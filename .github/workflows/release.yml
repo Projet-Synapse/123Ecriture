@@ -41,6 +41,9 @@ jobs:
       - name: Exporte le build web (Expo) chargé par Electron
         run: pnpm --filter @123ecriture/mobile build:web
 
+      - name: Bundle le process principal Electron (esbuild)
+        run: pnpm --filter @123ecriture/desktop run build:electron
+
       - name: Build + publie l'installateur desktop
         # provider/owner/repo viennent de apps/desktop/package.json (champs
         # "build.publish" et "repository") — --publish always n'a d'effet
@@ -55,3 +58,8 @@ jobs:
 # installateurs (Linux/Windows/macOS non signés — attends-toi à un
 # avertissement Gatekeeper/SmartScreen faute de certificat de signature),
 # puis publie-la manuellement quand tu es prêt·e.
+#
+# Auto-update (electron-updater, voir apps/desktop/electron/main.js) : le
+# dépôt doit être PUBLIC pour que l'app installée puisse consulter les
+# Releases GitHub sans authentification. Sur un dépôt privé, la vérification
+# de mise à jour échoue silencieusement (l'app démarre quand même).

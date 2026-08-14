@@ -16,6 +16,7 @@ apps/mobile/web-build/
 apps/desktop/dist/
 apps/desktop/out/
 apps/desktop/release/
+apps/desktop/electron-dist/
 
 # Env
 .env

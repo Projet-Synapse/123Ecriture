@@ -1,21 +1,24 @@
 {
   "name": "@123ecriture/desktop",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "123Ecriture — application d'écriture et de productivité (version desktop)",
   "author": "Catelina",
   "repository": "https://github.com/catelyn2332-design/123Ecriture.git",
   "private": true,
-  "main": "electron/main.js",
+  "main": "electron-dist/main.js",
   "scripts": {
-    "dev": "electron .",
+    "build:electron": "esbuild electron/main.js electron/preload.js --bundle --platform=node --external:electron --outdir=electron-dist --format=cjs",
+    "dev": "pnpm build:electron && electron .",
     "lint": "eslint .",
-    "package:linux": "electron-builder --linux --publish never",
-    "package:win": "electron-builder --win --publish never",
-    "package:mac": "electron-builder --mac --publish never"
+    "package:linux": "pnpm build:electron && electron-builder --linux --publish never",
+    "package:win": "pnpm build:electron && electron-builder --win --publish never",
+    "package:mac": "pnpm build:electron && electron-builder --mac --publish never"
   },
   "devDependencies": {
     "electron": "^43.0.0",
-    "electron-builder": "^26.15.3"
+    "electron-builder": "^26.15.3",
+    "electron-updater": "^6.8.9",
+    "esbuild": "^0.28.2"
   },
   "build": {
     "appId": "com.123ecriture.app",
@@ -24,11 +27,12 @@
     "publish": {
       "provider": "github"
     },
+    "artifactName": "${productName}.${ext}",
     "directories": {
       "output": "release"
     },
     "files": [
-      "electron/**/*",
+      "electron-dist/**/*",
       "package.json"
     ],
     "extraResources": [
@@ -39,20 +43,14 @@
     ],
     "icon": "../mobile/assets/icon.png",
     "linux": {
-      "target": [
-        "AppImage"
-      ],
+      "target": ["AppImage"],
       "category": "Office"
     },
     "win": {
-      "target": [
-        "nsis"
-      ]
+      "target": ["nsis"]
     },
     "mac": {
-      "target": [
-        "dmg"
-      ],
+      "target": ["dmg"],
       "category": "public.app-category.productivity"
     }
   }

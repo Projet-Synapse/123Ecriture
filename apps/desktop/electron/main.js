@@ -1,4 +1,5 @@
 const { app, BrowserWindow, protocol, net } = require('electron');
+const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const fs = require('fs');
 const { URL, pathToFileURL } = require('url');
@@ -64,9 +65,25 @@ function createWindow() {
   }
 }
 
+// Auto-update : source = les Releases GitHub du dépôt (déjà configuré dans
+// apps/desktop/package.json → build.publish, réutilisé ici tel quel). Le
+// dépôt doit être public pour qu'electron-updater puisse y accéder sans
+// authentification — voir docs/ARCHITECTURE.md. Ne s'exécute qu'en version
+// packagée : en dev il n'y a pas de version installée à mettre à jour, et
+// electron-updater exige un app.getVersion() issu d'un vrai package.json
+// buildé, pas du process de dev.
+function checkForUpdates() {
+  autoUpdater.checkForUpdatesAndNotify().catch((error) => {
+    // Une vérification de mise à jour qui échoue (pas de réseau, dépôt
+    // encore privé...) ne doit jamais empêcher l'app de démarrer.
+    console.error('[auto-update] échec de la vérification :', error);
+  });
+}
+
 app.whenReady().then(() => {
   if (!isDev) {
     registerAppProtocol();
+    checkForUpdates();
   }
 
   createWindow();
