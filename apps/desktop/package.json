@@ -1,8 +1,9 @@
 {
   "name": "@123ecriture/desktop",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "123Ecriture — application d'écriture et de productivité (version desktop)",
   "author": "Catelina",
+  "repository": "https://github.com/catelyn2332-design/123Ecriture.git",
   "private": true,
   "main": "electron/main.js",
   "scripts": {

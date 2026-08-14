@@ -42,18 +42,19 @@ jobs:
         run: pnpm --filter @123ecriture/mobile build:web
 
       - name: Build + publie l'installateur desktop
-        # Le provider GitHub (owner/repo) est passé ici en override CLI
-        # plutôt que codé en dur dans apps/desktop/package.json : le
-        # configurer en dur y faisait planter electron-builder en local
-        # (bug connu de génération des métadonnées d'auto-update pour la
-        # cible AppImage). --publish always ne s'applique qu'ici, sur tag.
+        # Le provider GitHub est passé ici en override CLI plutôt que codé en
+        # dur dans apps/desktop/package.json : le configurer en dur y faisait
+        # planter electron-builder en local (bug connu de génération des
+        # métadonnées d'auto-update pour la cible AppImage). --publish always
+        # ne s'applique qu'ici, sur tag. Owner/repo sont déduits du champ
+        # "repository" d'apps/desktop/package.json — plusieurs flags -c.
+        # séparés font planter electron-builder sous PowerShell (Windows),
+        # d'où un seul flag ici.
         run: >
           pnpm --filter @123ecriture/desktop exec electron-builder
           ${{ matrix.flag }}
           --publish always
           -c.publish.provider=github
-          -c.publish.owner=catelyn2332-design
-          -c.publish.repo=123Ecriture
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
