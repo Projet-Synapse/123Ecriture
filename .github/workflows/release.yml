@@ -1,0 +1,66 @@
+name: Release desktop
+
+# Se déclenche uniquement sur un tag "vX.Y.Z" poussé sur le dépôt — jamais
+# automatiquement sur un simple commit/push de branche.
+on:
+  push:
+    tags:
+      - "v*"
+
+# Nécessaire pour qu'electron-builder puisse créer/publier une Release
+# GitHub (draft par défaut — voir note en bas de fichier) avec GITHUB_TOKEN.
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            flag: --linux
+          - os: windows-latest
+            flag: --win
+          - os: macos-latest
+            flag: --mac
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Installe les dépendances du monorepo
+        run: pnpm install --frozen-lockfile
+
+      - name: Exporte le build web (Expo) chargé par Electron
+        run: pnpm --filter @123ecriture/mobile build:web
+
+      - name: Build + publie l'installateur desktop
+        # Le provider GitHub (owner/repo) est passé ici en override CLI
+        # plutôt que codé en dur dans apps/desktop/package.json : le
+        # configurer en dur y faisait planter electron-builder en local
+        # (bug connu de génération des métadonnées d'auto-update pour la
+        # cible AppImage). --publish always ne s'applique qu'ici, sur tag.
+        run: >
+          pnpm --filter @123ecriture/desktop exec electron-builder
+          ${{ matrix.flag }}
+          --publish always
+          -c.publish.provider=github
+          -c.publish.owner=catelyn2332-design
+          -c.publish.repo=123Ecriture
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+# Note : electron-builder publie par défaut la Release GitHub en DRAFT.
+# Après un push de tag, va sur l'onglet "Releases" du dépôt, vérifie les 3
+# installateurs (Linux/Windows/macOS non signés — attends-toi à un
+# avertissement Gatekeeper/SmartScreen faute de certificat de signature),
+# puis publie-la manuellement quand tu es prêt·e.

@@ -8,9 +8,9 @@
   "scripts": {
     "dev": "electron .",
     "lint": "eslint .",
-    "package:linux": "electron-builder --linux",
-    "package:win": "electron-builder --win",
-    "package:mac": "electron-builder --mac"
+    "package:linux": "electron-builder --linux --publish never",
+    "package:win": "electron-builder --win --publish never",
+    "package:mac": "electron-builder --mac --publish never"
   },
   "devDependencies": {
     "electron": "^43.0.0",
