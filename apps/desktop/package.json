@@ -1,0 +1,13 @@
+{
+  "name": "@123ecriture/desktop",
+  "version": "0.0.1",
+  "private": true,
+  "main": "electron/main.js",
+  "scripts": {
+    "dev": "electron .",
+    "lint": "eslint ."
+  },
+  "devDependencies": {
+    "electron": "^43.0.0"
+  }
+}

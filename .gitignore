@@ -1,0 +1,25 @@
+# Dépendances
+node_modules/
+
+# Builds
+dist/
+dist_electron/
+.expo/
+.turbo/
+*.tsbuildinfo
+
+# Expo
+apps/mobile/.expo/
+apps/mobile/web-build/
+
+# Electron
+apps/desktop/dist/
+apps/desktop/out/
+
+# Env
+.env
+.env.local
+
+# OS / éditeurs
+.DS_Store
+*.log
