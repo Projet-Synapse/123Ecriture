@@ -69,6 +69,7 @@ module.exports = defineConfig([
       '**/dist_electron/**',
       '**/.expo/**',
       '**/node_modules/**',
+      'apps/desktop/release/**',
       'supabase/functions/**',
     ],
   },

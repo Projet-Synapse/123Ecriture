@@ -1,13 +1,47 @@
 {
   "name": "@123ecriture/desktop",
   "version": "0.0.1",
+  "description": "123Ecriture — application d'écriture et de productivité (version desktop)",
+  "author": "Catelina",
   "private": true,
   "main": "electron/main.js",
   "scripts": {
     "dev": "electron .",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "package:linux": "electron-builder --linux",
+    "package:win": "electron-builder --win",
+    "package:mac": "electron-builder --mac"
   },
   "devDependencies": {
-    "electron": "^43.0.0"
+    "electron": "^43.0.0",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.123ecriture.app",
+    "productName": "123Ecriture",
+    "executableName": "123ecriture",
+    "publish": null,
+    "directories": {
+      "output": "release"
+    },
+    "files": ["electron/**/*", "package.json"],
+    "extraResources": [
+      {
+        "from": "../mobile/dist",
+        "to": "web-build"
+      }
+    ],
+    "icon": "../mobile/assets/icon.png",
+    "linux": {
+      "target": ["AppImage"],
+      "category": "Office"
+    },
+    "win": {
+      "target": ["nsis"]
+    },
+    "mac": {
+      "target": ["dmg"],
+      "category": "public.app-category.productivity"
+    }
   }
 }

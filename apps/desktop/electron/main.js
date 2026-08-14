@@ -8,7 +8,13 @@ const path = require('path');
 
 const isDev = !app.isPackaged;
 const DEV_URL = process.env.EXPO_WEB_URL || 'http://localhost:8081';
-const PROD_BUILD_INDEX = path.join(__dirname, '../../mobile/dist/index.html');
+// En paquet (electron-builder), le build web est copié dans les resources
+// de l'app via `extraResources` (voir apps/desktop/package.json → build).
+// Hors paquet (ex. `electron .` avec isDev forcé à false pour tester le
+// build sans tout packager), on retombe sur le dist/ voisin d'apps/mobile.
+const PROD_BUILD_INDEX = app.isPackaged
+  ? path.join(process.resourcesPath, 'web-build', 'index.html')
+  : path.join(__dirname, '../../mobile/dist/index.html');
 
 function createWindow() {
   const win = new BrowserWindow({
