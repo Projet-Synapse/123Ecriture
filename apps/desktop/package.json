@@ -21,11 +21,16 @@
     "appId": "com.123ecriture.app",
     "productName": "123Ecriture",
     "executableName": "123ecriture",
-    "publish": null,
+    "publish": {
+      "provider": "github"
+    },
     "directories": {
       "output": "release"
     },
-    "files": ["electron/**/*", "package.json"],
+    "files": [
+      "electron/**/*",
+      "package.json"
+    ],
     "extraResources": [
       {
         "from": "../mobile/dist",
@@ -34,14 +39,20 @@
     ],
     "icon": "../mobile/assets/icon.png",
     "linux": {
-      "target": ["AppImage"],
+      "target": [
+        "AppImage"
+      ],
       "category": "Office"
     },
     "win": {
-      "target": ["nsis"]
+      "target": [
+        "nsis"
+      ]
     },
     "mac": {
-      "target": ["dmg"],
+      "target": [
+        "dmg"
+      ],
       "category": "public.app-category.productivity"
     }
   }
