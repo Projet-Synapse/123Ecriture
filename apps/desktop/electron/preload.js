@@ -16,6 +16,8 @@ contextBridge.exposeInMainWorld('vault', {
   createNote: (name, parentRelPath) => ipcRenderer.invoke('vault:create-note', name, parentRelPath),
   createFolder: (name, parentRelPath) => ipcRenderer.invoke('vault:create-folder', name, parentRelPath),
   rename: (relPath, newName) => ipcRenderer.invoke('vault:rename', relPath, newName),
+  move: (relPath, destinationParentRelPath) =>
+    ipcRenderer.invoke('vault:move', relPath, destinationParentRelPath),
 });
 
 contextBridge.exposeInMainWorld('updater', {

@@ -54,7 +54,11 @@ function registerTasksHandlers() {
     if (!trimmed) throw new Error('Le texte de la tâche ne peut pas être vide.');
 
     const tasks = readTasks(vaultPath);
-    tasks.push({
+    // En tête plutôt qu'en fin de liste : une tâche ajoutée reste visible
+    // sans avoir à faire défiler, même quand la liste est déjà longue —
+    // sinon l'ajout peut sembler "ne rien faire" si la nouvelle tâche
+    // apparaît hors champ tout en bas.
+    tasks.unshift({
       id: crypto.randomUUID(),
       text: trimmed,
       done: false,

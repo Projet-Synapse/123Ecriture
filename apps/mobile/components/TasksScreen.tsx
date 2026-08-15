@@ -18,6 +18,7 @@ export function TasksScreen() {
   const [vaultPath, setVaultPath] = useState<string | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [draft, setDraft] = useState('');
+  const [addError, setAddError] = useState<string | null>(null);
 
   const refreshTasks = useCallback(async () => {
     if (!tasksBridge) return;
@@ -53,11 +54,15 @@ export function TasksScreen() {
     if (!tasksBridge) return;
     const text = draft.trim();
     if (!text) return;
+    setAddError(null);
     try {
       setTasks(await tasksBridge.add(text));
       setDraft('');
     } catch (error) {
+      // Visible dans l'UI, pas juste dans la console — un échec silencieux
+      // donnait l'impression que le bouton "ne faisait rien".
       console.error('[tasks] échec de l’ajout :', error);
+      setAddError(error instanceof Error ? error.message : String(error));
     }
   }, [tasksBridge, draft]);
 
@@ -124,7 +129,10 @@ export function TasksScreen() {
       <View style={styles.addRow}>
         <TextInput
           value={draft}
-          onChangeText={setDraft}
+          onChangeText={(text) => {
+            setDraft(text);
+            if (addError) setAddError(null);
+          }}
           onSubmitEditing={() => void handleAddTask()}
           placeholder="Nouvelle tâche…"
           placeholderTextColor={theme.textMuted}
@@ -137,6 +145,7 @@ export function TasksScreen() {
           <Text style={styles.buttonText}>Ajouter</Text>
         </Pressable>
       </View>
+      {addError && <Text style={styles.error}>⚠️ {addError}</Text>}
 
       <ScrollView contentContainerStyle={styles.list}>
         {[...pending, ...done].map((task) => (
@@ -260,5 +269,9 @@ const styles = StyleSheet.create({
   removeButton: {
     paddingHorizontal: 6,
     paddingVertical: 2,
+  },
+  error: {
+    color: '#dc2626',
+    fontSize: 13,
   },
 });

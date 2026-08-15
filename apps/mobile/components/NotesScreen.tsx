@@ -10,7 +10,9 @@ import {
 
 import type { FormattingResult, Selection } from '../lib/mdxFormatting';
 import { NOTES_TOOLBAR_ACTIONS, type ToolbarAction } from '../lib/notesToolbarActions';
+import { findNodeByPath } from '../lib/vaultTree';
 import { usePreferences } from '../preferences/PreferencesContext';
+import { MoveDialog } from './MoveDialog';
 import { VaultTreeView } from './VaultTreeView';
 
 // Écran Notes — Phase 1 : vault local (arborescence réelle, pas juste une
@@ -24,11 +26,11 @@ const AUTOSAVE_DELAY_MS = 600;
 
 type Status = 'idle' | 'saving' | 'saved' | 'error';
 
-// Un élément renommé affecte la note actuellement ouverte si c'est lui-même
-// cette note, ou si c'est un dossier qui la contient (renommer un dossier
-// change le relPath de tout ce qu'il contient, en cascade).
-function renameAffectsPath(activeRelPath: string, renamedOldRelPath: string): boolean {
-  return activeRelPath === renamedOldRelPath || activeRelPath.startsWith(`${renamedOldRelPath}/`);
+// Un élément renommé/déplacé affecte la note actuellement ouverte si c'est
+// lui-même cette note, ou si c'est un dossier qui la contient (un dossier
+// renommé/déplacé change le relPath de tout ce qu'il contient, en cascade).
+function isPathAffected(activeRelPath: string, changedOldRelPath: string): boolean {
+  return activeRelPath === changedOldRelPath || activeRelPath.startsWith(`${changedOldRelPath}/`);
 }
 
 export function NotesScreen() {
@@ -44,6 +46,7 @@ export function NotesScreen() {
   const [collapsedPaths, setCollapsedPaths] = useState<Set<string>>(new Set());
   const [renamingRelPath, setRenamingRelPath] = useState<string | null>(null);
   const [renamingValue, setRenamingValue] = useState('');
+  const [movingNode, setMovingNode] = useState<VaultTreeNode | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const listAreaRef = useRef<View>(null);
 
@@ -160,21 +163,62 @@ export function NotesScreen() {
     setRenamingValue('');
 
     try {
-      await vault.rename(relPath, value);
-      if (activeNote && renameAffectsPath(activeNote.relPath, relPath)) {
-        // Le chemin de la note ouverte a changé (elle-même renommée, ou un
-        // dossier parent renommé qui la fait "bouger" en cascade) — on
-        // ferme l'éditeur plutôt que de risquer d'écrire sur un chemin
-        // périmé. Il suffit de recliquer la note dans l'arborescence
-        // rafraîchie.
-        setActiveNote(null);
-        setContent('');
-      }
+      const result = await vault.rename(relPath, value);
+      setActiveNote((current) => {
+        if (!current) return current;
+        if (current.relPath === relPath) {
+          // La note ouverte est exactement l'élément renommé : on continue
+          // à l'éditer sous son nouveau nom plutôt que de fermer l'éditeur.
+          return { ...current, relPath: result.relPath, name: result.name };
+        }
+        if (isPathAffected(current.relPath, relPath)) {
+          // Un dossier PARENT de la note ouverte a été renommé : le
+          // relPath de la note change en cascade, mais on ne le connaît
+          // pas précisément ici — on ferme plutôt que de risquer d'écrire
+          // sur un chemin périmé. Il suffit de recliquer la note.
+          setContent('');
+          return null;
+        }
+        return current;
+      });
       await refreshTree();
     } catch (error) {
       console.error('[vault] échec du renommage :', error);
     }
-  }, [vault, renamingRelPath, renamingValue, activeNote, refreshTree]);
+  }, [vault, renamingRelPath, renamingValue, refreshTree]);
+
+  const startMove = useCallback((node: VaultTreeNode) => {
+    setMovingNode(node);
+  }, []);
+
+  const cancelMove = useCallback(() => setMovingNode(null), []);
+
+  const submitMove = useCallback(
+    async (destinationRelPath?: string) => {
+      if (!vault || !movingNode) return;
+      const node = movingNode;
+      setMovingNode(null);
+
+      try {
+        const result = await vault.move(node.relPath, destinationRelPath);
+        setActiveNote((current) => {
+          if (!current) return current;
+          if (current.relPath === node.relPath) {
+            return { ...current, relPath: result.relPath, name: result.name };
+          }
+          if (isPathAffected(current.relPath, node.relPath)) {
+            setContent('');
+            return null;
+          }
+          return current;
+        });
+        await refreshTree();
+      } catch (error) {
+        console.error('[vault] échec du déplacement :', error);
+      }
+    },
+    [vault, movingNode, refreshTree],
+  );
 
   const toggleCollapse = useCallback((relPath: string) => {
     setCollapsedPaths((prev) => {
@@ -188,56 +232,62 @@ export function NotesScreen() {
     });
   }, []);
 
-  const handleContextMenuNode = useCallback(
-    (node: VaultTreeNode) => {
+  const showContextMenuFor = useCallback(
+    (node: VaultTreeNode | null) => {
       if (!contextMenuBridge) return;
-      const items =
-        node.type === 'folder'
+      const items = !node
+        ? [
+            { id: 'new-note', label: 'Nouvelle note' },
+            { id: 'new-folder', label: 'Nouveau dossier' },
+          ]
+        : node.type === 'folder'
           ? [
               { id: 'new-note-here', label: 'Nouvelle note ici' },
               { id: 'new-folder-here', label: 'Nouveau dossier ici' },
               { id: 'rename', label: 'Renommer' },
+              { id: 'move', label: 'Déplacer vers…' },
             ]
-          : [{ id: 'rename', label: 'Renommer' }];
+          : [
+              { id: 'rename', label: 'Renommer' },
+              { id: 'move', label: 'Déplacer vers…' },
+            ];
 
       void contextMenuBridge.show(items).then((choice) => {
-        if (choice === 'new-note-here') void handleCreateNote(node.relPath);
-        if (choice === 'new-folder-here') void handleCreateFolder(node.relPath);
-        if (choice === 'rename') startRename(node);
+        if (choice === 'new-note') void handleCreateNote();
+        if (choice === 'new-folder') void handleCreateFolder();
+        if (node && choice === 'new-note-here') void handleCreateNote(node.relPath);
+        if (node && choice === 'new-folder-here') void handleCreateFolder(node.relPath);
+        if (node && choice === 'rename') startRename(node);
+        if (node && choice === 'move') startMove(node);
       });
     },
-    [contextMenuBridge, handleCreateNote, handleCreateFolder, startRename],
+    [contextMenuBridge, handleCreateNote, handleCreateFolder, startRename, startMove],
   );
 
-  // Clic droit dans le fond de la liste (pas sur un dossier/note précis) →
-  // création à la racine du vault. Attaché en DOM direct (via le ref de la
-  // View, qui pointe vers un vrai élément DOM sous react-native-web)
-  // plutôt que via une prop RN — View n'a pas d'équivalent onContextMenu.
-  // Les lignes de VaultTreeView stoppent la propagation de leur propre
-  // clic droit, donc celui-ci ne se déclenche que pour un clic sur le fond.
+  // Un seul écouteur "contextmenu" délégué sur tout le conteneur de la
+  // liste, plutôt qu'un handler par ligne : chaque ligne de VaultTreeView
+  // porte juste un attribut data-relpath (voir dataSet), et on retrouve ici
+  // quel élément précis a été visé via closest(). Passer onContextMenu
+  // directement à un Pressable par ligne ne fonctionnait pas de façon
+  // fiable (pas une prop RN officielle) — la délégation sur un seul nœud
+  // DOM est un mécanisme bien plus robuste et déjà éprouvé (c'est ce qui
+  // gérait déjà le clic droit "dans le vide").
   useEffect(() => {
-    const node = listAreaRef.current as unknown as HTMLElement | null;
-    if (!node || !contextMenuBridge) return;
+    const container = listAreaRef.current as unknown as HTMLElement | null;
+    if (!container || !contextMenuBridge) return;
 
     const handler = (event: MouseEvent) => {
       event.preventDefault();
-      void contextMenuBridge
-        .show([
-          { id: 'new-note', label: 'Nouvelle note' },
-          { id: 'new-folder', label: 'Nouveau dossier' },
-        ])
-        .then((choice) => {
-          if (choice === 'new-note') void handleCreateNote();
-          if (choice === 'new-folder') void handleCreateFolder();
-        });
+      const target = event.target as HTMLElement | null;
+      const rowEl = target?.closest ? (target.closest('[data-relpath]') as HTMLElement | null) : null;
+      const relPath = rowEl?.getAttribute('data-relpath') ?? null;
+      const node = relPath ? findNodeByPath(tree, relPath) : null;
+      showContextMenuFor(node);
     };
 
-    node.addEventListener('contextmenu', handler);
-    return () => node.removeEventListener('contextmenu', handler);
-    // Dépend de vaultPath : c'est ce qui détermine si la liste (donc le
-    // nœud référencé) est effectivement montée — vault seul ne change pas
-    // quand on passe de "pas de vault" à "vault choisi".
-  }, [vaultPath, contextMenuBridge, handleCreateNote, handleCreateFolder]);
+    container.addEventListener('contextmenu', handler);
+    return () => container.removeEventListener('contextmenu', handler);
+  }, [vaultPath, tree, contextMenuBridge, showContextMenuFor]);
 
   const scheduleSave = useCallback(
     (text: string) => {
@@ -304,6 +354,8 @@ export function NotesScreen() {
     );
   }
 
+  const activeNoteIsRenaming = activeNote !== null && renamingRelPath === activeNote.relPath;
+
   return (
     <View style={styles.row}>
       <View
@@ -329,7 +381,6 @@ export function NotesScreen() {
             collapsedPaths={collapsedPaths}
             onToggleCollapse={toggleCollapse}
             onOpenNote={(node) => void openNote(node)}
-            onContextMenuNode={handleContextMenuNode}
             rename={
               renamingRelPath
                 ? {
@@ -353,7 +404,23 @@ export function NotesScreen() {
         {activeNote ? (
           <>
             <View style={styles.editorHeader}>
-              <Text style={[styles.editorTitle, { color: theme.text }]}>{activeNote.name}</Text>
+              {activeNoteIsRenaming ? (
+                <TextInput
+                  autoFocus
+                  value={renamingValue}
+                  onChangeText={setRenamingValue}
+                  onSubmitEditing={() => void submitRename()}
+                  onBlur={() => void submitRename()}
+                  onKeyPress={(event) => {
+                    if (event.nativeEvent.key === 'Escape') cancelRename();
+                  }}
+                  style={[styles.editorTitleInput, { color: theme.text, borderColor: theme.accent }]}
+                />
+              ) : (
+                <Pressable onPress={() => startRename({ type: 'note', ...activeNote })}>
+                  <Text style={[styles.editorTitle, { color: theme.text }]}>{activeNote.name}</Text>
+                </Pressable>
+              )}
               <Text style={[styles.status, { color: theme.textMuted }]}>
                 {status === 'saving' && 'Enregistrement…'}
                 {status === 'saved' && 'Enregistré'}
@@ -398,6 +465,14 @@ export function NotesScreen() {
           </View>
         )}
       </View>
+
+      <MoveDialog
+        node={movingNode}
+        tree={tree}
+        theme={theme}
+        onSelect={(destination) => void submitMove(destination)}
+        onCancel={cancelMove}
+      />
     </View>
   );
 }
@@ -460,6 +535,13 @@ const styles = StyleSheet.create({
   editorTitle: {
     fontSize: 16,
     fontWeight: '600',
+  },
+  editorTitleInput: {
+    fontSize: 16,
+    fontWeight: '600',
+    borderBottomWidth: 1,
+    minWidth: 160,
+    paddingVertical: 2,
   },
   status: {
     fontSize: 12,

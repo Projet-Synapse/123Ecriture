@@ -173,6 +173,45 @@ function registerVaultHandlers() {
     await fs.rename(oldFull, newFull);
     return { relPath: path.relative(vaultPath, newFull), name: baseName };
   });
+
+  // Déplace une note ou un dossier vers un autre dossier du vault (ou la
+  // racine si destinationParentRelPath est omis). Contrairement à
+  // vault:rename, ça change le dossier parent — le nom reste le même sauf
+  // collision à destination.
+  ipcMain.handle('vault:move', async (_event, relPath, destinationParentRelPath) => {
+    const vaultPath = getVaultPath();
+    if (!vaultPath) throw new Error('Aucun vault sélectionné');
+
+    const oldFull = resolveInVault(vaultPath, relPath);
+    if (!fsSync.existsSync(oldFull)) throw new Error('Élément introuvable.');
+
+    const destFull = destinationParentRelPath
+      ? resolveInVault(vaultPath, destinationParentRelPath)
+      : vaultPath;
+    if (!fsSync.existsSync(destFull) || !fsSync.statSync(destFull).isDirectory()) {
+      throw new Error('Destination invalide.');
+    }
+
+    // Un dossier ne peut pas être déplacé dans lui-même ni dans l'un de ses
+    // propres sous-dossiers (casserait l'arborescence).
+    if (destFull === oldFull || destFull.startsWith(oldFull + path.sep)) {
+      throw new Error('Impossible de déplacer un dossier dans lui-même ou l’un de ses sous-dossiers.');
+    }
+
+    const isNote = fsSync.statSync(oldFull).isFile();
+    const baseName = isNote ? path.basename(oldFull, '.mdx') : path.basename(oldFull);
+    const extension = isNote ? '.mdx' : '';
+    const finalName = findAvailableName(destFull, baseName, extension);
+    const newFull = path.join(destFull, finalName);
+
+    if (newFull === oldFull) {
+      // Déjà à cet endroit — no-op plutôt qu'une erreur fs.rename inutile.
+      return { relPath: path.relative(vaultPath, oldFull), name: baseName };
+    }
+
+    await fs.rename(oldFull, newFull);
+    return { relPath: path.relative(vaultPath, newFull), name: finalName.replace(/\.mdx$/i, '') };
+  });
 }
 
 module.exports = { registerVaultHandlers };

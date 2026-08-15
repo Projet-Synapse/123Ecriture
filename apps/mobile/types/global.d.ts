@@ -29,6 +29,10 @@ declare global {
     createNote: (name: string, parentRelPath?: string) => Promise<VaultEntry>;
     createFolder: (name: string, parentRelPath?: string) => Promise<VaultFolderEntry>;
     rename: (relPath: string, newName: string) => Promise<{ relPath: string; name: string }>;
+    move: (
+      relPath: string,
+      destinationParentRelPath?: string,
+    ) => Promise<{ relPath: string; name: string }>;
   }
 
   type UpdaterStatus =

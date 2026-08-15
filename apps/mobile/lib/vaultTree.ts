@@ -1,0 +1,43 @@
+// Fonctions pures sur l'arborescence du vault — séparées des composants
+// pour rester testables sans RN, comme lib/mdxFormatting.ts.
+
+// Retrouve un nœud (note ou dossier) par son relPath, en profondeur.
+// Utilisé par NotesScreen pour retrouver l'élément visé par un clic droit
+// délégué (voir components/NotesScreen.tsx) à partir du data-relpath lu
+// dans le DOM.
+export function findNodeByPath(nodes: VaultTreeNode[], relPath: string): VaultTreeNode | null {
+  for (const node of nodes) {
+    if (node.relPath === relPath) return node;
+    if (node.type === 'folder') {
+      const found = findNodeByPath(node.children, relPath);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+export type FolderOption = { relPath: string; label: string; depth: number };
+
+// Liste plate de tous les dossiers de l'arborescence (avec leur profondeur,
+// pour l'indentation visuelle) — utilisé par MoveDialog pour proposer des
+// destinations. `excludeRelPath` retire le dossier qu'on est en train de
+// déplacer ET tous ses descendants : on ne peut pas déplacer un dossier
+// dans lui-même ou dans l'un de ses propres sous-dossiers.
+export function collectFolderOptions(
+  nodes: VaultTreeNode[],
+  excludeRelPath?: string,
+  depth = 0,
+  options: FolderOption[] = [],
+): FolderOption[] {
+  for (const node of nodes) {
+    if (node.type !== 'folder') continue;
+    const isExcluded =
+      excludeRelPath !== undefined &&
+      (node.relPath === excludeRelPath || node.relPath.startsWith(`${excludeRelPath}/`));
+    if (isExcluded) continue;
+
+    options.push({ relPath: node.relPath, label: node.name, depth });
+    collectFolderOptions(node.children, excludeRelPath, depth + 1, options);
+  }
+  return options;
+}

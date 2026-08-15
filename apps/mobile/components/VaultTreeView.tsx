@@ -8,6 +8,16 @@ import type { Theme } from '../theme';
 // dossiers repliés, état de renommage) et les actions vivent dans
 // NotesScreen — ce fichier ne fait qu'afficher et relayer les événements,
 // pour ne pas éparpiller la logique métier vault entre deux fichiers.
+//
+// Le clic droit n'est PAS géré ici : chaque ligne porte juste un
+// `dataSet={{ relpath: ... }}` (converti en attribut data-relpath par
+// react-native-web), et c'est NotesScreen qui écoute un seul événement
+// "contextmenu" délégué sur tout le conteneur puis retrouve la ligne visée
+// via cet attribut. Passer `onContextMenu` directement à Pressable ne
+// fonctionnait pas de façon fiable (ce n'est pas une prop RN officielle,
+// juste transmise "si ça marche" par react-native-web) — la délégation sur
+// un seul écouteur, déjà éprouvée pour le clic droit dans le vide, est un
+// mécanisme bien plus robuste.
 
 export type RenameState = {
   relPath: string;
@@ -25,7 +35,6 @@ type Props = {
   collapsedPaths: Set<string>;
   onToggleCollapse: (relPath: string) => void;
   onOpenNote: (node: VaultNoteNode) => void;
-  onContextMenuNode: (node: VaultTreeNode) => void;
   rename: RenameState | null;
 };
 
@@ -37,7 +46,6 @@ export function VaultTreeView({
   collapsedPaths,
   onToggleCollapse,
   onOpenNote,
-  onContextMenuNode,
   rename,
 }: Props) {
   return (
@@ -51,16 +59,7 @@ export function VaultTreeView({
           <Fragment key={node.relPath}>
             <Pressable
               onPress={() => (isFolder ? onToggleCollapse(node.relPath) : onOpenNote(node))}
-              // @ts-expect-error — onContextMenu (DOM) n'est pas dans les types RN,
-              // mais react-native-web le transmet bien au <div> sous-jacent.
-              onContextMenu={(event: MouseEvent) => {
-                event.preventDefault();
-                // Empêche le clic droit de "remonter" jusqu'au conteneur
-                // (qui a son propre menu contextuel pour le fond de liste,
-                // voir NotesScreen) — sinon les deux menus se déclenchent.
-                event.stopPropagation();
-                onContextMenuNode(node);
-              }}
+              dataSet={{ relpath: node.relPath }}
               style={[
                 styles.row,
                 { paddingLeft: 12 + depth * 16 },
@@ -96,7 +95,6 @@ export function VaultTreeView({
                 collapsedPaths={collapsedPaths}
                 onToggleCollapse={onToggleCollapse}
                 onOpenNote={onOpenNote}
-                onContextMenuNode={onContextMenuNode}
                 rename={rename}
               />
             )}
