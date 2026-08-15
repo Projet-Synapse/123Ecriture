@@ -1,20 +1,21 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, useColorScheme, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import { darkTheme, lightTheme } from '../theme';
+import { PersonalizationCard } from './PersonalizationCard';
+import { usePreferences } from '../preferences/PreferencesContext';
 
-// Écran Paramètres : gestion du vault local + traqueur de mise à jour. Les
-// deux dépendent de ponts exposés uniquement par Electron desktop
-// (window.vault / window.updater) — voir apps/desktop/electron/preload.js.
+// Écran Paramètres : personnalisation de l'interface (toujours disponible),
+// vault local et traqueur de mise à jour (dépendent de ponts exposés
+// uniquement par Electron desktop — window.vault / window.updater, voir
+// apps/desktop/electron/preload.js).
 export function SettingsScreen() {
-  const scheme = useColorScheme();
-  const theme = scheme === 'dark' ? darkTheme : lightTheme;
+  const { theme } = usePreferences();
   const vault = typeof window !== 'undefined' ? window.vault : undefined;
   const updater = typeof window !== 'undefined' ? window.updater : undefined;
 
   const [vaultPath, setVaultPath] = useState<string | null>(null);
   const [version, setVersion] = useState<string | null>(null);
-  const [status, setStatus] = useState<UpdaterStatus>({ state: 'up-to-date' });
+  const [status, setStatus] = useState<UpdaterStatus>({ state: 'idle' });
 
   useEffect(() => {
     if (!vault) return;
@@ -24,14 +25,25 @@ export function SettingsScreen() {
   useEffect(() => {
     if (!updater) return;
     void updater.getVersion().then(setVersion);
+    // Récupère l'état déjà connu du process principal avant de s'abonner :
+    // la vérification de mise à jour démarre au lancement de l'app, donc
+    // les tout premiers événements (checking/downloading...) peuvent être
+    // passés avant même que cet écran ne soit monté. Sans ce snapshot,
+    // Paramètres afficherait un état par défaut périmé tant qu'aucun
+    // nouvel événement n'arrive.
+    void updater.getStatus().then(setStatus);
     const unsubscribe = updater.onStatusChange(setStatus);
     return unsubscribe;
   }, [updater]);
 
   const handleChooseFolder = useCallback(async () => {
     if (!vault) return;
-    const chosen = await vault.chooseFolder();
-    setVaultPath(chosen);
+    try {
+      const chosen = await vault.chooseFolder();
+      setVaultPath(chosen);
+    } catch (error) {
+      console.error('[vault] échec du choix de dossier :', error);
+    }
   }, [vault]);
 
   const handleCheckForUpdates = useCallback(async () => {
@@ -41,22 +53,18 @@ export function SettingsScreen() {
 
   const handleInstall = useCallback(async () => {
     if (!updater) return;
-    await updater.quitAndInstall();
+    try {
+      await updater.quitAndInstall();
+    } catch (error) {
+      console.error('[updater] échec de l’installation :', error);
+      setStatus({ state: 'error', message: String(error) });
+    }
   }, [updater]);
-
-  if (!vault && !updater) {
-    return (
-      <View style={styles.centered}>
-        <Text style={[styles.title, { color: theme.text }]}>⚙️ Paramètres</Text>
-        <Text style={[styles.muted, { color: theme.textMuted }]}>
-          Disponible sur la version desktop pour l’instant.
-        </Text>
-      </View>
-    );
-  }
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
+      <PersonalizationCard />
+
       {vault && (
         <View style={[styles.card, { backgroundColor: theme.surface, borderColor: theme.border }]}>
           <Text style={[styles.cardTitle, { color: theme.text }]}>Vault</Text>
@@ -80,6 +88,13 @@ export function SettingsScreen() {
           <Text style={[styles.cardValue, { color: theme.textMuted }]}>
             Version installée : {version ?? '…'}
           </Text>
+
+          {status.state === 'idle' && (
+            <View style={styles.statusRow}>
+              <ActivityIndicator size="small" color={theme.accent} />
+              <Text style={{ color: theme.textMuted }}>Initialisation…</Text>
+            </View>
+          )}
 
           {status.state === 'checking' && (
             <View style={styles.statusRow}>
@@ -136,6 +151,12 @@ export function SettingsScreen() {
           )}
         </View>
       )}
+
+      {!vault && !updater && (
+        <Text style={[styles.muted, { color: theme.textMuted }]}>
+          Vault et mises à jour sont disponibles sur la version desktop pour l’instant.
+        </Text>
+      )}
     </ScrollView>
   );
 }
@@ -147,17 +168,6 @@ const styles = StyleSheet.create({
     maxWidth: 480,
     width: '100%',
     alignSelf: 'center',
-  },
-  centered: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 32,
-    gap: 8,
-  },
-  title: {
-    fontSize: 22,
-    fontWeight: '600',
   },
   muted: {
     fontSize: 14,

@@ -1,10 +1,11 @@
 const { app, BrowserWindow, protocol, net, Menu } = require('electron');
-const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const fs = require('fs');
 const { URL, pathToFileURL } = require('url');
 const { registerVaultHandlers } = require('./vault');
-const { registerUpdaterHandlers } = require('./updater');
+const { registerUpdaterHandlers, checkOnStartup } = require('./updater');
+const { registerPreferencesHandlers } = require('./preferences');
+const { registerContextMenuHandlers } = require('./contextMenu');
 
 // Phase 1 : fenêtre qui charge le renderer web d'Expo (partagé avec
 // apps/mobile) + le vault local (accès fs natif, voir vault.js et
@@ -86,16 +87,18 @@ app.whenReady().then(() => {
 
   registerVaultHandlers();
   registerUpdaterHandlers(() => mainWindow);
+  registerPreferencesHandlers();
+  registerContextMenuHandlers();
 
   if (!isDev) {
     registerAppProtocol();
     // Vérification silencieuse au démarrage — l'état (dispo/téléchargement/
     // prêt) est ensuite affiché et piloté depuis l'écran Paramètres, pas
     // via une notification OS. Voir docs/ARCHITECTURE.md : nécessite le
-    // dépôt public. Erreur jamais fatale au démarrage de l'app.
-    autoUpdater.checkForUpdates().catch((error) => {
-      console.error('[auto-update] échec de la vérification au démarrage :', error);
-    });
+    // dépôt public. Jamais fatale au démarrage de l'app (erreurs gérées
+    // dans updater.js, qui garde aussi l'état pour l'UI même si elle se
+    // monte après que les premiers événements soient passés).
+    checkOnStartup(() => mainWindow);
   }
 
   createWindow();

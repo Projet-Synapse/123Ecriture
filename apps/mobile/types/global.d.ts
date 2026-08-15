@@ -1,7 +1,7 @@
 // Types des ponts exposés par apps/desktop/electron/preload.js via
-// contextBridge. N'existent que côté Electron desktop (window.vault et
-// window.updater sont undefined sur web/mobile — pas encore de vault ni
-// d'auto-update sur ces plateformes, voir docs/ARCHITECTURE.md, Phase 2).
+// contextBridge. N'existent que côté Electron desktop (window.vault,
+// window.updater, window.preferences, window.contextMenu sont undefined
+// sur web/mobile — Phase 2 pour ces plateformes).
 export {};
 
 declare global {
@@ -11,6 +11,11 @@ declare global {
     modifiedAt: number;
   }
 
+  interface VaultFolderEntry {
+    relPath: string;
+    name: string;
+  }
+
   interface VaultBridge {
     chooseFolder: () => Promise<string | null>;
     getCurrentPath: () => Promise<string | null>;
@@ -18,9 +23,11 @@ declare global {
     readNote: (relPath: string) => Promise<string>;
     writeNote: (relPath: string, content: string) => Promise<void>;
     createNote: (name: string) => Promise<VaultEntry>;
+    createFolder: (name: string) => Promise<VaultFolderEntry>;
   }
 
   type UpdaterStatus =
+    | { state: 'idle' }
     | { state: 'checking' }
     | { state: 'up-to-date' }
     | { state: 'downloading'; version?: string; percent: number }
@@ -29,13 +36,43 @@ declare global {
 
   interface UpdaterBridge {
     getVersion: () => Promise<string>;
+    getStatus: () => Promise<UpdaterStatus>;
     check: () => Promise<void>;
     quitAndInstall: () => Promise<void>;
     onStatusChange: (callback: (status: UpdaterStatus) => void) => () => void;
   }
 
+  type ThemeMode = 'system' | 'light' | 'dark';
+
+  interface ToolbarItemConfig {
+    id: string;
+    visible: boolean;
+  }
+
+  interface Preferences {
+    themeMode: ThemeMode;
+    accentColor: string;
+    notesToolbarOrder: ToolbarItemConfig[];
+  }
+
+  interface PreferencesBridge {
+    get: () => Promise<Preferences>;
+    set: (partial: Partial<Preferences>) => Promise<Preferences>;
+  }
+
+  interface ContextMenuItem {
+    id: string;
+    label: string;
+  }
+
+  interface ContextMenuBridge {
+    show: (items: ContextMenuItem[]) => Promise<string | null>;
+  }
+
   interface Window {
     vault?: VaultBridge;
     updater?: UpdaterBridge;
+    preferences?: PreferencesBridge;
+    contextMenu?: ContextMenuBridge;
   }
 }

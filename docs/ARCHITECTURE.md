@@ -194,6 +194,17 @@ totalement la plateforme sur laquelle ils tournent.
 - Cette couche est volontairement conçue pour être réutilisée par les
   futures applications du Projet Synapse (même moteur de thèmes/layout).
 
+> **Écart pragmatique (v0.1.5)** : la première version (mode clair/sombre/
+> système, couleur d'accent, ordre/visibilité de la barre d'outils Notes)
+> est stockée dans le config.json app-level d'Electron (userData), pas
+> encore dans `.123ecriture/theme.json` du vault — ça fonctionne même sans
+> vault sélectionné, et évite de coupler la personnalisation à la présence
+> d'un vault tant que la sync compte (Phase 3) n'existe pas. Voir
+> `apps/desktop/electron/preferences.js` et
+> `apps/mobile/preferences/PreferencesContext.tsx`. À migrer vers le vault
+> quand la personnalisation devra suivre l'utilisateur·rice plutôt que la
+> machine.
+
 //////////////////////////////////////////////////////////////////////////
 // 8. 🧩 ARCHITECTURE EN MODULES (OUTILS DE PRODUCTIVITÉ)
 //////////////////////////////////////////////////////////////////////////

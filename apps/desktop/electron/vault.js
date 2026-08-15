@@ -1,29 +1,13 @@
-const { app, dialog, ipcMain } = require('electron');
+const { dialog, ipcMain } = require('electron');
 const fs = require('fs/promises');
 const fsSync = require('fs');
 const path = require('path');
+const { readConfig, writeConfig } = require('./config');
 
 // Phase 1 : vault local minimal — un dossier choisi par l'utilisateur·rice,
-// des fichiers .mdx dedans. Le chemin du vault est persisté dans un petit
-// config.json (dossier userData d'Electron, indépendant de la version de
-// l'app) pour le retrouver au redémarrage. Voir docs/ARCHITECTURE.md §5.
-
-function getConfigPath() {
-  return path.join(app.getPath('userData'), 'config.json');
-}
-
-function readConfig() {
-  try {
-    return JSON.parse(fsSync.readFileSync(getConfigPath(), 'utf8'));
-  } catch {
-    return {};
-  }
-}
-
-function writeConfig(config) {
-  fsSync.mkdirSync(path.dirname(getConfigPath()), { recursive: true });
-  fsSync.writeFileSync(getConfigPath(), JSON.stringify(config, null, 2), 'utf8');
-}
+// des fichiers .mdx dedans. Le chemin du vault est persisté dans
+// config.json (voir config.js) pour le retrouver au redémarrage. Voir
+// docs/ARCHITECTURE.md §5.
 
 function getVaultPath() {
   return readConfig().vaultPath ?? null;
@@ -40,6 +24,18 @@ function resolveInVault(vaultPath, relPath) {
     throw new Error(`Chemin hors du vault refusé : ${relPath}`);
   }
   return resolved;
+}
+
+// Trouve un nom de fichier/dossier disponible en suffixant " 2", " 3"...
+// si `candidate` existe déjà — mêmes règles pour les notes et les dossiers.
+function findAvailableName(vaultPath, candidate, extension = '') {
+  let name = candidate;
+  let counter = 2;
+  while (fsSync.existsSync(path.join(vaultPath, `${name}${extension}`))) {
+    name = `${candidate} ${counter}`;
+    counter += 1;
+  }
+  return `${name}${extension}`;
 }
 
 async function walkMdxFiles(dir, vaultRoot, results = []) {
@@ -71,7 +67,7 @@ function registerVaultHandlers() {
       return getVaultPath();
     }
     const chosen = result.filePaths[0];
-    writeConfig({ ...readConfig(), vaultPath: chosen });
+    writeConfig({ vaultPath: chosen });
     return chosen;
   });
 
@@ -100,13 +96,7 @@ function registerVaultHandlers() {
     if (!vaultPath) throw new Error('Aucun vault sélectionné');
 
     const safeName = name && name.trim().length > 0 ? name.trim() : 'Sans titre';
-    let fileName = `${safeName}.mdx`;
-    let counter = 2;
-    while (fsSync.existsSync(path.join(vaultPath, fileName))) {
-      fileName = `${safeName} ${counter}.mdx`;
-      counter += 1;
-    }
-
+    const fileName = findAvailableName(vaultPath, safeName, '.mdx');
     const fullPath = path.join(vaultPath, fileName);
     const template = `---\ntitle: ${safeName}\ncreated: ${new Date().toISOString()}\n---\n\n`;
     await fs.writeFile(fullPath, template, 'utf8');
@@ -117,6 +107,23 @@ function registerVaultHandlers() {
       name: fileName.replace(/\.mdx$/, ''),
       modifiedAt: stat.mtimeMs,
     };
+  });
+
+  // Crée un dossier à la racine du vault. Pas encore de navigateur de
+  // dossiers dans l'UI (Notes reste une liste plate de tous les .mdx,
+  // récursive) — le dossier existe bien sur le disque et toute note qu'on y
+  // place manuellement apparaît dans la liste, mais rien ne l'affiche
+  // encore comme dossier à proprement parler. À revoir avec un vrai
+  // navigateur de vault.
+  ipcMain.handle('vault:create-folder', async (_event, name) => {
+    const vaultPath = getVaultPath();
+    if (!vaultPath) throw new Error('Aucun vault sélectionné');
+
+    const safeName = name && name.trim().length > 0 ? name.trim() : 'Nouveau dossier';
+    const folderName = findAvailableName(vaultPath, safeName);
+    await fs.mkdir(path.join(vaultPath, folderName));
+
+    return { relPath: folderName, name: folderName };
   });
 }
 

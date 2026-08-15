@@ -6,13 +6,14 @@ import { NotesScreen } from './components/NotesScreen';
 import { PlaceholderScreen } from './components/PlaceholderScreen';
 import { SettingsScreen } from './components/SettingsScreen';
 import { SECTIONS } from './navigation';
+import { PreferencesProvider } from './preferences/PreferencesContext';
 
 const SCREENS: Record<string, () => React.JSX.Element> = {
   notes: NotesScreen,
   settings: SettingsScreen,
 };
 
-export default function App() {
+function Root() {
   const [activeId, setActiveId] = useState(SECTIONS[0].id);
   const activeSection = SECTIONS.find((section) => section.id === activeId) ?? SECTIONS[0];
   const ActiveScreen = SCREENS[activeId];
@@ -24,5 +25,13 @@ export default function App() {
       </AppShell>
       <StatusBar style="auto" />
     </>
+  );
+}
+
+export default function App() {
+  return (
+    <PreferencesProvider>
+      <Root />
+    </PreferencesProvider>
   );
 }

@@ -1,7 +1,7 @@
-import { StyleSheet, Text, useColorScheme, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 
 import type { Section } from '../navigation';
-import { darkTheme, lightTheme } from '../theme';
+import { usePreferences } from '../preferences/PreferencesContext';
 
 // Écran générique pour les sections pas encore construites — évite
 // d'attendre d'avoir chaque module fini pour que la navigation soit
@@ -11,8 +11,7 @@ type Props = {
 };
 
 export function PlaceholderScreen({ section }: Props) {
-  const scheme = useColorScheme();
-  const theme = scheme === 'dark' ? darkTheme : lightTheme;
+  const { theme } = usePreferences();
 
   return (
     <View style={styles.container}>

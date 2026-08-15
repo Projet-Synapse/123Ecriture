@@ -5,48 +5,27 @@ import {
   StyleSheet,
   Text,
   TextInput,
-  useColorScheme,
   View,
 } from 'react-native';
 
-import {
-  applyHeading,
-  insertLink,
-  toggleLinePrefix,
-  toggleNumberedList,
-  wrapSelection,
-  type FormattingResult,
-  type Selection,
-} from '../lib/mdxFormatting';
-import { darkTheme, lightTheme } from '../theme';
+import type { FormattingResult, Selection } from '../lib/mdxFormatting';
+import { NOTES_TOOLBAR_ACTIONS, type ToolbarAction } from '../lib/notesToolbarActions';
+import { usePreferences } from '../preferences/PreferencesContext';
 
 // Écran Notes — Phase 1 : vault local + édition MDX avec barre de
-// formatage (pas encore de rendu enrichi/live-preview, voir
-// docs/ARCHITECTURE.md §4 et la feuille de route). Le vault n'existe que
-// côté Electron desktop pour l'instant (window.vault, exposé par
-// apps/desktop/electron/preload.js) — sur web/mobile, cette section reste
-// indisponible jusqu'à la Phase 2.
+// formatage personnalisable (voir Paramètres → Personnalisation). Pas
+// encore de rendu enrichi/live-preview, voir docs/ARCHITECTURE.md §4 et la
+// feuille de route. Le vault n'existe que côté Electron desktop pour
+// l'instant (window.vault, exposé par apps/desktop/electron/preload.js) —
+// sur web/mobile, cette section reste indisponible jusqu'à la Phase 2.
 const AUTOSAVE_DELAY_MS = 600;
 
 type Status = 'idle' | 'saving' | 'saved' | 'error';
 
-const TOOLBAR_ACTIONS: { id: string; label: string; run: (text: string, selection: Selection) => FormattingResult }[] = [
-  { id: 'h1', label: 'H1', run: (text, sel) => applyHeading(text, sel, 1) },
-  { id: 'h2', label: 'H2', run: (text, sel) => applyHeading(text, sel, 2) },
-  { id: 'h3', label: 'H3', run: (text, sel) => applyHeading(text, sel, 3) },
-  { id: 'bold', label: 'G', run: (text, sel) => wrapSelection(text, sel, '**') },
-  { id: 'italic', label: 'I', run: (text, sel) => wrapSelection(text, sel, '_') },
-  { id: 'code', label: '</>', run: (text, sel) => wrapSelection(text, sel, '`') },
-  { id: 'quote', label: '❝', run: (text, sel) => toggleLinePrefix(text, sel, '> ') },
-  { id: 'bullet', label: '•', run: (text, sel) => toggleLinePrefix(text, sel, '- ') },
-  { id: 'numbered', label: '1.', run: (text, sel) => toggleNumberedList(text, sel) },
-  { id: 'link', label: '🔗', run: (text, sel) => insertLink(text, sel) },
-];
-
 export function NotesScreen() {
-  const scheme = useColorScheme();
-  const theme = scheme === 'dark' ? darkTheme : lightTheme;
+  const { preferences, theme } = usePreferences();
   const vault = typeof window !== 'undefined' ? window.vault : undefined;
+  const contextMenuBridge = typeof window !== 'undefined' ? window.contextMenu : undefined;
 
   const [vaultPath, setVaultPath] = useState<string | null>(null);
   const [notes, setNotes] = useState<VaultEntry[]>([]);
@@ -54,6 +33,7 @@ export function NotesScreen() {
   const [content, setContent] = useState('');
   const [status, setStatus] = useState<Status>('idle');
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const listAreaRef = useRef<View>(null);
 
   // Sélection courante de l'éditeur — en ref (pas en state) pour ne pas
   // re-render à chaque déplacement de curseur. `forcedSelection` sert
@@ -65,6 +45,11 @@ export function NotesScreen() {
   const selectionRef = useRef<Selection>({ start: 0, end: 0 });
   const [forcedSelection, setForcedSelection] = useState<Selection | undefined>(undefined);
   const inputRef = useRef<TextInput>(null);
+
+  const toolbarActions: ToolbarAction[] = preferences.notesToolbarOrder
+    .filter((item) => item.visible)
+    .map((item) => NOTES_TOOLBAR_ACTIONS.find((action) => action.id === item.id))
+    .filter((action): action is ToolbarAction => Boolean(action));
 
   const refreshNotes = useCallback(async () => {
     if (!vault) return;
@@ -99,21 +84,24 @@ export function NotesScreen() {
     }
   };
 
-  const openNote = async (entry: VaultEntry) => {
-    if (!vault) return;
-    try {
-      const text = await vault.readNote(entry.relPath);
-      setActiveNote(entry);
-      setContent(text);
-      setStatus('idle');
-      selectionRef.current = { start: text.length, end: text.length };
-    } catch (error) {
-      console.error('[vault] échec de lecture de la note :', error);
-      setStatus('error');
-    }
-  };
+  const openNote = useCallback(
+    async (entry: VaultEntry) => {
+      if (!vault) return;
+      try {
+        const text = await vault.readNote(entry.relPath);
+        setActiveNote(entry);
+        setContent(text);
+        setStatus('idle');
+        selectionRef.current = { start: text.length, end: text.length };
+      } catch (error) {
+        console.error('[vault] échec de lecture de la note :', error);
+        setStatus('error');
+      }
+    },
+    [vault],
+  );
 
-  const handleCreateNote = async () => {
+  const handleCreateNote = useCallback(async () => {
     if (!vault) return;
     try {
       const entry = await vault.createNote('Sans titre');
@@ -122,7 +110,50 @@ export function NotesScreen() {
     } catch (error) {
       console.error('[vault] échec de création de la note :', error);
     }
-  };
+  }, [vault, refreshNotes, openNote]);
+
+  const handleCreateFolder = useCallback(async () => {
+    if (!vault) return;
+    try {
+      // Pas encore de navigateur de dossiers dans l'UI (liste plate et
+      // récursive) : le dossier est bien créé sur le disque, mais rien ne
+      // l'affiche encore en tant que tel — à revoir avec un vrai
+      // navigateur de vault.
+      await vault.createFolder('Nouveau dossier');
+      await refreshNotes();
+    } catch (error) {
+      console.error('[vault] échec de création du dossier :', error);
+    }
+  }, [vault, refreshNotes]);
+
+  // Clic droit dans la liste des notes → menu contextuel natif. Attaché en
+  // DOM direct (via le ref de la View, qui pointe vers un vrai élément DOM
+  // sous react-native-web) plutôt que via une prop RN — View n'a pas
+  // d'équivalent onContextMenu, et ce menu n'a de sens que sur
+  // desktop/web de toute façon (contextMenuBridge n'existe que là).
+  useEffect(() => {
+    const node = listAreaRef.current as unknown as HTMLElement | null;
+    if (!node || !contextMenuBridge) return;
+
+    const handler = (event: MouseEvent) => {
+      event.preventDefault();
+      void contextMenuBridge
+        .show([
+          { id: 'new-note', label: 'Nouvelle note' },
+          { id: 'new-folder', label: 'Nouveau dossier' },
+        ])
+        .then((choice) => {
+          if (choice === 'new-note') void handleCreateNote();
+          if (choice === 'new-folder') void handleCreateFolder();
+        });
+    };
+
+    node.addEventListener('contextmenu', handler);
+    return () => node.removeEventListener('contextmenu', handler);
+    // Dépend de vaultPath : c'est ce qui détermine si la liste (donc le
+    // nœud référencé) est effectivement montée — vault seul ne change pas
+    // quand on passe de "pas de vault" à "vault choisi".
+  }, [vaultPath, contextMenuBridge, handleCreateNote, handleCreateFolder]);
 
   const scheduleSave = useCallback(
     (text: string) => {
@@ -191,7 +222,10 @@ export function NotesScreen() {
 
   return (
     <View style={styles.row}>
-      <View style={[styles.list, { borderColor: theme.border, backgroundColor: theme.surface }]}>
+      <View
+        ref={listAreaRef}
+        style={[styles.list, { borderColor: theme.border, backgroundColor: theme.surface }]}
+      >
         <View style={styles.listHeader}>
           <Text style={[styles.vaultPath, { color: theme.textMuted }]} numberOfLines={1}>
             {vaultPath}
@@ -220,7 +254,7 @@ export function NotesScreen() {
           ))}
           {notes.length === 0 && (
             <Text style={[styles.muted, { color: theme.textMuted, padding: 16 }]}>
-              Aucune note pour l’instant.
+              Aucune note pour l’instant. Clic droit ici pour en créer une.
             </Text>
           )}
         </ScrollView>
@@ -236,19 +270,21 @@ export function NotesScreen() {
                 {status === 'error' && '⚠️ Échec de la sauvegarde'}
               </Text>
             </View>
-            <View style={[styles.toolbar, { borderColor: theme.border }]}>
-              {TOOLBAR_ACTIONS.map((action) => (
-                <Pressable
-                  key={action.id}
-                  onPress={() => applyFormatting(action.run)}
-                  style={[styles.toolbarButton, { backgroundColor: theme.surface }]}
-                >
-                  <Text style={[styles.toolbarButtonText, { color: theme.text }]}>
-                    {action.label}
-                  </Text>
-                </Pressable>
-              ))}
-            </View>
+            {toolbarActions.length > 0 && (
+              <View style={[styles.toolbar, { borderColor: theme.border }]}>
+                {toolbarActions.map((action) => (
+                  <Pressable
+                    key={action.id}
+                    onPress={() => applyFormatting(action.run)}
+                    style={[styles.toolbarButton, { backgroundColor: theme.surface }]}
+                  >
+                    <Text style={[styles.toolbarButtonText, { color: theme.text }]}>
+                      {action.label}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            )}
             <TextInput
               ref={inputRef}
               multiline

@@ -1,8 +1,8 @@
 import type { ReactNode } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, useColorScheme, useWindowDimensions, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
 import type { Section } from '../navigation';
-import { darkTheme, lightTheme } from '../theme';
+import { usePreferences } from '../preferences/PreferencesContext';
 
 // Coquille de navigation générale de l'app : panneau de sections (Notes,
 // Tâches, Calendrier...) + zone de contenu. Bascule automatiquement entre
@@ -20,8 +20,7 @@ type Props = {
 };
 
 export function AppShell({ sections, activeId, onSelect, children }: Props) {
-  const scheme = useColorScheme();
-  const theme = scheme === 'dark' ? darkTheme : lightTheme;
+  const { theme } = usePreferences();
   const { width } = useWindowDimensions();
   const isWide = width >= WIDE_BREAKPOINT;
 

@@ -14,10 +14,12 @@ contextBridge.exposeInMainWorld('vault', {
   readNote: (relPath) => ipcRenderer.invoke('vault:read-note', relPath),
   writeNote: (relPath, content) => ipcRenderer.invoke('vault:write-note', relPath, content),
   createNote: (name) => ipcRenderer.invoke('vault:create-note', name),
+  createFolder: (name) => ipcRenderer.invoke('vault:create-folder', name),
 });
 
 contextBridge.exposeInMainWorld('updater', {
   getVersion: () => ipcRenderer.invoke('updater:get-version'),
+  getStatus: () => ipcRenderer.invoke('updater:get-status'),
   check: () => ipcRenderer.invoke('updater:check'),
   quitAndInstall: () => ipcRenderer.invoke('updater:quit-and-install'),
   onStatusChange: (callback) => {
@@ -25,4 +27,13 @@ contextBridge.exposeInMainWorld('updater', {
     ipcRenderer.on('updater:status', handler);
     return () => ipcRenderer.removeListener('updater:status', handler);
   },
+});
+
+contextBridge.exposeInMainWorld('preferences', {
+  get: () => ipcRenderer.invoke('preferences:get'),
+  set: (partial) => ipcRenderer.invoke('preferences:set', partial),
+});
+
+contextBridge.exposeInMainWorld('contextMenu', {
+  show: (items) => ipcRenderer.invoke('context-menu:show', items),
 });
