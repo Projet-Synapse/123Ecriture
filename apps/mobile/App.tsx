@@ -5,11 +5,13 @@ import { AppShell } from './components/AppShell';
 import { NotesScreen } from './components/NotesScreen';
 import { PlaceholderScreen } from './components/PlaceholderScreen';
 import { SettingsScreen } from './components/SettingsScreen';
+import { TasksScreen } from './components/TasksScreen';
 import { SECTIONS } from './navigation';
 import { PreferencesProvider } from './preferences/PreferencesContext';
 
 const SCREENS: Record<string, () => React.JSX.Element> = {
   notes: NotesScreen,
+  tasks: TasksScreen,
   settings: SettingsScreen,
 };
 

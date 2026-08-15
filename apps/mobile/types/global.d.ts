@@ -16,14 +16,19 @@ declare global {
     name: string;
   }
 
+  type VaultNoteNode = { type: 'note' } & VaultEntry;
+  type VaultFolderNode = { type: 'folder'; relPath: string; name: string; children: VaultTreeNode[] };
+  type VaultTreeNode = VaultNoteNode | VaultFolderNode;
+
   interface VaultBridge {
     chooseFolder: () => Promise<string | null>;
     getCurrentPath: () => Promise<string | null>;
-    listNotes: () => Promise<VaultEntry[]>;
+    listTree: () => Promise<VaultTreeNode[]>;
     readNote: (relPath: string) => Promise<string>;
     writeNote: (relPath: string, content: string) => Promise<void>;
-    createNote: (name: string) => Promise<VaultEntry>;
-    createFolder: (name: string) => Promise<VaultFolderEntry>;
+    createNote: (name: string, parentRelPath?: string) => Promise<VaultEntry>;
+    createFolder: (name: string, parentRelPath?: string) => Promise<VaultFolderEntry>;
+    rename: (relPath: string, newName: string) => Promise<{ relPath: string; name: string }>;
   }
 
   type UpdaterStatus =
@@ -69,10 +74,25 @@ declare global {
     show: (items: ContextMenuItem[]) => Promise<string | null>;
   }
 
+  interface Task {
+    id: string;
+    text: string;
+    done: boolean;
+    createdAt: string;
+  }
+
+  interface TasksBridge {
+    list: () => Promise<Task[]>;
+    add: (text: string) => Promise<Task[]>;
+    toggle: (id: string) => Promise<Task[]>;
+    remove: (id: string) => Promise<Task[]>;
+  }
+
   interface Window {
     vault?: VaultBridge;
     updater?: UpdaterBridge;
     preferences?: PreferencesBridge;
     contextMenu?: ContextMenuBridge;
+    tasks?: TasksBridge;
   }
 }

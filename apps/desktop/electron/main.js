@@ -6,6 +6,7 @@ const { registerVaultHandlers } = require('./vault');
 const { registerUpdaterHandlers, checkOnStartup } = require('./updater');
 const { registerPreferencesHandlers } = require('./preferences');
 const { registerContextMenuHandlers } = require('./contextMenu');
+const { registerTasksHandlers } = require('./tasks');
 
 // Phase 1 : fenêtre qui charge le renderer web d'Expo (partagé avec
 // apps/mobile) + le vault local (accès fs natif, voir vault.js et
@@ -89,6 +90,7 @@ app.whenReady().then(() => {
   registerUpdaterHandlers(() => mainWindow);
   registerPreferencesHandlers();
   registerContextMenuHandlers();
+  registerTasksHandlers();
 
   if (!isDev) {
     registerAppProtocol();

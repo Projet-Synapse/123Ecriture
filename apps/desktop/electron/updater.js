@@ -81,7 +81,12 @@ function registerUpdaterHandlers(getWindow) {
 
   ipcMain.handle('updater:quit-and-install', () => {
     try {
-      autoUpdater.quitAndInstall();
+      // isSilent=false (Windows : montre la progression de l'installateur),
+      // isForceRunAfter=true (relance l'app après installation sur les 3
+      // plateformes — sans ça, seul Windows la relance par défaut selon la
+      // config NSIS, pas Linux/macOS de façon fiable). C'est la confirmation
+      // visible que la mise à jour a réussi.
+      autoUpdater.quitAndInstall(false, true);
     } catch (error) {
       broadcastStatus(getWindow, { state: 'error', message: String(error) });
     }

@@ -11,16 +11,25 @@ import {
 import type { FormattingResult, Selection } from '../lib/mdxFormatting';
 import { NOTES_TOOLBAR_ACTIONS, type ToolbarAction } from '../lib/notesToolbarActions';
 import { usePreferences } from '../preferences/PreferencesContext';
+import { VaultTreeView } from './VaultTreeView';
 
-// Écran Notes — Phase 1 : vault local + édition MDX avec barre de
-// formatage personnalisable (voir Paramètres → Personnalisation). Pas
-// encore de rendu enrichi/live-preview, voir docs/ARCHITECTURE.md §4 et la
-// feuille de route. Le vault n'existe que côté Electron desktop pour
-// l'instant (window.vault, exposé par apps/desktop/electron/preload.js) —
-// sur web/mobile, cette section reste indisponible jusqu'à la Phase 2.
+// Écran Notes — Phase 1 : vault local (arborescence réelle, pas juste une
+// liste plate) + édition MDX avec barre de formatage personnalisable (voir
+// Paramètres → Personnalisation). Pas encore de rendu enrichi/live-preview,
+// voir docs/ARCHITECTURE.md §4 et la feuille de route. Le vault n'existe
+// que côté Electron desktop pour l'instant (window.vault, exposé par
+// apps/desktop/electron/preload.js) — sur web/mobile, cette section reste
+// indisponible jusqu'à la Phase 2.
 const AUTOSAVE_DELAY_MS = 600;
 
 type Status = 'idle' | 'saving' | 'saved' | 'error';
+
+// Un élément renommé affecte la note actuellement ouverte si c'est lui-même
+// cette note, ou si c'est un dossier qui la contient (renommer un dossier
+// change le relPath de tout ce qu'il contient, en cascade).
+function renameAffectsPath(activeRelPath: string, renamedOldRelPath: string): boolean {
+  return activeRelPath === renamedOldRelPath || activeRelPath.startsWith(`${renamedOldRelPath}/`);
+}
 
 export function NotesScreen() {
   const { preferences, theme } = usePreferences();
@@ -28,10 +37,13 @@ export function NotesScreen() {
   const contextMenuBridge = typeof window !== 'undefined' ? window.contextMenu : undefined;
 
   const [vaultPath, setVaultPath] = useState<string | null>(null);
-  const [notes, setNotes] = useState<VaultEntry[]>([]);
+  const [tree, setTree] = useState<VaultTreeNode[]>([]);
   const [activeNote, setActiveNote] = useState<VaultEntry | null>(null);
   const [content, setContent] = useState('');
   const [status, setStatus] = useState<Status>('idle');
+  const [collapsedPaths, setCollapsedPaths] = useState<Set<string>>(new Set());
+  const [renamingRelPath, setRenamingRelPath] = useState<string | null>(null);
+  const [renamingValue, setRenamingValue] = useState('');
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const listAreaRef = useRef<View>(null);
 
@@ -51,10 +63,9 @@ export function NotesScreen() {
     .map((item) => NOTES_TOOLBAR_ACTIONS.find((action) => action.id === item.id))
     .filter((action): action is ToolbarAction => Boolean(action));
 
-  const refreshNotes = useCallback(async () => {
+  const refreshTree = useCallback(async () => {
     if (!vault) return;
-    const list = await vault.listNotes();
-    setNotes([...list].sort((a, b) => b.modifiedAt - a.modifiedAt));
+    setTree(await vault.listTree());
   }, [vault]);
 
   useEffect(() => {
@@ -63,12 +74,12 @@ export function NotesScreen() {
       try {
         const current = await vault.getCurrentPath();
         setVaultPath(current);
-        if (current) await refreshNotes();
+        if (current) await refreshTree();
       } catch (error) {
         console.error('[vault] échec du chargement initial :', error);
       }
     })();
-    // refreshNotes est stable (useCallback sur `vault`) : pas besoin de le
+    // refreshTree est stable (useCallback sur `vault`) : pas besoin de le
     // relancer à chaque render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [vault]);
@@ -78,18 +89,18 @@ export function NotesScreen() {
     try {
       const chosen = await vault.chooseFolder();
       setVaultPath(chosen);
-      if (chosen) await refreshNotes();
+      if (chosen) await refreshTree();
     } catch (error) {
       console.error('[vault] échec du choix de dossier :', error);
     }
   };
 
   const openNote = useCallback(
-    async (entry: VaultEntry) => {
+    async (node: VaultNoteNode) => {
       if (!vault) return;
       try {
-        const text = await vault.readNote(entry.relPath);
-        setActiveNote(entry);
+        const text = await vault.readNote(node.relPath);
+        setActiveNote(node);
         setContent(text);
         setStatus('idle');
         selectionRef.current = { start: text.length, end: text.length };
@@ -101,36 +112,109 @@ export function NotesScreen() {
     [vault],
   );
 
-  const handleCreateNote = useCallback(async () => {
-    if (!vault) return;
-    try {
-      const entry = await vault.createNote('Sans titre');
-      await refreshNotes();
-      await openNote(entry);
-    } catch (error) {
-      console.error('[vault] échec de création de la note :', error);
-    }
-  }, [vault, refreshNotes, openNote]);
+  const handleCreateNote = useCallback(
+    async (parentRelPath?: string) => {
+      if (!vault) return;
+      try {
+        const entry = await vault.createNote('Sans titre', parentRelPath);
+        await refreshTree();
+        await openNote({ type: 'note', ...entry });
+      } catch (error) {
+        console.error('[vault] échec de création de la note :', error);
+      }
+    },
+    [vault, refreshTree, openNote],
+  );
 
-  const handleCreateFolder = useCallback(async () => {
-    if (!vault) return;
-    try {
-      // Pas encore de navigateur de dossiers dans l'UI (liste plate et
-      // récursive) : le dossier est bien créé sur le disque, mais rien ne
-      // l'affiche encore en tant que tel — à revoir avec un vrai
-      // navigateur de vault.
-      await vault.createFolder('Nouveau dossier');
-      await refreshNotes();
-    } catch (error) {
-      console.error('[vault] échec de création du dossier :', error);
-    }
-  }, [vault, refreshNotes]);
+  const handleCreateFolder = useCallback(
+    async (parentRelPath?: string) => {
+      if (!vault) return;
+      try {
+        await vault.createFolder('Nouveau dossier', parentRelPath);
+        await refreshTree();
+      } catch (error) {
+        console.error('[vault] échec de création du dossier :', error);
+      }
+    },
+    [vault, refreshTree],
+  );
 
-  // Clic droit dans la liste des notes → menu contextuel natif. Attaché en
-  // DOM direct (via le ref de la View, qui pointe vers un vrai élément DOM
-  // sous react-native-web) plutôt que via une prop RN — View n'a pas
-  // d'équivalent onContextMenu, et ce menu n'a de sens que sur
-  // desktop/web de toute façon (contextMenuBridge n'existe que là).
+  const startRename = useCallback((node: VaultTreeNode) => {
+    setRenamingRelPath(node.relPath);
+    setRenamingValue(node.name);
+  }, []);
+
+  const cancelRename = useCallback(() => {
+    setRenamingRelPath(null);
+    setRenamingValue('');
+  }, []);
+
+  const submitRename = useCallback(async () => {
+    if (!vault || !renamingRelPath) return;
+    const relPath = renamingRelPath;
+    const value = renamingValue;
+    // Relâche l'état de renommage tout de suite (avant l'appel async) :
+    // évite un double-submit si onBlur et onSubmitEditing se déclenchent
+    // tous les deux pour la même validation.
+    setRenamingRelPath(null);
+    setRenamingValue('');
+
+    try {
+      await vault.rename(relPath, value);
+      if (activeNote && renameAffectsPath(activeNote.relPath, relPath)) {
+        // Le chemin de la note ouverte a changé (elle-même renommée, ou un
+        // dossier parent renommé qui la fait "bouger" en cascade) — on
+        // ferme l'éditeur plutôt que de risquer d'écrire sur un chemin
+        // périmé. Il suffit de recliquer la note dans l'arborescence
+        // rafraîchie.
+        setActiveNote(null);
+        setContent('');
+      }
+      await refreshTree();
+    } catch (error) {
+      console.error('[vault] échec du renommage :', error);
+    }
+  }, [vault, renamingRelPath, renamingValue, activeNote, refreshTree]);
+
+  const toggleCollapse = useCallback((relPath: string) => {
+    setCollapsedPaths((prev) => {
+      const next = new Set(prev);
+      if (next.has(relPath)) {
+        next.delete(relPath);
+      } else {
+        next.add(relPath);
+      }
+      return next;
+    });
+  }, []);
+
+  const handleContextMenuNode = useCallback(
+    (node: VaultTreeNode) => {
+      if (!contextMenuBridge) return;
+      const items =
+        node.type === 'folder'
+          ? [
+              { id: 'new-note-here', label: 'Nouvelle note ici' },
+              { id: 'new-folder-here', label: 'Nouveau dossier ici' },
+              { id: 'rename', label: 'Renommer' },
+            ]
+          : [{ id: 'rename', label: 'Renommer' }];
+
+      void contextMenuBridge.show(items).then((choice) => {
+        if (choice === 'new-note-here') void handleCreateNote(node.relPath);
+        if (choice === 'new-folder-here') void handleCreateFolder(node.relPath);
+        if (choice === 'rename') startRename(node);
+      });
+    },
+    [contextMenuBridge, handleCreateNote, handleCreateFolder, startRename],
+  );
+
+  // Clic droit dans le fond de la liste (pas sur un dossier/note précis) →
+  // création à la racine du vault. Attaché en DOM direct (via le ref de la
+  // View, qui pointe vers un vrai élément DOM sous react-native-web)
+  // plutôt que via une prop RN — View n'a pas d'équivalent onContextMenu.
+  // Les lignes de VaultTreeView stoppent la propagation de leur propre
+  // clic droit, donc celui-ci ne se déclenche que pour un clic sur le fond.
   useEffect(() => {
     const node = listAreaRef.current as unknown as HTMLElement | null;
     if (!node || !contextMenuBridge) return;
@@ -165,7 +249,7 @@ export function NotesScreen() {
           try {
             await vault.writeNote(activeNote.relPath, text);
             setStatus('saved');
-            await refreshNotes();
+            await refreshTree();
           } catch (error) {
             console.error('[vault] échec de sauvegarde :', error);
             setStatus('error');
@@ -173,7 +257,7 @@ export function NotesScreen() {
         })();
       }, AUTOSAVE_DELAY_MS);
     },
-    [vault, activeNote, refreshNotes],
+    [vault, activeNote, refreshTree],
   );
 
   const handleChangeContent = (text: string) => {
@@ -238,21 +322,27 @@ export function NotesScreen() {
           </Pressable>
         </View>
         <ScrollView>
-          {notes.map((note) => (
-            <Pressable
-              key={note.relPath}
-              onPress={() => void openNote(note)}
-              style={[
-                styles.noteItem,
-                activeNote?.relPath === note.relPath && { backgroundColor: `${theme.accent}22` },
-              ]}
-            >
-              <Text style={{ color: theme.text }} numberOfLines={1}>
-                {note.name}
-              </Text>
-            </Pressable>
-          ))}
-          {notes.length === 0 && (
+          <VaultTreeView
+            nodes={tree}
+            theme={theme}
+            activeRelPath={activeNote?.relPath}
+            collapsedPaths={collapsedPaths}
+            onToggleCollapse={toggleCollapse}
+            onOpenNote={(node) => void openNote(node)}
+            onContextMenuNode={handleContextMenuNode}
+            rename={
+              renamingRelPath
+                ? {
+                    relPath: renamingRelPath,
+                    value: renamingValue,
+                    onChangeValue: setRenamingValue,
+                    onSubmit: () => void submitRename(),
+                    onCancel: cancelRename,
+                  }
+                : null
+            }
+          />
+          {tree.length === 0 && (
             <Text style={[styles.muted, { color: theme.textMuted, padding: 16 }]}>
               Aucune note pour l’instant. Clic droit ici pour en créer une.
             </Text>
@@ -357,10 +447,6 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: 8,
     alignItems: 'center',
-  },
-  noteItem: {
-    paddingVertical: 10,
-    paddingHorizontal: 12,
   },
   editor: {
     flex: 1,

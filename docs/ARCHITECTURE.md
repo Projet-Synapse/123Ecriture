@@ -228,6 +228,16 @@ indépendamment (esprit Projet Synapse). **Cette architecture est prévue dès
 le départ mais implémentée progressivement** : l'éditeur MDX de base n'a pas
 besoin du registre complet pour exister (voir feuille de route §10).
 
+> **Écart pragmatique (v0.1.6)** : le premier module (Tâches) est câblé
+> directement (apps/desktop/electron/tasks.js + apps/mobile/components/
+> TasksScreen.tsx), pas encore via l'interface `Module` ci-dessus — construire
+> le registre pour un seul module serait prématuré (l'abstraction se dessine
+> vraiment à partir du deuxième). Les tâches sont stockées dans le vault
+> (`.123ecriture/tasks.json`), comme le seront les futurs modules, pour
+> rester cohérent avec le principe local-first plutôt que dans le
+> config.json app-level (réservé aux préférences d'interface, pas au
+> contenu utilisateur).
+
 //////////////////////////////////////////////////////////////////////////
 // 9. ✅ QUALITÉ, TESTS, CI
 //////////////////////////////////////////////////////////////////////////

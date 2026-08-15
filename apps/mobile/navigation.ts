@@ -20,7 +20,7 @@ export const SECTIONS: Section[] = [
     id: 'tasks',
     label: 'Tâches',
     icon: '✅',
-    description: 'To-do lists — prévu en Phase 5 (modules de productivité).',
+    description: 'To-do list locale, stockée dans le vault.',
   },
   {
     id: 'calendar',

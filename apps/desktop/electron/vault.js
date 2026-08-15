@@ -5,7 +5,8 @@ const path = require('path');
 const { readConfig, writeConfig } = require('./config');
 
 // Phase 1 : vault local minimal — un dossier choisi par l'utilisateur·rice,
-// des fichiers .mdx dedans. Le chemin du vault est persisté dans
+// des fichiers .mdx et des dossiers dedans, exposés comme une vraie
+// arborescence (voir walkTree). Le chemin du vault est persisté dans
 // config.json (voir config.js) pour le retrouver au redémarrage. Voir
 // docs/ARCHITECTURE.md §5.
 
@@ -26,36 +27,56 @@ function resolveInVault(vaultPath, relPath) {
   return resolved;
 }
 
-// Trouve un nom de fichier/dossier disponible en suffixant " 2", " 3"...
-// si `candidate` existe déjà — mêmes règles pour les notes et les dossiers.
-function findAvailableName(vaultPath, candidate, extension = '') {
+// Trouve un nom de fichier/dossier disponible dans `dir` en suffixant
+// " 2", " 3"... si `candidate` existe déjà — mêmes règles pour les notes et
+// les dossiers.
+function findAvailableName(dir, candidate, extension = '') {
   let name = candidate;
   let counter = 2;
-  while (fsSync.existsSync(path.join(vaultPath, `${name}${extension}`))) {
+  while (fsSync.existsSync(path.join(dir, `${name}${extension}`))) {
     name = `${candidate} ${counter}`;
     counter += 1;
   }
   return `${name}${extension}`;
 }
 
-async function walkMdxFiles(dir, vaultRoot, results = []) {
+// Arborescence complète du vault : dossiers avec leurs enfants, notes en
+// feuilles. Dossiers d'abord puis notes, triés alphabétiquement à chaque
+// niveau — plus stable pour naviguer qu'un tri par date de modification.
+async function walkTree(dir, vaultRoot) {
   const entries = await fs.readdir(dir, { withFileTypes: true });
+  const nodes = [];
+
   for (const entry of entries) {
-    // Ignore les dossiers cachés (.123ecriture/ config vault, .git...).
+    // Ignore les dossiers/fichiers cachés (.123ecriture/ config vault,
+    // .git...).
     if (entry.name.startsWith('.')) continue;
     const fullPath = path.join(dir, entry.name);
+
     if (entry.isDirectory()) {
-      await walkMdxFiles(fullPath, vaultRoot, results);
+      const children = await walkTree(fullPath, vaultRoot);
+      nodes.push({
+        type: 'folder',
+        relPath: path.relative(vaultRoot, fullPath),
+        name: entry.name,
+        children,
+      });
     } else if (entry.isFile() && entry.name.endsWith('.mdx')) {
       const stat = await fs.stat(fullPath);
-      results.push({
+      nodes.push({
+        type: 'note',
         relPath: path.relative(vaultRoot, fullPath),
         name: entry.name.replace(/\.mdx$/, ''),
         modifiedAt: stat.mtimeMs,
       });
     }
   }
-  return results;
+
+  nodes.sort((a, b) => {
+    if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
+    return a.name.localeCompare(b.name, 'fr');
+  });
+  return nodes;
 }
 
 function registerVaultHandlers() {
@@ -73,10 +94,10 @@ function registerVaultHandlers() {
 
   ipcMain.handle('vault:get-current-path', () => getVaultPath());
 
-  ipcMain.handle('vault:list-notes', async () => {
+  ipcMain.handle('vault:list-tree', async () => {
     const vaultPath = getVaultPath();
     if (!vaultPath) return [];
-    return walkMdxFiles(vaultPath, vaultPath);
+    return walkTree(vaultPath, vaultPath);
   });
 
   ipcMain.handle('vault:read-note', async (_event, relPath) => {
@@ -91,13 +112,16 @@ function registerVaultHandlers() {
     await fs.writeFile(resolveInVault(vaultPath, relPath), content, 'utf8');
   });
 
-  ipcMain.handle('vault:create-note', async (_event, name) => {
+  // `parentRelPath` optionnel : crée à la racine du vault si omis, sinon
+  // dans le dossier visé (clic droit sur un dossier → "Nouvelle note ici").
+  ipcMain.handle('vault:create-note', async (_event, name, parentRelPath) => {
     const vaultPath = getVaultPath();
     if (!vaultPath) throw new Error('Aucun vault sélectionné');
+    const parentFull = parentRelPath ? resolveInVault(vaultPath, parentRelPath) : vaultPath;
 
     const safeName = name && name.trim().length > 0 ? name.trim() : 'Sans titre';
-    const fileName = findAvailableName(vaultPath, safeName, '.mdx');
-    const fullPath = path.join(vaultPath, fileName);
+    const fileName = findAvailableName(parentFull, safeName, '.mdx');
+    const fullPath = path.join(parentFull, fileName);
     const template = `---\ntitle: ${safeName}\ncreated: ${new Date().toISOString()}\n---\n\n`;
     await fs.writeFile(fullPath, template, 'utf8');
     const stat = await fs.stat(fullPath);
@@ -109,21 +133,45 @@ function registerVaultHandlers() {
     };
   });
 
-  // Crée un dossier à la racine du vault. Pas encore de navigateur de
-  // dossiers dans l'UI (Notes reste une liste plate de tous les .mdx,
-  // récursive) — le dossier existe bien sur le disque et toute note qu'on y
-  // place manuellement apparaît dans la liste, mais rien ne l'affiche
-  // encore comme dossier à proprement parler. À revoir avec un vrai
-  // navigateur de vault.
-  ipcMain.handle('vault:create-folder', async (_event, name) => {
+  ipcMain.handle('vault:create-folder', async (_event, name, parentRelPath) => {
+    const vaultPath = getVaultPath();
+    if (!vaultPath) throw new Error('Aucun vault sélectionné');
+    const parentFull = parentRelPath ? resolveInVault(vaultPath, parentRelPath) : vaultPath;
+
+    const safeName = name && name.trim().length > 0 ? name.trim() : 'Nouveau dossier';
+    const folderName = findAvailableName(parentFull, safeName);
+    const fullPath = path.join(parentFull, folderName);
+    await fs.mkdir(fullPath);
+
+    return { relPath: path.relative(vaultPath, fullPath), name: folderName };
+  });
+
+  // Renomme une note ou un dossier (détection automatique du type via
+  // fs.stat) — reste dans le même dossier parent, pas de déplacement.
+  ipcMain.handle('vault:rename', async (_event, relPath, newName) => {
     const vaultPath = getVaultPath();
     if (!vaultPath) throw new Error('Aucun vault sélectionné');
 
-    const safeName = name && name.trim().length > 0 ? name.trim() : 'Nouveau dossier';
-    const folderName = findAvailableName(vaultPath, safeName);
-    await fs.mkdir(path.join(vaultPath, folderName));
+    const oldFull = resolveInVault(vaultPath, relPath);
+    if (!fsSync.existsSync(oldFull)) throw new Error('Élément introuvable.');
+    const isNote = fsSync.statSync(oldFull).isFile();
 
-    return { relPath: folderName, name: folderName };
+    // Un nom ne doit pas pouvoir contenir de séparateur de chemin : un
+    // renommage reste un renommage, pas un déplacement déguisé.
+    const trimmed = (newName ?? '').trim().replace(/[/\\]/g, '');
+    if (!trimmed) throw new Error('Le nom ne peut pas être vide.');
+
+    const baseName = isNote ? trimmed.replace(/\.mdx$/i, '') : trimmed;
+    const finalName = isNote ? `${baseName}.mdx` : baseName;
+    const parentDir = path.dirname(oldFull);
+    const newFull = path.join(parentDir, finalName);
+
+    if (newFull !== oldFull && fsSync.existsSync(newFull)) {
+      throw new Error(`"${finalName}" existe déjà à cet endroit.`);
+    }
+
+    await fs.rename(oldFull, newFull);
+    return { relPath: path.relative(vaultPath, newFull), name: baseName };
   });
 }
 
