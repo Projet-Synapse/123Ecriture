@@ -151,6 +151,16 @@ Implémentations prévues :
 C'est cette abstraction qui permet au `core` et à l'`editor` d'ignorer
 totalement la plateforme sur laquelle ils tournent.
 
+> **Écart pragmatique (Phase 1, v0.1.3)** : l'implémentation Electron du
+> VaultAdapter vit pour l'instant directement dans
+> `apps/desktop/electron/vault.js` (exposé au renderer via IPC/preload), pas
+> encore dans un `packages/storage` séparé — on a évité de créer un paquet
+> partagé tant qu'il n'a qu'un seul consommateur réel (les adaptateurs
+> Expo/web de la Phase 2 n'existent pas encore), pour ne pas complexifier
+> prématurément la résolution de dépendances du monorepo pnpm (source de
+> plusieurs galères déjà rencontrées côté packaging desktop). À extraire
+> en `packages/storage` quand un deuxième consommateur apparaîtra.
+
 //////////////////////////////////////////////////////////////////////////
 // 6. ☁️ SYNCHRONISATION PAR COMPTE (SUPABASE)
 //////////////////////////////////////////////////////////////////////////

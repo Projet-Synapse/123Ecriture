@@ -1,8 +1,17 @@
-const { contextBridge } = require('electron');
+const { contextBridge, ipcRenderer } = require('electron');
 
-// Phase 0 : pont vide (contextIsolation activée, pas de nodeIntegration).
-// Les APIs de fichiers/vault (VaultAdapter Electron) seront exposées ici en
-// Phase 1 — voir docs/ARCHITECTURE.md §5.
+// Phase 1 : pont contextIsolation-safe (pas de nodeIntegration) vers le
+// vault local — la logique fichier réelle vit dans vault.js (accès fs
+// natif dans le process principal), exposée ici via IPC.
 contextBridge.exposeInMainWorld('electronBridge', {
   platform: process.platform,
+});
+
+contextBridge.exposeInMainWorld('vault', {
+  chooseFolder: () => ipcRenderer.invoke('vault:choose-folder'),
+  getCurrentPath: () => ipcRenderer.invoke('vault:get-current-path'),
+  listNotes: () => ipcRenderer.invoke('vault:list-notes'),
+  readNote: (relPath) => ipcRenderer.invoke('vault:read-note', relPath),
+  writeNote: (relPath, content) => ipcRenderer.invoke('vault:write-note', relPath, content),
+  createNote: (name) => ipcRenderer.invoke('vault:create-note', name),
 });

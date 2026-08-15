@@ -2,6 +2,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useState } from 'react';
 
 import { AppShell } from './components/AppShell';
+import { NotesScreen } from './components/NotesScreen';
 import { PlaceholderScreen } from './components/PlaceholderScreen';
 import { SECTIONS } from './navigation';
 
@@ -12,7 +13,7 @@ export default function App() {
   return (
     <>
       <AppShell sections={SECTIONS} activeId={activeId} onSelect={setActiveId}>
-        <PlaceholderScreen section={activeSection} />
+        {activeId === 'notes' ? <NotesScreen /> : <PlaceholderScreen section={activeSection} />}
       </AppShell>
       <StatusBar style="auto" />
     </>

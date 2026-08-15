@@ -1,13 +1,13 @@
-const { app, BrowserWindow, protocol, net } = require('electron');
+const { app, BrowserWindow, protocol, net, Menu } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const fs = require('fs');
 const { URL, pathToFileURL } = require('url');
+const { registerVaultHandlers } = require('./vault');
 
-// Phase 0 : fenêtre minimale qui charge le renderer web d'Expo (partagé
-// avec apps/mobile). Aucun accès au système de fichiers ici — le
-// VaultAdapter Electron (accès fs natif, voir docs/ARCHITECTURE.md §5)
-// arrive en Phase 1.
+// Phase 1 : fenêtre qui charge le renderer web d'Expo (partagé avec
+// apps/mobile) + le vault local (accès fs natif, voir vault.js et
+// docs/ARCHITECTURE.md §5).
 
 const isDev = !app.isPackaged;
 const DEV_URL = process.env.EXPO_WEB_URL || 'http://localhost:8081';
@@ -81,11 +81,20 @@ function checkForUpdates() {
 }
 
 app.whenReady().then(() => {
+  // Retire la barre de menu par défaut (File/Edit/View/Window) qu'Electron
+  // ajoute automatiquement — l'app n'en a pas l'usage. Sur macOS, ça retire
+  // aussi les raccourcis clavier standards habituellement câblés via les
+  // rôles du menu Edit (Cmd+C/V/X, Cmd+Q...) : à surveiller, un menu minimal
+  // mac-only (juste ces rôles, sans les items visibles) pourra être ajouté
+  // si ça pose problème à l'usage.
+  Menu.setApplicationMenu(null);
+
   if (!isDev) {
     registerAppProtocol();
     checkForUpdates();
   }
 
+  registerVaultHandlers();
   createWindow();
 
   app.on('activate', () => {
