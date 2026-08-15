@@ -9,16 +9,39 @@ import {
   View,
 } from 'react-native';
 
+import {
+  applyHeading,
+  insertLink,
+  toggleLinePrefix,
+  toggleNumberedList,
+  wrapSelection,
+  type FormattingResult,
+  type Selection,
+} from '../lib/mdxFormatting';
 import { darkTheme, lightTheme } from '../theme';
 
-// Écran Notes — Phase 1 : vault local + édition MDX brute (pas encore de
-// rendu enrichi/live-preview, voir docs/ARCHITECTURE.md §4 et la feuille de
-// route). Le vault n'existe que côté Electron desktop pour l'instant
-// (window.vault, exposé par apps/desktop/electron/preload.js) — sur
-// web/mobile, cette section reste indisponible jusqu'à la Phase 2.
+// Écran Notes — Phase 1 : vault local + édition MDX avec barre de
+// formatage (pas encore de rendu enrichi/live-preview, voir
+// docs/ARCHITECTURE.md §4 et la feuille de route). Le vault n'existe que
+// côté Electron desktop pour l'instant (window.vault, exposé par
+// apps/desktop/electron/preload.js) — sur web/mobile, cette section reste
+// indisponible jusqu'à la Phase 2.
 const AUTOSAVE_DELAY_MS = 600;
 
 type Status = 'idle' | 'saving' | 'saved' | 'error';
+
+const TOOLBAR_ACTIONS: { id: string; label: string; run: (text: string, selection: Selection) => FormattingResult }[] = [
+  { id: 'h1', label: 'H1', run: (text, sel) => applyHeading(text, sel, 1) },
+  { id: 'h2', label: 'H2', run: (text, sel) => applyHeading(text, sel, 2) },
+  { id: 'h3', label: 'H3', run: (text, sel) => applyHeading(text, sel, 3) },
+  { id: 'bold', label: 'G', run: (text, sel) => wrapSelection(text, sel, '**') },
+  { id: 'italic', label: 'I', run: (text, sel) => wrapSelection(text, sel, '_') },
+  { id: 'code', label: '</>', run: (text, sel) => wrapSelection(text, sel, '`') },
+  { id: 'quote', label: '❝', run: (text, sel) => toggleLinePrefix(text, sel, '> ') },
+  { id: 'bullet', label: '•', run: (text, sel) => toggleLinePrefix(text, sel, '- ') },
+  { id: 'numbered', label: '1.', run: (text, sel) => toggleNumberedList(text, sel) },
+  { id: 'link', label: '🔗', run: (text, sel) => insertLink(text, sel) },
+];
 
 export function NotesScreen() {
   const scheme = useColorScheme();
@@ -31,6 +54,17 @@ export function NotesScreen() {
   const [content, setContent] = useState('');
   const [status, setStatus] = useState<Status>('idle');
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Sélection courante de l'éditeur — en ref (pas en state) pour ne pas
+  // re-render à chaque déplacement de curseur. `forcedSelection` sert
+  // uniquement à repositionner le curseur juste après une action de la
+  // barre d'outils (voir applyFormatting) ; elle est relâchée aussitôt
+  // après pour laisser la frappe normale non contrôlée — un TextInput dont
+  // la prop `selection` reste en permanence contrôlée fait sauter le
+  // curseur pendant la frappe (piège classique React Native).
+  const selectionRef = useRef<Selection>({ start: 0, end: 0 });
+  const [forcedSelection, setForcedSelection] = useState<Selection | undefined>(undefined);
+  const inputRef = useRef<TextInput>(null);
 
   const refreshNotes = useCallback(async () => {
     if (!vault) return;
@@ -72,6 +106,7 @@ export function NotesScreen() {
       setActiveNote(entry);
       setContent(text);
       setStatus('idle');
+      selectionRef.current = { start: text.length, end: text.length };
     } catch (error) {
       console.error('[vault] échec de lecture de la note :', error);
       setStatus('error');
@@ -89,24 +124,40 @@ export function NotesScreen() {
     }
   };
 
+  const scheduleSave = useCallback(
+    (text: string) => {
+      if (!vault || !activeNote) return;
+      setStatus('saving');
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+      saveTimer.current = setTimeout(() => {
+        void (async () => {
+          try {
+            await vault.writeNote(activeNote.relPath, text);
+            setStatus('saved');
+            await refreshNotes();
+          } catch (error) {
+            console.error('[vault] échec de sauvegarde :', error);
+            setStatus('error');
+          }
+        })();
+      }, AUTOSAVE_DELAY_MS);
+    },
+    [vault, activeNote, refreshNotes],
+  );
+
   const handleChangeContent = (text: string) => {
     setContent(text);
-    if (!vault || !activeNote) return;
+    scheduleSave(text);
+  };
 
-    setStatus('saving');
-    if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => {
-      void (async () => {
-        try {
-          await vault.writeNote(activeNote.relPath, text);
-          setStatus('saved');
-          await refreshNotes();
-        } catch (error) {
-          console.error('[vault] échec de sauvegarde :', error);
-          setStatus('error');
-        }
-      })();
-    }, AUTOSAVE_DELAY_MS);
+  const applyFormatting = (run: (text: string, selection: Selection) => FormattingResult) => {
+    const result = run(content, selectionRef.current);
+    setContent(result.text);
+    scheduleSave(result.text);
+    selectionRef.current = result.selection;
+    setForcedSelection(result.selection);
+    inputRef.current?.focus();
+    setTimeout(() => setForcedSelection(undefined), 0);
   };
 
   if (!vault) {
@@ -185,10 +236,28 @@ export function NotesScreen() {
                 {status === 'error' && '⚠️ Échec de la sauvegarde'}
               </Text>
             </View>
+            <View style={[styles.toolbar, { borderColor: theme.border }]}>
+              {TOOLBAR_ACTIONS.map((action) => (
+                <Pressable
+                  key={action.id}
+                  onPress={() => applyFormatting(action.run)}
+                  style={[styles.toolbarButton, { backgroundColor: theme.surface }]}
+                >
+                  <Text style={[styles.toolbarButtonText, { color: theme.text }]}>
+                    {action.label}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
             <TextInput
+              ref={inputRef}
               multiline
               value={content}
               onChangeText={handleChangeContent}
+              onSelectionChange={(event) => {
+                selectionRef.current = event.nativeEvent.selection;
+              }}
+              selection={forcedSelection}
               style={[styles.textArea, { color: theme.text }]}
               placeholder="Écris en MDX ici…"
               placeholderTextColor={theme.textMuted}
@@ -272,6 +341,25 @@ const styles = StyleSheet.create({
   },
   status: {
     fontSize: 12,
+  },
+  toolbar: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+  },
+  toolbarButton: {
+    minWidth: 32,
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    borderRadius: 6,
+    alignItems: 'center',
+  },
+  toolbarButtonText: {
+    fontSize: 13,
+    fontWeight: '600',
   },
   textArea: {
     flex: 1,

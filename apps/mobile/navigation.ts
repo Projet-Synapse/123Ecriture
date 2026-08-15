@@ -40,4 +40,10 @@ export const SECTIONS: Section[] = [
     icon: '🕸️',
     description: 'Graphe de notes, dérivé automatiquement des liens — prévu en Phase 5.',
   },
+  {
+    id: 'settings',
+    label: 'Paramètres',
+    icon: '⚙️',
+    description: 'Vault, mises à jour — disponible sur la version desktop.',
+  },
 ];

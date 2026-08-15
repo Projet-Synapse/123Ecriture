@@ -4,6 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const { URL, pathToFileURL } = require('url');
 const { registerVaultHandlers } = require('./vault');
+const { registerUpdaterHandlers } = require('./updater');
 
 // Phase 1 : fenêtre qui charge le renderer web d'Expo (partagé avec
 // apps/mobile) + le vault local (accès fs natif, voir vault.js et
@@ -46,6 +47,10 @@ function registerAppProtocol() {
   });
 }
 
+// Référence à la fenêtre principale, pour que updater.js puisse lui
+// pousser les événements de mise à jour (checking/downloading/ready...).
+let mainWindow = null;
+
 function createWindow() {
   const win = new BrowserWindow({
     width: 1200,
@@ -58,26 +63,16 @@ function createWindow() {
     },
   });
 
+  mainWindow = win;
+  win.on('closed', () => {
+    if (mainWindow === win) mainWindow = null;
+  });
+
   if (isDev) {
     win.loadURL(DEV_URL);
   } else {
     win.loadURL('app://-/');
   }
-}
-
-// Auto-update : source = les Releases GitHub du dépôt (déjà configuré dans
-// apps/desktop/package.json → build.publish, réutilisé ici tel quel). Le
-// dépôt doit être public pour qu'electron-updater puisse y accéder sans
-// authentification — voir docs/ARCHITECTURE.md. Ne s'exécute qu'en version
-// packagée : en dev il n'y a pas de version installée à mettre à jour, et
-// electron-updater exige un app.getVersion() issu d'un vrai package.json
-// buildé, pas du process de dev.
-function checkForUpdates() {
-  autoUpdater.checkForUpdatesAndNotify().catch((error) => {
-    // Une vérification de mise à jour qui échoue (pas de réseau, dépôt
-    // encore privé...) ne doit jamais empêcher l'app de démarrer.
-    console.error('[auto-update] échec de la vérification :', error);
-  });
 }
 
 app.whenReady().then(() => {
@@ -89,12 +84,20 @@ app.whenReady().then(() => {
   // si ça pose problème à l'usage.
   Menu.setApplicationMenu(null);
 
+  registerVaultHandlers();
+  registerUpdaterHandlers(() => mainWindow);
+
   if (!isDev) {
     registerAppProtocol();
-    checkForUpdates();
+    // Vérification silencieuse au démarrage — l'état (dispo/téléchargement/
+    // prêt) est ensuite affiché et piloté depuis l'écran Paramètres, pas
+    // via une notification OS. Voir docs/ARCHITECTURE.md : nécessite le
+    // dépôt public. Erreur jamais fatale au démarrage de l'app.
+    autoUpdater.checkForUpdates().catch((error) => {
+      console.error('[auto-update] échec de la vérification au démarrage :', error);
+    });
   }
 
-  registerVaultHandlers();
   createWindow();
 
   app.on('activate', () => {

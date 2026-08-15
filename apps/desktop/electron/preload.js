@@ -15,3 +15,14 @@ contextBridge.exposeInMainWorld('vault', {
   writeNote: (relPath, content) => ipcRenderer.invoke('vault:write-note', relPath, content),
   createNote: (name) => ipcRenderer.invoke('vault:create-note', name),
 });
+
+contextBridge.exposeInMainWorld('updater', {
+  getVersion: () => ipcRenderer.invoke('updater:get-version'),
+  check: () => ipcRenderer.invoke('updater:check'),
+  quitAndInstall: () => ipcRenderer.invoke('updater:quit-and-install'),
+  onStatusChange: (callback) => {
+    const handler = (_event, status) => callback(status);
+    ipcRenderer.on('updater:status', handler);
+    return () => ipcRenderer.removeListener('updater:status', handler);
+  },
+});
