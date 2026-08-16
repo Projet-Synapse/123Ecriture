@@ -3,26 +3,43 @@ const fs = require('fs/promises');
 const fsSync = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { readConfig } = require('./config');
+const vaults = require('./vaults');
 
-// Premier module de productivité (voir docs/ARCHITECTURE.md §8) : une
-// liste de tâches simple, stockée DANS le vault (pas dans le config.json
-// app-level comme les préférences) — les tâches sont du contenu
-// utilisateur au même titre que les notes, pas un réglage de l'app. Fichier
-// caché dédié plutôt qu'une note .mdx : plus simple à lire/écrire comme
-// données structurées, et .123ecriture/ est déjà le dossier réservé à la
-// config du vault (voir docs/ARCHITECTURE.md §4).
+// Module de productivité "Tâches" (voir docs/ARCHITECTURE.md §8) : listes de
+// tâches, stockées DANS le vault (pas dans le config.json app-level comme
+// les préférences) — les tâches sont du contenu utilisateur au même titre
+// que les notes, pas un réglage de l'app. Fichiers cachés dédiés plutôt que
+// des notes .mdx : plus simple à lire/écrire comme données structurées, et
+// .123ecriture/ est déjà le dossier réservé à la config du vault (voir
+// docs/ARCHITECTURE.md §4).
+//
+// Comme vault.js, délègue au coffre ACTIF du registre multi-coffres
+// (vaults.js) — chaque coffre a son propre jeu de listes de tâches.
+//
+// Plusieurs LISTES nommées (pas juste une liste plate comme avant) : un
+// fichier `.123ecriture/tasklists.json` ({ lists: [...], activeListId })
+// tient le registre des listes, un seul `.123ecriture/tasks.json` continue
+// de porter TOUTES les tâches de toutes les listes du coffre (chacune
+// taguée `listId`) — plus simple qu'un fichier par liste, et cohérent avec
+// le fait que le nombre de tâches par coffre reste petit. Toutes les
+// opérations (`tasks:list/add/toggle/remove`) restent scopées à la liste
+// ACTIVE, exactement comme vault.js scope tout au coffre actif — même
+// pattern, pour rester prévisible.
 //
 // Pas encore de vrai registre de modules (§8) : prématuré tant qu'il n'y a
 // qu'un seul module — à construire quand un deuxième (calendrier...)
 // arrivera et qu'un pattern commun se dessinera vraiment.
 
 function getVaultPath() {
-  return readConfig().vaultPath ?? null;
+  return vaults.getActiveVaultPath();
 }
 
 function getTasksFilePath(vaultPath) {
   return path.join(vaultPath, '.123ecriture', 'tasks.json');
+}
+
+function getTaskListsFilePath(vaultPath) {
+  return path.join(vaultPath, '.123ecriture', 'tasklists.json');
 }
 
 function readTasks(vaultPath) {
@@ -40,11 +57,148 @@ async function writeTasks(vaultPath, tasks) {
   return tasks;
 }
 
-function registerTasksHandlers() {
+function readTaskListsRaw(vaultPath) {
+  try {
+    return JSON.parse(fsSync.readFileSync(getTaskListsFilePath(vaultPath), 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function writeTaskLists(vaultPath, data) {
+  const filePath = getTaskListsFilePath(vaultPath);
+  fsSync.mkdirSync(path.dirname(filePath), { recursive: true });
+  fsSync.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf8');
+  return data;
+}
+
+// Migration paresseuse et idempotente : la toute première fois qu'un coffre
+// (nouveau ou déjà utilisé avant l'introduction des listes multiples) est
+// consulté, crée une liste par défaut et y rattache les tâches existantes
+// qui n'ont pas encore de `listId` (tâches créées avant cette fonctionnalité
+// — jamais perdues, juste rangées dans la liste par défaut).
+function migrateTaskLists(vaultPath) {
+  let data = readTaskListsRaw(vaultPath);
+  if (data) return data;
+
+  const defaultList = { id: crypto.randomUUID(), name: 'Tâches', createdAt: new Date().toISOString() };
+  data = { lists: [defaultList], activeListId: defaultList.id };
+  writeTaskLists(vaultPath, data);
+
+  const tasks = readTasks(vaultPath);
+  if (tasks.some((task) => !task.listId)) {
+    const migratedTasks = tasks.map((task) => (task.listId ? task : { ...task, listId: defaultList.id }));
+    // Synchrone (pas d'await ici, cette fonction est volontairement non
+    // async pour rester appelable depuis n'importe quel accesseur sans
+    // propager `async` partout) — fs.writeFileSync plutôt que writeTasks().
+    fsSync.writeFileSync(getTasksFilePath(vaultPath), JSON.stringify(migratedTasks, null, 2), 'utf8');
+  }
+
+  return data;
+}
+
+function getTaskLists(vaultPath) {
+  return migrateTaskLists(vaultPath).lists;
+}
+
+function getActiveListId(vaultPath) {
+  return migrateTaskLists(vaultPath).activeListId;
+}
+
+function findListOrThrow(lists, id) {
+  const list = lists.find((l) => l.id === id);
+  if (!list) throw new Error('Liste introuvable.');
+  return list;
+}
+
+function broadcastTaskListsChanged(getWindow, vaultPath) {
+  const win = getWindow?.();
+  if (win) win.webContents.send('tasklists:changed', getTaskLists(vaultPath));
+}
+
+function registerTasksHandlers(getWindow) {
+  ipcMain.handle('tasklists:list', () => {
+    const vaultPath = getVaultPath();
+    if (!vaultPath) return [];
+    return getTaskLists(vaultPath);
+  });
+
+  ipcMain.handle('tasklists:get-active', () => {
+    const vaultPath = getVaultPath();
+    if (!vaultPath) return null;
+    return getActiveListId(vaultPath);
+  });
+
+  ipcMain.handle('tasklists:create', (_event, name) => {
+    const vaultPath = getVaultPath();
+    if (!vaultPath) throw new Error('Aucun vault sélectionné');
+    const trimmed = (name ?? '').trim();
+    if (!trimmed) throw new Error('Le nom de la liste ne peut pas être vide.');
+
+    const data = migrateTaskLists(vaultPath);
+    const list = { id: crypto.randomUUID(), name: trimmed, createdAt: new Date().toISOString() };
+    data.lists.push(list);
+    data.activeListId = list.id;
+    writeTaskLists(vaultPath, data);
+    broadcastTaskListsChanged(getWindow, vaultPath);
+    return data.lists;
+  });
+
+  ipcMain.handle('tasklists:rename', (_event, id, name) => {
+    const vaultPath = getVaultPath();
+    if (!vaultPath) throw new Error('Aucun vault sélectionné');
+    const trimmed = (name ?? '').trim();
+    if (!trimmed) throw new Error('Le nom de la liste ne peut pas être vide.');
+
+    const data = migrateTaskLists(vaultPath);
+    findListOrThrow(data.lists, id).name = trimmed;
+    writeTaskLists(vaultPath, data);
+    broadcastTaskListsChanged(getWindow, vaultPath);
+    return data.lists;
+  });
+
+  // Supprime la liste ET ses tâches (comme la plupart des apps de listes de
+  // tâches : une liste est un panier jetable, contrairement à une note/un
+  // dossier du vault, qu'on ne supprime jamais silencieusement dans cette
+  // app — voir vault.js, qui n'expose d'ailleurs aucune suppression). Si
+  // c'était la dernière liste, le coffre se retrouve sans liste active ;
+  // l'écran Tâches propose alors d'en créer une nouvelle (même traitement
+  // que "0 coffre" côté Paramètres).
+  ipcMain.handle('tasklists:remove', (_event, id) => {
+    const vaultPath = getVaultPath();
+    if (!vaultPath) throw new Error('Aucun vault sélectionné');
+
+    const data = migrateTaskLists(vaultPath);
+    data.lists = data.lists.filter((l) => l.id !== id);
+    if (data.activeListId === id) {
+      data.activeListId = data.lists[0]?.id ?? null;
+    }
+    writeTaskLists(vaultPath, data);
+
+    const remainingTasks = readTasks(vaultPath).filter((task) => task.listId !== id);
+    void writeTasks(vaultPath, remainingTasks);
+
+    broadcastTaskListsChanged(getWindow, vaultPath);
+    return data.lists;
+  });
+
+  ipcMain.handle('tasklists:switch', (_event, id) => {
+    const vaultPath = getVaultPath();
+    if (!vaultPath) throw new Error('Aucun vault sélectionné');
+
+    const data = migrateTaskLists(vaultPath);
+    findListOrThrow(data.lists, id);
+    data.activeListId = id;
+    writeTaskLists(vaultPath, data);
+    broadcastTaskListsChanged(getWindow, vaultPath);
+    return data.lists;
+  });
+
   ipcMain.handle('tasks:list', () => {
     const vaultPath = getVaultPath();
     if (!vaultPath) return [];
-    return readTasks(vaultPath);
+    const activeListId = getActiveListId(vaultPath);
+    return readTasks(vaultPath).filter((task) => task.listId === activeListId);
   });
 
   ipcMain.handle('tasks:add', async (_event, text) => {
@@ -52,6 +206,8 @@ function registerTasksHandlers() {
     if (!vaultPath) throw new Error('Aucun vault sélectionné');
     const trimmed = (text ?? '').trim();
     if (!trimmed) throw new Error('Le texte de la tâche ne peut pas être vide.');
+    const activeListId = getActiveListId(vaultPath);
+    if (!activeListId) throw new Error('Aucune liste sélectionnée — crées-en une d’abord.');
 
     const tasks = readTasks(vaultPath);
     // En tête plutôt qu'en fin de liste : une tâche ajoutée reste visible
@@ -63,24 +219,30 @@ function registerTasksHandlers() {
       text: trimmed,
       done: false,
       createdAt: new Date().toISOString(),
+      listId: activeListId,
     });
-    return writeTasks(vaultPath, tasks);
+    await writeTasks(vaultPath, tasks);
+    return tasks.filter((task) => task.listId === activeListId);
   });
 
   ipcMain.handle('tasks:toggle', async (_event, id) => {
     const vaultPath = getVaultPath();
     if (!vaultPath) throw new Error('Aucun vault sélectionné');
+    const activeListId = getActiveListId(vaultPath);
     const tasks = readTasks(vaultPath).map((task) =>
       task.id === id ? { ...task, done: !task.done } : task,
     );
-    return writeTasks(vaultPath, tasks);
+    await writeTasks(vaultPath, tasks);
+    return tasks.filter((task) => task.listId === activeListId);
   });
 
   ipcMain.handle('tasks:remove', async (_event, id) => {
     const vaultPath = getVaultPath();
     if (!vaultPath) throw new Error('Aucun vault sélectionné');
+    const activeListId = getActiveListId(vaultPath);
     const tasks = readTasks(vaultPath).filter((task) => task.id !== id);
-    return writeTasks(vaultPath, tasks);
+    await writeTasks(vaultPath, tasks);
+    return tasks.filter((task) => task.listId === activeListId);
   });
 }
 

@@ -1,5 +1,5 @@
 //////////////////////////////////////////////////////////////////////////
-//                           📋 CLAUDE.md                                 //
+//                           🤖 CLAUDE.md                                 //
 //////////////////////////////////////////////////////////////////////////
 
 // INTRODUCTION
@@ -39,8 +39,15 @@ etc...
 Idéalement, afin de se repérer plus facilement, une bonne organisation et présentation de chaques fiches est fortement recommandée (titre, sommaire, chapitrages...).
 - Respecter les conventions d'ESLint dans le fichier de configuration:
 Cela est afin d'éviter d'avoir du code mort et des erreurs imperçeptibles dans le code. Il sera d'ailleurs empêché de compiler s'il y a des erreurs dans le code.
+- Poser des questions:
+N'hésite pas à me faire des questionnaires n'importe quand. Cela permettra d'éviter les malentendus, d'affiner notre travail ensemble et d'avancer de façon plus efficace.
 - Tester !
 Je t'incite à souvent tester par toi-même l'application comme tu le peux. Car par principe, la modification du code ne doit pas en casser quelque chose silencieusement. Cela est impératif si cela touche les fonctionnalités les plus essentielles pour la performance de l'appli/plateforme. Notamment celles-ci:
 -> La stabilité des interfaces en général, quel que soit la plateforme (Android, iOS, Windows, Linux, Mac...)
 -> La connexion au compte
 -> La sauvegarde et la gestion générale des données
+- La règle impérative avant chaque release:
+Si tu ajoutes par exemple des boutons ou de nouveaux composants, je souhaiterais que tu tiennes à ce qu'ils soient fonctionnels autant que possible. Je considère qu'ils sont fonctionnels minimum avec ces deux caractéristiques:
+- On peut cliquer dessus
+- Ils produisent ce qu'ils sont censés faire
+Cela m'évitera à avoir à te demander systématiquement de les améliorer encore et encore à chaque session
