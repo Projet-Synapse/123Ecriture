@@ -161,23 +161,80 @@ totalement la plateforme sur laquelle ils tournent.
 > plusieurs galères déjà rencontrées côté packaging desktop). À extraire
 > en `packages/storage` quand un deuxième consommateur apparaîtra.
 
+> **Écart pragmatique (v0.1.8)** : un vault n'est plus un `vaultPath` unique
+> mais une vraie liste (`apps/desktop/electron/vaults.js`, config.json →
+> `{ vaults: [...], activeVaultId }`, migration automatique de l'ancien
+> format). Chaque dossier de vault reçoit une identité stable
+> (`.123ecriture/vault.json`, `{ id, name, createdAt }`), indépendante de son
+> chemin — c'est cette identité qui sert de clé de correspondance avec la
+> ligne cloud du vault (§6), pas le chemin local (qui change d'une machine à
+> l'autre). `vault.js`/`tasks.js` continuent d'opérer sur UN SEUL vault "actif"
+> à la fois (`getActiveVaultPath()`), inchangés au-delà de ce point de
+> couture.
+
 //////////////////////////////////////////////////////////////////////////
 // 6. ☁️ SYNCHRONISATION PAR COMPTE (SUPABASE)
 //////////////////////////////////////////////////////////////////////////
 
-- **Auth** : Supabase Auth (email/mot de passe + OAuth au besoin).
-- **Stockage des fichiers** : Supabase Storage, un objet par note (ou par
-  vault compressé en v0, à trancher — voir §11).
-- **Métadonnées** : table Postgres (chemin, hash de contenu, date de
-  modification, taille) pour détecter rapidement ce qui a changé sans
-  retélécharger tout le vault.
-- **Stratégie de conflit v0** : "dernier écrit gagne" avec horodatage +
-  conservation d'une copie de sauvegarde du côté perdant (jamais de perte
-  silencieuse de données — cf. CLAUDE.md, "sauvegarde et gestion des
-  données" est une fonctionnalité critique). Une résolution plus fine
-  (fusion, CRDT) est une évolution possible, pas un prérequis v0.
-- La sync est **opt-in et best-effort** : l'app doit rester 100 %
-  fonctionnelle hors ligne / sans compte.
+Statut : implémenté (v0.1.8, desktop uniquement — voir écart pragmatique plus
+bas) sur le projet Supabase partagé "Projet Synapse".
+
+- **Auth** : Supabase Auth, Google OAuth uniquement pour l'instant (le
+  provider était déjà activé côté Supabase). Flux "navigateur système +
+  protocole personnalisé" côté Electron (`apps/desktop/electron/auth.js` +
+  `apps/mobile/lib/sync/AuthContext.tsx`) — PKCE, la session vit entièrement
+  côté renderer (client Supabase, `localStorage`), le main process ne fait
+  que relayer l'URL de callback (`app123ecriture://auth-callback`) reçue via le
+  protocole personnalisé (nécessite le verrou mono-instance, voir `main.js`).
+- **Schéma dédié** : `app_123ecriture` (jamais `public`, réservé aux autres
+  apps du projet partagé) — voir
+  `supabase/migrations/20260816120000_app_123ecriture_schema.sql`. Deux
+  tables : `vaults` (identité cloud d'un coffre local, clé sur
+  `local_vault_id` = l'id de `.123ecriture/vault.json`, pas le chemin) et
+  `vault_files` (une ligne par note). RLS strictement `owner_id = auth.uid()`
+  des deux côtés + sur `storage.objects` (via lookup dans `vaults`, pas par
+  segment de chemin "de confiance").
+- **Stockage des fichiers** : Supabase Storage, **un objet par note**
+  (tranché — voir §11), bucket privé dédié `123ecriture-vaults`, chemin
+  `<vaults.id>/<relPath>`.
+- **Métadonnées** : table `vault_files` (chemin, hash de contenu SHA-256,
+  taille, horodatage) pour détecter ce qui a changé sans retélécharger tout
+  le vault — hash local calculé en un seul passage par
+  `apps/desktop/electron/sync.js` (`sync:hash-vault`).
+- **Stratégie de conflit v0** : "dernier écrit gagne" par horodatage +
+  conservation d'une copie de sauvegarde du côté perdant, écrite comme une
+  note `.mdx` normale et visible (`Nom (conflit <horodatage ISO>).mdx`),
+  **avant** tout écrasement — jamais de perte silencieuse de données (cf.
+  CLAUDE.md). Implémenté dans `apps/mobile/lib/sync/{diff,syncEngine}.ts` —
+  `diff.ts` est pure (décisions push/pull/conflit, testée en isolation,
+  voir `diff.test.ts`), `syncEngine.ts` orchestre les effets de bord
+  (Storage, table, pont vault local). Une résolution plus fine (fusion,
+  CRDT) reste une évolution possible, pas un prérequis v0.
+- **v0 ne propage pas les suppressions locales** (pas de tombstone) —
+  supprimer une note localement ne supprime pas sa copie cloud ; la
+  prochaine synchro la retélécharge. Assumé et documenté dans l'UI plutôt
+  que silencieux ; suivi naturel une fois le push/pull de base éprouvé.
+- La sync est **opt-in, manuelle (bouton "Synchroniser maintenant", pas de
+  timer en v0) et best-effort** : l'app reste 100 % fonctionnelle hors
+  ligne / sans compte, un coffre non lié au cloud n'appelle jamais Supabase.
+
+> **Écart pragmatique (v0.1.8)** : pas de nouveau `packages/sync` — la
+> logique vit dans `apps/mobile/lib/sync/` (renderer) et
+> `apps/desktop/electron/{auth,sync}.js` (main process), même principe que
+> l'écart §5 sur `packages/storage` : aujourd'hui il n'y a qu'un seul vrai
+> consommateur (`@123ecriture/mobile`, chargé tel quel par le shell
+> Electron), et le mobile natif n'a encore aucun adaptateur de stockage
+> local (Phase 2 mobile non faite) donc rien à synchroniser — lui câbler
+> l'auth/la synchro maintenant serait du code non utilisé. Extraire
+> `packages/sync` (au moins `diff.ts`, déjà pur) le jour où le mobile natif
+> a un vrai accès fichier et devient un second consommateur réel.
+
+> **Limite connue (v0.1.8)** : le flux Google OAuth Electron (protocole
+> personnalisé + verrou mono-instance) et un aller-retour de synchro réel
+> n'ont été vérifiés que statiquement (lint/typecheck/bundle) — un vrai
+> aller-retour navigateur système + callback, et un vrai conflit à deux
+> écritures, restent à valider manuellement dans l'app avant release (zones
+> CLAUDE.md "connexion au compte" et "sauvegarde et gestion des données").
 
 //////////////////////////////////////////////////////////////////////////
 // 7. 🎨 PERSONNALISATION DE L'INTERFACE
@@ -274,13 +331,22 @@ Cible : ouvrir un dossier, éditer une note, la retrouver après redémarrage.
 web, parité de l'éditeur sur les trois cibles.
 
 **Phase 3 — Compte & synchronisation** : intégration Supabase (auth,
-sync des fichiers, résolution de conflit v0).
+sync des fichiers, résolution de conflit v0). ✅ Fait (v0.1.8) côté desktop —
+voir §6. Mobile natif reste hors périmètre tant que la Phase 2 mobile (accès
+fichier local) n'existe pas.
 
 **Phase 4 — Personnalisation** : moteur de thèmes/layout (§7) + UI de
 réglages.
 
 **Phase 5 — Modules productivité** : registre de modules (§8), puis premiers
-modules (todo list, calendrier...), un par un.
+modules (todo list, calendrier...), un par un. ✅ Fait (v0.1.8) côté desktop :
+Tâches (listes multiples), Calendrier (notes journalières + évènements),
+Graphiques (tableur intégré + barres/lignes/camembert), Canvas (cartes
+texte/note reliées par des flèches sur un plan pannable). Toujours pas de
+vrai registre de modules générique (§8) — chaque module reste câblé
+directement, comme Tâches l'était déjà ; à construire quand le besoin d'un
+pattern commun se fera vraiment sentir. Mobile natif reste hors périmètre
+(pas d'accès fichier local — Phase 2 mobile non faite).
 
 Chaque phase doit rester livrable et testée avant de passer à la suivante —
 pas de big-bang.
@@ -290,8 +356,10 @@ pas de big-bang.
 //////////////////////////////////////////////////////////////////////////
 
 À trancher avant/pendant les phases concernées :
-- Stockage Supabase : un objet Storage par note vs. vault packagé — impacte
-  la granularité de la sync (Phase 3).
+- ~~Stockage Supabase : un objet Storage par note vs. vault packagé~~ —
+  **tranché (v0.1.8) : un objet par note**, voir §6. Permet une synchro
+  incrémentale fine (seuls les fichiers modifiés sont ré-uploadés) et un
+  conflit qui ne touche qu'une note à la fois plutôt que tout le coffre.
 - Bibliothèque de parsing/rendu MDX précise (`@mdx-js/mdx` + `remark`/`rehype`
   plugins) — à choisir en Phase 1.
 - Canvas/Excalidraw : lib dédiée vs. intégration d'`excalidraw` en composant

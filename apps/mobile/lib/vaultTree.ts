@@ -16,6 +16,30 @@ export function findNodeByPath(nodes: VaultTreeNode[], relPath: string): VaultTr
   return null;
 }
 
+// Chemin du dossier parent d'un relPath, ou undefined si l'élément est déjà
+// à la racine du vault. Utilisé par le glisser-déposer (NotesScreen.tsx)
+// pour résoudre "on a lâché sur une NOTE" → destination = le dossier qui la
+// contient, pas la note elle-même (une note n'est pas un dossier valide).
+export function getParentRelPath(relPath: string): string | undefined {
+  const idx = relPath.lastIndexOf('/');
+  return idx === -1 ? undefined : relPath.slice(0, idx);
+}
+
+// Liste plate de toutes les NOTES de l'arborescence (pas les dossiers) —
+// utilisé par CanvasScreen.tsx pour proposer un choix de note à référencer
+// dans une carte.
+export function flattenNotes(nodes: VaultTreeNode[]): VaultNoteNode[] {
+  const notes: VaultNoteNode[] = [];
+  for (const node of nodes) {
+    if (node.type === 'note') {
+      notes.push(node);
+    } else {
+      notes.push(...flattenNotes(node.children));
+    }
+  }
+  return notes;
+}
+
 export type FolderOption = { relPath: string; label: string; depth: number };
 
 // Liste plate de tous les dossiers de l'arborescence (avec leur profondeur,

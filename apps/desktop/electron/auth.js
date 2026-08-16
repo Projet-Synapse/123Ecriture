@@ -11,14 +11,18 @@ const path = require('path');
 //    formulaire de connexion Google dans une fenêtre Electron est bloqué
 //    par Google (politique anti-automatisation "disallowed_useragent").
 // 2. Une fois la connexion terminée, Google → Supabase redirigent le
-//    navigateur vers `123ecriture://auth-callback?code=...` ; l'OS relance/
+//    navigateur vers `app123ecriture://auth-callback?code=...` ; l'OS relance/
 //    relaie cette URL à notre app via le protocole personnalisé enregistré
 //    ci-dessous (nécessite le verrou mono-instance, voir main.js).
 // 3. On renvoie cette URL au renderer (`auth:callback`), qui termine
 //    l'échange PKCE (`exchangeCodeForSession`) avec le client Supabase.
-const PROTOCOL = '123ecriture';
+// Un schéma d'URI ne peut PAS commencer par un chiffre (RFC 3986) —
+// `123ecriture` seul est donc invalide ("Protocol scheme must start with an
+// ASCII letter", trouvé en lançant réellement le build packagé). D'où le
+// préfixe `app`.
+const PROTOCOL = 'app123ecriture';
 
-// Enregistre l'app comme gestionnaire du protocole `123ecriture://`. En dev
+// Enregistre l'app comme gestionnaire du protocole `app123ecriture://`. En dev
 // (non empaqueté), Electron a besoin du chemin de l'exécutable + du script
 // pour relancer correctement l'app depuis le protocole (sinon Windows en
 // particulier relance juste `electron.exe` sans argument) ; en build

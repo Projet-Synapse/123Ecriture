@@ -3,6 +3,7 @@ import { Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } fr
 
 import type { Section } from '../navigation';
 import { usePreferences } from '../preferences/PreferencesContext';
+import { VaultSwitcher } from './VaultSwitcher';
 
 // Coquille de navigation générale de l'app : panneau de sections (Notes,
 // Tâches, Calendrier...) + zone de contenu. Bascule automatiquement entre
@@ -31,6 +32,7 @@ export function AppShell({ sections, activeId, onSelect, children }: Props) {
         { backgroundColor: theme.surface, borderColor: theme.border },
       ]}
     >
+      {isWide && <VaultSwitcher />}
       {sections.map((section) => {
         const isActive = section.id === activeId;
         return (

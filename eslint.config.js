@@ -54,7 +54,13 @@ module.exports = defineConfig([
       },
     },
     rules: {
-      // 🎯 Les vrais chasseurs de bugs
+      // 🎯 Les chasseurs de bugs
+      // `eqeqeq`/`no-duplicate-imports` sont des règles ESLint "de base" —
+      // @typescript-eslint n'en fournit pas de variante namespacée (pas
+      // besoin d'info de type pour celles-ci), contrairement aux trois
+      // suivantes.
+      eqeqeq: ['error', 'always'],
+      'no-duplicate-imports': 'warn',
       '@typescript-eslint/no-floating-promises': 'error',
       '@typescript-eslint/no-misused-promises': 'error',
       '@typescript-eslint/await-thenable': 'error',

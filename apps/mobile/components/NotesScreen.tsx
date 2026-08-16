@@ -10,10 +10,17 @@ import {
 
 import type { FormattingResult, Selection } from '../lib/mdxFormatting';
 import { NOTES_TOOLBAR_ACTIONS, type ToolbarAction } from '../lib/notesToolbarActions';
-import { findNodeByPath } from '../lib/vaultTree';
+import { findNodeByPath, getParentRelPath } from '../lib/vaultTree';
+import { useVaults } from '../lib/sync/VaultsContext';
 import { usePreferences } from '../preferences/PreferencesContext';
+import { EditPathDialog } from './EditPathDialog';
 import { MoveDialog } from './MoveDialog';
 import { VaultTreeView } from './VaultTreeView';
+
+// Sentinelle utilisée par le glisser-déposer pour représenter "on survole la
+// racine du vault" (aucune ligne sous le curseur) — distincte de `undefined`
+// (qui, lui, signifie "pas de glissement en cours").
+const ROOT_DROP_ZONE = '__root__';
 
 // Écran Notes — Phase 1 : vault local (arborescence réelle, pas juste une
 // liste plate) + édition MDX avec barre de formatage personnalisable (voir
@@ -21,7 +28,14 @@ import { VaultTreeView } from './VaultTreeView';
 // voir docs/ARCHITECTURE.md §4 et la feuille de route. Le vault n'existe
 // que côté Electron desktop pour l'instant (window.vault, exposé par
 // apps/desktop/electron/preload.js) — sur web/mobile, cette section reste
-// indisponible jusqu'à la Phase 2.
+// indisponible jusqu'à la Phase 2. Le CHEMIN du vault actif vient de
+// VaultsContext (coffres multiples, voir apps/desktop/electron/vaults.js) —
+// cet écran ne connaît plus que le nom du coffre actif, pas comment il est
+// choisi/changé. Déplacement de fichiers/dossiers : par glisser-déposer
+// (curseur, voir l'effet dragstart/dragover/drop plus bas) OU par "Déplacer
+// vers…" (MoveDialog) OU par édition manuelle du chemin complet
+// (EditPathDialog) — trois façons d'arriver à la même opération
+// (vault:move / vault:set-path).
 const AUTOSAVE_DELAY_MS = 600;
 
 type Status = 'idle' | 'saving' | 'saved' | 'error';
@@ -33,12 +47,22 @@ function isPathAffected(activeRelPath: string, changedOldRelPath: string): boole
   return activeRelPath === changedOldRelPath || activeRelPath.startsWith(`${changedOldRelPath}/`);
 }
 
-export function NotesScreen() {
+type Props = {
+  // Demande d'ouverture d'une note depuis un AUTRE écran (Calendrier,
+  // Canvas — voir App.tsx) : relPath à ouvrir dès que possible.
+  // `onOpenedPendingNote` prévient le parent une fois fait, pour qu'il
+  // remette ce champ à null (sinon rebasculer sur l'onglet Notes sans
+  // passer par un autre écran redéclencherait l'ouverture en boucle).
+  pendingOpenRelPath?: string | null;
+  onOpenedPendingNote?: () => void;
+};
+
+export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props = {}) {
   const { preferences, theme } = usePreferences();
   const vault = typeof window !== 'undefined' ? window.vault : undefined;
   const contextMenuBridge = typeof window !== 'undefined' ? window.contextMenu : undefined;
+  const { activeVaultPath: vaultPath } = useVaults();
 
-  const [vaultPath, setVaultPath] = useState<string | null>(null);
   const [tree, setTree] = useState<VaultTreeNode[]>([]);
   const [activeNote, setActiveNote] = useState<VaultEntry | null>(null);
   const [content, setContent] = useState('');
@@ -47,6 +71,14 @@ export function NotesScreen() {
   const [renamingRelPath, setRenamingRelPath] = useState<string | null>(null);
   const [renamingValue, setRenamingValue] = useState('');
   const [movingNode, setMovingNode] = useState<VaultTreeNode | null>(null);
+  const [editingPathNode, setEditingPathNode] = useState<VaultTreeNode | null>(null);
+  const [editPathError, setEditPathError] = useState<string | null>(null);
+  // État de glisser-déposer, pour l'affichage (VaultTreeView) — voir aussi
+  // draggingRelPathRef ci-dessous, qui porte la même info pour la LOGIQUE
+  // (évite une closure périmée dans les écouteurs DOM délégués).
+  const [draggingRelPath, setDraggingRelPath] = useState<string | null>(null);
+  const [dragOverRelPath, setDragOverRelPath] = useState<string | null>(null);
+  const draggingRelPathRef = useRef<string | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const listAreaRef = useRef<View>(null);
 
@@ -72,27 +104,29 @@ export function NotesScreen() {
   }, [vault]);
 
   useEffect(() => {
-    if (!vault) return;
+    if (!vault || !vaultPath) return;
     void (async () => {
       try {
-        const current = await vault.getCurrentPath();
-        setVaultPath(current);
-        if (current) await refreshTree();
+        await refreshTree();
       } catch (error) {
-        console.error('[vault] échec du chargement initial :', error);
+        console.error('[vault] échec du chargement de l’arborescence :', error);
       }
     })();
     // refreshTree est stable (useCallback sur `vault`) : pas besoin de le
-    // relancer à chaque render.
+    // relancer à chaque render. Se redéclenche quand `vaultPath` change
+    // (changement de coffre actif, voir VaultsContext) pour rafraîchir
+    // l'arborescence affichée.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [vault]);
+  }, [vault, vaultPath]);
 
   const handleChooseFolder = async () => {
     if (!vault) return;
     try {
-      const chosen = await vault.chooseFolder();
-      setVaultPath(chosen);
-      if (chosen) await refreshTree();
+      // Ajoute+active le dossier choisi dans le registre multi-coffres (voir
+      // apps/desktop/electron/vaults.js) — `vaultPath` ci-dessus se met à
+      // jour via VaultsContext une fois l'évènement `vaults:changed` reçu,
+      // ce qui redéclenche l'effet ci-dessus.
+      await vault.chooseFolder();
     } catch (error) {
       console.error('[vault] échec du choix de dossier :', error);
     }
@@ -114,6 +148,39 @@ export function NotesScreen() {
     },
     [vault],
   );
+
+  // Ouvre une note demandée par un AUTRE écran (voir App.tsx,
+  // `pendingOpenRelPath`) — ex. "Ouvrir la note du jour" du Calendrier, une
+  // carte-note du Canvas. Relit l'arborescence directement (pas via `tree`
+  // en state, qui pourrait être périmé si la note vient d'être créée par
+  // l'écran appelant, ex. `vault:ensure-daily-note`) pour retrouver ses
+  // vraies métadonnées ; à défaut, ouvre quand même avec un nœud minimal
+  // plutôt que d'échouer silencieusement.
+  useEffect(() => {
+    if (!vault || !pendingOpenRelPath) return;
+    void (async () => {
+      try {
+        const freshTree = await vault.listTree();
+        setTree(freshTree);
+        const found = findNodeByPath(freshTree, pendingOpenRelPath);
+        const noteNode: VaultNoteNode =
+          found && found.type === 'note'
+            ? found
+            : {
+                type: 'note',
+                relPath: pendingOpenRelPath,
+                name: (pendingOpenRelPath.split('/').pop() ?? pendingOpenRelPath).replace(/\.mdx$/i, ''),
+                modifiedAt: Date.now(),
+              };
+        await openNote(noteNode);
+      } catch (error) {
+        console.error('[vault] échec de l’ouverture demandée :', error);
+      } finally {
+        onOpenedPendingNote?.();
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vault, pendingOpenRelPath]);
 
   const handleCreateNote = useCallback(
     async (parentRelPath?: string) => {
@@ -193,12 +260,11 @@ export function NotesScreen() {
 
   const cancelMove = useCallback(() => setMovingNode(null), []);
 
-  const submitMove = useCallback(
-    async (destinationRelPath?: string) => {
-      if (!vault || !movingNode) return;
-      const node = movingNode;
-      setMovingNode(null);
-
+  // Effet commun à "Déplacer vers…" (MoveDialog) ET au glisser-déposer —
+  // même opération, deux façons de choisir la destination.
+  const performMove = useCallback(
+    async (node: VaultTreeNode, destinationRelPath?: string) => {
+      if (!vault) return;
       try {
         const result = await vault.move(node.relPath, destinationRelPath);
         setActiveNote((current) => {
@@ -217,7 +283,58 @@ export function NotesScreen() {
         console.error('[vault] échec du déplacement :', error);
       }
     },
-    [vault, movingNode, refreshTree],
+    [vault, refreshTree],
+  );
+
+  const submitMove = useCallback(
+    async (destinationRelPath?: string) => {
+      if (!movingNode) return;
+      const node = movingNode;
+      setMovingNode(null);
+      await performMove(node, destinationRelPath);
+    },
+    [movingNode, performMove],
+  );
+
+  const startEditPath = useCallback((node: VaultTreeNode) => {
+    setEditPathError(null);
+    setEditingPathNode(node);
+  }, []);
+
+  const cancelEditPath = useCallback(() => {
+    setEditingPathNode(null);
+    setEditPathError(null);
+  }, []);
+
+  const submitEditPath = useCallback(
+    async (newRelPath: string) => {
+      if (!vault || !editingPathNode) return;
+      const node = editingPathNode;
+      try {
+        const result = await vault.setPath(node.relPath, newRelPath);
+        // Fermé seulement en cas de SUCCÈS — en cas d'erreur (collision,
+        // chemin invalide...), la boîte reste ouverte avec le message pour
+        // que l'utilisatrice puisse corriger sans tout retaper.
+        setEditingPathNode(null);
+        setEditPathError(null);
+        setActiveNote((current) => {
+          if (!current) return current;
+          if (current.relPath === node.relPath) {
+            return { ...current, relPath: result.relPath, name: result.name };
+          }
+          if (isPathAffected(current.relPath, node.relPath)) {
+            setContent('');
+            return null;
+          }
+          return current;
+        });
+        await refreshTree();
+      } catch (error) {
+        console.error('[vault] échec de la modification du chemin :', error);
+        setEditPathError(error instanceof Error ? error.message : String(error));
+      }
+    },
+    [vault, editingPathNode, refreshTree],
   );
 
   const toggleCollapse = useCallback((relPath: string) => {
@@ -246,10 +363,12 @@ export function NotesScreen() {
               { id: 'new-folder-here', label: 'Nouveau dossier ici' },
               { id: 'rename', label: 'Renommer' },
               { id: 'move', label: 'Déplacer vers…' },
+              { id: 'edit-path', label: 'Modifier le chemin' },
             ]
           : [
               { id: 'rename', label: 'Renommer' },
               { id: 'move', label: 'Déplacer vers…' },
+              { id: 'edit-path', label: 'Modifier le chemin' },
             ];
 
       void contextMenuBridge.show(items).then((choice) => {
@@ -259,9 +378,10 @@ export function NotesScreen() {
         if (node && choice === 'new-folder-here') void handleCreateFolder(node.relPath);
         if (node && choice === 'rename') startRename(node);
         if (node && choice === 'move') startMove(node);
+        if (node && choice === 'edit-path') startEditPath(node);
       });
     },
-    [contextMenuBridge, handleCreateNote, handleCreateFolder, startRename, startMove],
+    [contextMenuBridge, handleCreateNote, handleCreateFolder, startRename, startMove, startEditPath],
   );
 
   // Un seul écouteur "contextmenu" délégué sur tout le conteneur de la
@@ -288,6 +408,117 @@ export function NotesScreen() {
     container.addEventListener('contextmenu', handler);
     return () => container.removeEventListener('contextmenu', handler);
   }, [vaultPath, tree, contextMenuBridge, showContextMenuFor]);
+
+  // Glisser-déposer réel (curseur), même mécanisme de délégation que le clic
+  // droit ci-dessus : un seul jeu d'écouteurs DOM (dragstart/dragover/drop/
+  // dragend) sur le conteneur de la liste plutôt qu'un handler par ligne —
+  // chaque ligne porte juste `draggable` (voir VaultTreeView.tsx) et son
+  // `data-relpath`. `draggingRelPathRef` (pas seulement le state) sert de
+  // source de vérité à la logique : cet effet ne se re-crée qu'au
+  // changement de `tree`/`vault`, donc les closures ci-dessous figeraient
+  // une valeur périmée du state `draggingRelPath` si on le lisait
+  // directement — la ref, elle, reste toujours à jour.
+  useEffect(() => {
+    const container = listAreaRef.current as unknown as HTMLElement | null;
+    if (!container || !vault) return;
+
+    // Un dossier ne peut pas être déposé dans lui-même ni dans l'un de ses
+    // propres sous-dossiers — vault:move le refuserait de toute façon, mais
+    // le vérifier ici aussi évite d'afficher un survol "valide" (bordure
+    // d'accentuation) pour une destination qui sera de toute façon rejetée.
+    const isSelfOrDescendant = (folderRelPath: string, candidateRelPath?: string) =>
+      candidateRelPath !== undefined &&
+      (candidateRelPath === folderRelPath || candidateRelPath.startsWith(`${folderRelPath}/`));
+
+    // Déposer sur une NOTE = déposer dans le dossier qui la contient (une
+    // note n'est pas un dossier valide) ; déposer dans le vide (aucune ligne
+    // sous le curseur, mais toujours dans le conteneur de la liste) =
+    // déposer à la racine du vault. Retourne null si la cible n'est pas une
+    // destination valide pour `draggedRelPath` — pris en paramètre plutôt
+    // que lu depuis `draggingRelPathRef` ici : `handleDrop` a besoin
+    // d'appeler ceci APRÈS avoir déjà remis la ref à null (pour ne pas
+    // laisser un état de glissement "collé" si l'event se termine mal), donc
+    // lire la ref à l'intérieur donnerait une valeur périmée à ce moment-là.
+    const resolveDropTarget = (
+      event: DragEvent,
+      draggedRelPath: string | null,
+    ): { destinationRelPath?: string; label: string } | null => {
+      const target = event.target as HTMLElement | null;
+      const rowEl = target?.closest ? (target.closest('[data-relpath]') as HTMLElement | null) : null;
+      const hoveredRelPath = rowEl?.getAttribute('data-relpath') ?? null;
+
+      const resolved = !hoveredRelPath
+        ? { destinationRelPath: undefined, label: ROOT_DROP_ZONE }
+        : (() => {
+            const node = findNodeByPath(tree, hoveredRelPath);
+            if (!node) return null;
+            if (node.type === 'folder') return { destinationRelPath: node.relPath, label: node.relPath };
+            const parent = getParentRelPath(node.relPath);
+            return { destinationRelPath: parent, label: parent ?? ROOT_DROP_ZONE };
+          })();
+      if (!resolved) return null;
+
+      const draggedNode = draggedRelPath ? findNodeByPath(tree, draggedRelPath) : null;
+      if (draggedNode?.type === 'folder' && isSelfOrDescendant(draggedNode.relPath, resolved.destinationRelPath)) {
+        return null;
+      }
+      return resolved;
+    };
+
+    const handleDragStart = (event: DragEvent) => {
+      const target = event.target as HTMLElement | null;
+      const rowEl = target?.closest ? (target.closest('[data-relpath]') as HTMLElement | null) : null;
+      const relPath = rowEl?.getAttribute('data-relpath') ?? null;
+      if (!relPath) {
+        event.preventDefault();
+        return;
+      }
+      event.dataTransfer?.setData('text/plain', relPath);
+      if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
+      draggingRelPathRef.current = relPath;
+      setDraggingRelPath(relPath);
+    };
+
+    const handleDragOver = (event: DragEvent) => {
+      if (!draggingRelPathRef.current) return;
+      // Nécessaire pour autoriser le drop (comportement par défaut du
+      // navigateur : refuser) — voir MDN sur l'API HTML5 Drag and Drop.
+      event.preventDefault();
+      const target = resolveDropTarget(event, draggingRelPathRef.current);
+      setDragOverRelPath(target ? target.label : null);
+    };
+
+    const handleDrop = (event: DragEvent) => {
+      event.preventDefault();
+      const dragRelPath = draggingRelPathRef.current;
+      draggingRelPathRef.current = null;
+      setDraggingRelPath(null);
+      setDragOverRelPath(null);
+      if (!dragRelPath) return;
+
+      const draggedNode = findNodeByPath(tree, dragRelPath);
+      const target = resolveDropTarget(event, dragRelPath);
+      if (!draggedNode || !target) return;
+      void performMove(draggedNode, target.destinationRelPath);
+    };
+
+    const handleDragEnd = () => {
+      draggingRelPathRef.current = null;
+      setDraggingRelPath(null);
+      setDragOverRelPath(null);
+    };
+
+    container.addEventListener('dragstart', handleDragStart);
+    container.addEventListener('dragover', handleDragOver);
+    container.addEventListener('drop', handleDrop);
+    container.addEventListener('dragend', handleDragEnd);
+    return () => {
+      container.removeEventListener('dragstart', handleDragStart);
+      container.removeEventListener('dragover', handleDragOver);
+      container.removeEventListener('drop', handleDrop);
+      container.removeEventListener('dragend', handleDragEnd);
+    };
+  }, [vault, tree, performMove]);
 
   const scheduleSave = useCallback(
     (text: string) => {
@@ -360,7 +591,11 @@ export function NotesScreen() {
     <View style={styles.row}>
       <View
         ref={listAreaRef}
-        style={[styles.list, { borderColor: theme.border, backgroundColor: theme.surface }]}
+        style={[
+          styles.list,
+          { borderColor: theme.border, backgroundColor: theme.surface },
+          dragOverRelPath === ROOT_DROP_ZONE && { borderColor: theme.accent, borderWidth: 2 },
+        ]}
       >
         <View style={styles.listHeader}>
           <Text style={[styles.vaultPath, { color: theme.textMuted }]} numberOfLines={1}>
@@ -381,6 +616,8 @@ export function NotesScreen() {
             collapsedPaths={collapsedPaths}
             onToggleCollapse={toggleCollapse}
             onOpenNote={(node) => void openNote(node)}
+            draggingRelPath={draggingRelPath}
+            dragOverRelPath={dragOverRelPath}
             rename={
               renamingRelPath
                 ? {
@@ -472,6 +709,15 @@ export function NotesScreen() {
         theme={theme}
         onSelect={(destination) => void submitMove(destination)}
         onCancel={cancelMove}
+      />
+
+      <EditPathDialog
+        key={editingPathNode?.relPath ?? 'closed'}
+        node={editingPathNode}
+        theme={theme}
+        error={editPathError}
+        onSubmit={(newRelPath) => void submitEditPath(newRelPath)}
+        onCancel={cancelEditPath}
       />
     </View>
   );

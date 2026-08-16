@@ -84,7 +84,7 @@ function createWindow() {
 }
 
 // Connexion Google (voir auth.js) : le callback OAuth arrive via un
-// protocole d'URL personnalisé (123ecriture://auth-callback), que l'OS
+// protocole d'URL personnalisé (app123ecriture://auth-callback), que l'OS
 // relaie en relançant l'app — sans verrou mono-instance, ça ouvrirait une
 // DEUXIÈME fenêtre au lieu de relayer l'URL à celle déjà ouverte. Demandé
 // tout de suite, avant toute autre init : si on ne l'obtient pas, une
@@ -146,7 +146,7 @@ if (!gotSingleInstanceLock) {
     // Le relais de l'URL de callback OAuth (voir auth.js, écouteur posé plus
     // haut) se fait via ce même évènement ; ici on s'assure juste que la
     // fenêtre existante reprend le focus si une deuxième instance a été
-    // lancée pour une autre raison qu'un lien 123ecriture://.
+    // lancée pour une autre raison qu'un lien app123ecriture://.
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.focus();

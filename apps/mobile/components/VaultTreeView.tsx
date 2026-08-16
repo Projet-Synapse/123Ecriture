@@ -1,7 +1,20 @@
-import { Fragment } from 'react';
+import { Fragment, type ComponentProps, type ComponentType } from 'react';
 import { Pressable, StyleSheet, Text, TextInput } from 'react-native';
 
 import type { Theme } from '../theme';
+
+// `draggable` n'est pas dans les types RN officiels de Pressable (ce n'est
+// pas une prop React Native — voir le commentaire plus bas sur
+// `onContextMenu`), mais react-native-web la transmet bel et bien telle
+// quelle jusqu'au <div> sous-jacent, ce qui est justement ce qui rend le
+// glisser-déposer HTML5 délégué (voir NotesScreen.tsx) possible sans
+// handler par ligne. Échappatoire de typage locale et explicite plutôt que
+// de parsemer des `as any` dans le JSX plus bas. Exportée : réutilisée telle
+// quelle par CanvasScreen.tsx pour les mêmes raisons (cartes/poignées de
+// connexion glissables).
+export const DraggablePressable = Pressable as unknown as ComponentType<
+  ComponentProps<typeof Pressable> & { draggable?: boolean }
+>;
 
 // Rendu récursif de l'arborescence du vault (dossiers + notes). Composant
 // purement présentationnel : toutes les données (arbre, sélection en cours,
@@ -36,6 +49,14 @@ type Props = {
   onToggleCollapse: (relPath: string) => void;
   onOpenNote: (node: VaultNoteNode) => void;
   rename: RenameState | null;
+  // Glisser-déposer (voir NotesScreen.tsx, qui délègue les évènements DOM
+  // dragstart/dragover/drop sur le conteneur plutôt que par ligne — même
+  // raison que le clic droit délégué : passer onDragStart/onDragOver
+  // directement en props Pressable n'est pas fiable via react-native-web).
+  // Ce composant reste purement présentationnel : juste `draggable` + le
+  // style de survol/glissement, aucune logique ici.
+  draggingRelPath?: string | null;
+  dragOverRelPath?: string | null;
 };
 
 export function VaultTreeView({
@@ -47,6 +68,8 @@ export function VaultTreeView({
   onToggleCollapse,
   onOpenNote,
   rename,
+  draggingRelPath,
+  dragOverRelPath,
 }: Props) {
   return (
     <>
@@ -54,17 +77,22 @@ export function VaultTreeView({
         const isRenaming = rename?.relPath === node.relPath;
         const isFolder = node.type === 'folder';
         const isCollapsed = isFolder && collapsedPaths.has(node.relPath);
+        const isDragging = draggingRelPath === node.relPath;
+        const isDropTarget = isFolder && dragOverRelPath === node.relPath && !isDragging;
 
         return (
           <Fragment key={node.relPath}>
-            <Pressable
+            <DraggablePressable
               onPress={() => (isFolder ? onToggleCollapse(node.relPath) : onOpenNote(node))}
               dataSet={{ relpath: node.relPath }}
+              draggable={!isRenaming}
               style={[
                 styles.row,
                 { paddingLeft: 12 + depth * 16 },
                 !isFolder &&
                   node.relPath === activeRelPath && { backgroundColor: `${theme.accent}22` },
+                isDragging && styles.rowDragging,
+                isDropTarget && [styles.rowDropTarget, { borderColor: theme.accent }],
               ]}
             >
               <Text style={styles.icon}>{isFolder ? (isCollapsed ? '📁' : '📂') : '📝'}</Text>
@@ -85,7 +113,7 @@ export function VaultTreeView({
                   {node.name}
                 </Text>
               )}
-            </Pressable>
+            </DraggablePressable>
             {isFolder && !isCollapsed && (
               <VaultTreeView
                 nodes={node.children}
@@ -96,6 +124,8 @@ export function VaultTreeView({
                 onToggleCollapse={onToggleCollapse}
                 onOpenNote={onOpenNote}
                 rename={rename}
+                draggingRelPath={draggingRelPath}
+                dragOverRelPath={dragOverRelPath}
               />
             )}
           </Fragment>
@@ -115,6 +145,13 @@ const styles = StyleSheet.create({
   },
   icon: {
     fontSize: 14,
+  },
+  rowDragging: {
+    opacity: 0.4,
+  },
+  rowDropTarget: {
+    borderWidth: 2,
+    borderRadius: 4,
   },
   renameInput: {
     flex: 1,
