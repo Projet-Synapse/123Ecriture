@@ -1,5 +1,9 @@
-const { app, ipcMain } = require('electron');
-const { autoUpdater } = require('electron-updater');
+import { app, ipcMain, type BrowserWindow } from 'electron';
+import { autoUpdater } from 'electron-updater';
+
+import type { UpdaterStatus } from './types';
+
+type GetWindow = () => BrowserWindow | null;
 
 // Traqueur de mise à jour piloté depuis l'UI (écran Paramètres), plutôt que
 // la notification OS silencieuse utilisée jusque-là. Le téléchargement
@@ -23,7 +27,7 @@ autoUpdater.logger = console;
 // événement n'arrivait. `updater:get-status` permet à l'UI de récupérer
 // l'état réel dès son montage, sans dépendre d'avoir "entendu" l'événement
 // au bon moment.
-let currentStatus = { state: 'idle' };
+let currentStatus: UpdaterStatus = { state: 'idle' };
 
 // Empêche deux vérifications de se chevaucher (ex. clic sur "Vérifier" alors
 // que la vérification au démarrage tourne encore) — les appels concurrents à
@@ -31,7 +35,7 @@ let currentStatus = { state: 'idle' };
 // marchent dessus.
 let checkInProgress = false;
 
-function broadcastStatus(getWindow, status) {
+function broadcastStatus(getWindow: GetWindow, status: UpdaterStatus): void {
   currentStatus = status;
   const win = getWindow();
   if (win && !win.isDestroyed()) {
@@ -39,7 +43,7 @@ function broadcastStatus(getWindow, status) {
   }
 }
 
-async function performCheck(getWindow) {
+async function performCheck(getWindow: GetWindow): Promise<void> {
   if (checkInProgress) return;
   checkInProgress = true;
   try {
@@ -55,7 +59,7 @@ async function performCheck(getWindow) {
   }
 }
 
-function registerUpdaterHandlers(getWindow) {
+export function registerUpdaterHandlers(getWindow: GetWindow): void {
   autoUpdater.on('checking-for-update', () => {
     broadcastStatus(getWindow, { state: 'checking' });
   });
@@ -93,8 +97,6 @@ function registerUpdaterHandlers(getWindow) {
   });
 }
 
-function checkOnStartup(getWindow) {
+export function checkOnStartup(getWindow: GetWindow): void {
   void performCheck(getWindow);
 }
-
-module.exports = { registerUpdaterHandlers, checkOnStartup };

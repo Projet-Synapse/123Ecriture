@@ -9,6 +9,11 @@ export type Section = {
   description: string;
 };
 
+// Canvas et Graphiques ne sont PLUS des sections ici : ce sont des types de
+// fichiers du vault (`.canvas`/`.chart`), ouverts depuis l'arborescence de
+// "Notes" comme n'importe quel fichier (voir CanvasEditor.tsx/
+// ChartEditor.tsx, NotesScreen.tsx) — révision du choix initial, documentée
+// dans le plan/la mémoire du projet.
 export const SECTIONS: Section[] = [
   {
     id: 'notes',
@@ -27,18 +32,6 @@ export const SECTIONS: Section[] = [
     label: 'Calendrier',
     icon: '📅',
     description: 'Notes journalières et évènements, stockés dans le vault.',
-  },
-  {
-    id: 'canvas',
-    label: 'Canvas',
-    icon: '🎨',
-    description: 'Cartes (texte/notes) reliées par des flèches sur un plan libre.',
-  },
-  {
-    id: 'charts',
-    label: 'Graphiques',
-    icon: '📊',
-    description: 'Tableur intégré et graphiques barres/lignes/camembert.',
   },
   {
     id: 'settings',

@@ -113,3 +113,19 @@ export function insertLink(text: string, selection: Selection): FormattingResult
   const urlEnd = urlStart + 3; // "url"
   return { text: newText, selection: { start: urlStart, end: urlEnd } };
 }
+
+// Insère un gabarit de tableau Markdown (GFM, rendu par NoteRenderer.tsx) —
+// 2 colonnes, 1 ligne de données, prête à être adaptée/étendue à la main
+// (ajouter des colonnes/lignes reste juste taper du texte, comme le reste
+// du Markdown — pas d'éditeur de grille dédié pour ça).
+export function insertTable(text: string, selection: Selection): FormattingResult {
+  const { start, end } = selection;
+  const table = '| Colonne 1 | Colonne 2 |\n| --- | --- |\n| Valeur | Valeur |\n';
+  // Un tableau Markdown doit démarrer sur sa propre ligne — ajoute un saut
+  // de ligne devant si on n'est pas déjà en début de ligne/fichier.
+  const needsLeadingBreak = start > 0 && text[start - 1] !== '\n';
+  const prefix = needsLeadingBreak ? '\n' : '';
+  const newText = text.slice(0, start) + prefix + table + text.slice(end);
+  const cursor = start + prefix.length + table.length;
+  return { text: newText, selection: { start: cursor, end: cursor } };
+}

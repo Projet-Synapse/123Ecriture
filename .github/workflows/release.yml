@@ -39,7 +39,20 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Exporte le build web (Expo) chargé par Electron
+        # EXPO_PUBLIC_* : Expo les inline DANS le bundle à ce moment précis
+        # (pas à l'exécution) — voir apps/mobile/lib/sync/supabaseClient.ts.
+        # Sans ça, `supabase` y reste `null`, la carte "Compte" de
+        # SettingsScreen.tsx ne s'affiche jamais (auth.available === false)
+        # et l'authentification/synchro est invisible dans TOUTE release
+        # construite par ce workflow, quoi qu'on fasse côté app — cause
+        # racine trouvée après coup, corrigée ici. Secrets à créer soi-même
+        # dans Settings → Secrets and variables → Actions du dépôt (valeurs
+        # dans la mémoire du projet 123ecriture-vault-sync.md) : sans eux,
+        # ces variables restent vides et le problème persiste malgré ce fix.
         run: pnpm --filter @123ecriture/mobile build:web
+        env:
+          EXPO_PUBLIC_SUPABASE_URL: ${{ secrets.EXPO_PUBLIC_SUPABASE_URL }}
+          EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_ANON_KEY }}
 
       - name: Bundle le process principal Electron (esbuild)
         run: pnpm --filter @123ecriture/desktop run build:electron
@@ -59,7 +72,7 @@ jobs:
 # avertissement Gatekeeper/SmartScreen faute de certificat de signature),
 # puis publie-la manuellement quand tu es prêt·e.
 #
-# Auto-update (electron-updater, voir apps/desktop/electron/main.js) : le
+# Auto-update (electron-updater, voir apps/desktop/electron/main.ts) : le
 # dépôt doit être PUBLIC pour que l'app installée puisse consulter les
 # Releases GitHub sans authentification. Sur un dépôt privé, la vérification
 # de mise à jour échoue silencieusement (l'app démarre quand même).

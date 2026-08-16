@@ -1,8 +1,10 @@
-const { ipcMain } = require('electron');
-const fs = require('fs/promises');
-const crypto = require('crypto');
-const path = require('path');
-const vaults = require('./vaults');
+import { ipcMain } from 'electron';
+import crypto from 'crypto';
+import fs from 'fs/promises';
+import path from 'path';
+
+import * as vaults from './vaults';
+import type { HashedNote } from './types';
 
 // Partie "synchro" (voir docs/ARCHITECTURE.md §6) : la seule opération qui a
 // vraiment besoin du process principal est de hasher le vault actif en une
@@ -18,12 +20,12 @@ const vaults = require('./vaults');
 // on veut une liste PLATE de notes avec leur hash — forme différente pour un
 // besoin différent, pas la peine de faire porter cette forme à walkTree.
 
-async function hashFileContent(fullPath) {
+async function hashFileContent(fullPath: string): Promise<string> {
   const content = await fs.readFile(fullPath);
   return crypto.createHash('sha256').update(content).digest('hex');
 }
 
-async function walkAndHash(dir, vaultRoot, out) {
+async function walkAndHash(dir: string, vaultRoot: string, out: HashedNote[]): Promise<HashedNote[]> {
   const entries = await fs.readdir(dir, { withFileTypes: true });
   for (const entry of entries) {
     if (entry.name.startsWith('.')) continue;
@@ -43,12 +45,10 @@ async function walkAndHash(dir, vaultRoot, out) {
   return out;
 }
 
-function registerSyncHandlers() {
+export function registerSyncHandlers(): void {
   ipcMain.handle('sync:hash-vault', async () => {
     const vaultPath = vaults.getActiveVaultPath();
     if (!vaultPath) return [];
     return walkAndHash(vaultPath, vaultPath, []);
   });
 }
-
-module.exports = { registerSyncHandlers };

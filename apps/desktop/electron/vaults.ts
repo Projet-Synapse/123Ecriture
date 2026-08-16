@@ -1,8 +1,12 @@
-const { dialog, ipcMain } = require('electron');
-const fsSync = require('fs');
-const path = require('path');
-const crypto = require('crypto');
-const { readConfig, writeConfig } = require('./config');
+import { dialog, ipcMain, type BrowserWindow } from 'electron';
+import crypto from 'crypto';
+import fsSync from 'fs';
+import path from 'path';
+
+import { readConfig, writeConfig } from './config';
+import type { AppConfig, VaultIdentity, VaultRegistryEntry } from './types';
+
+type GetWindow = () => BrowserWindow | null;
 
 // Registre des coffres (vaults) — voir docs/ARCHITECTURE.md §5/§6. Avant ce
 // fichier, l'app ne connaissait qu'un seul `vaultPath` (string) dans
@@ -12,7 +16,7 @@ const { readConfig, writeConfig } = require('./config');
 
 const IDENTITY_RELATIVE_PATH = path.join('.123ecriture', 'vault.json');
 
-function getIdentityFilePath(vaultPath) {
+function getIdentityFilePath(vaultPath: string): string {
   return path.join(vaultPath, IDENTITY_RELATIVE_PATH);
 }
 
@@ -21,15 +25,15 @@ function getIdentityFilePath(vaultPath) {
 // re-sélectionne après l'avoir retiré de la liste, ou s'il a été déplacé/
 // resynchronisé depuis une autre machine — indispensable pour, plus tard, le
 // faire correspondre à sa ligne Supabase sans dupliquer le coffre côté cloud.
-function readVaultIdentity(vaultPath) {
+function readVaultIdentity(vaultPath: string): VaultIdentity | null {
   try {
-    return JSON.parse(fsSync.readFileSync(getIdentityFilePath(vaultPath), 'utf8'));
+    return JSON.parse(fsSync.readFileSync(getIdentityFilePath(vaultPath), 'utf8')) as VaultIdentity;
   } catch {
     return null;
   }
 }
 
-function writeVaultIdentity(vaultPath, identity) {
+function writeVaultIdentity(vaultPath: string, identity: VaultIdentity): void {
   const filePath = getIdentityFilePath(vaultPath);
   fsSync.mkdirSync(path.dirname(filePath), { recursive: true });
   fsSync.writeFileSync(filePath, JSON.stringify(identity, null, 2), 'utf8');
@@ -40,7 +44,7 @@ function writeVaultIdentity(vaultPath, identity) {
 // accesseur plutôt que séquencée explicitement au démarrage : pas d'ordre à
 // respecter, et un ancien config.json (utilisateur déjà en prod) migre tout
 // seul sans perdre le vault déjà choisi.
-function migrateLegacyConfig() {
+function migrateLegacyConfig(): AppConfig {
   const config = readConfig();
   if (config.vaults) return config;
 
@@ -60,7 +64,7 @@ function migrateLegacyConfig() {
         // sur disque sera réécrite au prochain accès réussi.
       }
     }
-    const vault = {
+    const vault: VaultRegistryEntry = {
       id: identity.id,
       name: identity.name ?? path.basename(config.vaultPath),
       path: config.vaultPath,
@@ -73,26 +77,26 @@ function migrateLegacyConfig() {
   return writeConfig({ vaults: [], activeVaultId: null });
 }
 
-function getVaults() {
+export function getVaults(): VaultRegistryEntry[] {
   return migrateLegacyConfig().vaults ?? [];
 }
 
-function getActiveVaultId() {
+export function getActiveVaultId(): string | null {
   return migrateLegacyConfig().activeVaultId ?? null;
 }
 
-function getActiveVaultPath() {
+export function getActiveVaultPath(): string | null {
   const activeId = getActiveVaultId();
   const active = getVaults().find((v) => v.id === activeId);
   return active ? active.path : null;
 }
 
-function saveVaults(vaults, activeVaultId) {
-  return writeConfig({ vaults, activeVaultId });
+function saveVaults(vaultList: VaultRegistryEntry[], activeVaultId: string | null): AppConfig {
+  return writeConfig({ vaults: vaultList, activeVaultId });
 }
 
-function findVaultOrThrow(vaults, id) {
-  const vault = vaults.find((v) => v.id === id);
+function findVaultOrThrow(vaultList: VaultRegistryEntry[], id: string): VaultRegistryEntry {
+  const vault = vaultList.find((v) => v.id === id);
   if (!vault) throw new Error('Coffre introuvable.');
   return vault;
 }
@@ -103,9 +107,9 @@ function findVaultOrThrow(vaults, id) {
 // isolément et réutilisée par les deux points d'entrée IPC qui ont besoin
 // d'ajouter un dossier existant (`vaults:add-existing` et l'ancien
 // `vault:choose-folder`, gardé pour compatibilité — voir vault.js).
-function addExistingVault(chosenPath) {
+export function addExistingVault(chosenPath: string): VaultRegistryEntry {
   const config = migrateLegacyConfig();
-  const vaults = config.vaults ?? [];
+  const vaultList = config.vaults ?? [];
 
   let identity = readVaultIdentity(chosenPath);
   if (!identity) {
@@ -117,28 +121,28 @@ function addExistingVault(chosenPath) {
     writeVaultIdentity(chosenPath, identity);
   }
 
-  const already = vaults.find((v) => v.id === identity.id);
+  const already = vaultList.find((v) => v.id === identity.id);
   if (already) {
     already.path = chosenPath;
-    saveVaults(vaults, already.id);
+    saveVaults(vaultList, already.id);
     return already;
   }
 
-  const vault = {
+  const vault: VaultRegistryEntry = {
     id: identity.id,
     name: identity.name ?? path.basename(chosenPath),
     path: chosenPath,
     cloudLinked: false,
     remoteVaultId: null,
   };
-  vaults.push(vault);
-  saveVaults(vaults, vault.id);
+  vaultList.push(vault);
+  saveVaults(vaultList, vault.id);
   return vault;
 }
 
 // Crée un nouveau dossier `name` dans `parentDir`, l'initialise comme vault
 // (identité + dossier .123ecriture/) et le rend actif.
-function createVault(parentDir, name) {
+export function createVault(parentDir: string, name: string): VaultRegistryEntry {
   const safeName = name && name.trim().length > 0 ? name.trim() : 'Nouveau coffre';
 
   // Même logique de dédoublonnage que findAvailableName() dans vault.js
@@ -153,66 +157,71 @@ function createVault(parentDir, name) {
   const fullPath = path.join(parentDir, folderName);
   fsSync.mkdirSync(fullPath, { recursive: true });
 
-  const identity = { id: crypto.randomUUID(), name: folderName, createdAt: new Date().toISOString() };
+  const identity: VaultIdentity = { id: crypto.randomUUID(), name: folderName, createdAt: new Date().toISOString() };
   writeVaultIdentity(fullPath, identity);
 
   const config = migrateLegacyConfig();
-  const vaults = config.vaults ?? [];
-  const vault = {
+  const vaultList = config.vaults ?? [];
+  const vault: VaultRegistryEntry = {
     id: identity.id,
     name: folderName,
     path: fullPath,
     cloudLinked: false,
     remoteVaultId: null,
   };
-  vaults.push(vault);
-  saveVaults(vaults, vault.id);
+  vaultList.push(vault);
+  saveVaults(vaultList, vault.id);
   return vault;
 }
 
-function switchVault(id) {
+export function switchVault(id: string): VaultRegistryEntry[] {
   const config = migrateLegacyConfig();
-  const vaults = config.vaults ?? [];
-  findVaultOrThrow(vaults, id);
-  saveVaults(vaults, id);
+  const vaultList = config.vaults ?? [];
+  findVaultOrThrow(vaultList, id);
+  saveVaults(vaultList, id);
   return getVaults();
 }
 
-function renameVault(id, name) {
+export function renameVault(id: string, name: string): VaultRegistryEntry {
   const config = migrateLegacyConfig();
-  const vaults = config.vaults ?? [];
-  const vault = findVaultOrThrow(vaults, id);
+  const vaultList = config.vaults ?? [];
+  const vault = findVaultOrThrow(vaultList, id);
   const trimmed = (name ?? '').trim();
   if (!trimmed) throw new Error('Le nom ne peut pas être vide.');
   vault.name = trimmed;
   try {
-    const identity = readVaultIdentity(vault.path) ?? { id: vault.id, createdAt: new Date().toISOString() };
+    const identity = readVaultIdentity(vault.path) ?? { id: vault.id, name: trimmed, createdAt: new Date().toISOString() };
     writeVaultIdentity(vault.path, { ...identity, name: trimmed });
   } catch {
     // Dossier temporairement inaccessible : le nom reste correct côté
     // registre, juste pas répercuté sur disque pour l'instant.
   }
-  saveVaults(vaults, config.activeVaultId);
+  saveVaults(vaultList, config.activeVaultId ?? null);
   return vault;
 }
 
 // Retire un vault DE LA LISTE uniquement — ne supprime jamais ses fichiers
 // (règle CLAUDE.md : jamais de perte de données déclenchée par l'app).
-function removeVault(id) {
+export function removeVault(id: string): VaultRegistryEntry[] {
   const config = migrateLegacyConfig();
-  const vaults = (config.vaults ?? []).filter((v) => v.id !== id);
-  const activeVaultId = config.activeVaultId === id ? (vaults[0]?.id ?? null) : config.activeVaultId;
-  saveVaults(vaults, activeVaultId);
+  const vaultList = (config.vaults ?? []).filter((v) => v.id !== id);
+  const activeVaultId = config.activeVaultId === id ? (vaultList[0]?.id ?? null) : (config.activeVaultId ?? null);
+  saveVaults(vaultList, activeVaultId);
   return getVaults();
 }
 
-function setCloudLink(id, { linked, remoteVaultId }) {
+export interface CloudLinkPatch {
+  linked: boolean;
+  remoteVaultId?: string | null;
+}
+
+export function setCloudLink(id: string, { linked, remoteVaultId }: CloudLinkPatch): VaultRegistryEntry {
   const config = migrateLegacyConfig();
-  const vaults = config.vaults ?? [];
-  const vault = findVaultOrThrow(vaults, id);
+  const vaultList = config.vaults ?? [];
+  const vault = findVaultOrThrow(vaultList, id);
   vault.cloudLinked = Boolean(linked);
   if (remoteVaultId !== undefined) vault.remoteVaultId = remoteVaultId;
-  saveVaults(vaults, config.activeVaultId);
+  saveVaults(vaultList, config.activeVaultId ?? null);
   return vault;
 }
 
@@ -220,7 +229,7 @@ function setCloudLink(id, { linked, remoteVaultId }) {
 // Retourne null si l'utilisateur annule — partagé par `vaults:add-existing`
 // et par l'ancien `vault:choose-folder` (voir vault.js) pour ne pas dupliquer
 // la logique de dialog.
-async function pickAndAddExistingVault() {
+export async function pickAndAddExistingVault(): Promise<VaultRegistryEntry | null> {
   const result = await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] });
   if (result.canceled || result.filePaths.length === 0) return null;
   const vault = addExistingVault(result.filePaths[0]);
@@ -230,7 +239,7 @@ async function pickAndAddExistingVault() {
 
 // Ouvre le sélecteur natif pour choisir OÙ créer le nouveau coffre, puis
 // crée+active un sous-dossier `name` à cet endroit.
-async function pickAndCreateVault(name) {
+export async function pickAndCreateVault(name: string): Promise<VaultRegistryEntry | null> {
   const result = await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] });
   if (result.canceled || result.filePaths.length === 0) return null;
   const vault = createVault(result.filePaths[0], name);
@@ -238,12 +247,12 @@ async function pickAndCreateVault(name) {
   return vault;
 }
 
-function broadcastVaultsChanged(getWindow) {
+export function broadcastVaultsChanged(getWindow: GetWindow): void {
   const win = getWindow?.();
   if (win) win.webContents.send('vaults:changed', getVaults());
 }
 
-function registerVaultsHandlers(getWindow) {
+export function registerVaultsHandlers(getWindow: GetWindow): void {
   ipcMain.handle('vaults:list', () => getVaults());
   ipcMain.handle('vaults:get-active', () => getActiveVaultId());
 
@@ -253,52 +262,35 @@ function registerVaultsHandlers(getWindow) {
     return getVaults();
   });
 
-  ipcMain.handle('vaults:create-new', async (_event, name) => {
+  ipcMain.handle('vaults:create-new', async (_event, name: string) => {
     const vault = await pickAndCreateVault(name);
     if (vault) broadcastVaultsChanged(getWindow);
     return getVaults();
   });
 
-  ipcMain.handle('vaults:switch', (_event, id) => {
-    const vaults = switchVault(id);
+  ipcMain.handle('vaults:switch', (_event, id: string) => {
+    const vaultList = switchVault(id);
     broadcastVaultsChanged(getWindow);
-    return vaults;
+    return vaultList;
   });
 
-  ipcMain.handle('vaults:rename', (_event, id, name) => {
+  ipcMain.handle('vaults:rename', (_event, id: string, name: string) => {
     renameVault(id, name);
-    const vaults = getVaults();
+    const vaultList = getVaults();
     broadcastVaultsChanged(getWindow);
-    return vaults;
+    return vaultList;
   });
 
-  ipcMain.handle('vaults:remove', (_event, id) => {
-    const vaults = removeVault(id);
+  ipcMain.handle('vaults:remove', (_event, id: string) => {
+    const vaultList = removeVault(id);
     broadcastVaultsChanged(getWindow);
-    return vaults;
+    return vaultList;
   });
 
-  ipcMain.handle('vaults:set-cloud-link', (_event, id, payload) => {
-    setCloudLink(id, payload ?? {});
-    const vaults = getVaults();
+  ipcMain.handle('vaults:set-cloud-link', (_event, id: string, payload: CloudLinkPatch) => {
+    setCloudLink(id, payload ?? { linked: false });
+    const vaultList = getVaults();
     broadcastVaultsChanged(getWindow);
-    return vaults;
+    return vaultList;
   });
 }
-
-module.exports = {
-  migrateLegacyConfig,
-  getVaults,
-  getActiveVaultId,
-  getActiveVaultPath,
-  addExistingVault,
-  createVault,
-  switchVault,
-  renameVault,
-  removeVault,
-  setCloudLink,
-  pickAndAddExistingVault,
-  pickAndCreateVault,
-  broadcastVaultsChanged,
-  registerVaultsHandlers,
-};

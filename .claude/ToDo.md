@@ -20,8 +20,6 @@
 
 - [ ] Pouvoir gérer la largeur et la présence des barres lattérales avec le curseur
 
-- [ ] Ajouter les escalidraws
-
 // 2. 📝 Notes
 
 - [ ] Ajouter les [[liens internes]]
@@ -36,7 +34,8 @@
 
 - [ ] Pouvoir sélectionner et modifier les titres en haut de la page des fiches
 
-- [ ] Ajouter les {{occurences}} (inventées par moi)
+- [ ] Ajouter les {{occurences}} (idée inventée par moi)
+    Les occurences sont des mots qui reviennent dans notre vault et seront stockés dans un petit dictionnaire personnel. 
 
 - [ ] Ajouter les templates
 
@@ -45,3 +44,6 @@
 // 5. 🎨 Canvas
 // 6. 📇 Kanbans
 // 7. 🖍️ Escalidraws
+Les escalidraws sont des fichiers sur lesquels on peut dessiner et faire des formes. Idéaux pour faire des plans ou des petits sketchs rapides.
+
+- [ ] Ajouter les escalidraws

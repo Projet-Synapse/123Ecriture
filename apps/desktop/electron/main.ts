@@ -1,18 +1,19 @@
-const { app, BrowserWindow, protocol, net, Menu } = require('electron');
-const path = require('path');
-const fs = require('fs');
-const { URL, pathToFileURL } = require('url');
-const { registerVaultHandlers } = require('./vault');
-const { registerVaultsHandlers } = require('./vaults');
-const { registerUpdaterHandlers, checkOnStartup } = require('./updater');
-const { registerPreferencesHandlers } = require('./preferences');
-const { registerContextMenuHandlers } = require('./contextMenu');
-const { registerTasksHandlers } = require('./tasks');
-const { registerAuthProtocol, registerAuthHandlers } = require('./auth');
-const { registerSyncHandlers } = require('./sync');
-const { registerCalendarHandlers } = require('./calendar');
-const { registerSheetsHandlers } = require('./sheets');
-const { registerCanvasHandlers } = require('./canvas');
+import { app, BrowserWindow, Menu, net, protocol } from 'electron';
+import fs from 'fs';
+import path from 'path';
+import { pathToFileURL, URL } from 'url';
+
+import { registerAuthHandlers, registerAuthProtocol } from './auth';
+import { registerCalendarHandlers } from './calendar';
+import { registerContextMenuHandlers } from './contextMenu';
+import { registerOccurrencesHandlers } from './occurrences';
+import { registerPreferencesHandlers } from './preferences';
+import { registerPropertiesHandlers } from './properties';
+import { registerSyncHandlers } from './sync';
+import { registerTasksHandlers } from './tasks';
+import { checkOnStartup, registerUpdaterHandlers } from './updater';
+import { registerVaultHandlers } from './vault';
+import { registerVaultsHandlers } from './vaults';
 
 // Phase 1 : fenêtre qui charge le renderer web d'Expo (partagé avec
 // apps/mobile) + le vault local (accès fs natif, voir vault.js et
@@ -42,7 +43,7 @@ protocol.registerSchemesAsPrivileged([
   { scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true } },
 ]);
 
-function registerAppProtocol() {
+function registerAppProtocol(): void {
   protocol.handle('app', (request) => {
     const { pathname } = new URL(request.url);
     let filePath = path.join(WEB_BUILD_DIR, decodeURIComponent(pathname));
@@ -57,9 +58,9 @@ function registerAppProtocol() {
 
 // Référence à la fenêtre principale, pour qu'updater.js/auth.js puissent lui
 // pousser des évènements (mise à jour dispo, callback OAuth reçu...).
-let mainWindow = null;
+let mainWindow: BrowserWindow | null = null;
 
-function createWindow() {
+function createWindow(): void {
   const win = new BrowserWindow({
     width: 1200,
     height: 800,
@@ -77,9 +78,9 @@ function createWindow() {
   });
 
   if (isDev) {
-    win.loadURL(DEV_URL);
+    void win.loadURL(DEV_URL);
   } else {
-    win.loadURL('app://-/');
+    void win.loadURL('app://-/');
   }
 }
 
@@ -101,7 +102,7 @@ if (!gotSingleInstanceLock) {
   // whenReady().then(...).
   registerAuthHandlers(() => mainWindow);
 
-  app.whenReady().then(() => {
+  void app.whenReady().then(() => {
     // Retire la barre de menu par défaut (File/Edit/View/Window) qu'Electron
     // ajoute automatiquement — l'app n'en a pas l'usage. Sur macOS, ça retire
     // aussi les raccourcis clavier standards habituellement câblés via les
@@ -118,8 +119,8 @@ if (!gotSingleInstanceLock) {
     registerTasksHandlers(() => mainWindow);
     registerSyncHandlers();
     registerCalendarHandlers();
-    registerSheetsHandlers(() => mainWindow);
-    registerCanvasHandlers(() => mainWindow);
+    registerPropertiesHandlers();
+    registerOccurrencesHandlers();
     registerAuthProtocol();
 
     if (!isDev) {

@@ -1,8 +1,76 @@
-const { ipcMain } = require('electron');
-const fs = require('fs/promises');
-const fsSync = require('fs');
-const path = require('path');
-const vaults = require('./vaults');
+import { dialog, ipcMain, type BrowserWindow } from 'electron';
+import crypto from 'crypto';
+import fs from 'fs/promises';
+import fsSync from 'fs';
+import path from 'path';
+
+import * as vaults from './vaults';
+import type { VaultEntryKind, VaultOrder, VaultTreeNode } from './types';
+
+type GetWindow = () => BrowserWindow | null;
+
+const ATTACHMENTS_FOLDER = 'attachments';
+
+const MIME_BY_EXTENSION: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.svg': 'image/svg+xml',
+  '.mp3': 'audio/mpeg',
+  '.wav': 'audio/wav',
+  '.ogg': 'audio/ogg',
+  '.m4a': 'audio/mp4',
+  '.flac': 'audio/flac',
+};
+
+function guessMimeType(fileName: string): string {
+  return MIME_BY_EXTENSION[path.extname(fileName).toLowerCase()] ?? 'application/octet-stream';
+}
+
+// Un fichier du vault est reconnu comme "note" (feuille de l'arbre, ouvrable
+// dans NotesScreen.tsx) selon son extension, qui détermine aussi son `kind`
+// — pilote l'éditeur affiché côté renderer (MDX/CanvasEditor/ChartEditor,
+// voir NotesScreen.tsx) et l'icône dans VaultTreeView.tsx. `.canvas` aligné
+// sur JSON Canvas (https://jsoncanvas.org), `.chart` sur le format maison
+// déjà utilisé par sheets.js (voir defaultContentForKind ci-dessous).
+const EXTENSION_TO_KIND: Record<string, VaultEntryKind> = {
+  '.mdx': 'markdown',
+  '.canvas': 'canvas',
+  '.chart': 'chart',
+};
+
+const KIND_TO_EXTENSION: Record<VaultEntryKind, string> = {
+  markdown: '.mdx',
+  canvas: '.canvas',
+  chart: '.chart',
+};
+
+// Contenu initial d'un fichier fraîchement créé, selon son `kind` — gabarit
+// frontmatter pour une note, structures JSON vides mais valides sinon (un
+// CanvasEditor/ChartEditor vide doit pouvoir parser le fichier tel quel dès
+// sa création, sans cas particulier "fichier neuf").
+function defaultContentForKind(kind: VaultEntryKind, safeName: string): string {
+  if (kind === 'canvas') {
+    return JSON.stringify({ nodes: [], edges: [] }, null, 2);
+  }
+  if (kind === 'chart') {
+    return JSON.stringify(
+      {
+        columns: [
+          { id: crypto.randomUUID(), name: 'Colonne A' },
+          { id: crypto.randomUUID(), name: 'Colonne B' },
+        ],
+        rows: [],
+        chart: null,
+      },
+      null,
+      2,
+    );
+  }
+  return `---\ntitle: ${safeName}\ncreated: ${new Date().toISOString()}\n---\n\n`;
+}
 
 // Phase 1 : vault local minimal — un dossier choisi par l'utilisateur·rice,
 // des fichiers .mdx et des dossiers dedans, exposés comme une vraie
@@ -12,7 +80,7 @@ const vaults = require('./vaults');
 // connaît plus de `vaultPath` en dur : `getVaultPath()` délègue au coffre
 // ACTIF du registre. Tout le reste (walkTree, resolveInVault, les handlers
 // vault:*) est inchangé — un seul point de couture avec vaults.js.
-function getVaultPath() {
+function getVaultPath(): string | null {
   return vaults.getActiveVaultPath();
 }
 
@@ -20,7 +88,7 @@ function getVaultPath() {
 // le renderer ne peut pas manipuler fs directement, mais mieux vaut quand
 // même ne jamais faire confiance à un relPath IPC sans vérifier qu'il reste
 // dans le vault (ex. contre un "../../etc/passwd" mal intentionné ou bugué).
-function resolveInVault(vaultPath, relPath) {
+function resolveInVault(vaultPath: string, relPath: string): string {
   const root = path.resolve(vaultPath);
   const resolved = path.resolve(root, relPath);
   if (resolved !== root && !resolved.startsWith(root + path.sep)) {
@@ -32,7 +100,7 @@ function resolveInVault(vaultPath, relPath) {
 // Trouve un nom de fichier/dossier disponible dans `dir` en suffixant
 // " 2", " 3"... si `candidate` existe déjà — mêmes règles pour les notes et
 // les dossiers.
-function findAvailableName(dir, candidate, extension = '') {
+function findAvailableName(dir: string, candidate: string, extension = ''): string {
   let name = candidate;
   let counter = 2;
   while (fsSync.existsSync(path.join(dir, `${name}${extension}`))) {
@@ -42,12 +110,42 @@ function findAvailableName(dir, candidate, extension = '') {
   return `${name}${extension}`;
 }
 
+function getOrderFilePath(vaultPath: string): string {
+  return path.join(vaultPath, '.123ecriture', 'order.json');
+}
+
+// Ordre manuel des enfants d'un dossier — voir vault:reorder plus bas et
+// apps/mobile/components/NotesScreen.tsx (glisser pour réordonner). Une clé
+// par dossier PARENT (chemin relatif, "" pour la racine du vault), valeur =
+// noms d'enfants dans l'ordre voulu. Absent/illisible = pas encore de tri
+// manuel dans ce vault, on retombe sur le tri alphabétique par défaut.
+function readOrder(vaultPath: string): VaultOrder {
+  try {
+    return JSON.parse(fsSync.readFileSync(getOrderFilePath(vaultPath), 'utf8')) as VaultOrder;
+  } catch {
+    return {};
+  }
+}
+
+async function writeOrder(vaultPath: string, order: VaultOrder): Promise<VaultOrder> {
+  const filePath = getOrderFilePath(vaultPath);
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.writeFile(filePath, JSON.stringify(order, null, 2), 'utf8');
+  return order;
+}
+
 // Arborescence complète du vault : dossiers avec leurs enfants, notes en
-// feuilles. Dossiers d'abord puis notes, triés alphabétiquement à chaque
-// niveau — plus stable pour naviguer qu'un tri par date de modification.
-async function walkTree(dir, vaultRoot) {
+// feuilles. Tri par défaut : dossiers d'abord puis notes, alphabétique à
+// chaque niveau — plus stable pour naviguer qu'un tri par date de
+// modification. Si `order` contient une entrée pour ce dossier (voir
+// readOrder), elle prime : les enfants qui y figurent sortent dans cet
+// ordre-là, ceux qui n'y figurent pas (nouveaux, ou order.json pas encore
+// mis à jour) restent à la suite dans leur ordre alphabétique habituel —
+// pas besoin de purger les noms obsolètes (renommés/supprimés), ils sont
+// simplement ignorés puisqu'introuvables dans `nodes`.
+async function walkTree(dir: string, vaultRoot: string, order: VaultOrder): Promise<VaultTreeNode[]> {
   const entries = await fs.readdir(dir, { withFileTypes: true });
-  const nodes = [];
+  const nodes: VaultTreeNode[] = [];
 
   for (const entry of entries) {
     // Ignore les dossiers/fichiers cachés (.123ecriture/ config vault,
@@ -56,20 +154,22 @@ async function walkTree(dir, vaultRoot) {
     const fullPath = path.join(dir, entry.name);
 
     if (entry.isDirectory()) {
-      const children = await walkTree(fullPath, vaultRoot);
+      const children = await walkTree(fullPath, vaultRoot, order);
       nodes.push({
         type: 'folder',
         relPath: path.relative(vaultRoot, fullPath),
         name: entry.name,
         children,
       });
-    } else if (entry.isFile() && entry.name.endsWith('.mdx')) {
+    } else if (entry.isFile() && EXTENSION_TO_KIND[path.extname(entry.name)]) {
       const stat = await fs.stat(fullPath);
+      const extension = path.extname(entry.name);
       nodes.push({
         type: 'note',
         relPath: path.relative(vaultRoot, fullPath),
-        name: entry.name.replace(/\.mdx$/, ''),
+        name: entry.name.slice(0, -extension.length),
         modifiedAt: stat.mtimeMs,
+        kind: EXTENSION_TO_KIND[extension],
       });
     }
   }
@@ -78,10 +178,21 @@ async function walkTree(dir, vaultRoot) {
     if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
     return a.name.localeCompare(b.name, 'fr');
   });
+
+  const orderKey = path.relative(vaultRoot, dir);
+  const savedOrder = order?.[orderKey];
+  if (savedOrder && savedOrder.length > 0) {
+    const rank = new Map(savedOrder.map((name, index) => [name, index]));
+    // Tri stable (garantie ES2019+) : les nœuds absents de `rank` (rang
+    // Infinity, tous égaux entre eux) conservent l'ordre alphabétique déjà
+    // établi ci-dessus plutôt que d'être mélangés.
+    nodes.sort((a, b) => (rank.get(a.name) ?? Infinity) - (rank.get(b.name) ?? Infinity));
+  }
+
   return nodes;
 }
 
-function registerVaultHandlers(getWindow) {
+export function registerVaultHandlers(getWindow: GetWindow): void {
   // Gardé tel quel (nom + signature) car consommé directement par
   // NotesScreen.tsx/TasksScreen.tsx (écran vide "Choisir un dossier") —
   // délègue maintenant à vaults.js (ajoute+active le dossier choisi dans le
@@ -97,16 +208,31 @@ function registerVaultHandlers(getWindow) {
   ipcMain.handle('vault:list-tree', async () => {
     const vaultPath = getVaultPath();
     if (!vaultPath) return [];
-    return walkTree(vaultPath, vaultPath);
+    return walkTree(vaultPath, vaultPath, readOrder(vaultPath));
   });
 
-  ipcMain.handle('vault:read-note', async (_event, relPath) => {
+  // Persiste l'ordre manuel des enfants d'un dossier (glisser pour
+  // réordonner, voir NotesScreen.tsx) et renvoie l'arborescence à jour —
+  // même forme de réponse que vault:list-tree, pour éviter un aller-retour
+  // supplémentaire côté renderer après un reorder.
+  ipcMain.handle('vault:reorder', async (_event, parentRelPath: string | undefined, orderedNames: unknown) => {
+    const vaultPath = getVaultPath();
+    if (!vaultPath) throw new Error('Aucun vault sélectionné');
+    if (!Array.isArray(orderedNames)) throw new Error('Ordre invalide.');
+
+    const order = readOrder(vaultPath);
+    order[parentRelPath ?? ''] = orderedNames as string[];
+    await writeOrder(vaultPath, order);
+    return walkTree(vaultPath, vaultPath, order);
+  });
+
+  ipcMain.handle('vault:read-note', async (_event, relPath: string) => {
     const vaultPath = getVaultPath();
     if (!vaultPath) throw new Error('Aucun vault sélectionné');
     return fs.readFile(resolveInVault(vaultPath, relPath), 'utf8');
   });
 
-  ipcMain.handle('vault:write-note', async (_event, relPath, content) => {
+  ipcMain.handle('vault:write-note', async (_event, relPath: string, content: string) => {
     const vaultPath = getVaultPath();
     if (!vaultPath) throw new Error('Aucun vault sélectionné');
     await fs.writeFile(resolveInVault(vaultPath, relPath), content, 'utf8');
@@ -114,26 +240,34 @@ function registerVaultHandlers(getWindow) {
 
   // `parentRelPath` optionnel : crée à la racine du vault si omis, sinon
   // dans le dossier visé (clic droit sur un dossier → "Nouvelle note ici").
-  ipcMain.handle('vault:create-note', async (_event, name, parentRelPath) => {
-    const vaultPath = getVaultPath();
-    if (!vaultPath) throw new Error('Aucun vault sélectionné');
-    const parentFull = parentRelPath ? resolveInVault(vaultPath, parentRelPath) : vaultPath;
+  // `kind` optionnel (défaut 'markdown') : voir EXTENSION_TO_KIND/
+  // defaultContentForKind — même handler pour note/canvas/graphique, seul le
+  // gabarit change (clic droit → "Nouveau canvas"/"Nouveau graphique").
+  ipcMain.handle(
+    'vault:create-note',
+    async (_event, name: string, parentRelPath: string | undefined, kind: string | undefined) => {
+      const vaultPath = getVaultPath();
+      if (!vaultPath) throw new Error('Aucun vault sélectionné');
+      const parentFull = parentRelPath ? resolveInVault(vaultPath, parentRelPath) : vaultPath;
 
-    const safeName = name && name.trim().length > 0 ? name.trim() : 'Sans titre';
-    const fileName = findAvailableName(parentFull, safeName, '.mdx');
-    const fullPath = path.join(parentFull, fileName);
-    const template = `---\ntitle: ${safeName}\ncreated: ${new Date().toISOString()}\n---\n\n`;
-    await fs.writeFile(fullPath, template, 'utf8');
-    const stat = await fs.stat(fullPath);
+      const safeKind: VaultEntryKind = kind && kind in KIND_TO_EXTENSION ? (kind as VaultEntryKind) : 'markdown';
+      const extension = KIND_TO_EXTENSION[safeKind];
+      const safeName = name && name.trim().length > 0 ? name.trim() : 'Sans titre';
+      const fileName = findAvailableName(parentFull, safeName, extension);
+      const fullPath = path.join(parentFull, fileName);
+      await fs.writeFile(fullPath, defaultContentForKind(safeKind, safeName), 'utf8');
+      const stat = await fs.stat(fullPath);
 
-    return {
-      relPath: path.relative(vaultPath, fullPath),
-      name: fileName.replace(/\.mdx$/, ''),
-      modifiedAt: stat.mtimeMs,
-    };
-  });
+      return {
+        relPath: path.relative(vaultPath, fullPath),
+        name: fileName.slice(0, -extension.length),
+        modifiedAt: stat.mtimeMs,
+        kind: safeKind,
+      };
+    },
+  );
 
-  ipcMain.handle('vault:create-folder', async (_event, name, parentRelPath) => {
+  ipcMain.handle('vault:create-folder', async (_event, name: string, parentRelPath: string | undefined) => {
     const vaultPath = getVaultPath();
     if (!vaultPath) throw new Error('Aucun vault sélectionné');
     const parentFull = parentRelPath ? resolveInVault(vaultPath, parentRelPath) : vaultPath;
@@ -152,7 +286,7 @@ function registerVaultHandlers(getWindow) {
   // dossier fixe `Journal/`, un fichier par jour nommé AAAA-MM-JJ.mdx.
   // Idempotent : si la note existe déjà, la renvoie telle quelle sans la
   // toucher (jamais d'écrasement d'une note journalière déjà écrite).
-  ipcMain.handle('vault:ensure-daily-note', async (_event, dateIso) => {
+  ipcMain.handle('vault:ensure-daily-note', async (_event, dateIso: string) => {
     const vaultPath = getVaultPath();
     if (!vaultPath) throw new Error('Aucun vault sélectionné');
     if (!/^\d{4}-\d{2}-\d{2}$/.test(dateIso ?? '')) {
@@ -176,9 +310,51 @@ function registerVaultHandlers(getWindow) {
     };
   });
 
+  // Pièce jointe (image/audio/fichier) pour une note — voir
+  // apps/mobile/components/NoteRenderer.tsx (rendu de `![[...]]`, syntaxe
+  // d'embed Obsidian). Copiée dans un dossier `attachments/` à la RACINE du
+  // vault (pas à côté de la note) : une pièce jointe référencée par son seul
+  // nom reste valide même si la note qui la référence est ensuite déplacée/
+  // renommée — un dossier par note aurait cassé ce lien à chaque
+  // déplacement.
+  ipcMain.handle('vault:import-attachment', async () => {
+    const vaultPath = getVaultPath();
+    if (!vaultPath) throw new Error('Aucun vault sélectionné');
+
+    const result = await dialog.showOpenDialog({ properties: ['openFile'] });
+    if (result.canceled || result.filePaths.length === 0) return null;
+
+    const sourcePath = result.filePaths[0];
+    const attachmentsDir = path.join(vaultPath, ATTACHMENTS_FOLDER);
+    await fs.mkdir(attachmentsDir, { recursive: true });
+    const extension = path.extname(sourcePath);
+    const baseName = path.basename(sourcePath, extension);
+    const finalName = findAvailableName(attachmentsDir, baseName, extension);
+    const destPath = path.join(attachmentsDir, finalName);
+    await fs.copyFile(sourcePath, destPath);
+
+    return { relPath: path.relative(vaultPath, destPath), name: finalName };
+  });
+
+  // Contenu d'une pièce jointe en URI `data:` (image/audio affichés inline
+  // dans NoteRenderer.tsx) — plus simple et plus fiable ici qu'un protocole
+  // personnalisé dédié (le renderer charge déjà tout via `app://`/le
+  // serveur de dev Expo, un `file://` direct se heurterait aux règles de
+  // sécurité de Chromium selon l'origine). Accepte un nom seul (résolu dans
+  // `attachments/`) ou un relPath complet, pour rester utilisable si des
+  // pièces jointes non conventionnelles apparaissent plus tard.
+  ipcMain.handle('vault:read-attachment-data-url', async (_event, relPath: string) => {
+    const vaultPath = getVaultPath();
+    if (!vaultPath) throw new Error('Aucun vault sélectionné');
+    const target = relPath && relPath.includes('/') ? relPath : path.join(ATTACHMENTS_FOLDER, relPath ?? '');
+    const fullPath = resolveInVault(vaultPath, target);
+    const buffer = await fs.readFile(fullPath);
+    return `data:${guessMimeType(fullPath)};base64,${buffer.toString('base64')}`;
+  });
+
   // Renomme une note ou un dossier (détection automatique du type via
   // fs.stat) — reste dans le même dossier parent, pas de déplacement.
-  ipcMain.handle('vault:rename', async (_event, relPath, newName) => {
+  ipcMain.handle('vault:rename', async (_event, relPath: string, newName: string) => {
     const vaultPath = getVaultPath();
     if (!vaultPath) throw new Error('Aucun vault sélectionné');
 
@@ -208,7 +384,7 @@ function registerVaultHandlers(getWindow) {
   // racine si destinationParentRelPath est omis). Contrairement à
   // vault:rename, ça change le dossier parent — le nom reste le même sauf
   // collision à destination.
-  ipcMain.handle('vault:move', async (_event, relPath, destinationParentRelPath) => {
+  ipcMain.handle('vault:move', async (_event, relPath: string, destinationParentRelPath: string | undefined) => {
     const vaultPath = getVaultPath();
     if (!vaultPath) throw new Error('Aucun vault sélectionné');
 
@@ -252,7 +428,7 @@ function registerVaultHandlers(getWindow) {
   // édition "manuelle" de chemin. Contrairement à create-note/create-folder,
   // AUCUN renommage automatique en " 2"/" 3" en cas de collision : c'est une
   // erreur, l'utilisatrice a tapé ce chemin précis exprès.
-  ipcMain.handle('vault:set-path', async (_event, relPath, newRelPath) => {
+  ipcMain.handle('vault:set-path', async (_event, relPath: string, newRelPath: string) => {
     const vaultPath = getVaultPath();
     if (!vaultPath) throw new Error('Aucun vault sélectionné');
 
@@ -295,5 +471,3 @@ function registerVaultHandlers(getWindow) {
     };
   });
 }
-
-module.exports = { registerVaultHandlers };

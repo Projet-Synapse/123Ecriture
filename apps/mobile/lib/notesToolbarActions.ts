@@ -1,6 +1,7 @@
 import {
   applyHeading,
   insertLink,
+  insertTable,
   toggleLinePrefix,
   toggleNumberedList,
   wrapSelection,
@@ -25,7 +26,8 @@ export type ToolbarActionId =
   | 'quote'
   | 'bullet'
   | 'numbered'
-  | 'link';
+  | 'link'
+  | 'table';
 
 export type ToolbarAction = {
   id: ToolbarActionId;
@@ -44,6 +46,7 @@ export const NOTES_TOOLBAR_ACTIONS: ToolbarAction[] = [
   { id: 'bullet', label: '•', run: (text, sel) => toggleLinePrefix(text, sel, '- ') },
   { id: 'numbered', label: '1.', run: (text, sel) => toggleNumberedList(text, sel) },
   { id: 'link', label: '🔗', run: (text, sel) => insertLink(text, sel) },
+  { id: 'table', label: '▦', run: (text, sel) => insertTable(text, sel) },
 ];
 
 // Libellés lisibles pour la liste de réorganisation dans Paramètres (plus
@@ -59,6 +62,7 @@ export const NOTES_TOOLBAR_DESCRIPTIONS: Record<ToolbarActionId, string> = {
   bullet: 'Liste à puces',
   numbered: 'Liste numérotée',
   link: 'Lien',
+  table: 'Tableau',
 };
 
 export const DEFAULT_NOTES_TOOLBAR_ORDER: { id: ToolbarActionId; visible: boolean }[] =

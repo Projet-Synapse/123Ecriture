@@ -3,8 +3,6 @@ import { useCallback, useState } from 'react';
 
 import { AppShell } from './components/AppShell';
 import { CalendarScreen } from './components/CalendarScreen';
-import { CanvasScreen } from './components/CanvasScreen';
-import { ChartsScreen } from './components/ChartsScreen';
 import { NotesScreen } from './components/NotesScreen';
 import { PlaceholderScreen } from './components/PlaceholderScreen';
 import { SettingsScreen } from './components/SettingsScreen';
@@ -18,10 +16,12 @@ function Root() {
   const [activeId, setActiveId] = useState(SECTIONS[0].id);
   const activeSection = SECTIONS.find((section) => section.id === activeId) ?? SECTIONS[0];
 
-  // Mécanisme partagé "ouvrir cette note" depuis un autre écran (carte-note
-  // du Canvas, "Ouvrir la note du jour" du Calendrier) : on bascule sur
-  // l'onglet Notes ET on note le relPath à ouvrir ; NotesScreen le
-  // consomme dans un effet dès qu'il change, puis prévient qu'il l'a fait
+  // Mécanisme partagé "ouvrir cette note" depuis un autre écran ("Ouvrir la
+  // note du jour" du Calendrier — une carte-note de Canvas, elle, s'ouvre
+  // directement DANS NotesScreen puisque Canvas y est maintenant embarqué en
+  // tant que type de fichier, plus besoin de ce mécanisme pour ce cas) : on
+  // bascule sur l'onglet Notes ET on note le relPath à ouvrir ; NotesScreen
+  // le consomme dans un effet dès qu'il change, puis prévient qu'il l'a fait
   // (onOpenedPendingNote) pour qu'on le remette à null — sinon rouvrir le
   // même onglet Notes sans repasser par un autre écran re-déclencherait
   // l'ouverture à chaque fois.
@@ -39,10 +39,6 @@ function Root() {
     content = <TasksScreen />;
   } else if (activeId === 'calendar') {
     content = <CalendarScreen onRequestOpenNote={requestOpenNote} />;
-  } else if (activeId === 'charts') {
-    content = <ChartsScreen />;
-  } else if (activeId === 'canvas') {
-    content = <CanvasScreen onRequestOpenNote={requestOpenNote} />;
   } else if (activeId === 'settings') {
     content = <SettingsScreen />;
   } else {

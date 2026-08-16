@@ -1,5 +1,7 @@
-const { app, ipcMain, shell } = require('electron');
-const path = require('path');
+import { app, ipcMain, shell, type BrowserWindow } from 'electron';
+import path from 'path';
+
+type GetWindow = () => BrowserWindow | null;
 
 // Connexion Google via Supabase Auth (OAuth système, PKCE) — voir
 // docs/ARCHITECTURE.md §6 et apps/mobile/lib/sync/AuthContext.tsx. Le client
@@ -20,7 +22,7 @@ const path = require('path');
 // `123ecriture` seul est donc invalide ("Protocol scheme must start with an
 // ASCII letter", trouvé en lançant réellement le build packagé). D'où le
 // préfixe `app`.
-const PROTOCOL = 'app123ecriture';
+export const PROTOCOL = 'app123ecriture';
 
 // Enregistre l'app comme gestionnaire du protocole `app123ecriture://`. En dev
 // (non empaqueté), Electron a besoin du chemin de l'exécutable + du script
@@ -28,7 +30,7 @@ const PROTOCOL = 'app123ecriture';
 // particulier relance juste `electron.exe` sans argument) ; en build
 // empaqueté, l'appel simple suffit (voir aussi `build.protocols` dans
 // apps/desktop/package.json pour l'enregistrement au niveau OS/installeur).
-function registerAuthProtocol() {
+export function registerAuthProtocol(): void {
   if (process.defaultApp && process.argv.length >= 2) {
     app.setAsDefaultProtocolClient(PROTOCOL, process.execPath, [path.resolve(process.argv[1])]);
   } else {
@@ -38,19 +40,19 @@ function registerAuthProtocol() {
 
 // Windows/Linux : le protocole personnalisé relance l'app (captée par le
 // verrou mono-instance dans main.js) avec l'URL quelque part dans argv.
-function findProtocolUrlInArgv(argv) {
+export function findProtocolUrlInArgv(argv: string[]): string | null {
   return argv.find((arg) => arg.startsWith(`${PROTOCOL}://`)) ?? null;
 }
 
-function registerAuthHandlers(getWindow) {
-  ipcMain.handle('auth:open-external', async (_event, url) => {
+export function registerAuthHandlers(getWindow: GetWindow): void {
+  ipcMain.handle('auth:open-external', async (_event, url: unknown) => {
     if (typeof url !== 'string' || !url.startsWith('https://')) {
       throw new Error('URL de connexion invalide.');
     }
     await shell.openExternal(url);
   });
 
-  const deliverCallback = (url) => {
+  const deliverCallback = (url: string) => {
     const win = getWindow?.();
     if (!win) return;
     // Le navigateur système a pris le focus pendant la connexion — le
@@ -82,5 +84,3 @@ function registerAuthHandlers(getWindow) {
     if (url) deliverCallback(url);
   });
 }
-
-module.exports = { PROTOCOL, registerAuthProtocol, registerAuthHandlers, findProtocolUrlInArgv };

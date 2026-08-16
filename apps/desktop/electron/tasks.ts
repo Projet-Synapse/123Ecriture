@@ -1,9 +1,13 @@
-const { ipcMain } = require('electron');
-const fs = require('fs/promises');
-const fsSync = require('fs');
-const path = require('path');
-const crypto = require('crypto');
-const vaults = require('./vaults');
+import { ipcMain, type BrowserWindow } from 'electron';
+import fs from 'fs/promises';
+import fsSync from 'fs';
+import path from 'path';
+import crypto from 'crypto';
+
+import * as vaults from './vaults';
+import type { Task, TaskList, TaskListsData } from './types';
+
+type GetWindow = () => BrowserWindow | null;
 
 // Module de productivité "Tâches" (voir docs/ARCHITECTURE.md §8) : listes de
 // tâches, stockées DANS le vault (pas dans le config.json app-level comme
@@ -30,42 +34,42 @@ const vaults = require('./vaults');
 // qu'un seul module — à construire quand un deuxième (calendrier...)
 // arrivera et qu'un pattern commun se dessinera vraiment.
 
-function getVaultPath() {
+function getVaultPath(): string | null {
   return vaults.getActiveVaultPath();
 }
 
-function getTasksFilePath(vaultPath) {
+function getTasksFilePath(vaultPath: string): string {
   return path.join(vaultPath, '.123ecriture', 'tasks.json');
 }
 
-function getTaskListsFilePath(vaultPath) {
+function getTaskListsFilePath(vaultPath: string): string {
   return path.join(vaultPath, '.123ecriture', 'tasklists.json');
 }
 
-function readTasks(vaultPath) {
+function readTasks(vaultPath: string): Task[] {
   try {
-    return JSON.parse(fsSync.readFileSync(getTasksFilePath(vaultPath), 'utf8'));
+    return JSON.parse(fsSync.readFileSync(getTasksFilePath(vaultPath), 'utf8')) as Task[];
   } catch {
     return [];
   }
 }
 
-async function writeTasks(vaultPath, tasks) {
+async function writeTasks(vaultPath: string, tasks: Task[]): Promise<Task[]> {
   const filePath = getTasksFilePath(vaultPath);
   await fs.mkdir(path.dirname(filePath), { recursive: true });
   await fs.writeFile(filePath, JSON.stringify(tasks, null, 2), 'utf8');
   return tasks;
 }
 
-function readTaskListsRaw(vaultPath) {
+function readTaskListsRaw(vaultPath: string): TaskListsData | null {
   try {
-    return JSON.parse(fsSync.readFileSync(getTaskListsFilePath(vaultPath), 'utf8'));
+    return JSON.parse(fsSync.readFileSync(getTaskListsFilePath(vaultPath), 'utf8')) as TaskListsData;
   } catch {
     return null;
   }
 }
 
-function writeTaskLists(vaultPath, data) {
+function writeTaskLists(vaultPath: string, data: TaskListsData): TaskListsData {
   const filePath = getTaskListsFilePath(vaultPath);
   fsSync.mkdirSync(path.dirname(filePath), { recursive: true });
   fsSync.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf8');
@@ -77,11 +81,11 @@ function writeTaskLists(vaultPath, data) {
 // consulté, crée une liste par défaut et y rattache les tâches existantes
 // qui n'ont pas encore de `listId` (tâches créées avant cette fonctionnalité
 // — jamais perdues, juste rangées dans la liste par défaut).
-function migrateTaskLists(vaultPath) {
+function migrateTaskLists(vaultPath: string): TaskListsData {
   let data = readTaskListsRaw(vaultPath);
   if (data) return data;
 
-  const defaultList = { id: crypto.randomUUID(), name: 'Tâches', createdAt: new Date().toISOString() };
+  const defaultList: TaskList = { id: crypto.randomUUID(), name: 'Tâches', createdAt: new Date().toISOString() };
   data = { lists: [defaultList], activeListId: defaultList.id };
   writeTaskLists(vaultPath, data);
 
@@ -97,26 +101,26 @@ function migrateTaskLists(vaultPath) {
   return data;
 }
 
-function getTaskLists(vaultPath) {
+function getTaskLists(vaultPath: string): TaskList[] {
   return migrateTaskLists(vaultPath).lists;
 }
 
-function getActiveListId(vaultPath) {
+function getActiveListId(vaultPath: string): string | null {
   return migrateTaskLists(vaultPath).activeListId;
 }
 
-function findListOrThrow(lists, id) {
+function findListOrThrow(lists: TaskList[], id: string): TaskList {
   const list = lists.find((l) => l.id === id);
   if (!list) throw new Error('Liste introuvable.');
   return list;
 }
 
-function broadcastTaskListsChanged(getWindow, vaultPath) {
+function broadcastTaskListsChanged(getWindow: GetWindow, vaultPath: string): void {
   const win = getWindow?.();
   if (win) win.webContents.send('tasklists:changed', getTaskLists(vaultPath));
 }
 
-function registerTasksHandlers(getWindow) {
+export function registerTasksHandlers(getWindow: GetWindow): void {
   ipcMain.handle('tasklists:list', () => {
     const vaultPath = getVaultPath();
     if (!vaultPath) return [];
@@ -129,14 +133,14 @@ function registerTasksHandlers(getWindow) {
     return getActiveListId(vaultPath);
   });
 
-  ipcMain.handle('tasklists:create', (_event, name) => {
+  ipcMain.handle('tasklists:create', (_event, name: string) => {
     const vaultPath = getVaultPath();
     if (!vaultPath) throw new Error('Aucun vault sélectionné');
     const trimmed = (name ?? '').trim();
     if (!trimmed) throw new Error('Le nom de la liste ne peut pas être vide.');
 
     const data = migrateTaskLists(vaultPath);
-    const list = { id: crypto.randomUUID(), name: trimmed, createdAt: new Date().toISOString() };
+    const list: TaskList = { id: crypto.randomUUID(), name: trimmed, createdAt: new Date().toISOString() };
     data.lists.push(list);
     data.activeListId = list.id;
     writeTaskLists(vaultPath, data);
@@ -144,7 +148,7 @@ function registerTasksHandlers(getWindow) {
     return data.lists;
   });
 
-  ipcMain.handle('tasklists:rename', (_event, id, name) => {
+  ipcMain.handle('tasklists:rename', (_event, id: string, name: string) => {
     const vaultPath = getVaultPath();
     if (!vaultPath) throw new Error('Aucun vault sélectionné');
     const trimmed = (name ?? '').trim();
@@ -164,7 +168,7 @@ function registerTasksHandlers(getWindow) {
   // c'était la dernière liste, le coffre se retrouve sans liste active ;
   // l'écran Tâches propose alors d'en créer une nouvelle (même traitement
   // que "0 coffre" côté Paramètres).
-  ipcMain.handle('tasklists:remove', (_event, id) => {
+  ipcMain.handle('tasklists:remove', (_event, id: string) => {
     const vaultPath = getVaultPath();
     if (!vaultPath) throw new Error('Aucun vault sélectionné');
 
@@ -182,7 +186,7 @@ function registerTasksHandlers(getWindow) {
     return data.lists;
   });
 
-  ipcMain.handle('tasklists:switch', (_event, id) => {
+  ipcMain.handle('tasklists:switch', (_event, id: string) => {
     const vaultPath = getVaultPath();
     if (!vaultPath) throw new Error('Aucun vault sélectionné');
 
@@ -201,7 +205,7 @@ function registerTasksHandlers(getWindow) {
     return readTasks(vaultPath).filter((task) => task.listId === activeListId);
   });
 
-  ipcMain.handle('tasks:add', async (_event, text) => {
+  ipcMain.handle('tasks:add', async (_event, text: string) => {
     const vaultPath = getVaultPath();
     if (!vaultPath) throw new Error('Aucun vault sélectionné');
     const trimmed = (text ?? '').trim();
@@ -225,7 +229,7 @@ function registerTasksHandlers(getWindow) {
     return tasks.filter((task) => task.listId === activeListId);
   });
 
-  ipcMain.handle('tasks:toggle', async (_event, id) => {
+  ipcMain.handle('tasks:toggle', async (_event, id: string) => {
     const vaultPath = getVaultPath();
     if (!vaultPath) throw new Error('Aucun vault sélectionné');
     const activeListId = getActiveListId(vaultPath);
@@ -236,7 +240,7 @@ function registerTasksHandlers(getWindow) {
     return tasks.filter((task) => task.listId === activeListId);
   });
 
-  ipcMain.handle('tasks:remove', async (_event, id) => {
+  ipcMain.handle('tasks:remove', async (_event, id: string) => {
     const vaultPath = getVaultPath();
     if (!vaultPath) throw new Error('Aucun vault sélectionné');
     const activeListId = getActiveListId(vaultPath);
@@ -245,5 +249,3 @@ function registerTasksHandlers(getWindow) {
     return tasks.filter((task) => task.listId === activeListId);
   });
 }
-
-module.exports = { registerTasksHandlers };

@@ -9,19 +9,27 @@
       "Bash(npx expo-doctor:*)",
       "Bash(eas build:*)",
       "Bash(eas update:*)",
+      "Bash(gh release list:*)",
       "Bash(git status:*)",
       "Bash(git diff:*)",
       "Bash(git log:*)",
       "Bash(gh run:*)",
       "Read(./**)",
       "Read(./.env*)",
-      "Bash(git push *)"
+      "Bash(git push *)",
+      "Bash(git tag:*)"
     ],
+
+    "ask": [
+      "Bash(gh release create:*)"
+    ],
+
     "deny": [
       "Read(./**/*.keystore)",
       "Bash(rm -rf:*)",
       "Bash(git push --force:*)"
     ],
+
      "hooks": {
     "Stop": [
       {

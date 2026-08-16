@@ -1,5 +1,5 @@
 import { Fragment, type ComponentProps, type ComponentType } from 'react';
-import { Pressable, StyleSheet, Text, TextInput } from 'react-native';
+import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import type { Theme } from '../theme';
 
@@ -10,7 +10,7 @@ import type { Theme } from '../theme';
 // glisser-déposer HTML5 délégué (voir NotesScreen.tsx) possible sans
 // handler par ligne. Échappatoire de typage locale et explicite plutôt que
 // de parsemer des `as any` dans le JSX plus bas. Exportée : réutilisée telle
-// quelle par CanvasScreen.tsx pour les mêmes raisons (cartes/poignées de
+// quelle par CanvasEditor.tsx pour les mêmes raisons (cartes/poignées de
 // connexion glissables).
 export const DraggablePressable = Pressable as unknown as ComponentType<
   ComponentProps<typeof Pressable> & { draggable?: boolean }
@@ -32,6 +32,15 @@ export const DraggablePressable = Pressable as unknown as ComponentType<
 // un seul écouteur, déjà éprouvée pour le clic droit dans le vide, est un
 // mécanisme bien plus robuste.
 
+// Icône par `kind` de fichier (voir EXTENSION_TO_KIND dans
+// apps/desktop/electron/vault.js) — distingue une note MDX d'un canvas ou
+// d'un graphique dans l'arborescence.
+const NOTE_ICON_BY_KIND: Record<VaultEntryKind, string> = {
+  markdown: '📝',
+  canvas: '🎨',
+  chart: '📊',
+};
+
 export type RenameState = {
   relPath: string;
   value: string;
@@ -49,14 +58,14 @@ type Props = {
   onToggleCollapse: (relPath: string) => void;
   onOpenNote: (node: VaultNoteNode) => void;
   rename: RenameState | null;
-  // Glisser-déposer (voir NotesScreen.tsx, qui délègue les évènements DOM
-  // dragstart/dragover/drop sur le conteneur plutôt que par ligne — même
-  // raison que le clic droit délégué : passer onDragStart/onDragOver
-  // directement en props Pressable n'est pas fiable via react-native-web).
-  // Ce composant reste purement présentationnel : juste `draggable` + le
-  // style de survol/glissement, aucune logique ici.
+  // Glisser pour RÉORDONNER (voir NotesScreen.tsx, qui délègue les
+  // évènements DOM dragstart/dragover/drop sur le conteneur plutôt que par
+  // ligne — même raison que le clic droit délégué : passer onDragStart/
+  // onDragOver directement en props Pressable n'est pas fiable via
+  // react-native-web). Ce composant reste purement présentationnel : juste
+  // `draggable` + le trait d'insertion, aucune logique ici.
   draggingRelPath?: string | null;
-  dragOverRelPath?: string | null;
+  dragOverInsertion?: { relPath: string; edge: 'above' | 'below' } | null;
 };
 
 export function VaultTreeView({
@@ -69,7 +78,7 @@ export function VaultTreeView({
   onOpenNote,
   rename,
   draggingRelPath,
-  dragOverRelPath,
+  dragOverInsertion,
 }: Props) {
   return (
     <>
@@ -78,10 +87,15 @@ export function VaultTreeView({
         const isFolder = node.type === 'folder';
         const isCollapsed = isFolder && collapsedPaths.has(node.relPath);
         const isDragging = draggingRelPath === node.relPath;
-        const isDropTarget = isFolder && dragOverRelPath === node.relPath && !isDragging;
+        const insertionEdge = dragOverInsertion?.relPath === node.relPath ? dragOverInsertion.edge : null;
 
         return (
           <Fragment key={node.relPath}>
+            {insertionEdge === 'above' && (
+              <View style={[styles.insertionLine, { paddingLeft: 12 + depth * 16 }]}>
+                <View style={[styles.insertionLineBar, { backgroundColor: theme.accent }]} />
+              </View>
+            )}
             <DraggablePressable
               onPress={() => (isFolder ? onToggleCollapse(node.relPath) : onOpenNote(node))}
               dataSet={{ relpath: node.relPath }}
@@ -92,10 +106,11 @@ export function VaultTreeView({
                 !isFolder &&
                   node.relPath === activeRelPath && { backgroundColor: `${theme.accent}22` },
                 isDragging && styles.rowDragging,
-                isDropTarget && [styles.rowDropTarget, { borderColor: theme.accent }],
               ]}
             >
-              <Text style={styles.icon}>{isFolder ? (isCollapsed ? '📁' : '📂') : '📝'}</Text>
+              <Text style={styles.icon}>
+                {node.type === 'folder' ? (isCollapsed ? '📁' : '📂') : NOTE_ICON_BY_KIND[node.kind]}
+              </Text>
               {isRenaming ? (
                 <TextInput
                   autoFocus
@@ -114,6 +129,11 @@ export function VaultTreeView({
                 </Text>
               )}
             </DraggablePressable>
+            {insertionEdge === 'below' && (
+              <View style={[styles.insertionLine, { paddingLeft: 12 + depth * 16 }]}>
+                <View style={[styles.insertionLineBar, { backgroundColor: theme.accent }]} />
+              </View>
+            )}
             {isFolder && !isCollapsed && (
               <VaultTreeView
                 nodes={node.children}
@@ -125,7 +145,7 @@ export function VaultTreeView({
                 onOpenNote={onOpenNote}
                 rename={rename}
                 draggingRelPath={draggingRelPath}
-                dragOverRelPath={dragOverRelPath}
+                dragOverInsertion={dragOverInsertion}
               />
             )}
           </Fragment>
@@ -149,9 +169,18 @@ const styles = StyleSheet.create({
   rowDragging: {
     opacity: 0.4,
   },
-  rowDropTarget: {
-    borderWidth: 2,
-    borderRadius: 4,
+  // Hauteur 0 volontaire : le trait (insertionLineBar, en enfant) se
+  // dessine par-dessus l'espacement entre deux lignes sans en changer la
+  // hauteur — sinon la liste "sauterait" visuellement à chaque position
+  // survolée pendant le glisser.
+  insertionLine: {
+    height: 0,
+    paddingRight: 12,
+    justifyContent: 'center',
+  },
+  insertionLineBar: {
+    height: 2,
+    borderRadius: 1,
   },
   renameInput: {
     flex: 1,

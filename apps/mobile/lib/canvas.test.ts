@@ -6,8 +6,8 @@ function makeData(): CanvasData {
   return {
     nodes: [createTextNode('a', 0, 0), createTextNode('b', 100, 100), createTextNode('c', 200, 200)],
     edges: [
-      { id: 'e1', from: 'a', to: 'b' },
-      { id: 'e2', from: 'b', to: 'c' },
+      { id: 'e1', fromNode: 'a', toNode: 'b' },
+      { id: 'e2', fromNode: 'b', toNode: 'c' },
     ],
   };
 }
@@ -22,17 +22,17 @@ describe('removeNodeCascade', () => {
   it('ne touche pas les arêtes sans lien avec le nœud retiré', () => {
     const data: CanvasData = {
       nodes: [createTextNode('a', 0, 0), createTextNode('b', 0, 0), createTextNode('c', 0, 0)],
-      edges: [{ id: 'e1', from: 'a', to: 'b' }],
+      edges: [{ id: 'e1', fromNode: 'a', toNode: 'b' }],
     };
     const result = removeNodeCascade(data, 'c');
-    expect(result.edges).toEqual([{ id: 'e1', from: 'a', to: 'b' }]);
+    expect(result.edges).toEqual([{ id: 'e1', fromNode: 'a', toNode: 'b' }]);
   });
 });
 
 describe('removeEdge', () => {
   it('retire seulement l’arête ciblée', () => {
     const result = removeEdge(makeData(), 'e1');
-    expect(result.edges).toEqual([{ id: 'e2', from: 'b', to: 'c' }]);
+    expect(result.edges).toEqual([{ id: 'e2', fromNode: 'b', toNode: 'c' }]);
   });
 });
 
@@ -41,7 +41,7 @@ describe('addEdgeIfNew', () => {
     const data = makeData();
     const result = addEdgeIfNew(data, 'e3', 'a', 'c');
     expect(result.edges).toHaveLength(3);
-    expect(result.edges[2]).toEqual({ id: 'e3', from: 'a', to: 'c' });
+    expect(result.edges[2]).toMatchObject({ id: 'e3', fromNode: 'a', toNode: 'c' });
   });
 
   it('refuse une arête vers soi-même', () => {

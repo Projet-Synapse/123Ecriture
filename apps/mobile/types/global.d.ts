@@ -5,10 +5,17 @@
 export {};
 
 declare global {
+  // Type de fichier reconnu par le vault, dérivé de l'extension (voir
+  // walkTree dans apps/desktop/electron/vault.js) — pilote l'aiguillage de
+  // NotesScreen.tsx vers l'éditeur MDX, CanvasEditor.tsx ou ChartEditor.tsx,
+  // et l'icône affichée par VaultTreeView.tsx.
+  type VaultEntryKind = 'markdown' | 'canvas' | 'chart';
+
   interface VaultEntry {
     relPath: string;
     name: string;
     modifiedAt: number;
+    kind: VaultEntryKind;
   }
 
   interface VaultFolderEntry {
@@ -26,7 +33,7 @@ declare global {
     listTree: () => Promise<VaultTreeNode[]>;
     readNote: (relPath: string) => Promise<string>;
     writeNote: (relPath: string, content: string) => Promise<void>;
-    createNote: (name: string, parentRelPath?: string) => Promise<VaultEntry>;
+    createNote: (name: string, parentRelPath?: string, kind?: VaultEntryKind) => Promise<VaultEntry>;
     createFolder: (name: string, parentRelPath?: string) => Promise<VaultFolderEntry>;
     rename: (relPath: string, newName: string) => Promise<{ relPath: string; name: string }>;
     move: (
@@ -35,6 +42,9 @@ declare global {
     ) => Promise<{ relPath: string; name: string }>;
     setPath: (relPath: string, newRelPath: string) => Promise<{ relPath: string; name: string }>;
     ensureDailyNote: (dateIso: string) => Promise<VaultEntry>;
+    reorder: (parentRelPath: string | undefined, orderedNames: string[]) => Promise<VaultTreeNode[]>;
+    importAttachment: () => Promise<{ relPath: string; name: string } | null>;
+    readAttachmentDataUrl: (relPath: string) => Promise<string>;
   }
 
   interface VaultRegistryEntry {
@@ -101,22 +111,60 @@ declare global {
     removeEvent: (id: string) => Promise<CalendarEvent[]>;
   }
 
-  interface SheetListEntry {
+  // Schéma global de propriétés typées (voir PropertiesPanel.tsx) — ne
+  // porte que la DÉFINITION (nom + type) ; les valeurs vivent dans le
+  // frontmatter YAML de chaque note (voir lib/frontmatter.ts).
+  type PropertyType = 'text' | 'list' | 'number' | 'checkbox' | 'date' | 'datetime';
+
+  interface PropertyDefinition {
     id: string;
     name: string;
+    type: PropertyType;
     createdAt: string;
   }
 
-  interface SheetListsBridge {
-    list: () => Promise<SheetListEntry[]>;
-    getActive: () => Promise<string | null>;
-    create: (name: string) => Promise<SheetListEntry[]>;
-    rename: (id: string, name: string) => Promise<SheetListEntry[]>;
-    remove: (id: string) => Promise<SheetListEntry[]>;
-    switch: (id: string) => Promise<SheetListEntry[]>;
-    onChanged: (callback: (lists: SheetListEntry[]) => void) => () => void;
+  interface PropertyPatch {
+    name?: string;
+    type?: PropertyType;
   }
 
+  interface PropertiesBridge {
+    list: () => Promise<PropertyDefinition[]>;
+    create: (name: string, type: PropertyType) => Promise<PropertyDefinition[]>;
+    update: (id: string, patch: PropertyPatch) => Promise<PropertyDefinition[]>;
+    remove: (id: string) => Promise<PropertyDefinition[]>;
+  }
+
+  // Dictionnaire personnel des {{occurrences}} (voir OccurrencesPanel.tsx,
+  // lib/markdownPlugins.ts, lib/mdxLivePreview.ts). Renommer un mot
+  // (`update` avec `word`) réécrit `{{ancien}}`→`{{nouveau}}` dans tout le
+  // vault côté main process (apps/desktop/electron/occurrences.js) — pas
+  // juste dans le registre.
+  interface OccurrenceEntry {
+    id: string;
+    word: string;
+    description: string;
+    createdAt: string;
+  }
+
+  interface OccurrencePatch {
+    word?: string;
+    description?: string;
+  }
+
+  interface OccurrencesBridge {
+    list: () => Promise<OccurrenceEntry[]>;
+    create: (word: string, description?: string) => Promise<OccurrenceEntry[]>;
+    update: (id: string, patch: OccurrencePatch) => Promise<OccurrenceEntry[]>;
+    remove: (id: string) => Promise<OccurrenceEntry[]>;
+    findNotes: (word: string) => Promise<string[]>;
+  }
+
+  // Contenu d'un fichier `.chart` (voir defaultContentForKind dans
+  // apps/desktop/electron/vault.js) — plus de registre multi-feuilles
+  // séparé (SheetListsBridge/SheetBridge supprimés) : un `.chart` est lu/
+  // écrit via VaultBridge.readNote/writeNote comme n'importe quel fichier
+  // du vault, son CONTENU (texte JSON) a cette forme.
   interface SheetColumn {
     id: string;
     name: string;
@@ -141,28 +189,12 @@ declare global {
     chart: SheetChartConfig | null;
   }
 
-  interface SheetBridge {
-    getActiveData: () => Promise<SheetData>;
-    saveActiveData: (data: SheetData) => Promise<SheetData>;
-  }
-
-  interface CanvasListEntry {
-    id: string;
-    name: string;
-    createdAt: string;
-  }
-
-  interface CanvasListsBridge {
-    list: () => Promise<CanvasListEntry[]>;
-    getActive: () => Promise<string | null>;
-    create: (name: string) => Promise<CanvasListEntry[]>;
-    rename: (id: string, name: string) => Promise<CanvasListEntry[]>;
-    remove: (id: string) => Promise<CanvasListEntry[]>;
-    switch: (id: string) => Promise<CanvasListEntry[]>;
-    onChanged: (callback: (lists: CanvasListEntry[]) => void) => () => void;
-  }
-
-  type CanvasNodeType = 'text' | 'note';
+  // Champs alignés sur JSON Canvas (spec ouverte publiée par Obsidian,
+  // https://jsoncanvas.org — voir lib/canvas.ts) : un `.canvas` est un
+  // fichier du vault comme un autre (plus de registre séparé, voir
+  // CanvasEditor.tsx), lu/écrit via VaultBridge.readNote/writeNote comme
+  // n'importe quelle note — son CONTENU (texte JSON) a cette forme.
+  type CanvasNodeType = 'text' | 'file';
 
   interface CanvasNode {
     id: string;
@@ -172,24 +204,23 @@ declare global {
     width: number;
     height: number;
     text?: string; // type 'text'
-    relPath?: string; // type 'note'
-    title?: string; // type 'note' — titre affiché, mis en cache au choix de la note
+    file?: string; // type 'file' — relPath de la note référencée
+    title?: string; // type 'file' — titre affiché, mis en cache au choix de la note
   }
+
+  type CanvasEdgeSide = 'top' | 'right' | 'bottom' | 'left';
 
   interface CanvasEdge {
     id: string;
-    from: string;
-    to: string;
+    fromNode: string;
+    fromSide?: CanvasEdgeSide;
+    toNode: string;
+    toSide?: CanvasEdgeSide;
   }
 
   interface CanvasData {
     nodes: CanvasNode[];
     edges: CanvasEdge[];
-  }
-
-  interface CanvasBridge {
-    getActiveData: () => Promise<CanvasData>;
-    saveActiveData: (data: CanvasData) => Promise<CanvasData>;
   }
 
   type UpdaterStatus =
@@ -277,9 +308,7 @@ declare global {
     auth?: AuthBridge;
     sync?: SyncBridge;
     calendar?: CalendarBridge;
-    sheetLists?: SheetListsBridge;
-    sheet?: SheetBridge;
-    canvasLists?: CanvasListsBridge;
-    canvas?: CanvasBridge;
+    properties?: PropertiesBridge;
+    occurrences?: OccurrencesBridge;
   }
 }

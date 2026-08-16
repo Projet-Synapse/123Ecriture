@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import { View } from 'react-native';
 
 // Superposition SVG générique pour dessiner des flèches entre deux points —
-// utilisée par CanvasScreen.tsx pour les connexions entre cartes. Même
+// utilisée par CanvasEditor.tsx pour les connexions entre cartes. Même
 // échappatoire que `draggable` (voir VaultTreeView.tsx) : RN n'a pas de
 // primitive de dessin vectoriel, on injecte un <svg> réel dans le DOM via
 // une ref plutôt que d'ajouter une dépendance (react-native-svg) pour un

@@ -12,7 +12,7 @@ import type { Theme } from '../theme';
 // libellés directs sélectifs plutôt que sur chaque point, le texte des
 // libellés/légendes reste dans les couleurs de TEXTE du thème (jamais la
 // couleur de la série). "Vue tableau" : déjà satisfaite par construction —
-// le tableur lui-même (ChartsScreen.tsx) reste visible à côté du
+// le tableur lui-même (ChartEditor.tsx) reste visible à côté du
 // graphique, ce n'est pas un dashboard qui consomme des données opaques.
 //
 // Rendu en SVG injecté directement dans le DOM (même échappatoire que

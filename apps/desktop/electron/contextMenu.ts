@@ -1,4 +1,6 @@
-const { ipcMain, Menu, BrowserWindow } = require('electron');
+import { BrowserWindow, ipcMain, Menu } from 'electron';
+
+import type { ContextMenuItem } from './types';
 
 // Menu contextuel générique (clic droit) : le renderer fournit la liste des
 // actions ({ id, label }) pertinentes pour l'endroit où il a cliqué (ex.
@@ -7,13 +9,13 @@ const { ipcMain, Menu, BrowserWindow } = require('electron');
 // choisi (ou null si fermé sans choix). Volontairement générique — chaque
 // écran décide de son propre contenu, ce fichier ne connaît aucune logique
 // métier.
-function registerContextMenuHandlers() {
-  ipcMain.handle('context-menu:show', (event, items) => {
-    return new Promise((resolve) => {
+export function registerContextMenuHandlers(): void {
+  ipcMain.handle('context-menu:show', (event, items: ContextMenuItem[]) => {
+    return new Promise<string | null>((resolve) => {
       let resolved = false;
       // Le clic sur un item ET la fermeture du menu (callback de popup())
       // peuvent chacun tenter de résoudre — un seul doit compter.
-      const resolveOnce = (value) => {
+      const resolveOnce = (value: string | null) => {
         if (resolved) return;
         resolved = true;
         resolve(value);
@@ -29,5 +31,3 @@ function registerContextMenuHandlers() {
     });
   });
 }
-
-module.exports = { registerContextMenuHandlers };

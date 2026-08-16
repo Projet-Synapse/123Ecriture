@@ -125,6 +125,76 @@ natives). Toute la logique testable vit dans `packages/`.
   du contenu, pas stockés séparément — recalculés/mis en cache à l'ouverture
   du vault.
 
+> **Écart pragmatique (v0.1.8, révision "avec sérieux")** : Canvas et
+> Graphiques ne sont plus des sections d'app séparées avec leur propre
+> registre multi-documents — ce sont des **types de fichiers du vault**,
+> côte à côte avec les `.mdx` dans la même arborescence, créés par clic
+> droit ("Nouveau canvas"/"Nouveau graphique") comme une note ou un dossier
+> (`apps/desktop/electron/vault.ts`, champ `kind` dérivé de l'extension —
+> `walkTree`/`vault:create-note`). Chaque type garde sa propre barre
+> d'outils, affichée à la place de celle des notes quand ce type de fichier
+> est ouvert (`apps/mobile/components/NotesScreen.tsx`, aiguillage par
+> `kind` vers `CanvasEditor.tsx`/`ChartEditor.tsx`).
+> - `.canvas` : aligné sur **JSON Canvas** (spec ouverte publiée par
+>   Obsidian, https://jsoncanvas.org) — `nodes: [{id, type: 'text'|'file',
+>   x, y, width, height, text?|file?|title?}]`, `edges: [{id, fromNode,
+>   fromSide?, toNode, toSide?}]`.
+> - `.chart` : format JSON maison (pas Vega-Lite, jugé trop lourd pour le
+>   gain) — `{columns, rows, chart: {type, labelColumnId, valueColumnIds}}`
+>   (voir `apps/mobile/lib/sheets.ts`). Le tableur qui l'accompagne reste
+>   nécessaire pour alimenter le graphique (pas encore de lecture depuis un
+>   tableau MDX externe).
+> - Les **tableaux** (GFM `| a | b |`), eux, sont insérables directement
+>   dans un `.mdx` via la barre d'outils des notes — pas un type de fichier
+>   séparé.
+> - Rendu Markdown réel des notes (`markdown-it` + `react-native-markdown-display`,
+>   `apps/mobile/lib/markdownPlugins.ts`) : `[[liens internes]]`, `#tags`,
+>   `![[pièces jointes]]` (images/audio, syntaxe Obsidian), `{{occurrences}}`
+>   (voir plus bas), 3 modes d'affichage (Source/Intermédiaire/Aperçu).
+> - **Excalidraw** (demandé, pas encore implémenté) : format existant
+>   `.excalidraw`, JSON ouvert maintenu par l'équipe Excalidraw elle-même
+>   (`{type: "excalidraw", elements: [...], appState: {...}}`) — à réutiliser
+>   tel quel le jour venu plutôt qu'inventer un format maison.
+
+> **Écart pragmatique (v0.1.8, barre latérale + Live Preview)** :
+> - "Intermédiaire" est maintenant un VRAI Live Preview inline à la
+>   Obsidian, pas un côte-à-côte : le `TextInput` a été remplacé par
+>   CodeMirror 6 (`@uiw/react-codemirror`, `apps/mobile/components/
+>   MdxEditor.tsx`) pour les modes Source ET Intermédiaire — même éditeur,
+>   seule la présence d'un `ViewPlugin` de décoration
+>   (`apps/mobile/lib/mdxLivePreview.ts`) change : gras/italique/titres
+>   stylés (marqueurs masqués sauf curseur dedans), liens/tags/occurrences/
+>   embeds en pastilles cliquables. S'intègre directement dans l'arbre RN
+>   sans échappatoire ref+useEffect : l'app tourne comme une vraie appli
+>   `react-dom` (web export Expo → react-native-web compile `View`/`Text`
+>   en `<div>`/`<span>` via `React.createElement` standard), donc un
+>   composant React "DOM pur" comme ce wrapper CodeMirror s'y intègre
+>   nativement — contrairement à `SvgOverlay.tsx`/`AudioEmbed.tsx`, qui
+>   injectent du DOM brut pour des primitives que RN n'expose pas du tout.
+> - **Propriétés** : schéma global typé (texte/liste/nombre/case à cocher/
+>   date/date-heure) par coffre (`.123ecriture/properties.json`,
+>   `apps/desktop/electron/properties.ts`) — ne porte que la DÉFINITION,
+>   pas les valeurs, qui vivent dans le frontmatter de chaque note (parsé/
+>   sérialisé par `apps/mobile/lib/frontmatter.ts`, dépendance `js-yaml`,
+>   jamais parsé avant cette version). Gérées depuis la nouvelle barre
+>   latérale droite de l'écran Notes (`RightSidebar.tsx`, repliable, rail de
+>   boutons extensible — premier onglet `PropertiesPanel.tsx`). Renommer/
+>   changer le type/supprimer une propriété ne touche QUE le schéma, jamais
+>   les valeurs déjà écrites (pas de migration silencieuse de contenu).
+> - **`{{Occurrences}}`** : mélange lien interne/mot-clé — un mot choisi à
+>   l'avance dans un dictionnaire personnel par coffre
+>   (`.123ecriture/occurrences.json`, `apps/desktop/electron/occurrences.ts`),
+>   deuxième onglet de la barre latérale (`OccurrencesPanel.tsx`). Une
+>   `{{...}}` n'est stylée/cliquable que si son mot existe dans le
+>   dictionnaire (sinon texte brut) — contrairement à `[[lien]]`, pas de
+>   création à la volée par simple frappe : autocomplétion dès `{{`
+>   (`@codemirror/autocomplete`, `apps/mobile/lib/occurrenceAutocomplete.ts`)
+>   ne propose que les mots connus + une option "Créer" qui ajoute le mot
+>   au dictionnaire avant de fermer le token. Renommer un mot réécrit
+>   `{{ancien}}`→`{{nouveau}}` dans TOUS les `.mdx` du coffre côté main
+>   process (contrairement aux propriétés — ici le mot est le texte lui-même
+>   dans le contenu, pas juste une clé de frontmatter).
+
 //////////////////////////////////////////////////////////////////////////
 // 5. 💾 STOCKAGE LOCAL & ABSTRACTION MULTIPLATEFORME
 //////////////////////////////////////////////////////////////////////////
@@ -153,7 +223,7 @@ totalement la plateforme sur laquelle ils tournent.
 
 > **Écart pragmatique (Phase 1, v0.1.3)** : l'implémentation Electron du
 > VaultAdapter vit pour l'instant directement dans
-> `apps/desktop/electron/vault.js` (exposé au renderer via IPC/preload), pas
+> `apps/desktop/electron/vault.ts` (exposé au renderer via IPC/preload), pas
 > encore dans un `packages/storage` séparé — on a évité de créer un paquet
 > partagé tant qu'il n'a qu'un seul consommateur réel (les adaptateurs
 > Expo/web de la Phase 2 n'existent pas encore), pour ne pas complexifier
@@ -162,15 +232,31 @@ totalement la plateforme sur laquelle ils tournent.
 > en `packages/storage` quand un deuxième consommateur apparaîtra.
 
 > **Écart pragmatique (v0.1.8)** : un vault n'est plus un `vaultPath` unique
-> mais une vraie liste (`apps/desktop/electron/vaults.js`, config.json →
+> mais une vraie liste (`apps/desktop/electron/vaults.ts`, config.json →
 > `{ vaults: [...], activeVaultId }`, migration automatique de l'ancien
 > format). Chaque dossier de vault reçoit une identité stable
 > (`.123ecriture/vault.json`, `{ id, name, createdAt }`), indépendante de son
 > chemin — c'est cette identité qui sert de clé de correspondance avec la
 > ligne cloud du vault (§6), pas le chemin local (qui change d'une machine à
-> l'autre). `vault.js`/`tasks.js` continuent d'opérer sur UN SEUL vault "actif"
+> l'autre). `vault.ts`/`tasks.ts` continuent d'opérer sur UN SEUL vault "actif"
 > à la fois (`getActiveVaultPath()`), inchangés au-delà de ce point de
 > couture.
+
+> **Écart corrigé (v0.1.9)** : le process principal Electron était resté en
+> JavaScript brut (`.js`) depuis la Phase 1, seul point non-TypeScript de
+> tout le monorepo (le renderer, `apps/mobile`, l'était déjà entièrement).
+> Converti en `.ts` (14 fichiers) — nouveau `apps/desktop/tsconfig.json`
+> (`noEmit: true`, esbuild reste le seul à transpiler/bundler vers CJS, même
+> répartition des rôles que Metro côté mobile), nouveau script `typecheck`,
+> types partagés entre les fichiers du process principal centralisés dans
+> `apps/desktop/electron/types.ts` — délibérément PAS partagés avec
+> `apps/mobile/types/global.d.ts` (pas de `packages/shared-types`
+> aujourd'hui, même raisonnement "pas d'abstraction avant un vrai deuxième
+> consommateur" que pour `packages/storage` ci-dessus). `main.js`/
+> `preload.js` restent le point d'ENTRÉE réel de l'app (Electron ne peut
+> exécuter que du JS compilé) — désormais produits par esbuild à partir de
+> `electron/main.ts`/`preload.ts`, exactement comme le web export Expo
+> compile déjà `App.tsx` pour le renderer.
 
 //////////////////////////////////////////////////////////////////////////
 // 6. ☁️ SYNCHRONISATION PAR COMPTE (SUPABASE)
@@ -181,11 +267,11 @@ bas) sur le projet Supabase partagé "Projet Synapse".
 
 - **Auth** : Supabase Auth, Google OAuth uniquement pour l'instant (le
   provider était déjà activé côté Supabase). Flux "navigateur système +
-  protocole personnalisé" côté Electron (`apps/desktop/electron/auth.js` +
+  protocole personnalisé" côté Electron (`apps/desktop/electron/auth.ts` +
   `apps/mobile/lib/sync/AuthContext.tsx`) — PKCE, la session vit entièrement
   côté renderer (client Supabase, `localStorage`), le main process ne fait
   que relayer l'URL de callback (`app123ecriture://auth-callback`) reçue via le
-  protocole personnalisé (nécessite le verrou mono-instance, voir `main.js`).
+  protocole personnalisé (nécessite le verrou mono-instance, voir `main.ts`).
 - **Schéma dédié** : `app_123ecriture` (jamais `public`, réservé aux autres
   apps du projet partagé) — voir
   `supabase/migrations/20260816120000_app_123ecriture_schema.sql`. Deux
@@ -200,7 +286,7 @@ bas) sur le projet Supabase partagé "Projet Synapse".
 - **Métadonnées** : table `vault_files` (chemin, hash de contenu SHA-256,
   taille, horodatage) pour détecter ce qui a changé sans retélécharger tout
   le vault — hash local calculé en un seul passage par
-  `apps/desktop/electron/sync.js` (`sync:hash-vault`).
+  `apps/desktop/electron/sync.ts` (`sync:hash-vault`).
 - **Stratégie de conflit v0** : "dernier écrit gagne" par horodatage +
   conservation d'une copie de sauvegarde du côté perdant, écrite comme une
   note `.mdx` normale et visible (`Nom (conflit <horodatage ISO>).mdx`),
@@ -220,7 +306,7 @@ bas) sur le projet Supabase partagé "Projet Synapse".
 
 > **Écart pragmatique (v0.1.8)** : pas de nouveau `packages/sync` — la
 > logique vit dans `apps/mobile/lib/sync/` (renderer) et
-> `apps/desktop/electron/{auth,sync}.js` (main process), même principe que
+> `apps/desktop/electron/{auth,sync}.ts` (main process), même principe que
 > l'écart §5 sur `packages/storage` : aujourd'hui il n'y a qu'un seul vrai
 > consommateur (`@123ecriture/mobile`, chargé tel quel par le shell
 > Electron), et le mobile natif n'a encore aucun adaptateur de stockage
@@ -235,6 +321,22 @@ bas) sur le projet Supabase partagé "Projet Synapse".
 > aller-retour navigateur système + callback, et un vrai conflit à deux
 > écritures, restent à valider manuellement dans l'app avant release (zones
 > CLAUDE.md "connexion au compte" et "sauvegarde et gestion des données").
+
+> **Cause racine trouvée et corrigée (v0.1.9)** : la carte "Compte" de
+> `SettingsScreen.tsx` n'apparaissait dans AUCUNE release construite par
+> `.github/workflows/release.yml`, quoi qu'on fasse côté app — l'étape
+> `pnpm --filter @123ecriture/mobile build:web` du workflow ne définissait
+> jamais `EXPO_PUBLIC_SUPABASE_URL`/`EXPO_PUBLIC_SUPABASE_ANON_KEY` (inlinées
+> par Expo AU MOMENT du build web, pas à l'exécution — voir
+> `apps/mobile/lib/sync/supabaseClient.ts`), donc `auth.available` restait
+> `false` dans tout build CI même une fois le `.env` local correctement
+> renseigné. Corrigé en passant ces deux variables comme `env:` sur cette
+> étape, sourcées depuis `${{ secrets.* }}` — nécessite que ces 2 secrets
+> soient créés une fois dans Settings → Secrets and variables → Actions du
+> dépôt GitHub (valeurs dans la mémoire du projet
+> `123ecriture-vault-sync.md`), étape que je ne peux pas faire moi-même
+> (jeton `gh` de session sans droit de gestion des secrets, confirmé par un
+> 403 sur `gh secret list`).
 
 //////////////////////////////////////////////////////////////////////////
 // 7. 🎨 PERSONNALISATION DE L'INTERFACE
@@ -257,7 +359,7 @@ bas) sur le projet Supabase partagé "Projet Synapse".
 > encore dans `.123ecriture/theme.json` du vault — ça fonctionne même sans
 > vault sélectionné, et évite de coupler la personnalisation à la présence
 > d'un vault tant que la sync compte (Phase 3) n'existe pas. Voir
-> `apps/desktop/electron/preferences.js` et
+> `apps/desktop/electron/preferences.ts` et
 > `apps/mobile/preferences/PreferencesContext.tsx`. À migrer vers le vault
 > quand la personnalisation devra suivre l'utilisateur·rice plutôt que la
 > machine.
@@ -286,7 +388,7 @@ le départ mais implémentée progressivement** : l'éditeur MDX de base n'a pas
 besoin du registre complet pour exister (voir feuille de route §10).
 
 > **Écart pragmatique (v0.1.6)** : le premier module (Tâches) est câblé
-> directement (apps/desktop/electron/tasks.js + apps/mobile/components/
+> directement (apps/desktop/electron/tasks.ts + apps/mobile/components/
 > TasksScreen.tsx), pas encore via l'interface `Module` ci-dessus — construire
 > le registre pour un seul module serait prématuré (l'abstraction se dessine
 > vraiment à partir du deuxième). Les tâches sont stockées dans le vault
@@ -341,9 +443,13 @@ réglages.
 **Phase 5 — Modules productivité** : registre de modules (§8), puis premiers
 modules (todo list, calendrier...), un par un. ✅ Fait (v0.1.8) côté desktop :
 Tâches (listes multiples), Calendrier (notes journalières + évènements),
-Graphiques (tableur intégré + barres/lignes/camembert), Canvas (cartes
-texte/note reliées par des flèches sur un plan pannable). Toujours pas de
-vrai registre de modules générique (§8) — chaque module reste câblé
+Graphiques (barres/lignes/camembert) et Canvas (cartes texte/note reliées
+par des flèches sur un plan pannable) — révisés depuis en types de fichiers
+du vault (`.chart`/`.canvas`, voir §4) plutôt que sections séparées. Rendu
+Markdown réel des notes (liens internes, tags, pièces jointes, 3 modes
+d'affichage — voir §4) et réordonnancement manuel du vault par glisser
+(`.123ecriture/order.json`, `vault:reorder`) également faits. Toujours pas
+de vrai registre de modules générique (§8) — chaque module reste câblé
 directement, comme Tâches l'était déjà ; à construire quand le besoin d'un
 pattern commun se fera vraiment sentir. Mobile natif reste hors périmètre
 (pas d'accès fichier local — Phase 2 mobile non faite).
@@ -361,8 +467,13 @@ pas de big-bang.
   incrémentale fine (seuls les fichiers modifiés sont ré-uploadés) et un
   conflit qui ne touche qu'une note à la fois plutôt que tout le coffre.
 - Bibliothèque de parsing/rendu MDX précise (`@mdx-js/mdx` + `remark`/`rehype`
-  plugins) — à choisir en Phase 1.
-- Canvas/Excalidraw : lib dédiée vs. intégration d'`excalidraw` en composant
-  — à trancher en Phase 5 selon maturité du support React Native Web.
+  plugins) — à choisir en Phase 1. ~~Tranché partiellement (v0.1.8)~~ : rendu
+  Markdown (pas encore compilation JSX/MDX complète avec composants
+  embarqués) via `markdown-it`/`react-native-markdown-display`, voir §4 —
+  suffisant pour liens/tags/pièces jointes/tableaux, mais pas des composants
+  React arbitraires dans une note. À revoir si ce besoin se confirme.
+- Excalidraw : lib dédiée (`@excalidraw/excalidraw`, à valider sous RN Web)
+  vs. rendu maison minimal (lecture seule d'abord) — format de fichier déjà
+  identifié (`.excalidraw`, voir §4), implémentation pas encore commencée.
 - Chiffrement des notes synchronisées (au repos côté Supabase) — non prévu
   v0, à évaluer si des notes sensibles sont attendues.

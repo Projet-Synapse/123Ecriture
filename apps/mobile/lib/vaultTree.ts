@@ -26,7 +26,7 @@ export function getParentRelPath(relPath: string): string | undefined {
 }
 
 // Liste plate de toutes les NOTES de l'arborescence (pas les dossiers) —
-// utilisé par CanvasScreen.tsx pour proposer un choix de note à référencer
+// utilisé par CanvasEditor.tsx pour proposer un choix de note à référencer
 // dans une carte.
 export function flattenNotes(nodes: VaultTreeNode[]): VaultNoteNode[] {
   const notes: VaultNoteNode[] = [];
@@ -38,6 +38,15 @@ export function flattenNotes(nodes: VaultTreeNode[]): VaultNoteNode[] {
     }
   }
   return notes;
+}
+
+// Liste des enfants (nœuds frères) au niveau `parentRelPath` — la racine du
+// vault si omis. Utilisé par le glisser-pour-réordonner (NotesScreen.tsx)
+// pour retrouver l'ensemble des frères de l'élément glissé.
+export function getChildrenAt(tree: VaultTreeNode[], parentRelPath: string | undefined): VaultTreeNode[] {
+  if (parentRelPath === undefined) return tree;
+  const parent = findNodeByPath(tree, parentRelPath);
+  return parent && parent.type === 'folder' ? parent.children : [];
 }
 
 export type FolderOption = { relPath: string; label: string; depth: number };

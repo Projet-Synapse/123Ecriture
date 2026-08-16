@@ -1,9 +1,11 @@
-const { ipcMain } = require('electron');
-const fs = require('fs/promises');
-const fsSync = require('fs');
-const path = require('path');
-const crypto = require('crypto');
-const vaults = require('./vaults');
+import { ipcMain } from 'electron';
+import crypto from 'crypto';
+import fs from 'fs/promises';
+import fsSync from 'fs';
+import path from 'path';
+
+import * as vaults from './vaults';
+import type { CalendarEvent, CalendarEventInput } from './types';
 
 // Module "Calendrier" — évènements horodatés (voir docs/ARCHITECTURE.md §8
 // et apps/mobile/components/CalendarScreen.tsx). Les notes JOURNALIÈRES,
@@ -14,37 +16,37 @@ const vaults = require('./vaults');
 // actif, pas de multi-listes ici (un seul calendrier par coffre a du sens,
 // contrairement aux tâches).
 
-function getVaultPath() {
+function getVaultPath(): string | null {
   return vaults.getActiveVaultPath();
 }
 
-function getEventsFilePath(vaultPath) {
+function getEventsFilePath(vaultPath: string): string {
   return path.join(vaultPath, '.123ecriture', 'events.json');
 }
 
-function readEvents(vaultPath) {
+function readEvents(vaultPath: string): CalendarEvent[] {
   try {
-    return JSON.parse(fsSync.readFileSync(getEventsFilePath(vaultPath), 'utf8'));
+    return JSON.parse(fsSync.readFileSync(getEventsFilePath(vaultPath), 'utf8')) as CalendarEvent[];
   } catch {
     return [];
   }
 }
 
-async function writeEvents(vaultPath, events) {
+async function writeEvents(vaultPath: string, events: CalendarEvent[]): Promise<CalendarEvent[]> {
   const filePath = getEventsFilePath(vaultPath);
   await fs.mkdir(path.dirname(filePath), { recursive: true });
   await fs.writeFile(filePath, JSON.stringify(events, null, 2), 'utf8');
   return events;
 }
 
-function registerCalendarHandlers() {
+export function registerCalendarHandlers(): void {
   ipcMain.handle('calendar:list-events', () => {
     const vaultPath = getVaultPath();
     if (!vaultPath) return [];
     return readEvents(vaultPath);
   });
 
-  ipcMain.handle('calendar:add-event', async (_event, input) => {
+  ipcMain.handle('calendar:add-event', async (_event, input: CalendarEventInput) => {
     const vaultPath = getVaultPath();
     if (!vaultPath) throw new Error('Aucun vault sélectionné');
     const title = (input?.title ?? '').trim();
@@ -66,19 +68,17 @@ function registerCalendarHandlers() {
     return writeEvents(vaultPath, events);
   });
 
-  ipcMain.handle('calendar:update-event', async (_event, id, patch) => {
+  ipcMain.handle('calendar:update-event', async (_event, id: string, patch: Partial<CalendarEventInput>) => {
     const vaultPath = getVaultPath();
     if (!vaultPath) throw new Error('Aucun vault sélectionné');
     const events = readEvents(vaultPath).map((ev) => (ev.id === id ? { ...ev, ...patch, id: ev.id } : ev));
     return writeEvents(vaultPath, events);
   });
 
-  ipcMain.handle('calendar:remove-event', async (_event, id) => {
+  ipcMain.handle('calendar:remove-event', async (_event, id: string) => {
     const vaultPath = getVaultPath();
     if (!vaultPath) throw new Error('Aucun vault sélectionné');
     const events = readEvents(vaultPath).filter((ev) => ev.id !== id);
     return writeEvents(vaultPath, events);
   });
 }
-
-module.exports = { registerCalendarHandlers };
