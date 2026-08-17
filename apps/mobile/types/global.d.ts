@@ -246,15 +246,34 @@ declare global {
     visible: boolean;
   }
 
+  type NewNoteLocation = 'vaultRoot' | 'sameFolder' | 'custom';
+
+  type EditorViewMode = 'source' | 'split' | 'reading';
+
   interface Preferences {
     themeMode: ThemeMode;
     accentColor: string;
     notesToolbarOrder: ToolbarItemConfig[];
+    canvasToolbarOrder: ToolbarItemConfig[];
+    chartToolbarOrder: ToolbarItemConfig[];
+    // Paramètres → Gestion des fichiers et des liens.
+    attachmentsFolder: string;
+    autoCreateWikilinkTarget: boolean;
+    newNoteLocation: NewNoteLocation;
+    newNoteCustomFolder: string;
+    // Paramètres → Éditeur.
+    editorFontSize: number;
+    editorDefaultMode: EditorViewMode;
+    editorCloseBrackets: boolean;
+    editorInlineTitle: boolean;
   }
 
   interface PreferencesBridge {
     get: () => Promise<Preferences>;
     set: (partial: Partial<Preferences>) => Promise<Preferences>;
+    reset: () => Promise<Preferences>;
+    getConfigPath: () => Promise<string>;
+    revealConfigFolder: () => Promise<void>;
   }
 
   interface ContextMenuItem {

@@ -1,7 +1,10 @@
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useState } from 'react';
+import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { NOTES_TOOLBAR_DESCRIPTIONS, type ToolbarActionId } from '../lib/notesToolbarActions';
 import { usePreferences } from '../preferences/PreferencesContext';
+
+const HEX_COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/;
 
 // Section "Personnalisation" de l'écran Paramètres — le point de départ de
 // la vision « interface ultra-personnalisable » (voir .claude/CLAUDE.md et
@@ -23,6 +26,30 @@ const ACCENT_PRESETS = ['#4f46e5', '#2563eb', '#0d9488', '#16a34a', '#d97706', '
 
 export function PersonalizationCard() {
   const { preferences, theme, setThemeMode, setAccentColor, setNotesToolbarOrder } = usePreferences();
+  const [hexDraft, setHexDraft] = useState(preferences.accentColor);
+  const [hexError, setHexError] = useState(false);
+  // Reste synchronisé si l'accent change ailleurs (clic sur une pastille, ou
+  // chargement des préférences depuis Electron) — sans ça, le champ hex
+  // afficherait une ancienne valeur après un clic sur une pastille. Ajustée
+  // pendant le rendu plutôt que dans un effet (voir
+  // https://react.dev/learn/you-might-not-need-an-effect) : pas de rendu
+  // supplémentaire déclenché après coup.
+  const [syncedAccentColor, setSyncedAccentColor] = useState(preferences.accentColor);
+  if (preferences.accentColor !== syncedAccentColor) {
+    setSyncedAccentColor(preferences.accentColor);
+    setHexDraft(preferences.accentColor);
+    setHexError(false);
+  }
+
+  const submitHexColor = () => {
+    const trimmed = hexDraft.trim();
+    if (!HEX_COLOR_PATTERN.test(trimmed)) {
+      setHexError(true);
+      return;
+    }
+    setHexError(false);
+    setAccentColor(trimmed);
+  };
 
   const moveToolbarItem = (index: number, direction: -1 | 1) => {
     const target = index + direction;
@@ -77,7 +104,23 @@ export function PersonalizationCard() {
             </Pressable>
           );
         })}
+        <TextInput
+          value={hexDraft}
+          onChangeText={(text) => {
+            setHexDraft(text);
+            setHexError(false);
+          }}
+          onSubmitEditing={submitHexColor}
+          onBlur={submitHexColor}
+          placeholder="#rrggbb"
+          placeholderTextColor={theme.textMuted}
+          style={[
+            styles.hexInput,
+            { color: theme.text, borderColor: hexError ? '#dc2626' : theme.border },
+          ]}
+        />
       </View>
+      {hexError && <Text style={styles.hexError}>⚠️ Couleur invalide — format attendu : #rrggbb</Text>}
 
       <Text style={[styles.label, { color: theme.textMuted }]}>
         Barre d’outils Notes (ordre et boutons affichés)
@@ -165,6 +208,18 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 13,
     fontWeight: '700',
+  },
+  hexInput: {
+    width: 100,
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    fontSize: 13,
+  },
+  hexError: {
+    color: '#dc2626',
+    fontSize: 12,
   },
   toolbarList: {
     gap: 6,

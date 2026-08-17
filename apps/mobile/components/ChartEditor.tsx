@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { getSeriesColor } from '../lib/chartPalette';
+import { CHART_TOOLBAR_ACTIONS, type ChartToolbarActionId } from '../lib/chartToolbarActions';
 import { buildChartSeries } from '../lib/sheets';
 import { usePreferences } from '../preferences/PreferencesContext';
 import { ChartView } from './ChartView';
@@ -28,7 +29,7 @@ type Props = {
 const EMPTY_DATA: SheetData = { columns: [], rows: [], chart: null };
 
 export function ChartEditor({ relPath }: Props) {
-  const { theme, colorScheme } = usePreferences();
+  const { theme, colorScheme, preferences } = usePreferences();
   const vault = typeof window !== 'undefined' ? window.vault : undefined;
 
   const [data, setData] = useState<SheetData>(EMPTY_DATA);
@@ -144,6 +145,21 @@ export function ChartEditor({ relPath }: Props) {
 
   const removeChart = () => updateData((prev) => ({ ...prev, chart: null }));
 
+  // Paramètres → Éditeur → "Barre d'outils Graphiques" : mêmes ordre/
+  // visibilité que Notes/Canvas. `create-chart` est en plus toujours exclu
+  // dès qu'un graphique existe déjà (comme l'ancien bouton conditionnel
+  // "Créer un graphique" — l'appeler à nouveau écraserait silencieusement
+  // la config existante, voir createChart ci-dessus).
+  const chartActionHandlers: Record<ChartToolbarActionId, () => void> = {
+    'add-column': addColumn,
+    'add-row': addRow,
+    'create-chart': createChart,
+  };
+  const toolbarActions = preferences.chartToolbarOrder
+    .filter((item) => item.visible && (item.id !== 'create-chart' || !data.chart))
+    .map((item) => CHART_TOOLBAR_ACTIONS.find((action) => action.id === item.id))
+    .filter((action): action is (typeof CHART_TOOLBAR_ACTIONS)[number] => Boolean(action));
+
   const setChartType = (type: SheetChartType) => {
     updateData((prev) =>
       prev.chart
@@ -193,12 +209,15 @@ export function ChartEditor({ relPath }: Props) {
   return (
     <ScrollView style={styles.root} contentContainerStyle={styles.container}>
       <View style={styles.headerRow}>
-        <Pressable onPress={addColumn} style={[styles.button, styles.smallButton, { backgroundColor: theme.accent }]}>
-          <Text style={styles.buttonText}>+ Colonne</Text>
-        </Pressable>
-        <Pressable onPress={addRow} style={[styles.button, styles.smallButton, { backgroundColor: theme.accent }]}>
-          <Text style={styles.buttonText}>+ Ligne</Text>
-        </Pressable>
+        {toolbarActions.map((action) => (
+          <Pressable
+            key={action.id}
+            onPress={chartActionHandlers[action.id]}
+            style={[styles.button, styles.smallButton, { backgroundColor: theme.accent }]}
+          >
+            <Text style={styles.buttonText}>{action.label}</Text>
+          </Pressable>
+        ))}
         <Text style={[styles.saveStatus, { color: theme.textMuted }]}>
           {saveStatus === 'saving' ? 'Enregistrement…' : saveStatus === 'saved' ? 'Enregistré' : ''}
         </Text>

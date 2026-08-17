@@ -36,6 +36,11 @@ type Props = {
   occurrenceWords?: string[];
   onCreateOccurrence?: (word: string) => Promise<void>;
   onReady?: (ref: ReactCodeMirrorRef) => void;
+  // Paramètres → Éditeur (voir PreferencesContext.tsx). Valeurs par défaut
+  // alignées sur DEFAULT_PREFERENCES pour rester utilisable si le composant
+  // est monté sans ces props (ex. anciens appelants, tests).
+  fontSize?: number;
+  closeBrackets?: boolean;
 };
 
 export function MdxEditor({
@@ -48,6 +53,8 @@ export function MdxEditor({
   occurrenceWords,
   onCreateOccurrence,
   onReady,
+  fontSize = 15,
+  closeBrackets = true,
 }: Props) {
   const editorTheme = useMemo(
     () =>
@@ -56,7 +63,7 @@ export function MdxEditor({
           backgroundColor: theme.background,
           color: theme.text,
           height: '100%',
-          fontSize: '15px',
+          fontSize: `${fontSize}px`,
         },
         '.cm-content': { padding: '16px', caretColor: theme.accent },
         '.cm-scroller': { fontFamily: 'inherit', lineHeight: '1.6' },
@@ -65,7 +72,7 @@ export function MdxEditor({
         '.cm-gutters': { display: 'none' },
         '.cm-activeLine': { backgroundColor: 'transparent' },
       }),
-    [theme],
+    [theme, fontSize],
   );
 
   const liveExtension = useMemo(
@@ -108,7 +115,13 @@ export function MdxEditor({
         height="100%"
         theme="none"
         extensions={[editorTheme, ...extensions]}
-        basicSetup={{ lineNumbers: false, foldGutter: false, highlightActiveLine: false, autocompletion: false }}
+        basicSetup={{
+          lineNumbers: false,
+          foldGutter: false,
+          highlightActiveLine: false,
+          autocompletion: false,
+          closeBrackets,
+        }}
         onChange={onChange}
         ref={(ref) => {
           if (ref) onReady?.(ref);

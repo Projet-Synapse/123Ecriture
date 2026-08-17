@@ -62,6 +62,9 @@ contextBridge.exposeInMainWorld('updater', {
 contextBridge.exposeInMainWorld('preferences', {
   get: () => ipcRenderer.invoke('preferences:get'),
   set: (partial: unknown) => ipcRenderer.invoke('preferences:set', partial),
+  reset: () => ipcRenderer.invoke('preferences:reset'),
+  getConfigPath: () => ipcRenderer.invoke('preferences:get-config-path'),
+  revealConfigFolder: () => ipcRenderer.invoke('preferences:reveal-config-folder'),
 });
 
 contextBridge.exposeInMainWorld('contextMenu', {

@@ -10,6 +10,7 @@ import {
   WORLD_CENTER,
   WORLD_SIZE,
 } from '../lib/canvas';
+import { CANVAS_TOOLBAR_ACTIONS, type CanvasToolbarActionId } from '../lib/canvasToolbarActions';
 import { flattenNotes } from '../lib/vaultTree';
 import { useVaults } from '../lib/sync/VaultsContext';
 import { usePreferences } from '../preferences/PreferencesContext';
@@ -54,7 +55,7 @@ type Props = {
 const EMPTY_DATA: CanvasData = { nodes: [], edges: [] };
 
 export function CanvasEditor({ relPath, onOpenNote }: Props) {
-  const { theme } = usePreferences();
+  const { theme, preferences } = usePreferences();
   const vault = typeof window !== 'undefined' ? window.vault : undefined;
   const contextMenuBridge = typeof window !== 'undefined' ? window.contextMenu : undefined;
   const { activeVaultPath: vaultPath } = useVaults();
@@ -167,6 +168,20 @@ export function CanvasEditor({ relPath, onOpenNote }: Props) {
       }));
     });
   };
+
+  // Paramètres → Éditeur → "Barre d'outils Canvas" : mêmes ordre/visibilité
+  // que Notes (voir NotesScreen.tsx) — filtre les ids masqués, résout
+  // chaque id restant dans le registre de métadonnées, puis vers son
+  // handler local (le registre ne connaît que id/label, pas l'exécution :
+  // voir lib/canvasToolbarActions.ts).
+  const canvasActionHandlers: Record<CanvasToolbarActionId, () => void> = {
+    'add-text': addTextCard,
+    'add-note': addNoteCard,
+  };
+  const toolbarActions = preferences.canvasToolbarOrder
+    .filter((item) => item.visible)
+    .map((item) => CANVAS_TOOLBAR_ACTIONS.find((action) => action.id === item.id))
+    .filter((action): action is (typeof CANVAS_TOOLBAR_ACTIONS)[number] => Boolean(action));
 
   const removeNode = (nodeId: string) => updateData((prev) => removeNodeCascade(prev, nodeId));
 
@@ -326,12 +341,15 @@ export function CanvasEditor({ relPath, onOpenNote }: Props) {
   return (
     <View style={styles.container}>
       <View style={styles.headerRow}>
-        <Pressable onPress={addTextCard} style={[styles.button, { backgroundColor: theme.accent }]}>
-          <Text style={styles.buttonText}>+ Texte</Text>
-        </Pressable>
-        <Pressable onPress={addNoteCard} style={[styles.button, { backgroundColor: theme.accent }]}>
-          <Text style={styles.buttonText}>+ Note</Text>
-        </Pressable>
+        {toolbarActions.map((action) => (
+          <Pressable
+            key={action.id}
+            onPress={canvasActionHandlers[action.id]}
+            style={[styles.button, { backgroundColor: theme.accent }]}
+          >
+            <Text style={styles.buttonText}>{action.label}</Text>
+          </Pressable>
+        ))}
         <Text style={[styles.saveStatus, { color: theme.textMuted }]}>
           {saveStatus === 'saving' ? 'Enregistrement…' : saveStatus === 'saved' ? 'Enregistré' : ''}
         </Text>

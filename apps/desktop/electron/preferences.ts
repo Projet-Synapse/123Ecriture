@@ -1,7 +1,7 @@
-import { ipcMain } from 'electron';
+import { ipcMain, shell } from 'electron';
 
-import { readConfig, writeConfig } from './config';
-import type { Preferences } from './types';
+import { getConfigPath, readConfig, writeConfig } from './config';
+import type { Preferences, ToolbarItemConfig } from './types';
 
 // Personnalisation de l'interface — voir docs/ARCHITECTURE.md §7. Stockée
 // pour l'instant dans le config.json app-level (userData), pas encore
@@ -29,7 +29,43 @@ export const DEFAULT_PREFERENCES: Preferences = {
     { id: 'link', visible: true },
     { id: 'table', visible: true },
   ],
+  // Même principe pour Canvas et Graphiques (voir
+  // apps/mobile/lib/canvasToolbarActions.ts / chartToolbarActions.ts).
+  canvasToolbarOrder: [
+    { id: 'add-text', visible: true },
+    { id: 'add-note', visible: true },
+  ],
+  chartToolbarOrder: [
+    { id: 'add-column', visible: true },
+    { id: 'add-row', visible: true },
+    { id: 'create-chart', visible: true },
+  ],
+  attachmentsFolder: 'attachments',
+  autoCreateWikilinkTarget: true,
+  newNoteLocation: 'vaultRoot',
+  newNoteCustomFolder: '',
+  editorFontSize: 15,
+  editorDefaultMode: 'source',
+  editorCloseBrackets: true,
+  editorInlineTitle: false,
 };
+
+// Les 3 listes `*ToolbarOrder` (Notes/Canvas/Graphiques) ont besoin d'une
+// fusion plus fine que le reste : une config déjà enregistrée AVANT l'ajout
+// d'un nouveau bouton par défaut (ex. "table") ne le contient pas encore —
+// une fusion superficielle prendrait la liste stockée telle quelle et le
+// nouveau bouton disparaîtrait silencieusement. On l'ajoute plutôt à la fin
+// (règle CLAUDE.md : un nouveau bouton doit être visible et fonctionnel, pas
+// juste présent dans le code).
+function mergeToolbarOrder(
+  defaults: ToolbarItemConfig[],
+  stored: ToolbarItemConfig[] | undefined,
+): ToolbarItemConfig[] {
+  if (!stored) return defaults;
+  const knownIds = new Set(stored.map((item) => item.id));
+  const missing = defaults.filter((item) => !knownIds.has(item.id));
+  return [...stored, ...missing];
+}
 
 export function getPreferences(): Preferences {
   const stored = readConfig().preferences;
@@ -37,18 +73,9 @@ export function getPreferences(): Preferences {
   // défaut sans planter sur une config plus ancienne qui ne l'a pas encore.
   const merged: Preferences = { ...DEFAULT_PREFERENCES, ...stored };
 
-  // `notesToolbarOrder` a besoin d'une fusion plus fine que le reste : une
-  // config déjà enregistrée AVANT l'ajout d'un nouveau bouton par défaut
-  // (ex. "table") ne le contient pas encore — la fusion superficielle
-  // ci-dessus prend `stored.notesToolbarOrder` tel quel et le nouveau
-  // bouton disparaîtrait silencieusement. On l'ajoute plutôt à la fin (règle
-  // CLAUDE.md : un nouveau bouton doit être visible et fonctionnel, pas
-  // juste présent dans le code).
-  if (stored?.notesToolbarOrder) {
-    const knownIds = new Set(stored.notesToolbarOrder.map((item) => item.id));
-    const missing = DEFAULT_PREFERENCES.notesToolbarOrder.filter((item) => !knownIds.has(item.id));
-    merged.notesToolbarOrder = [...stored.notesToolbarOrder, ...missing];
-  }
+  merged.notesToolbarOrder = mergeToolbarOrder(DEFAULT_PREFERENCES.notesToolbarOrder, stored?.notesToolbarOrder);
+  merged.canvasToolbarOrder = mergeToolbarOrder(DEFAULT_PREFERENCES.canvasToolbarOrder, stored?.canvasToolbarOrder);
+  merged.chartToolbarOrder = mergeToolbarOrder(DEFAULT_PREFERENCES.chartToolbarOrder, stored?.chartToolbarOrder);
 
   return merged;
 }
@@ -60,5 +87,19 @@ export function registerPreferencesHandlers(): void {
     const next = { ...getPreferences(), ...partial };
     writeConfig({ preferences: next });
     return next;
+  });
+
+  // Paramètres → Confidentialité et données : remet uniquement la
+  // personnalisation (préférences) aux valeurs par défaut, sans toucher aux
+  // coffres ni au contenu des notes — voir DEFAULT_PREFERENCES ci-dessus.
+  ipcMain.handle('preferences:reset', () => {
+    writeConfig({ preferences: DEFAULT_PREFERENCES });
+    return DEFAULT_PREFERENCES;
+  });
+
+  ipcMain.handle('preferences:get-config-path', () => getConfigPath());
+
+  ipcMain.handle('preferences:reveal-config-folder', () => {
+    shell.showItemInFolder(getConfigPath());
   });
 }

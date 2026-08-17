@@ -1,6 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useColorScheme } from 'react-native';
 
+import { DEFAULT_CANVAS_TOOLBAR_ORDER } from '../lib/canvasToolbarActions';
+import { DEFAULT_CHART_TOOLBAR_ORDER } from '../lib/chartToolbarActions';
 import { DEFAULT_NOTES_TOOLBAR_ORDER } from '../lib/notesToolbarActions';
 import { darkTheme, lightTheme, type Theme } from '../theme';
 
@@ -16,6 +18,16 @@ const DEFAULT_PREFERENCES: Preferences = {
   themeMode: 'system',
   accentColor: lightTheme.accent,
   notesToolbarOrder: DEFAULT_NOTES_TOOLBAR_ORDER,
+  canvasToolbarOrder: DEFAULT_CANVAS_TOOLBAR_ORDER,
+  chartToolbarOrder: DEFAULT_CHART_TOOLBAR_ORDER,
+  attachmentsFolder: 'attachments',
+  autoCreateWikilinkTarget: true,
+  newNoteLocation: 'vaultRoot',
+  newNoteCustomFolder: '',
+  editorFontSize: 15,
+  editorDefaultMode: 'source',
+  editorCloseBrackets: true,
+  editorInlineTitle: false,
 };
 
 type PreferencesContextValue = {
@@ -25,6 +37,23 @@ type PreferencesContextValue = {
   setThemeMode: (mode: ThemeMode) => void;
   setAccentColor: (color: string) => void;
   setNotesToolbarOrder: (order: ToolbarItemConfig[]) => void;
+  setCanvasToolbarOrder: (order: ToolbarItemConfig[]) => void;
+  setChartToolbarOrder: (order: ToolbarItemConfig[]) => void;
+  setAttachmentsFolder: (folder: string) => void;
+  setAutoCreateWikilinkTarget: (value: boolean) => void;
+  setNewNoteLocation: (location: NewNoteLocation) => void;
+  setNewNoteCustomFolder: (folder: string) => void;
+  setEditorFontSize: (size: number) => void;
+  setEditorDefaultMode: (mode: EditorViewMode) => void;
+  setEditorCloseBrackets: (value: boolean) => void;
+  setEditorInlineTitle: (value: boolean) => void;
+  // Paramètres → Confidentialité et données. `undefined` si non disponible
+  // (pas de pont Electron, ex. web/mobile) — laissé à la charge de l'écran
+  // d'afficher/masquer les actions correspondantes, même logique de
+  // dégradation que le reste des préférences.
+  resetPreferences: () => void;
+  getConfigPath: (() => Promise<string>) | undefined;
+  revealConfigFolder: (() => Promise<void>) | undefined;
 };
 
 const PreferencesReactContext = createContext<PreferencesContextValue | null>(null);
@@ -61,6 +90,53 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     (order: ToolbarItemConfig[]) => persist({ notesToolbarOrder: order }),
     [persist],
   );
+  const setCanvasToolbarOrder = useCallback(
+    (order: ToolbarItemConfig[]) => persist({ canvasToolbarOrder: order }),
+    [persist],
+  );
+  const setChartToolbarOrder = useCallback(
+    (order: ToolbarItemConfig[]) => persist({ chartToolbarOrder: order }),
+    [persist],
+  );
+  const setAttachmentsFolder = useCallback(
+    (folder: string) => persist({ attachmentsFolder: folder }),
+    [persist],
+  );
+  const setAutoCreateWikilinkTarget = useCallback(
+    (value: boolean) => persist({ autoCreateWikilinkTarget: value }),
+    [persist],
+  );
+  const setNewNoteLocation = useCallback(
+    (location: NewNoteLocation) => persist({ newNoteLocation: location }),
+    [persist],
+  );
+  const setNewNoteCustomFolder = useCallback(
+    (folder: string) => persist({ newNoteCustomFolder: folder }),
+    [persist],
+  );
+  const setEditorFontSize = useCallback((size: number) => persist({ editorFontSize: size }), [persist]);
+  const setEditorDefaultMode = useCallback(
+    (mode: EditorViewMode) => persist({ editorDefaultMode: mode }),
+    [persist],
+  );
+  const setEditorCloseBrackets = useCallback(
+    (value: boolean) => persist({ editorCloseBrackets: value }),
+    [persist],
+  );
+  const setEditorInlineTitle = useCallback(
+    (value: boolean) => persist({ editorInlineTitle: value }),
+    [persist],
+  );
+
+  const resetPreferences = useCallback(() => {
+    setPreferences(DEFAULT_PREFERENCES);
+    if (bridge) {
+      bridge.reset().catch((error) => console.error('[preferences] échec de la réinitialisation :', error));
+    }
+  }, [bridge]);
+
+  const getConfigPath = bridge?.getConfigPath;
+  const revealConfigFolder = bridge?.revealConfigFolder;
 
   const colorScheme: 'light' | 'dark' =
     preferences.themeMode === 'system' ? (systemScheme === 'dark' ? 'dark' : 'light') : preferences.themeMode;
@@ -71,8 +147,48 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
   }, [colorScheme, preferences.accentColor]);
 
   const value = useMemo<PreferencesContextValue>(
-    () => ({ preferences, theme, colorScheme, setThemeMode, setAccentColor, setNotesToolbarOrder }),
-    [preferences, theme, colorScheme, setThemeMode, setAccentColor, setNotesToolbarOrder],
+    () => ({
+      preferences,
+      theme,
+      colorScheme,
+      setThemeMode,
+      setAccentColor,
+      setNotesToolbarOrder,
+      setCanvasToolbarOrder,
+      setChartToolbarOrder,
+      setAttachmentsFolder,
+      setAutoCreateWikilinkTarget,
+      setNewNoteLocation,
+      setNewNoteCustomFolder,
+      setEditorFontSize,
+      setEditorDefaultMode,
+      setEditorCloseBrackets,
+      setEditorInlineTitle,
+      resetPreferences,
+      getConfigPath,
+      revealConfigFolder,
+    }),
+    [
+      preferences,
+      theme,
+      colorScheme,
+      setThemeMode,
+      setAccentColor,
+      setNotesToolbarOrder,
+      setCanvasToolbarOrder,
+      setChartToolbarOrder,
+      setAttachmentsFolder,
+      setAutoCreateWikilinkTarget,
+      setNewNoteLocation,
+      setNewNoteCustomFolder,
+      setEditorFontSize,
+      setEditorDefaultMode,
+      setEditorCloseBrackets,
+      setEditorInlineTitle,
+      resetPreferences,
+      getConfigPath,
+      revealConfigFolder,
+    ],
   );
 
   return <PreferencesReactContext.Provider value={value}>{children}</PreferencesReactContext.Provider>;

@@ -83,8 +83,9 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
   const [activeNote, setActiveNote] = useState<VaultEntry | null>(null);
   const [content, setContent] = useState('');
   const [status, setStatus] = useState<Status>('idle');
-  const [viewMode, setViewMode] = useState<ViewMode>('source');
+  const [viewMode, setViewMode] = useState<ViewMode>(preferences.editorDefaultMode);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
+  const [wikilinkNotice, setWikilinkNotice] = useState<string | null>(null);
   const [collapsedPaths, setCollapsedPaths] = useState<Set<string>>(new Set());
   const [renamingRelPath, setRenamingRelPath] = useState<string | null>(null);
   const [renamingValue, setRenamingValue] = useState('');
@@ -229,12 +230,16 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
         setActiveNote(node);
         setContent(text);
         setStatus('idle');
+        // Paramètres → Éditeur → "Mode d'édition par défaut" : chaque note
+        // rouverte repart de ce mode plutôt que de garder celui de la note
+        // précédemment ouverte dans la session.
+        setViewMode(preferences.editorDefaultMode);
       } catch (error) {
         console.error('[vault] échec de lecture de la note :', error);
         setStatus('error');
       }
     },
-    [vault],
+    [vault, preferences.editorDefaultMode],
   );
 
   // Ouvre une note demandée par un AUTRE écran (voir App.tsx,
@@ -274,19 +279,33 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
   // `kind` optionnel (défaut 'markdown') : "Nouveau canvas"/"Nouveau
   // graphique" du menu contextuel passent respectivement 'canvas'/'chart'
   // (voir showContextMenuFor) — même handler, seul le fichier créé change
-  // (voir vault:create-note dans apps/desktop/electron/vault.js).
+  // (voir vault:create-note dans apps/desktop/electron/vault.js). Quand
+  // AUCUN `parentRelPath` explicite n'est fourni (bouton "+ Nouvelle note",
+  // "Nouvelle note"/"Nouveau canvas"/"Nouveau graphique" du menu contextuel
+  // général — pas les variantes "...ici", qui passent toujours leur propre
+  // dossier), l'emplacement est résolu depuis Paramètres → Gestion des
+  // fichiers et des liens → "Emplacement par défaut des nouvelles notes".
   const handleCreateNote = useCallback(
     async (parentRelPath?: string, kind?: VaultEntryKind) => {
       if (!vault) return;
+      const resolvedParent =
+        parentRelPath ??
+        (preferences.newNoteLocation === 'sameFolder'
+          ? activeNote
+            ? getParentRelPath(activeNote.relPath)
+            : undefined
+          : preferences.newNoteLocation === 'custom'
+            ? preferences.newNoteCustomFolder || undefined
+            : undefined);
       try {
-        const entry = await vault.createNote('Sans titre', parentRelPath, kind);
+        const entry = await vault.createNote('Sans titre', resolvedParent, kind);
         await refreshTree();
         await openNote({ type: 'note', ...entry });
       } catch (error) {
         console.error('[vault] échec de création de la note :', error);
       }
     },
-    [vault, refreshTree, openNote],
+    [vault, refreshTree, openNote, activeNote, preferences.newNoteLocation, preferences.newNoteCustomFolder],
   );
 
   const handleCreateFolder = useCallback(
@@ -674,16 +693,26 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
   // Clic sur un [[lien interne]] (voir NoteRenderer.tsx) — résout par NOM
   // de note (comme Obsidian, insensible à la casse) plutôt que par relPath
   // exact, puisque c'est ce que la syntaxe du lien porte. Si la cible
-  // n'existe pas encore, la crée avant de l'ouvrir (façon Obsidian : un
-  // lien vers une note absente n'est pas une impasse).
+  // n'existe pas encore, la crée avant de l'ouvrir par défaut (façon
+  // Obsidian : un lien vers une note absente n'est pas une impasse) — sauf
+  // si Paramètres → Gestion des fichiers et des liens →
+  // "autoCreateWikilinkTarget" a été désactivé, auquel cas le clic se
+  // contente de prévenir plutôt que de créer silencieusement.
   const handleOpenWikilink = useCallback(
     async (target: string) => {
       if (!vault) return;
+      setWikilinkNotice(null);
       try {
         const notes = flattenNotes(tree);
         const existing = notes.find((note) => note.name.toLowerCase() === target.toLowerCase());
         if (existing) {
           await openNote(existing);
+          return;
+        }
+        if (!preferences.autoCreateWikilinkTarget) {
+          setWikilinkNotice(
+            `Aucune note « ${target} » — création automatique désactivée (Paramètres → Gestion des fichiers et des liens).`,
+          );
           return;
         }
         const entry = await vault.createNote(target);
@@ -693,7 +722,7 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
         console.error('[vault] échec de l’ouverture du lien interne :', error);
       }
     },
-    [vault, tree, openNote, refreshTree],
+    [vault, tree, openNote, refreshTree, preferences.autoCreateWikilinkTarget],
   );
 
   // Ouvre une note par relPath — utilisé par CanvasEditor quand on clique
@@ -823,23 +852,30 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
         {activeNote ? (
           <>
             <View style={styles.editorHeader}>
-              {activeNoteIsRenaming ? (
-                <TextInput
-                  autoFocus
-                  value={renamingValue}
-                  onChangeText={setRenamingValue}
-                  onSubmitEditing={() => void submitRename()}
-                  onBlur={() => void submitRename()}
-                  onKeyPress={(event) => {
-                    if (event.nativeEvent.key === 'Escape') cancelRename();
-                  }}
-                  style={[styles.editorTitleInput, { color: theme.text, borderColor: theme.accent }]}
-                />
-              ) : (
-                <Pressable onPress={() => startRename({ type: 'note', ...activeNote })}>
-                  <Text style={[styles.editorTitle, { color: theme.text }]}>{activeNote.name}</Text>
-                </Pressable>
-              )}
+              {/* Paramètres → Éditeur → "Titre en ligne" : pour une note
+                  markdown, le titre est alors rendu plus bas, à l'intérieur
+                  du contenu (voir juste avant le sélecteur de mode), et
+                  l'en-tête fixe ne garde que le statut + le panneau
+                  latéral. Canvas/graphiques n'ont pas cette zone de contenu
+                  scrollable équivalente, donc gardent toujours le titre ici. */}
+              {!(preferences.editorInlineTitle && activeNote.kind === 'markdown') &&
+                (activeNoteIsRenaming ? (
+                  <TextInput
+                    autoFocus
+                    value={renamingValue}
+                    onChangeText={setRenamingValue}
+                    onSubmitEditing={() => void submitRename()}
+                    onBlur={() => void submitRename()}
+                    onKeyPress={(event) => {
+                      if (event.nativeEvent.key === 'Escape') cancelRename();
+                    }}
+                    style={[styles.editorTitleInput, { color: theme.text, borderColor: theme.accent }]}
+                  />
+                ) : (
+                  <Pressable onPress={() => startRename({ type: 'note', ...activeNote })}>
+                    <Text style={[styles.editorTitle, { color: theme.text }]}>{activeNote.name}</Text>
+                  </Pressable>
+                ))}
               <Text style={[styles.status, { color: theme.textMuted }]}>
                 {status === 'saving' && 'Enregistrement…'}
                 {status === 'saved' && 'Enregistré'}
@@ -868,6 +904,26 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
                   </View>
                 ) : (
                   <>
+                    {preferences.editorInlineTitle &&
+                      (activeNoteIsRenaming ? (
+                        <TextInput
+                          autoFocus
+                          value={renamingValue}
+                          onChangeText={setRenamingValue}
+                          onSubmitEditing={() => void submitRename()}
+                          onBlur={() => void submitRename()}
+                          onKeyPress={(event) => {
+                            if (event.nativeEvent.key === 'Escape') cancelRename();
+                          }}
+                          style={[styles.editorTitleInline, { color: theme.text, borderColor: theme.accent }]}
+                        />
+                      ) : (
+                        <Pressable onPress={() => startRename({ type: 'note', ...activeNote })}>
+                          <Text style={[styles.editorTitleInline, { color: theme.text }]}>
+                            {activeNote.name}
+                          </Text>
+                        </Pressable>
+                      ))}
                     <View style={[styles.modeRow, { borderColor: theme.border }]}>
                       {(
                         [
@@ -895,6 +951,7 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
                       </Pressable>
                     </View>
                     {attachmentError && <Text style={styles.error}>⚠️ {attachmentError}</Text>}
+                    {wikilinkNotice && <Text style={styles.error}>⚠️ {wikilinkNotice}</Text>}
 
                     {viewMode !== 'reading' && toolbarActions.length > 0 && (
                       <View style={[styles.toolbar, { borderColor: theme.border }]}>
@@ -933,6 +990,8 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
                           onOpenOccurrence={handleOpenOccurrence}
                           occurrenceWords={occurrenceWordList}
                           onCreateOccurrence={handleCreateOccurrence}
+                          fontSize={preferences.editorFontSize}
+                          closeBrackets={preferences.editorCloseBrackets}
                           onReady={(ref: ReactCodeMirrorRef) => {
                             viewRef.current = ref.view ?? null;
                           }}
@@ -1059,6 +1118,16 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     minWidth: 160,
     paddingVertical: 2,
+  },
+  // Paramètres → Éditeur → "Titre en ligne" : plus grand que le titre
+  // épinglé de l'en-tête, façon titre de note Obsidian, puisqu'il fait
+  // partie du flux de contenu plutôt que d'une barre compacte.
+  editorTitleInline: {
+    fontSize: 26,
+    fontWeight: '700',
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 4,
   },
   status: {
     fontSize: 12,

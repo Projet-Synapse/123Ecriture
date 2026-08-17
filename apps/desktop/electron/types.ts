@@ -126,10 +126,26 @@ export interface ToolbarItemConfig {
   visible: boolean;
 }
 
+export type NewNoteLocation = 'vaultRoot' | 'sameFolder' | 'custom';
+
+export type EditorViewMode = 'source' | 'split' | 'reading';
+
 export interface Preferences {
   themeMode: ThemeMode;
   accentColor: string;
   notesToolbarOrder: ToolbarItemConfig[];
+  canvasToolbarOrder: ToolbarItemConfig[];
+  chartToolbarOrder: ToolbarItemConfig[];
+  // Paramètres → Gestion des fichiers et des liens (voir SettingsScreen.tsx).
+  attachmentsFolder: string;
+  autoCreateWikilinkTarget: boolean;
+  newNoteLocation: NewNoteLocation;
+  newNoteCustomFolder: string;
+  // Paramètres → Éditeur.
+  editorFontSize: number;
+  editorDefaultMode: EditorViewMode;
+  editorCloseBrackets: boolean;
+  editorInlineTitle: boolean;
 }
 
 export type UpdaterStatus =

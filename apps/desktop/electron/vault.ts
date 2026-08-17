@@ -4,12 +4,22 @@ import fs from 'fs/promises';
 import fsSync from 'fs';
 import path from 'path';
 
+import { readConfig } from './config';
 import * as vaults from './vaults';
 import type { VaultEntryKind, VaultOrder, VaultTreeNode } from './types';
 
 type GetWindow = () => BrowserWindow | null;
 
-const ATTACHMENTS_FOLDER = 'attachments';
+// Nom par défaut du dossier de pièces jointes — configurable depuis
+// Paramètres → Gestion des fichiers et des liens (voir
+// SettingsScreen.tsx/preferences.ts) ; ce fallback n'est utilisé qu'en
+// l'absence de réglage stocké (ex. première utilisation, config.json
+// absent).
+const DEFAULT_ATTACHMENTS_FOLDER = 'attachments';
+
+function getAttachmentsFolder(): string {
+  return readConfig().preferences?.attachmentsFolder || DEFAULT_ATTACHMENTS_FOLDER;
+}
 
 const MIME_BY_EXTENSION: Record<string, string> = {
   '.png': 'image/png',
@@ -325,7 +335,7 @@ export function registerVaultHandlers(getWindow: GetWindow): void {
     if (result.canceled || result.filePaths.length === 0) return null;
 
     const sourcePath = result.filePaths[0];
-    const attachmentsDir = path.join(vaultPath, ATTACHMENTS_FOLDER);
+    const attachmentsDir = path.join(vaultPath, getAttachmentsFolder());
     await fs.mkdir(attachmentsDir, { recursive: true });
     const extension = path.extname(sourcePath);
     const baseName = path.basename(sourcePath, extension);
@@ -346,7 +356,7 @@ export function registerVaultHandlers(getWindow: GetWindow): void {
   ipcMain.handle('vault:read-attachment-data-url', async (_event, relPath: string) => {
     const vaultPath = getVaultPath();
     if (!vaultPath) throw new Error('Aucun vault sélectionné');
-    const target = relPath && relPath.includes('/') ? relPath : path.join(ATTACHMENTS_FOLDER, relPath ?? '');
+    const target = relPath && relPath.includes('/') ? relPath : path.join(getAttachmentsFolder(), relPath ?? '');
     const fullPath = resolveInVault(vaultPath, target);
     const buffer = await fs.readFile(fullPath);
     return `data:${guessMimeType(fullPath)};base64,${buffer.toString('base64')}`;

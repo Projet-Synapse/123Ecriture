@@ -11,7 +11,7 @@ import type { AppConfig } from './types';
 // atomique du point de vue de la boucle d'événements Node, donc pas de
 // risque de conflit entre deux handlers IPC qui écriraient "en même temps".
 
-function getConfigPath(): string {
+export function getConfigPath(): string {
   return path.join(app.getPath('userData'), 'config.json');
 }
 
