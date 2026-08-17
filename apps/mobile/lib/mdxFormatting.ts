@@ -30,7 +30,7 @@ export function wrapSelection(text: string, selection: Selection, marker: string
 
 // Applique un titre Markdown (# / ## / ###) sur la ligne courante,
 // remplaçant un éventuel titre déjà présent plutôt que de l'empiler.
-export function applyHeading(text: string, selection: Selection, level: 1 | 2 | 3): FormattingResult {
+export function applyHeading(text: string, selection: Selection, level: 1 | 2 | 3 | 4 | 5 | 6): FormattingResult {
   const { lineStart, lineEnd } = getLineRange(text, selection.start);
   const line = text.slice(lineStart, lineEnd);
   const stripped = line.replace(/^#{1,6}\s*/, '');

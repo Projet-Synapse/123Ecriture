@@ -11,15 +11,13 @@ import {
 
 // Registre unique des actions de la barre de formatage Notes — utilisé à la
 // fois par l'éditeur (components/NotesScreen.tsx, pour exécuter l'action)
-// et par Paramètres (components/PersonalizationCard.tsx, pour proposer de
-// réordonner/masquer chaque bouton). Les préférences ne stockent que des
-// ids (voir apps/desktop/electron/preferences.js) ; ce fichier est la seule
+// et par Paramètres (components/settings/EditorSection.tsx, pour proposer
+// de réordonner/masquer chaque bouton). Les préférences ne stockent que des
+// ids (voir apps/desktop/electron/preferences.ts) ; ce fichier est la seule
 // source de vérité sur ce qu'un id représente concrètement.
 
 export type ToolbarActionId =
-  | 'h1'
-  | 'h2'
-  | 'h3'
+  | 'heading-group'
   | 'bold'
   | 'italic'
   | 'code'
@@ -32,13 +30,30 @@ export type ToolbarActionId =
 export type ToolbarAction = {
   id: ToolbarActionId;
   label: string;
-  run: (text: string, selection: Selection) => FormattingResult;
+  // Absent uniquement pour 'heading-group' (voir subActions) — un bouton
+  // normal exécute directement `run` au clic.
+  run?: (text: string, selection: Selection) => FormattingResult;
+  // "Groupe" façon plugin Editing Toolbar d'Obsidian (voir
+  // .claude/References/Sources.md §11) : un seul bouton dans la barre qui,
+  // au clic, déploie ces sous-actions au lieu d'en exécuter une
+  // directement — voir EditorToolbar.tsx. Les sous-actions ne sont PAS
+  // individuellement réordonnables/masquables dans Paramètres (un seul id
+  // de groupe dans `notesToolbarOrder`) : un ensemble fixe pour l'instant,
+  // à revoir si un vrai besoin de personnalisation par niveau de titre
+  // apparaît.
+  subActions?: { id: string; label: string; run: (text: string, selection: Selection) => FormattingResult }[];
 };
 
 export const NOTES_TOOLBAR_ACTIONS: ToolbarAction[] = [
-  { id: 'h1', label: 'H1', run: (text, sel) => applyHeading(text, sel, 1) },
-  { id: 'h2', label: 'H2', run: (text, sel) => applyHeading(text, sel, 2) },
-  { id: 'h3', label: 'H3', run: (text, sel) => applyHeading(text, sel, 3) },
+  {
+    id: 'heading-group',
+    label: 'H',
+    subActions: ([1, 2, 3, 4, 5, 6] as const).map((level) => ({
+      id: `h${level}`,
+      label: `H${level}`,
+      run: (text: string, sel: Selection) => applyHeading(text, sel, level),
+    })),
+  },
   { id: 'bold', label: 'G', run: (text, sel) => wrapSelection(text, sel, '**') },
   { id: 'italic', label: 'I', run: (text, sel) => wrapSelection(text, sel, '_') },
   { id: 'code', label: '</>', run: (text, sel) => wrapSelection(text, sel, '`') },
@@ -52,9 +67,7 @@ export const NOTES_TOOLBAR_ACTIONS: ToolbarAction[] = [
 // Libellés lisibles pour la liste de réorganisation dans Paramètres (plus
 // explicites que les glyphes courts affichés sur les boutons eux-mêmes).
 export const NOTES_TOOLBAR_DESCRIPTIONS: Record<ToolbarActionId, string> = {
-  h1: 'Titre H1',
-  h2: 'Titre H2',
-  h3: 'Titre H3',
+  'heading-group': 'Titres (H1-H6)',
   bold: 'Gras',
   italic: 'Italique',
   code: 'Code',

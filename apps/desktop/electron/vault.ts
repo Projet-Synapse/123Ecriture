@@ -6,7 +6,7 @@ import path from 'path';
 
 import { readConfig } from './config';
 import * as vaults from './vaults';
-import type { VaultEntryKind, VaultOrder, VaultTreeNode } from './types';
+import type { FileSortMode, VaultEntryKind, VaultOrder, VaultTreeNode } from './types';
 
 type GetWindow = () => BrowserWindow | null;
 
@@ -19,6 +19,11 @@ const DEFAULT_ATTACHMENTS_FOLDER = 'attachments';
 
 function getAttachmentsFolder(): string {
   return readConfig().preferences?.attachmentsFolder || DEFAULT_ATTACHMENTS_FOLDER;
+}
+
+// Paramètres → Gestion des fichiers et des liens → "Ordre des fichiers".
+function getFileSortMode(): FileSortMode {
+  return readConfig().preferences?.fileSortMode ?? 'alphabetical';
 }
 
 const MIME_BY_EXTENSION: Record<string, string> = {
@@ -199,19 +204,33 @@ async function walkTree(dir: string, vaultRoot: string, order: VaultOrder): Prom
     }
   }
 
+  const sortMode = getFileSortMode();
   nodes.sort((a, b) => {
     if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
+    // "Plus récent d'abord" ne s'applique qu'aux notes (pas de mtime
+    // suivi sur les dossiers eux-mêmes) — les dossiers entre eux restent
+    // alphabétiques quel que soit le mode, seul un repère stable et
+    // prévisible pour naviguer dedans.
+    if (sortMode === 'recent' && a.type === 'note' && b.type === 'note') {
+      return b.modifiedAt - a.modifiedAt;
+    }
     return a.name.localeCompare(b.name, 'fr');
   });
 
-  const orderKey = path.relative(vaultRoot, dir);
-  const savedOrder = order?.[orderKey];
-  if (savedOrder && savedOrder.length > 0) {
-    const rank = new Map(savedOrder.map((name, index) => [name, index]));
-    // Tri stable (garantie ES2019+) : les nœuds absents de `rank` (rang
-    // Infinity, tous égaux entre eux) conservent l'ordre alphabétique déjà
-    // établi ci-dessus plutôt que d'être mélangés.
-    nodes.sort((a, b) => (rank.get(a.name) ?? Infinity) - (rank.get(b.name) ?? Infinity));
+  // Le tri manuel (glisser-déposer, .123ecriture/order.json) ne s'applique
+  // qu'en mode 'manual' — en 'alphabetical'/'recent', un ordre déjà
+  // enregistré reste ignoré (pas supprimé : re-choisir 'manual' le
+  // restaure tel quel) pour que le mode choisi soit sans ambiguïté.
+  if (sortMode === 'manual') {
+    const orderKey = path.relative(vaultRoot, dir);
+    const savedOrder = order?.[orderKey];
+    if (savedOrder && savedOrder.length > 0) {
+      const rank = new Map(savedOrder.map((name, index) => [name, index]));
+      // Tri stable (garantie ES2019+) : les nœuds absents de `rank` (rang
+      // Infinity, tous égaux entre eux) conservent l'ordre déjà établi
+      // ci-dessus plutôt que d'être mélangés.
+      nodes.sort((a, b) => (rank.get(a.name) ?? Infinity) - (rank.get(b.name) ?? Infinity));
+    }
   }
 
   return nodes;

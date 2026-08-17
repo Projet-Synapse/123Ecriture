@@ -130,6 +130,12 @@ export type NewNoteLocation = 'vaultRoot' | 'sameFolder' | 'custom';
 
 export type EditorViewMode = 'source' | 'split' | 'reading';
 
+// Ordre des fichiers/dossiers dans l'explorateur (voir walkTree dans
+// vault.ts) — 'manual' applique la réorganisation glisser-déposer déjà
+// enregistrée (.123ecriture/order.json) ; les deux autres modes l'ignorent
+// (sans la perdre : re-choisir 'manual' la restaure).
+export type FileSortMode = 'alphabetical' | 'recent' | 'manual';
+
 export interface Preferences {
   themeMode: ThemeMode;
   accentColor: string;
@@ -141,6 +147,7 @@ export interface Preferences {
   autoCreateWikilinkTarget: boolean;
   newNoteLocation: NewNoteLocation;
   newNoteCustomFolder: string;
+  fileSortMode: FileSortMode;
   // Paramètres → Éditeur.
   editorFontSize: number;
   editorDefaultMode: EditorViewMode;

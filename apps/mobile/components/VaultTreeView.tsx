@@ -66,6 +66,18 @@ type Props = {
   // `draggable` + le trait d'insertion, aucune logique ici.
   draggingRelPath?: string | null;
   dragOverInsertion?: { relPath: string; edge: 'above' | 'below' } | null;
+  // Paramètres → Gestion des fichiers et des liens → "Ordre des fichiers" :
+  // le glisser-déposer n'a de sens qu'en mode 'manual' (voir walkTree dans
+  // apps/desktop/electron/vault.ts, qui ignore l'ordre enregistré dans les
+  // deux autres modes). Piloté uniquement pour le curseur ici (indice
+  // visuel) — l'attribut HTML `draggable` réel est posé IMPÉRATIVEMENT
+  // depuis NotesScreen.tsx (voir son effet dédié) : react-native-web
+  // 0.21 ne transmet PAS les props inconnues comme `draggable` jusqu'au
+  // DOM pour Pressable/View (seul `Image` le fait nativement, vérifié
+  // dans ses sources) — passer `draggable` en prop ici serait un no-op
+  // silencieux malgré l'apparence trompeuse. Vrai par défaut pour ne rien
+  // casser des usages existants (ex. si un futur appelant omet la prop).
+  dragEnabled?: boolean;
 };
 
 export function VaultTreeView({
@@ -79,6 +91,7 @@ export function VaultTreeView({
   rename,
   draggingRelPath,
   dragOverInsertion,
+  dragEnabled = true,
 }: Props) {
   return (
     <>
@@ -99,12 +112,12 @@ export function VaultTreeView({
             <DraggablePressable
               onPress={() => (isFolder ? onToggleCollapse(node.relPath) : onOpenNote(node))}
               dataSet={{ relpath: node.relPath }}
-              draggable={!isRenaming}
               style={[
                 styles.row,
                 { paddingLeft: 12 + depth * 16 },
                 !isFolder &&
                   node.relPath === activeRelPath && { backgroundColor: `${theme.accent}22` },
+                !isRenaming && dragEnabled && styles.rowDraggable,
                 isDragging && styles.rowDragging,
               ]}
             >
@@ -146,6 +159,7 @@ export function VaultTreeView({
                 rename={rename}
                 draggingRelPath={draggingRelPath}
                 dragOverInsertion={dragOverInsertion}
+                dragEnabled={dragEnabled}
               />
             )}
           </Fragment>
@@ -168,6 +182,15 @@ const styles = StyleSheet.create({
   },
   rowDragging: {
     opacity: 0.4,
+  },
+  // Simple indice visuel (RN Web transmet `cursor` tel quel) — l'attribut
+  // HTML `draggable` réel est posé depuis NotesScreen.tsx, voir le
+  // commentaire de `dragEnabled` ci-dessus.
+  rowDraggable: {
+    // Le type RN `CursorValue` n'admet que 'auto'/'pointer' — pas de
+    // valeur "grab" disponible, 'pointer' reste le meilleur indice de
+    // survol disponible dans ce typage.
+    cursor: 'pointer',
   },
   // Hauteur 0 volontaire : le trait (insertionLineBar, en enfant) se
   // dessine par-dessus l'espacement entre deux lignes sans en changer la

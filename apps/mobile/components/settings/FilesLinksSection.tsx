@@ -11,6 +11,12 @@ const NEW_NOTE_LOCATION_OPTIONS: { value: NewNoteLocation; label: string }[] = [
   { value: 'custom', label: 'Dossier personnalisé' },
 ];
 
+const FILE_SORT_MODE_OPTIONS: { value: FileSortMode; label: string }[] = [
+  { value: 'alphabetical', label: 'Alphabétique' },
+  { value: 'recent', label: 'Plus récent d’abord' },
+  { value: 'manual', label: 'Manuel (glisser-déposer)' },
+];
+
 // Section "Gestion des fichiers et des liens" — dossier des pièces
 // jointes, emplacement par défaut des nouvelles notes, création
 // automatique de note cible pour un wikilink. Toujours disponible (ces
@@ -24,6 +30,7 @@ export function FilesLinksSection() {
     setNewNoteLocation,
     setNewNoteCustomFolder,
     setAutoCreateWikilinkTarget,
+    setFileSortMode,
   } = usePreferences();
 
   // Champs texte en brouillon local, validés à la soumission (onBlur/Enter)
@@ -110,6 +117,30 @@ export function FilesLinksSection() {
         onChange={setAutoCreateWikilinkTarget}
         theme={theme}
       />
+
+      <Text style={[s.label, { color: theme.textMuted }]}>Ordre des fichiers dans l’explorateur</Text>
+      <View style={s.row}>
+        {FILE_SORT_MODE_OPTIONS.map((option) => {
+          const isActive = preferences.fileSortMode === option.value;
+          return (
+            <Pressable
+              key={option.value}
+              onPress={() => setFileSortMode(option.value)}
+              style={[
+                s.modeButton,
+                { borderColor: theme.border },
+                isActive && { backgroundColor: theme.accent, borderColor: theme.accent },
+              ]}
+            >
+              <Text style={{ color: isActive ? '#fff' : theme.text }}>{option.label}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
+      <Text style={[s.hint, { color: theme.textMuted }]}>
+        En mode Manuel, glisse un fichier dans l’explorateur pour le réordonner parmi ses frères — l’ordre est
+        mémorisé même si tu reviens plus tard sur ce mode.
+      </Text>
     </View>
   );
 }

@@ -24,6 +24,7 @@ const DEFAULT_PREFERENCES: Preferences = {
   autoCreateWikilinkTarget: true,
   newNoteLocation: 'vaultRoot',
   newNoteCustomFolder: '',
+  fileSortMode: 'alphabetical',
   editorFontSize: 15,
   editorDefaultMode: 'source',
   editorCloseBrackets: true,
@@ -43,6 +44,7 @@ type PreferencesContextValue = {
   setAutoCreateWikilinkTarget: (value: boolean) => void;
   setNewNoteLocation: (location: NewNoteLocation) => void;
   setNewNoteCustomFolder: (folder: string) => void;
+  setFileSortMode: (mode: FileSortMode) => void;
   setEditorFontSize: (size: number) => void;
   setEditorDefaultMode: (mode: EditorViewMode) => void;
   setEditorCloseBrackets: (value: boolean) => void;
@@ -114,6 +116,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     (folder: string) => persist({ newNoteCustomFolder: folder }),
     [persist],
   );
+  const setFileSortMode = useCallback((mode: FileSortMode) => persist({ fileSortMode: mode }), [persist]);
   const setEditorFontSize = useCallback((size: number) => persist({ editorFontSize: size }), [persist]);
   const setEditorDefaultMode = useCallback(
     (mode: EditorViewMode) => persist({ editorDefaultMode: mode }),
@@ -160,6 +163,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       setAutoCreateWikilinkTarget,
       setNewNoteLocation,
       setNewNoteCustomFolder,
+      setFileSortMode,
       setEditorFontSize,
       setEditorDefaultMode,
       setEditorCloseBrackets,
@@ -181,6 +185,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       setAutoCreateWikilinkTarget,
       setNewNoteLocation,
       setNewNoteCustomFolder,
+      setFileSortMode,
       setEditorFontSize,
       setEditorDefaultMode,
       setEditorCloseBrackets,

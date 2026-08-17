@@ -273,6 +273,12 @@ declare global {
 
   type EditorViewMode = 'source' | 'split' | 'reading';
 
+  // Ordre des fichiers/dossiers dans l'explorateur (voir walkTree dans
+  // apps/desktop/electron/vault.ts) — 'manual' applique la réorganisation
+  // glisser-déposer déjà enregistrée ; les deux autres modes l'ignorent
+  // (sans la perdre : re-choisir 'manual' la restaure).
+  type FileSortMode = 'alphabetical' | 'recent' | 'manual';
+
   interface Preferences {
     themeMode: ThemeMode;
     accentColor: string;
@@ -284,6 +290,7 @@ declare global {
     autoCreateWikilinkTarget: boolean;
     newNoteLocation: NewNoteLocation;
     newNoteCustomFolder: string;
+    fileSortMode: FileSortMode;
     // Paramètres → Éditeur.
     editorFontSize: number;
     editorDefaultMode: EditorViewMode;

@@ -17,9 +17,14 @@ export const DEFAULT_PREFERENCES: Preferences = {
   // ids possibles vit côté renderer (apps/mobile/lib/notesToolbarActions.ts)
   // — le process principal ne connaît que la structure générique.
   notesToolbarOrder: [
-    { id: 'h1', visible: true },
-    { id: 'h2', visible: true },
-    { id: 'h3', visible: true },
+    // 'heading-group' remplace les anciennes entrées h1/h2/h3 séparées —
+    // un seul bouton "H" qui déploie H1-H6 (voir
+    // apps/mobile/lib/notesToolbarActions.ts et EditorToolbar.tsx). Les
+    // configs déjà enregistrées avec les anciens ids h1/h2/h3 les
+    // perdent silencieusement (id inconnu, filtré au rendu — voir
+    // NotesScreen.tsx) et gagnent 'heading-group' à la fin via
+    // mergeToolbarOrder ci-dessous.
+    { id: 'heading-group', visible: true },
     { id: 'bold', visible: true },
     { id: 'italic', visible: true },
     { id: 'code', visible: true },
@@ -44,6 +49,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   autoCreateWikilinkTarget: true,
   newNoteLocation: 'vaultRoot',
   newNoteCustomFolder: '',
+  fileSortMode: 'alphabetical',
   editorFontSize: 15,
   editorDefaultMode: 'source',
   editorCloseBrackets: true,

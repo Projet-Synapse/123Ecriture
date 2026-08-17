@@ -652,6 +652,26 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
     };
   }, [vault, tree]);
 
+  // Pose l'attribut HTML `draggable` réel sur chaque ligne — react-native-
+  // web 0.21 ne transmet PAS les props inconnues comme `draggable` jusqu'au
+  // DOM pour Pressable/View (seul `Image` le fait nativement, vérifié dans
+  // ses sources), donc `draggable={...}` passé en prop à VaultTreeView
+  // resterait un no-op silencieux sans ceci. Posé impérativement plutôt que
+  // par prop, sur tous les `[data-relpath]` du conteneur, à chaque fois que
+  // la liste, le mode de tri, ou la ligne en cours de renommage change —
+  // c'est justement pourquoi le glisser-déposer n'a de sens qu'en mode
+  // 'manual' (voir Paramètres → Gestion des fichiers et des liens).
+  useEffect(() => {
+    const container = listAreaRef.current as unknown as HTMLElement | null;
+    if (!container) return;
+    const dragEnabled = preferences.fileSortMode === 'manual';
+    const rows = container.querySelectorAll<HTMLElement>('[data-relpath]');
+    rows.forEach((row) => {
+      const relPath = row.getAttribute('data-relpath');
+      row.draggable = dragEnabled && relPath !== renamingRelPath;
+    });
+  }, [tree, preferences.fileSortMode, renamingRelPath]);
+
   const scheduleSave = useCallback(
     (text: string) => {
       if (!vault || !activeNote) return;
@@ -844,6 +864,7 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
             onOpenNote={(node) => void openNote(node)}
             draggingRelPath={draggingRelPath}
             dragOverInsertion={dragOverInsertion}
+            dragEnabled={preferences.fileSortMode === 'manual'}
             rename={
               renamingRelPath
                 ? {
@@ -970,11 +991,23 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
 
                     {viewMode !== 'reading' && (
                       <EditorToolbar
-                        items={toolbarActions.map((action) => ({
-                          id: action.id,
-                          label: action.label,
-                          onPress: () => applyFormatting(action.run),
-                        }))}
+                        items={toolbarActions.map((action) =>
+                          action.subActions
+                            ? {
+                                id: action.id,
+                                label: action.label,
+                                subItems: action.subActions.map((sub) => ({
+                                  id: sub.id,
+                                  label: sub.label,
+                                  onPress: () => applyFormatting(sub.run),
+                                })),
+                              }
+                            : {
+                                id: action.id,
+                                label: action.label,
+                                onPress: () => applyFormatting(action.run as NonNullable<typeof action.run>),
+                              },
+                        )}
                         theme={theme}
                       />
                     )}
