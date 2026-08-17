@@ -113,6 +113,11 @@ contextBridge.exposeInMainWorld('occurrences', {
   findNotes: (word: string) => ipcRenderer.invoke('occurrences:find-notes', word),
 });
 
+contextBridge.exposeInMainWorld('search', {
+  run: (query: string, options?: { propertyId?: string; propertyValue?: string }) =>
+    ipcRenderer.invoke('vault:search', query, options),
+});
+
 contextBridge.exposeInMainWorld('taskLists', {
   list: () => ipcRenderer.invoke('tasklists:list'),
   getActive: () => ipcRenderer.invoke('tasklists:get-active'),

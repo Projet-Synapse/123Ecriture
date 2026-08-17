@@ -167,3 +167,23 @@ export interface HashedNote {
   sizeBytes: number;
   modifiedAt: number;
 }
+
+// Recherche globale (voir search.ts) — un résultat peut être un dossier ou
+// une pièce jointe (aucun `VaultEntryKind` ne les couvre), d'où ce type
+// élargi plutôt que de réutiliser VaultEntryKind tel quel.
+export type SearchResultKind = VaultEntryKind | 'folder' | 'attachment';
+
+export type SearchMatchType = 'title' | 'content' | 'tag' | 'property';
+
+export interface SearchResult {
+  relPath: string;
+  name: string;
+  kind: SearchResultKind;
+  matchType: SearchMatchType;
+  snippet?: string;
+}
+
+export interface SearchOptions {
+  propertyId?: string;
+  propertyValue?: string;
+}

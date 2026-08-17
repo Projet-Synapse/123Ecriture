@@ -47,6 +47,12 @@ function guessMimeType(fileName: string): string {
 // déjà utilisé par sheets.js (voir defaultContentForKind ci-dessous).
 const EXTENSION_TO_KIND: Record<string, VaultEntryKind> = {
   '.mdx': 'markdown',
+  // Fichiers `.md` importés depuis Obsidian (ou tout autre éditeur
+  // Markdown standard) — reconnus comme notes au même titre que `.mdx`,
+  // juste avec une extension différente. Les nouvelles notes créées PAR
+  // l'app restent en `.mdx` (voir KIND_TO_EXTENSION) ; `.md` n'est accepté
+  // qu'en LECTURE d'un fichier déjà existant sur disque.
+  '.md': 'markdown',
   '.canvas': 'canvas',
   '.chart': 'chart',
 };
@@ -105,6 +111,15 @@ function resolveInVault(vaultPath: string, relPath: string): string {
     throw new Error(`Chemin hors du vault refusé : ${relPath}`);
   }
   return resolved;
+}
+
+// Échappe les caractères spéciaux regex — utilisé pour retirer une
+// extension de fichier (`.mdx`, `.md`...) d'un nom sans que le `.` soit
+// interprété comme "n'importe quel caractère". Même utilitaire que
+// occurrences.ts (dupliqué à dessein, voir le commentaire de walkAndHash
+// dans sync.ts sur cette convention).
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 // Trouve un nom de fichier/dossier disponible dans `dir` en suffixant
@@ -305,7 +320,12 @@ export function registerVaultHandlers(getWindow: GetWindow): void {
 
     const folderFull = path.join(vaultPath, 'Journal');
     await fs.mkdir(folderFull, { recursive: true });
-    const fullPath = path.join(folderFull, `${dateIso}.mdx`);
+    const mdxPath = path.join(folderFull, `${dateIso}.mdx`);
+    // Une note journalière du jour peut déjà exister en `.md` (import
+    // Obsidian, plugin Daily Notes natif) — la retrouver plutôt que de
+    // créer un doublon `.mdx` à côté.
+    const mdPath = path.join(folderFull, `${dateIso}.md`);
+    const fullPath = fsSync.existsSync(mdPath) && !fsSync.existsSync(mdxPath) ? mdPath : mdxPath;
 
     if (!fsSync.existsSync(fullPath)) {
       const template = `---\ntitle: ${dateIso}\ncreated: ${new Date().toISOString()}\n---\n\n`;
@@ -371,14 +391,20 @@ export function registerVaultHandlers(getWindow: GetWindow): void {
     const oldFull = resolveInVault(vaultPath, relPath);
     if (!fsSync.existsSync(oldFull)) throw new Error('Élément introuvable.');
     const isNote = fsSync.statSync(oldFull).isFile();
+    // Préserve l'extension RÉELLE du fichier (`.mdx`, `.md`, `.canvas`,
+    // `.chart`...) plutôt que de forcer `.mdx` sur tout — un ancien bug qui
+    // corrompait silencieusement tout fichier non-`.mdx` renommé (ex. un
+    // `.canvas` devenait `truc.canvas.mdx`, disparaissait de l'arborescence
+    // car `.canvas.mdx` n'est reconnu par aucun kind).
+    const extension = isNote ? path.extname(oldFull) : '';
 
     // Un nom ne doit pas pouvoir contenir de séparateur de chemin : un
     // renommage reste un renommage, pas un déplacement déguisé.
     const trimmed = (newName ?? '').trim().replace(/[/\\]/g, '');
     if (!trimmed) throw new Error('Le nom ne peut pas être vide.');
 
-    const baseName = isNote ? trimmed.replace(/\.mdx$/i, '') : trimmed;
-    const finalName = isNote ? `${baseName}.mdx` : baseName;
+    const baseName = isNote && extension ? trimmed.replace(new RegExp(`${escapeRegExp(extension)}$`, 'i'), '') : trimmed;
+    const finalName = isNote ? `${baseName}${extension}` : baseName;
     const parentDir = path.dirname(oldFull);
     const newFull = path.join(parentDir, finalName);
 
@@ -415,8 +441,10 @@ export function registerVaultHandlers(getWindow: GetWindow): void {
     }
 
     const isNote = fsSync.statSync(oldFull).isFile();
-    const baseName = isNote ? path.basename(oldFull, '.mdx') : path.basename(oldFull);
-    const extension = isNote ? '.mdx' : '';
+    // Préserve l'extension réelle (voir vault:rename ci-dessus pour le
+    // détail du bug que ça corrige).
+    const extension = isNote ? path.extname(oldFull) : '';
+    const baseName = isNote ? path.basename(oldFull, extension) : path.basename(oldFull);
     const finalName = findAvailableName(destFull, baseName, extension);
     const newFull = path.join(destFull, finalName);
 
@@ -426,7 +454,10 @@ export function registerVaultHandlers(getWindow: GetWindow): void {
     }
 
     await fs.rename(oldFull, newFull);
-    return { relPath: path.relative(vaultPath, newFull), name: finalName.replace(/\.mdx$/i, '') };
+    return {
+      relPath: path.relative(vaultPath, newFull),
+      name: extension ? finalName.replace(new RegExp(`${escapeRegExp(extension)}$`, 'i'), '') : finalName,
+    };
   });
 
   // Édition manuelle du chemin complet (dossier + nom) en une seule
@@ -445,6 +476,8 @@ export function registerVaultHandlers(getWindow: GetWindow): void {
     const oldFull = resolveInVault(vaultPath, relPath);
     if (!fsSync.existsSync(oldFull)) throw new Error('Élément introuvable.');
     const isNote = fsSync.statSync(oldFull).isFile();
+    // Préserve l'extension réelle (voir vault:rename plus haut).
+    const extension = isNote ? path.extname(oldFull) : '';
 
     const trimmed = (newRelPath ?? '')
       .trim()
@@ -455,14 +488,16 @@ export function registerVaultHandlers(getWindow: GetWindow): void {
       throw new Error('Chemin invalide.');
     }
 
-    const finalRelPath = isNote ? `${trimmed.replace(/\.mdx$/i, '')}.mdx` : trimmed;
+    const strippedTrimmed =
+      isNote && extension ? trimmed.replace(new RegExp(`${escapeRegExp(extension)}$`, 'i'), '') : trimmed;
+    const finalRelPath = isNote ? `${strippedTrimmed}${extension}` : trimmed;
     const newFull = resolveInVault(vaultPath, finalRelPath);
 
     if (newFull === oldFull) {
       // Déjà à cet endroit — no-op plutôt qu'une erreur fs.rename inutile.
       return {
         relPath: path.relative(vaultPath, newFull),
-        name: isNote ? path.basename(newFull, '.mdx') : path.basename(newFull),
+        name: isNote ? path.basename(newFull, extension) : path.basename(newFull),
       };
     }
 
@@ -477,7 +512,7 @@ export function registerVaultHandlers(getWindow: GetWindow): void {
     await fs.rename(oldFull, newFull);
     return {
       relPath: path.relative(vaultPath, newFull),
-      name: isNote ? path.basename(newFull, '.mdx') : path.basename(newFull),
+      name: isNote ? path.basename(newFull, extension) : path.basename(newFull),
     };
   });
 }

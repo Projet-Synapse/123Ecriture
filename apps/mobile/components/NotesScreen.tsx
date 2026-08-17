@@ -25,6 +25,7 @@ import { NoteRenderer } from './NoteRenderer';
 import { OccurrencesPanel } from './OccurrencesPanel';
 import { PropertiesPanel } from './PropertiesPanel';
 import { RightSidebar, type SidebarTab } from './RightSidebar';
+import { SearchDialog } from './SearchDialog';
 import { VaultTreeView } from './VaultTreeView';
 
 // Trois modes d'affichage d'une note — "Source" (CodeMirror nu, texte brut,
@@ -99,6 +100,10 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
   // côté du contenu quel qu'il soit.
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>('properties');
+  // Recherche globale (voir SearchDialog.tsx) — modale indépendante de
+  // `activeNote`, contrairement à sidebarOpen/sidebarTab qui n'ont de sens
+  // qu'avec une note ouverte.
+  const [searchOpen, setSearchOpen] = useState(false);
   // Dictionnaire personnel des {{occurrences}} — chargé une fois ici (pas
   // dans OccurrencesPanel/NoteRenderer/MdxEditor séparément) puisque les
   // TROIS en ont besoin : NoteRenderer pour savoir quelles {{...}} styler
@@ -263,7 +268,7 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
             : {
                 type: 'note',
                 relPath: pendingOpenRelPath,
-                name: (pendingOpenRelPath.split('/').pop() ?? pendingOpenRelPath).replace(/\.mdx$/i, ''),
+                name: (pendingOpenRelPath.split('/').pop() ?? pendingOpenRelPath).replace(/\.mdx?$/i, ''),
                 modifiedAt: Date.now(),
                 kind: 'markdown',
               };
@@ -813,12 +818,21 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
           <Text style={[styles.vaultPath, { color: theme.textMuted }]} numberOfLines={1}>
             {vaultPath}
           </Text>
-          <Pressable
-            onPress={() => void handleCreateNote()}
-            style={[styles.newButton, { backgroundColor: theme.accent }]}
-          >
-            <Text style={styles.buttonText}>+ Nouvelle note</Text>
-          </Pressable>
+          <View style={styles.listHeaderActions}>
+            <Pressable
+              onPress={() => void handleCreateNote()}
+              style={[styles.newButton, styles.newButtonFlex, { backgroundColor: theme.accent }]}
+            >
+              <Text style={styles.buttonText}>+ Nouvelle note</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => setSearchOpen(true)}
+              style={[styles.searchButton, { borderColor: theme.border }]}
+              accessibilityLabel="Rechercher"
+            >
+              <Text style={{ color: theme.text }}>🔍</Text>
+            </Pressable>
+          </View>
         </View>
         <ScrollView>
           <VaultTreeView
@@ -1045,6 +1059,17 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
         onSubmit={(newRelPath) => void submitEditPath(newRelPath)}
         onCancel={cancelEditPath}
       />
+
+      {searchOpen && (
+        <SearchDialog
+          theme={theme}
+          onOpenResult={(relPath) => {
+            setSearchOpen(false);
+            openNoteByRelPath(relPath);
+          }}
+          onCancel={() => setSearchOpen(false)}
+        />
+      )}
     </View>
   );
 }
@@ -1090,10 +1115,26 @@ const styles = StyleSheet.create({
   vaultPath: {
     fontSize: 11,
   },
+  listHeaderActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
   newButton: {
     paddingVertical: 8,
     borderRadius: 8,
     alignItems: 'center',
+  },
+  newButtonFlex: {
+    flex: 1,
+  },
+  searchButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 8,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   editor: {
     flex: 1,

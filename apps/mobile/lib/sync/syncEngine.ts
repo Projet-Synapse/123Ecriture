@@ -111,17 +111,18 @@ async function pullFile(remoteVaultId: string, relPath: string): Promise<void> {
 
 // Écrit le côté PERDANT d'un conflit dans un fichier normal et visible avant
 // de l'écraser — jamais de perte silencieuse (règle CLAUDE.md). Un fichier
-// `.mdx` ordinaire que l'utilisatrice peut ouvrir/comparer/supprimer, pas un
-// mécanisme caché.
+// ordinaire (même extension que l'original — `.mdx`, `.md`...) que
+// l'utilisatrice peut ouvrir/comparer/supprimer, pas un mécanisme caché.
 async function backupLosingSide(relPath: string, content: string): Promise<void> {
   const { vault } = requireBridges();
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
   const dot = relPath.lastIndexOf('.');
   const withoutExt = dot >= 0 ? relPath.slice(0, dot) : relPath;
+  const extension = dot >= 0 ? relPath.slice(dot) : '';
   const parentSlash = withoutExt.lastIndexOf('/');
   const parent = parentSlash >= 0 ? withoutExt.slice(0, parentSlash + 1) : '';
   const baseName = parentSlash >= 0 ? withoutExt.slice(parentSlash + 1) : withoutExt;
-  const backupRelPath = `${parent}${baseName} (conflit ${timestamp}).mdx`;
+  const backupRelPath = `${parent}${baseName} (conflit ${timestamp})${extension}`;
   await vault.writeNote(backupRelPath, content);
 }
 

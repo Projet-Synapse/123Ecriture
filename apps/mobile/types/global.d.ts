@@ -160,6 +160,29 @@ declare global {
     findNotes: (word: string) => Promise<string[]>;
   }
 
+  // Recherche globale (voir SearchDialog.tsx, apps/desktop/electron/
+  // search.ts) — un résultat peut être un dossier ou une pièce jointe,
+  // aucun VaultEntryKind ne les couvre, d'où ce type élargi.
+  type SearchResultKind = VaultEntryKind | 'folder' | 'attachment';
+  type SearchMatchType = 'title' | 'content' | 'tag' | 'property';
+
+  interface SearchResult {
+    relPath: string;
+    name: string;
+    kind: SearchResultKind;
+    matchType: SearchMatchType;
+    snippet?: string;
+  }
+
+  interface SearchOptions {
+    propertyId?: string;
+    propertyValue?: string;
+  }
+
+  interface SearchBridge {
+    run: (query: string, options?: SearchOptions) => Promise<SearchResult[]>;
+  }
+
   // Contenu d'un fichier `.chart` (voir defaultContentForKind dans
   // apps/desktop/electron/vault.js) — plus de registre multi-feuilles
   // séparé (SheetListsBridge/SheetBridge supprimés) : un `.chart` est lu/
@@ -329,5 +352,6 @@ declare global {
     calendar?: CalendarBridge;
     properties?: PropertiesBridge;
     occurrences?: OccurrencesBridge;
+    search?: SearchBridge;
   }
 }

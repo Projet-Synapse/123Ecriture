@@ -9,6 +9,7 @@ import { registerContextMenuHandlers } from './contextMenu';
 import { registerOccurrencesHandlers } from './occurrences';
 import { registerPreferencesHandlers } from './preferences';
 import { registerPropertiesHandlers } from './properties';
+import { registerSearchHandlers } from './search';
 import { registerSyncHandlers } from './sync';
 import { registerTasksHandlers } from './tasks';
 import { checkOnStartup, registerUpdaterHandlers } from './updater';
@@ -121,6 +122,7 @@ if (!gotSingleInstanceLock) {
     registerCalendarHandlers();
     registerPropertiesHandlers();
     registerOccurrencesHandlers();
+    registerSearchHandlers();
     registerAuthProtocol();
 
     if (!isDev) {
