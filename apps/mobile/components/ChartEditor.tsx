@@ -6,6 +6,7 @@ import { CHART_TOOLBAR_ACTIONS, type ChartToolbarActionId } from '../lib/chartTo
 import { buildChartSeries } from '../lib/sheets';
 import { usePreferences } from '../preferences/PreferencesContext';
 import { ChartView } from './ChartView';
+import { EditorToolbar } from './EditorToolbar';
 
 // Éditeur Graphiques — tableur intégré (lignes/colonnes, saisie manuelle,
 // pas de formules) d'où on génère un graphique barres/lignes/camembert.
@@ -208,20 +209,19 @@ export function ChartEditor({ relPath }: Props) {
 
   return (
     <ScrollView style={styles.root} contentContainerStyle={styles.container}>
-      <View style={styles.headerRow}>
-        {toolbarActions.map((action) => (
-          <Pressable
-            key={action.id}
-            onPress={chartActionHandlers[action.id]}
-            style={[styles.button, styles.smallButton, { backgroundColor: theme.accent }]}
-          >
-            <Text style={styles.buttonText}>{action.label}</Text>
-          </Pressable>
-        ))}
+      <EditorToolbar
+        items={toolbarActions.map((action) => ({
+          id: action.id,
+          label: action.label,
+          onPress: chartActionHandlers[action.id],
+        }))}
+        theme={theme}
+      />
+      {saveStatus !== 'idle' && (
         <Text style={[styles.saveStatus, { color: theme.textMuted }]}>
-          {saveStatus === 'saving' ? 'Enregistrement…' : saveStatus === 'saved' ? 'Enregistré' : ''}
+          {saveStatus === 'saving' ? 'Enregistrement…' : 'Enregistré'}
         </Text>
-      </View>
+      )}
 
       <ScrollView horizontal>
         <View>
@@ -265,13 +265,28 @@ export function ChartEditor({ relPath }: Props) {
       </Pressable>
 
       <View style={[styles.chartSection, { borderColor: theme.border }]}>
-        <Text style={[styles.sectionTitle, { color: theme.text }]}>Graphique</Text>
         {!data.chart ? (
-          <Pressable onPress={createChart} style={[styles.button, { backgroundColor: theme.accent }]}>
-            <Text style={styles.buttonText}>Créer un graphique</Text>
-          </Pressable>
-        ) : (
           <>
+            <Text style={[styles.sectionTitle, { color: theme.text }]}>Graphique</Text>
+            <Pressable onPress={createChart} style={[styles.button, { backgroundColor: theme.accent }]}>
+              <Text style={styles.buttonText}>Créer un graphique</Text>
+            </Pressable>
+          </>
+        ) : (
+          // Une seule carte, clairement délimitée (fond + bordure), plutôt
+          // qu'un empilement de rangées de pastilles à même le fond de
+          // l'écran — chaque sous-section (type/étiquettes/valeurs) garde sa
+          // propre étiquette de champ, avec un espacement généreux entre
+          // elles pour rester lisible.
+          <View style={[styles.chartCard, { borderColor: theme.border, backgroundColor: theme.surface }]}>
+            <View style={styles.chartCardHeader}>
+              <Text style={[styles.chartCardTitle, { color: theme.text }]}>Graphique</Text>
+              <Pressable onPress={removeChart} style={styles.headerAction}>
+                <Text style={{ color: theme.textMuted }}>🗑️</Text>
+              </Pressable>
+            </View>
+
+            <Text style={[styles.formLabel, { color: theme.textMuted }]}>Type de graphique</Text>
             <View style={styles.chipsRow}>
               {(['bar', 'line', 'pie'] as SheetChartType[]).map((type) => (
                 <Pressable
@@ -288,9 +303,6 @@ export function ChartEditor({ relPath }: Props) {
                   </Text>
                 </Pressable>
               ))}
-              <Pressable onPress={removeChart} style={styles.headerAction}>
-                <Text style={{ color: theme.textMuted }}>🗑️</Text>
-              </Pressable>
             </View>
 
             <Text style={[styles.formLabel, { color: theme.textMuted }]}>Étiquettes</Text>
@@ -344,7 +356,7 @@ export function ChartEditor({ relPath }: Props) {
                 Choisis une colonne d’étiquettes et au moins une colonne de valeurs.
               </Text>
             )}
-          </>
+          </View>
         )}
       </View>
     </ScrollView>
@@ -383,18 +395,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     alignSelf: 'flex-start',
   },
-  smallButton: {
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-  },
   buttonText: {
     color: '#fff',
     fontWeight: '600',
-  },
-  headerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
   },
   headerAction: {
     paddingHorizontal: 6,
@@ -402,6 +405,8 @@ const styles = StyleSheet.create({
   },
   saveStatus: {
     fontSize: 11,
+    paddingHorizontal: 12,
+    paddingTop: 4,
   },
   gridRow: {
     flexDirection: 'row',
@@ -451,9 +456,24 @@ const styles = StyleSheet.create({
   chartSection: {
     borderTopWidth: 1,
     paddingTop: 16,
-    gap: 8,
+    gap: 12,
   },
   sectionTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  chartCard: {
+    borderWidth: 1,
+    borderRadius: 10,
+    padding: 14,
+    gap: 12,
+  },
+  chartCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  chartCardTitle: {
     fontSize: 16,
     fontWeight: '600',
   },

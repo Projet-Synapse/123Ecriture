@@ -1,17 +1,17 @@
 import { useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { NOTES_TOOLBAR_DESCRIPTIONS, type ToolbarActionId } from '../lib/notesToolbarActions';
 import { usePreferences } from '../preferences/PreferencesContext';
 
 const HEX_COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/;
 
 // Section "Personnalisation" de l'écran Paramètres — le point de départ de
 // la vision « interface ultra-personnalisable » (voir .claude/CLAUDE.md et
-// docs/ARCHITECTURE.md §7) : couleur d'accent, mode clair/sombre/système, et
-// réorganisation de la barre d'outils Notes (seule barre d'outils qui
-// existe pour l'instant — les autres viendront avec leurs modules
-// respectifs, Phase 5).
+// docs/ARCHITECTURE.md §7) : couleur d'accent, mode clair/sombre/système.
+// La réorganisation des barres d'outils (Notes/Canvas/Graphiques) vit dans
+// Paramètres → Éditeur (voir apps/mobile/components/settings/
+// EditorSection.tsx) — plus cohérent d'avoir les 3 au même endroit que
+// leurs autres réglages d'édition.
 const THEME_MODE_OPTIONS: { mode: ThemeMode; label: string }[] = [
   { mode: 'system', label: 'Système' },
   { mode: 'light', label: 'Clair' },
@@ -25,7 +25,7 @@ const THEME_MODE_OPTIONS: { mode: ThemeMode; label: string }[] = [
 const ACCENT_PRESETS = ['#4f46e5', '#2563eb', '#0d9488', '#16a34a', '#d97706', '#dc2626', '#db2777', '#7c3aed'];
 
 export function PersonalizationCard() {
-  const { preferences, theme, setThemeMode, setAccentColor, setNotesToolbarOrder } = usePreferences();
+  const { preferences, theme, setThemeMode, setAccentColor } = usePreferences();
   const [hexDraft, setHexDraft] = useState(preferences.accentColor);
   const [hexError, setHexError] = useState(false);
   // Reste synchronisé si l'accent change ailleurs (clic sur une pastille, ou
@@ -49,21 +49,6 @@ export function PersonalizationCard() {
     }
     setHexError(false);
     setAccentColor(trimmed);
-  };
-
-  const moveToolbarItem = (index: number, direction: -1 | 1) => {
-    const target = index + direction;
-    if (target < 0 || target >= preferences.notesToolbarOrder.length) return;
-    const next = [...preferences.notesToolbarOrder];
-    [next[index], next[target]] = [next[target], next[index]];
-    setNotesToolbarOrder(next);
-  };
-
-  const toggleToolbarItem = (index: number) => {
-    const next = preferences.notesToolbarOrder.map((item, i) =>
-      i === index ? { ...item, visible: !item.visible } : item,
-    );
-    setNotesToolbarOrder(next);
   };
 
   return (
@@ -121,48 +106,6 @@ export function PersonalizationCard() {
         />
       </View>
       {hexError && <Text style={styles.hexError}>⚠️ Couleur invalide — format attendu : #rrggbb</Text>}
-
-      <Text style={[styles.label, { color: theme.textMuted }]}>
-        Barre d’outils Notes (ordre et boutons affichés)
-      </Text>
-      <View style={styles.toolbarList}>
-        {preferences.notesToolbarOrder.map((item, index) => (
-          <View key={item.id} style={[styles.toolbarRow, { borderColor: theme.border }]}>
-            <Pressable
-              onPress={() => toggleToolbarItem(index)}
-              style={[
-                styles.checkbox,
-                { borderColor: theme.border },
-                item.visible && { backgroundColor: theme.accent, borderColor: theme.accent },
-              ]}
-            >
-              {item.visible && <Text style={styles.checkboxMark}>✓</Text>}
-            </Pressable>
-            <Text style={[styles.toolbarLabel, { color: theme.text }]}>
-              {NOTES_TOOLBAR_DESCRIPTIONS[item.id as ToolbarActionId] ?? item.id}
-            </Text>
-            <View style={styles.reorderButtons}>
-              <Pressable
-                onPress={() => moveToolbarItem(index, -1)}
-                disabled={index === 0}
-                style={[styles.reorderButton, index === 0 && styles.reorderButtonDisabled]}
-              >
-                <Text style={{ color: theme.textMuted }}>↑</Text>
-              </Pressable>
-              <Pressable
-                onPress={() => moveToolbarItem(index, 1)}
-                disabled={index === preferences.notesToolbarOrder.length - 1}
-                style={[
-                  styles.reorderButton,
-                  index === preferences.notesToolbarOrder.length - 1 && styles.reorderButtonDisabled,
-                ]}
-              >
-                <Text style={{ color: theme.textMuted }}>↓</Text>
-              </Pressable>
-            </View>
-          </View>
-        ))}
-      </View>
     </View>
   );
 }
@@ -220,45 +163,5 @@ const styles = StyleSheet.create({
   hexError: {
     color: '#dc2626',
     fontSize: 12,
-  },
-  toolbarList: {
-    gap: 6,
-  },
-  toolbarRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    paddingVertical: 6,
-    paddingHorizontal: 8,
-    borderWidth: 1,
-    borderRadius: 8,
-  },
-  checkbox: {
-    width: 20,
-    height: 20,
-    borderRadius: 4,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  checkboxMark: {
-    color: '#fff',
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  toolbarLabel: {
-    flex: 1,
-    fontSize: 13,
-  },
-  reorderButtons: {
-    flexDirection: 'row',
-    gap: 4,
-  },
-  reorderButton: {
-    paddingVertical: 2,
-    paddingHorizontal: 8,
-  },
-  reorderButtonDisabled: {
-    opacity: 0.3,
   },
 });

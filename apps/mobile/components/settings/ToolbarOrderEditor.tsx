@@ -4,12 +4,9 @@ import type { Theme } from '../../theme';
 import { settingsStyles as s } from './settingsStyles';
 
 // Liste réordonnable/masquable générique (case à cocher + libellé + flèches
-// haut/bas) — reproduit le visuel de la barre d'outils Notes dans
-// PersonalizationCard.tsx, généralisé pour être partagé entre Notes, Canvas
-// et Graphiques plutôt que dupliqué trois fois. PersonalizationCard.tsx
-// garde sa propre implémentation (pas touchée, pour ne pas risquer de
-// régression sur une fonctionnalité déjà en production) ; ce composant sert
-// les deux NOUVELLES listes (Canvas/Graphiques) dans EditorSection.tsx.
+// haut/bas) — utilisée par les 3 cartes "Barre d'outils Notes/Canvas/
+// Graphiques" de Paramètres → Éditeur (EditorSection.tsx), une seule
+// implémentation partagée plutôt que dupliquée trois fois.
 type Props = {
   items: ToolbarItemConfig[];
   descriptions: Record<string, string>;

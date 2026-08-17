@@ -2,6 +2,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { CANVAS_TOOLBAR_DESCRIPTIONS } from '../../lib/canvasToolbarActions';
 import { CHART_TOOLBAR_DESCRIPTIONS } from '../../lib/chartToolbarActions';
+import { NOTES_TOOLBAR_DESCRIPTIONS } from '../../lib/notesToolbarActions';
 import { usePreferences } from '../../preferences/PreferencesContext';
 import { SettingsToggle } from './SettingsToggle';
 import { settingsStyles as s } from './settingsStyles';
@@ -19,10 +20,11 @@ const DEFAULT_MODE_OPTIONS: { value: EditorViewMode; label: string }[] = [
 // Section "Éditeur" — réglages lus par MdxEditor.tsx et NotesScreen.tsx à
 // chaque ouverture/rendu de note (voir usages de `preferences.editorFontSize`,
 // `.editorDefaultMode`, `.editorCloseBrackets`, `.editorInlineTitle`), plus
-// les barres d'outils Canvas/Graphiques (lues par CanvasEditor.tsx/
-// ChartEditor.tsx via `preferences.canvasToolbarOrder`/`chartToolbarOrder`).
-// Barre d'outils Notes : reste dans PersonalizationCard.tsx, pas dupliquée
-// ici (déjà en place avant cette section, pas de raison de la déplacer).
+// les barres d'outils Notes/Canvas/Graphiques (lues par NotesScreen.tsx/
+// CanvasEditor.tsx/ChartEditor.tsx via `preferences.notesToolbarOrder`/
+// `canvasToolbarOrder`/`chartToolbarOrder`) — regroupées ici plutôt que la
+// barre Notes dans Personnalisation et les deux autres ici : les 3 réglages
+// de barre d'outils vivent au même endroit.
 export function EditorSection() {
   const {
     preferences,
@@ -31,6 +33,7 @@ export function EditorSection() {
     setEditorDefaultMode,
     setEditorCloseBrackets,
     setEditorInlineTitle,
+    setNotesToolbarOrder,
     setCanvasToolbarOrder,
     setChartToolbarOrder,
   } = usePreferences();
@@ -103,6 +106,17 @@ export function EditorSection() {
           label="Titre en ligne avec le contenu"
           value={preferences.editorInlineTitle}
           onChange={setEditorInlineTitle}
+          theme={theme}
+        />
+      </View>
+
+      <View style={[s.card, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+        <Text style={[s.cardTitle, { color: theme.text }]}>📝 Barre d’outils Notes</Text>
+        <Text style={[s.label, { color: theme.textMuted }]}>Ordre et boutons affichés</Text>
+        <ToolbarOrderEditor
+          items={preferences.notesToolbarOrder}
+          descriptions={NOTES_TOOLBAR_DESCRIPTIONS}
+          onChange={setNotesToolbarOrder}
           theme={theme}
         />
       </View>

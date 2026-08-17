@@ -15,6 +15,7 @@ import { flattenNotes } from '../lib/vaultTree';
 import { useVaults } from '../lib/sync/VaultsContext';
 import { usePreferences } from '../preferences/PreferencesContext';
 import { DraggablePressable } from './VaultTreeView';
+import { EditorToolbar } from './EditorToolbar';
 import { SvgOverlay, type OverlayLine } from './SvgOverlay';
 
 // Éditeur Canvas — cartes (texte ou référence à une note) reliées par des
@@ -340,20 +341,19 @@ export function CanvasEditor({ relPath, onOpenNote }: Props) {
 
   return (
     <View style={styles.container}>
-      <View style={styles.headerRow}>
-        {toolbarActions.map((action) => (
-          <Pressable
-            key={action.id}
-            onPress={canvasActionHandlers[action.id]}
-            style={[styles.button, { backgroundColor: theme.accent }]}
-          >
-            <Text style={styles.buttonText}>{action.label}</Text>
-          </Pressable>
-        ))}
+      <EditorToolbar
+        items={toolbarActions.map((action) => ({
+          id: action.id,
+          label: action.label,
+          onPress: canvasActionHandlers[action.id],
+        }))}
+        theme={theme}
+      />
+      {saveStatus !== 'idle' && (
         <Text style={[styles.saveStatus, { color: theme.textMuted }]}>
-          {saveStatus === 'saving' ? 'Enregistrement…' : saveStatus === 'saved' ? 'Enregistré' : ''}
+          {saveStatus === 'saving' ? 'Enregistrement…' : 'Enregistré'}
         </Text>
-      </View>
+      )}
 
       <View
         ref={surfaceRef}
@@ -446,22 +446,10 @@ const styles = StyleSheet.create({
   muted: {
     fontSize: 14,
   },
-  button: {
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    borderRadius: 8,
-  },
-  buttonText: {
-    color: '#fff',
-    fontWeight: '600',
-  },
-  headerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
   saveStatus: {
     fontSize: 11,
+    paddingHorizontal: 12,
+    paddingTop: 4,
   },
   surface: {
     flex: 1,

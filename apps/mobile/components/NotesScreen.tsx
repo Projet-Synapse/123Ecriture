@@ -17,6 +17,7 @@ import { useVaults } from '../lib/sync/VaultsContext';
 import { usePreferences } from '../preferences/PreferencesContext';
 import { CanvasEditor } from './CanvasEditor';
 import { ChartEditor } from './ChartEditor';
+import { EditorToolbar } from './EditorToolbar';
 import { EditPathDialog } from './EditPathDialog';
 import { MdxEditor } from './MdxEditor';
 import { MoveDialog } from './MoveDialog';
@@ -953,20 +954,15 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
                     {attachmentError && <Text style={styles.error}>⚠️ {attachmentError}</Text>}
                     {wikilinkNotice && <Text style={styles.error}>⚠️ {wikilinkNotice}</Text>}
 
-                    {viewMode !== 'reading' && toolbarActions.length > 0 && (
-                      <View style={[styles.toolbar, { borderColor: theme.border }]}>
-                        {toolbarActions.map((action) => (
-                          <Pressable
-                            key={action.id}
-                            onPress={() => applyFormatting(action.run)}
-                            style={[styles.toolbarButton, { backgroundColor: theme.surface }]}
-                          >
-                            <Text style={[styles.toolbarButtonText, { color: theme.text }]}>
-                              {action.label}
-                            </Text>
-                          </Pressable>
-                        ))}
-                      </View>
+                    {viewMode !== 'reading' && (
+                      <EditorToolbar
+                        items={toolbarActions.map((action) => ({
+                          id: action.id,
+                          label: action.label,
+                          onPress: () => applyFormatting(action.run),
+                        }))}
+                        theme={theme}
+                      />
                     )}
 
                     <View style={styles.editorBody}>
@@ -1142,25 +1138,6 @@ const styles = StyleSheet.create({
   },
   noteContent: {
     flex: 1,
-  },
-  toolbar: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingBottom: 10,
-    borderBottomWidth: 1,
-  },
-  toolbarButton: {
-    minWidth: 32,
-    paddingVertical: 6,
-    paddingHorizontal: 8,
-    borderRadius: 6,
-    alignItems: 'center',
-  },
-  toolbarButtonText: {
-    fontSize: 13,
-    fontWeight: '600',
   },
   modeRow: {
     flexDirection: 'row',
