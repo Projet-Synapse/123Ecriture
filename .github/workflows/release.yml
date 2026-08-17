@@ -13,7 +13,32 @@ permissions:
   contents: write
 
 jobs:
+  # Les 3 jobs `build` tournent en parallèle et appellent chacun
+  # electron-builder --publish always, qui crée la Release GitHub si elle
+  # n'existe pas encore. Sans coordination, les 3 jobs démarrent quasi en
+  # même temps sur un tag flambant neuf et créent chacun LEUR PROPRE
+  # brouillon (race condition confirmée en pratique : plusieurs releases
+  # dupliquées "v0.1.10", une seule avec les assets Linux, les autres
+  # Windows/macOS chacune isolée dans son propre brouillon). Ce job crée
+  # donc le brouillon en premier, seul — les jobs `build` en dépendent
+  # (`needs`) et se contentent d'y ajouter leurs assets un par un, plus de
+  # race possible sur la création.
+  create-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Crée le brouillon de Release GitHub (si pas déjà existant)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ github.ref_name }}"
+          gh release view "$TAG" --repo "${{ github.repository }}" \
+            || gh release create "$TAG" \
+                 --repo "${{ github.repository }}" \
+                 --draft \
+                 --title "${TAG#v}"
+
   build:
+    needs: create-release
     strategy:
       fail-fast: false
       matrix:
