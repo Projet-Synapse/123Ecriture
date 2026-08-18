@@ -113,6 +113,28 @@ export function MdxEditor({
       <CodeMirror
         value={value}
         height="100%"
+        // `style` n'est PAS dans la liste des props reconnues par
+        // @uiw/react-codemirror (voir son `esm/index.js`, `_excluded`) —
+        // il atterrit donc tel quel sur le <div className="cm-theme-none">
+        // que le composant rend lui-même pour englober l'éditeur. Ce div
+        // n'a autrement AUCUNE hauteur explicite (le prop `height="100%"`
+        // ci-dessus ne s'applique qu'à `.cm-editor`/`.cm-scroller`, PAS à
+        // ce wrapper, via `theme/dimensionTheme.js`) : par défaut, un item
+        // flexible sans hauteur explicite grandit pour englober tout son
+        // contenu (`min-height:auto`) plutôt que de respecter la place
+        // disponible dans le `View` (`styles.container`, `flex:1`,
+        // pourtant bien borné) qui l'entoure — exactement le classique
+        // "flexbug" des hauteurs en % dans une chaîne flexbox. Résultat
+        // observé : `.cm-scroller` grandissait à la hauteur du CONTENU
+        // entier de la note (confirmé : 3152px pour ~120 lignes) au lieu
+        // de rester borné avec un scroll interne — l'éditeur semblait
+        // "figé" (aucun scroll nulle part, tout le monde plus bas que
+        // 800px passait simplement hors champ). `flex:1` + `minHeight:0`
+        // ici donnent enfin une hauteur DÉFINIE à ce wrapper, ce qui
+        // permet à `height:100%` de `.cm-editor` de se résoudre
+        // normalement et à `.cm-scroller` (overflow-y:auto déjà géré en
+        // interne par CodeMirror) de redevenir réellement scrollable.
+        style={{ display: 'flex', flex: 1, minHeight: 0 }}
         theme="none"
         extensions={[editorTheme, ...extensions]}
         basicSetup={{

@@ -14,6 +14,7 @@ const NEW_NOTE_LOCATION_OPTIONS: { value: NewNoteLocation; label: string }[] = [
 const FILE_SORT_MODE_OPTIONS: { value: FileSortMode; label: string }[] = [
   { value: 'alphabetical', label: 'Alphabétique' },
   { value: 'recent', label: 'Plus récent d’abord' },
+  { value: 'oldest', label: 'Moins récent d’abord' },
   { value: 'manual', label: 'Manuel (glisser-déposer)' },
 ];
 

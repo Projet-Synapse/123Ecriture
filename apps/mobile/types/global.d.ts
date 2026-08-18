@@ -294,7 +294,7 @@ declare global {
   // apps/desktop/electron/vault.ts) — 'manual' applique la réorganisation
   // glisser-déposer déjà enregistrée ; les deux autres modes l'ignorent
   // (sans la perdre : re-choisir 'manual' la restaure).
-  type FileSortMode = 'alphabetical' | 'recent' | 'manual';
+  type FileSortMode = 'alphabetical' | 'recent' | 'oldest' | 'manual';
 
   interface Preferences {
     themeMode: ThemeMode;

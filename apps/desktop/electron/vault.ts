@@ -223,13 +223,16 @@ async function walkTree(dir: string, vaultRoot: string, order: VaultOrder): Prom
     if (sortMode === 'recent' && a.type === 'note' && b.type === 'note') {
       return b.modifiedAt - a.modifiedAt;
     }
+    if (sortMode === 'oldest' && a.type === 'note' && b.type === 'note') {
+      return a.modifiedAt - b.modifiedAt;
+    }
     return a.name.localeCompare(b.name, 'fr');
   });
 
   // Le tri manuel (glisser-déposer, .123ecriture/order.json) ne s'applique
-  // qu'en mode 'manual' — en 'alphabetical'/'recent', un ordre déjà
-  // enregistré reste ignoré (pas supprimé : re-choisir 'manual' le
-  // restaure tel quel) pour que le mode choisi soit sans ambiguïté.
+  // qu'en mode 'manual' — dans les autres modes, un ordre déjà enregistré
+  // reste ignoré (pas supprimé : re-choisir 'manual' le restaure tel quel)
+  // pour que le mode choisi soit sans ambiguïté.
   if (sortMode === 'manual') {
     const orderKey = path.relative(vaultRoot, dir);
     const savedOrder = order?.[orderKey];

@@ -257,6 +257,48 @@ natives). Toute la logique testable vit dans `packages/`.
 >   c'était le scroll EXTÉRIEUR qui captait la molette. Remplacé par une
 >   simple `View` ; chaque écran gère déjà son propre scroll interne.
 
+> **Écart pragmatique (v0.1.16, interface — round 3)** :
+> - **Éditeur de note figé (aucun scroll) corrigé** : cause racine dans
+>   `@uiw/react-codemirror` (`esm/index.js`/`theme/dimensionTheme.js`,
+>   lus directement) — le prop `height="100%"` de `<CodeMirror>` ne
+>   s'applique qu'à `.cm-editor`/`.cm-scroller` (via une extension
+>   `EditorView.theme()`), jamais au `<div className="cm-theme-none">`
+>   que le composant rend lui-même pour l'englober. Ce div, sans hauteur
+>   explicite, grandissait pour englober tout le contenu (confirmé :
+>   3152px pour ~120 lignes, alors que son propre parent RN restait
+>   correctement borné à 681px) — le classique "flexbug" des hauteurs en
+>   % sans `min-height:0` explicite à chaque niveau, ici sur un `<div>`
+>   hors de portée des styles React Native habituels. `style` n'est PAS
+>   dans la liste des props filtrées par la lib et atterrit donc tel quel
+>   sur ce div : `<CodeMirror style={{display:'flex', flex:1,
+>   minHeight:0}} .../>` (`apps/mobile/components/MdxEditor.tsx`) lui
+>   donne enfin une hauteur définie, ce qui laisse `.cm-scroller`
+>   redevenir réellement scrollable.
+> - **Glisser un fichier DANS un dossier** : le glisser-déposer ne faisait
+>   jusqu'ici QUE réordonner entre frères (même dossier parent) — étendu
+>   à une 3e zone `'inside'` (tiers central d'une ligne DOSSIER, tous
+>   dossiers confondus, pas seulement les frères) qui appelle `vault:move`
+>   (déjà existant, réutilisé tel quel — garde-fous "dossier dans
+>   lui-même" déjà en place côté main process) au lieu de
+>   `vault:reorder`. `apps/mobile/components/NotesScreen.tsx`
+>   (`resolveInsertion`/`handleDrop`), `VaultTreeView.tsx` (indice visuel :
+>   fond teinté de la ligne entière plutôt qu'un trait entre deux lignes).
+> - **Bouton "ordre de tri" dans l'explorateur** (`Sources.md` §2) : accès
+>   direct au réglage `fileSortMode` (déjà existant côté Paramètres)
+>   depuis l'explorateur lui-même, + un 4e mode `'oldest'` ("moins récent
+>   d'abord", symétrique de `'recent'` qui n'existait qu'en "plus récent
+>   d'abord"). Même mécanisme de choix contextuel que le sélecteur de
+>   liste de `TasksScreen.tsx` (entrée active préfixée ✅).
+> - **Graphiques** : re-testé de bout en bout (tableur → lignes de vraies
+>   données → graphique en barres réel, valeurs et proportions correctes,
+>   persistant après rechargement) sans trouver de nouveau bug — le moteur
+>   SVG (`ChartView.tsx`) fonctionne. Le blocage rapporté correspondait au
+>   cas déjà corrigé en v0.1.15 (tableau sans lignes remplies). Mermaid
+>   envisagé par l'utilisatrice puis écarté : DSL texte déclaratif pensé
+>   pour des diagrammes, pas piloté par une UI de tableur — mauvais fit
+>   pour un usage façon Airtable (données éditées interactivement →
+>   graphique automatique).
+
 //////////////////////////////////////////////////////////////////////////
 // 5. 💾 STOCKAGE LOCAL & ABSTRACTION MULTIPLATEFORME
 //////////////////////////////////////////////////////////////////////////

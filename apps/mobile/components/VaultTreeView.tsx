@@ -66,7 +66,11 @@ type Props = {
   // react-native-web). Ce composant reste purement présentationnel : juste
   // `draggable` + le trait d'insertion, aucune logique ici.
   draggingRelPath?: string | null;
-  dragOverInsertion?: { relPath: string; edge: 'above' | 'below' } | null;
+  // 'above'/'below' : trait fin entre deux lignes FRÈRES (réordonner).
+  // 'inside' : la ligne ENTIÈRE (forcément un dossier) se teinte de la
+  // couleur d'accent — déposer ici déplace DANS ce dossier plutôt que de
+  // réordonner (voir NotesScreen.tsx, `resolveInsertion`/`handleDrop`).
+  dragOverInsertion?: { relPath: string; edge: 'above' | 'below' | 'inside' } | null;
   // Toujours activé par défaut : glisser un fichier bascule maintenant
   // lui-même Paramètres → Gestion des fichiers et des liens → "Ordre des
   // fichiers" sur 'manual' dès qu'un dépôt aboutit (voir NotesScreen.tsx,
@@ -104,6 +108,7 @@ export function VaultTreeView({
         const isCollapsed = isFolder && collapsedPaths.has(node.relPath);
         const isDragging = draggingRelPath === node.relPath;
         const insertionEdge = dragOverInsertion?.relPath === node.relPath ? dragOverInsertion.edge : null;
+        const isDropInsideTarget = insertionEdge === 'inside';
 
         return (
           <Fragment key={node.relPath}>
@@ -122,6 +127,7 @@ export function VaultTreeView({
                   node.relPath === activeRelPath && { backgroundColor: `${theme.accent}22` },
                 !isRenaming && dragEnabled && styles.rowDraggable,
                 isDragging && styles.rowDragging,
+                isDropInsideTarget && { backgroundColor: `${theme.accent}33`, borderRadius: 6 },
               ]}
             >
               <Text style={styles.icon}>

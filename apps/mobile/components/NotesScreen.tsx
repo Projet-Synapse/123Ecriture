@@ -135,15 +135,18 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
   const occurrencesBridge = typeof window !== 'undefined' ? window.occurrences : undefined;
   const [occurrenceEntries, setOccurrenceEntries] = useState<OccurrenceEntry[]>([]);
   const [focusedOccurrenceWord, setFocusedOccurrenceWord] = useState<string | null>(null);
-  // État de glisser-pour-réordonner, pour l'affichage (VaultTreeView) — voir
-  // aussi draggingRelPathRef ci-dessous, qui porte la même info pour la
-  // LOGIQUE (évite une closure périmée dans les écouteurs DOM délégués).
-  // `dragOverInsertion` : sur quelle ligne FRÈRE de l'élément glissé
-  // afficher le trait d'insertion, et de quel côté (au-dessus/en dessous).
+  // État de glisser-pour-réordonner/déplacer, pour l'affichage
+  // (VaultTreeView) — voir aussi draggingRelPathRef ci-dessous, qui porte
+  // la même info pour la LOGIQUE (évite une closure périmée dans les
+  // écouteurs DOM délégués). `dragOverInsertion` : sur quelle ligne
+  // afficher l'indice de dépôt — 'above'/'below' = trait d'insertion entre
+  // deux frères (réordonner), 'inside' = ligne entière teintée (dossier
+  // ciblé, déplacer dedans).
   const [draggingRelPath, setDraggingRelPath] = useState<string | null>(null);
-  const [dragOverInsertion, setDragOverInsertion] = useState<{ relPath: string; edge: 'above' | 'below' } | null>(
-    null,
-  );
+  const [dragOverInsertion, setDragOverInsertion] = useState<{
+    relPath: string;
+    edge: 'above' | 'below' | 'inside';
+  } | null>(null);
   const draggingRelPathRef = useRef<string | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const listAreaRef = useRef<View>(null);
@@ -512,6 +515,27 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
     });
   }, []);
 
+  // Bouton "ordre de tri" en haut de l'explorateur (voir
+  // .claude/References/Sources.md §2) — même mécanisme de choix
+  // contextuel que le sélecteur de liste de TasksScreen.tsx : une entrée
+  // par mode, celle active préfixée ✅. Paramètres → Gestion des fichiers
+  // et des liens propose déjà ce réglage ; ce bouton n'en est qu'un accès
+  // direct depuis l'explorateur lui-même, pas un doublon de logique.
+  const showSortMenu = useCallback(() => {
+    if (!contextMenuBridge) return;
+    const options: { id: FileSortMode; label: string }[] = [
+      { id: 'alphabetical', label: 'Alphabétique' },
+      { id: 'recent', label: 'Plus récent d’abord' },
+      { id: 'oldest', label: 'Moins récent d’abord' },
+      { id: 'manual', label: 'Personnalisé (glisser-déposer)' },
+    ];
+    void contextMenuBridge
+      .show(options.map((o) => ({ id: o.id, label: o.id === preferences.fileSortMode ? `✅ ${o.label}` : o.label })))
+      .then((choice) => {
+        if (choice) setFileSortMode(choice as FileSortMode);
+      });
+  }, [contextMenuBridge, preferences.fileSortMode, setFileSortMode]);
+
   const showContextMenuFor = useCallback(
     (node: VaultTreeNode | null) => {
       if (!contextMenuBridge) return;
@@ -587,42 +611,53 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
     return () => container.removeEventListener('contextmenu', handler);
   }, [vaultPath, tree, contextMenuBridge, showContextMenuFor]);
 
-  // Glisser pour RÉORDONNER (curseur), même mécanisme de délégation que le
-  // clic droit ci-dessus : un seul jeu d'écouteurs DOM (dragstart/dragover/
-  // drop/dragend) sur le conteneur de la liste plutôt qu'un handler par
-  // ligne — chaque ligne porte juste `draggable` (voir VaultTreeView.tsx)
-  // et son `data-relpath`. Volontairement restreint aux FRÈRES (même
-  // dossier parent) : changer de dossier reste le rôle de "Déplacer
-  // vers…"/"Modifier le chemin", pas du glisser — voir le commentaire
-  // d'en-tête de fichier. `draggingRelPathRef` (pas seulement le state)
-  // sert de source de vérité à la logique : cet effet ne se re-crée qu'au
-  // changement de `tree`/`vault`, donc les closures ci-dessous figeraient
+  // Glisser pour RÉORDONNER OU DÉPLACER DANS UN DOSSIER (curseur), même
+  // mécanisme de délégation que le clic droit ci-dessus : un seul jeu
+  // d'écouteurs DOM (dragstart/dragover/drop/dragend) sur le conteneur de
+  // la liste plutôt qu'un handler par ligne — chaque ligne porte juste
+  // `draggable` (voir VaultTreeView.tsx) et son `data-relpath`.
+  // `draggingRelPathRef` (pas seulement le state) sert de source de vérité
+  // à la logique : cet effet ne se re-crée qu'au changement de
+  // `tree`/`vault`/`performMove`, donc les closures ci-dessous figeraient
   // une valeur périmée du state si elles le lisaient directement — la ref,
   // elle, reste toujours à jour.
   useEffect(() => {
     const container = listAreaRef.current as unknown as HTMLElement | null;
     if (!container || !vault) return;
 
-    // Résout "au-dessus ou en dessous de quelle ligne FRÈRE" insérer
-    // l'élément glissé — null si la ligne survolée n'est pas un frère valide
-    // (dossier parent différent, ou la ligne glissée elle-même) : dans ce
-    // cas on ne bloque pas l'évènement (pas de preventDefault), le
-    // navigateur affiche son curseur "dépôt refusé" par défaut.
+    // Résout la zone survolée. Trois cas :
+    // - Tiers central d'un DOSSIER (n'importe lequel, pas seulement un
+    //   frère) → 'inside', déplacer DEDANS (vault:move) — sauf le dossier
+    //   glissé lui-même ou un de ses propres descendants (mêmes règles que
+    //   vault:move, qui les revérifie de toute façon côté main process ;
+    //   ceci n'est qu'un indice visuel côté renderer, `isPathAffected` fait
+    //   déjà exactement ce test ailleurs dans ce fichier).
+    // - Tiers haut/bas d'une ligne FRÈRE (même dossier parent) → 'above'/
+    //   'below', réordonnancement classique (vault:reorder) — inchangé.
+    // - Sinon → null (dépôt refusé, curseur par défaut du navigateur).
     const resolveInsertion = (
       event: DragEvent,
       draggedRelPath: string,
-    ): { relPath: string; edge: 'above' | 'below' } | null => {
+    ): { relPath: string; edge: 'above' | 'below' | 'inside' } | null => {
       const target = event.target as HTMLElement | null;
       const rowEl = target?.closest ? (target.closest('[data-relpath]') as HTMLElement | null) : null;
       const hoveredRelPath = rowEl?.getAttribute('data-relpath') ?? null;
       if (!rowEl || !hoveredRelPath || hoveredRelPath === draggedRelPath) return null;
 
+      const rect = rowEl.getBoundingClientRect();
+      const relativeY = event.clientY - rect.top;
+
+      const hoveredNode = findNodeByPath(tree, hoveredRelPath);
+      const isMiddleThird = relativeY > rect.height / 3 && relativeY < (rect.height * 2) / 3;
+      if (hoveredNode?.type === 'folder' && isMiddleThird && !isPathAffected(hoveredRelPath, draggedRelPath)) {
+        return { relPath: hoveredRelPath, edge: 'inside' };
+      }
+
       const draggedParent = getParentRelPath(draggedRelPath);
       const hoveredParent = getParentRelPath(hoveredRelPath);
       if (draggedParent !== hoveredParent) return null;
 
-      const rect = rowEl.getBoundingClientRect();
-      const edge = event.clientY < rect.top + rect.height / 2 ? 'above' : 'below';
+      const edge = relativeY < rect.height / 2 ? 'above' : 'below';
       return { relPath: hoveredRelPath, edge };
     };
 
@@ -668,6 +703,16 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
       const draggedNode = findNodeByPath(tree, draggedRelPath);
       const targetNode = findNodeByPath(tree, insertion.relPath);
       if (!draggedNode || !targetNode) return;
+
+      if (insertion.edge === 'inside') {
+        // Déplacer DANS le dossier ciblé — même opération que "Déplacer
+        // vers…" (performMove, déjà géré : met à jour la note active si
+        // affectée, rafraîchit l'arborescence). Ne dépend pas de l'ordre de
+        // tri (contrairement au réordonnancement ci-dessous) : pas de
+        // bascule vers le mode "Manuel" ici.
+        void performMove(draggedNode, targetNode.relPath);
+        return;
+      }
 
       const parentRelPath = getParentRelPath(draggedRelPath);
       const siblingNames = getChildrenAt(tree, parentRelPath).map((n) => n.name);
@@ -718,7 +763,7 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
     // réglage — `handleDrop` lit `preferences.fileSortMode` au moment du
     // DÉPÔT réel, pas besoin que l'effet lui-même en dépende.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [vault, tree]);
+  }, [vault, tree, performMove]);
 
   // Pose l'attribut HTML `draggable` réel sur chaque ligne — react-native-
   // web 0.21 ne transmet PAS les props inconnues comme `draggable` jusqu'au
@@ -925,6 +970,13 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
               accessibilityLabel="Rechercher"
             >
               <Text style={{ color: theme.text }}>🔍</Text>
+            </Pressable>
+            <Pressable
+              onPress={showSortMenu}
+              style={[styles.searchButton, { borderColor: theme.border }]}
+              accessibilityLabel="Ordre de tri"
+            >
+              <Text style={{ color: theme.text }}>⇅</Text>
             </Pressable>
           </View>
         </View>

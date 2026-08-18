@@ -150,9 +150,10 @@ export type EditorViewMode = 'source' | 'split' | 'reading';
 
 // Ordre des fichiers/dossiers dans l'explorateur (voir walkTree dans
 // vault.ts) — 'manual' applique la réorganisation glisser-déposer déjà
-// enregistrée (.123ecriture/order.json) ; les deux autres modes l'ignorent
-// (sans la perdre : re-choisir 'manual' la restaure).
-export type FileSortMode = 'alphabetical' | 'recent' | 'manual';
+// enregistrée (.123ecriture/order.json) ; les autres modes l'ignorent
+// (sans la perdre : re-choisir 'manual' la restaure). 'oldest' est le
+// symétrique de 'recent' (plus ancien d'abord plutôt que plus récent).
+export type FileSortMode = 'alphabetical' | 'recent' | 'oldest' | 'manual';
 
 export interface Preferences {
   themeMode: ThemeMode;
