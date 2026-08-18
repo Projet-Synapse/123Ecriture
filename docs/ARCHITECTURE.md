@@ -151,10 +151,16 @@ natives). Toute la logique testable vit dans `packages/`.
 >   `apps/mobile/lib/markdownPlugins.ts`) : `[[liens internes]]`, `#tags`,
 >   `![[pièces jointes]]` (images/audio, syntaxe Obsidian), `{{occurrences}}`
 >   (voir plus bas), 3 modes d'affichage (Source/Intermédiaire/Aperçu).
-> - **Excalidraw** (demandé, pas encore implémenté) : format existant
+> - **Excalidraw** (v0.1.14, groundwork seulement) : 4e `VaultEntryKind`,
+>   reconnu de bout en bout (extension `.excalidraw`, icône, création
+>   depuis le menu contextuel, ouverture, recherche) — format existant
 >   `.excalidraw`, JSON ouvert maintenu par l'équipe Excalidraw elle-même
->   (`{type: "excalidraw", elements: [...], appState: {...}}`) — à réutiliser
->   tel quel le jour venu plutôt qu'inventer un format maison.
+>   (`{type: "excalidraw", elements: [...], appState: {...}}`), lu/écrit
+>   par `ExcalidrawEditor.tsx` avec repli sur une scène vide en cas
+>   d'erreur. Pas de vrai outil de dessin ni dépendance
+>   `@excalidraw/excalidraw` cette session (scaffolding uniquement, décision
+>   de scope explicite) — `ExcalidrawEditor.tsx` n'affiche qu'un
+>   placeholder pour l'instant.
 
 > **Écart pragmatique (v0.1.8, barre latérale + Live Preview)** :
 > - "Intermédiaire" est maintenant un VRAI Live Preview inline à la
@@ -194,6 +200,42 @@ natives). Toute la logique testable vit dans `packages/`.
 >   `{{ancien}}`→`{{nouveau}}` dans TOUS les `.mdx` du coffre côté main
 >   process (contrairement aux propriétés — ici le mot est le texte lui-même
 >   dans le contenu, pas juste une clé de frontmatter).
+
+> **Écart pragmatique (v0.1.14, interface — Tâches/Live Preview/sidebars)** :
+> - **Bug du mode "Intermédiaire" corrigé** : il se comportait exactement
+>   comme "Source" (aucune décoration visible), un `RangeSetBuilder`
+>   CodeMirror plantait silencieusement — les décorations `mark`/`heading`
+>   étaient ajoutées dans le mauvais ordre (le contenu stylé avant son
+>   marqueur, alors que `RangeSetBuilder` exige un ordre `from` strictement
+>   croissant), ce qui faisait planter `buildDecorations` et CodeMirror
+>   désactivait le `ViewPlugin` entier sans bruit visible. Diagnostiqué en
+>   lançant réellement l'app sous xvfb+Playwright (`_electron`) — jamais
+>   fait pour cette zone jusqu'ici — plutôt qu'en relisant le code une 3e
+>   fois ; corrigé dans `apps/mobile/lib/mdxLivePreview.ts`.
+> - **Tâches** refaites façon Microsoft To Do : `Task` porte maintenant
+>   `description`/`subtasks`/`attachments` (`apps/desktop/electron/
+>   tasks.ts`, normalisés à la lecture pour les tâches plus anciennes, pas
+>   de migration écrite sur disque), texte de tâche éditable après création.
+>   Les pièces jointes réutilisent le bridge générique
+>   `vault.importAttachment()` (pas de 2e mécanisme de copie de fichier).
+>   `DraftTextField` (le champ "brouillon, commit au blur" né dans
+>   `PropertiesPanel.tsx`) extrait dans son propre fichier pour être
+>   réutilisé par `TasksScreen.tsx`.
+> - **3 barres latérales redimensionnables/repliables au curseur** (nav
+>   générale, explorateur de fichiers, panneau Propriétés/Occurrences) :
+>   nouveau hook `apps/mobile/lib/useResizablePanel.ts` (mousedown/
+>   mousemove/mouseup sur `document`, premier précédent de ce genre dans le
+>   repo — tout le reste du drag existant est du HTML5 natif `draggable`),
+>   poignée partagée `ResizeHandle.tsx`, état persisté par coffre... par
+>   PRÉFÉRENCE (`preferences.sidebarLayout`, pas vault-scopé). Glisser sous
+>   la moitié de la largeur minimale replie automatiquement le panneau ; un
+>   chevron sur la poignée permet aussi de replier/déplier au clic.
+> - **Scroll de l'explorateur de fichiers indépendant du contenu** :
+>   `AppShell.tsx` enveloppait tout l'écran actif (donc les `ScrollView`
+>   internes de `NotesScreen.tsx`) dans un `ScrollView` supplémentaire —
+>   deux `ScrollView` imbriqués cassent la chaîne `flex:1` sur le web,
+>   c'était le scroll EXTÉRIEUR qui captait la molette. Remplacé par une
+>   simple `View` ; chaque écran gère déjà son propre scroll interne.
 
 //////////////////////////////////////////////////////////////////////////
 // 5. 💾 STOCKAGE LOCAL & ABSTRACTION MULTIPLATEFORME

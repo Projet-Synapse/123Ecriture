@@ -29,6 +29,11 @@ const DEFAULT_PREFERENCES: Preferences = {
   editorDefaultMode: 'source',
   editorCloseBrackets: true,
   editorInlineTitle: false,
+  sidebarLayout: {
+    nav: { width: 220, collapsed: false },
+    explorer: { width: 260, collapsed: false },
+    rightPanel: { width: 280, collapsed: false },
+  },
 };
 
 type PreferencesContextValue = {
@@ -49,6 +54,7 @@ type PreferencesContextValue = {
   setEditorDefaultMode: (mode: EditorViewMode) => void;
   setEditorCloseBrackets: (value: boolean) => void;
   setEditorInlineTitle: (value: boolean) => void;
+  setSidebarPanelLayout: (id: SidebarPanelId, layout: SidebarPanelLayout) => void;
   // Paramètres → Confidentialité et données. `undefined` si non disponible
   // (pas de pont Electron, ex. web/mobile) — laissé à la charge de l'écran
   // d'afficher/masquer les actions correspondantes, même logique de
@@ -130,6 +136,15 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     (value: boolean) => persist({ editorInlineTitle: value }),
     [persist],
   );
+  // Un seul panneau à la fois (voir lib/useResizablePanel.ts) : merge sur
+  // l'objet `sidebarLayout` courant plutôt que d'écraser les 3 entrées,
+  // sinon redimensionner l'explorateur oublierait la largeur mémorisée du
+  // panneau droit.
+  const setSidebarPanelLayout = useCallback(
+    (id: SidebarPanelId, layout: SidebarPanelLayout) =>
+      persist({ sidebarLayout: { ...preferences.sidebarLayout, [id]: layout } }),
+    [persist, preferences.sidebarLayout],
+  );
 
   const resetPreferences = useCallback(() => {
     setPreferences(DEFAULT_PREFERENCES);
@@ -168,6 +183,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       setEditorDefaultMode,
       setEditorCloseBrackets,
       setEditorInlineTitle,
+      setSidebarPanelLayout,
       resetPreferences,
       getConfigPath,
       revealConfigFolder,
@@ -190,6 +206,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       setEditorDefaultMode,
       setEditorCloseBrackets,
       setEditorInlineTitle,
+      setSidebarPanelLayout,
       resetPreferences,
       getConfigPath,
       revealConfigFolder,

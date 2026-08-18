@@ -3,6 +3,7 @@ import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-
 
 import { parseFrontmatter, serializeFrontmatter, type FrontmatterData } from '../lib/frontmatter';
 import type { Theme } from '../theme';
+import { DraftTextField } from './DraftTextField';
 
 // Onglet "Propriétés" de la barre latérale (voir RightSidebar.tsx,
 // NotesScreen.tsx) — deux sections : les VALEURS de la note actuellement
@@ -48,56 +49,6 @@ function parseInputForType(type: PropertyType, text: string): unknown {
       .filter((item) => item.length > 0);
   }
   return text;
-}
-
-// Champ texte "à commit différé" — un brouillon local (state contrôlé, pas
-// `defaultValue`) mis à jour à chaque frappe, mais qui ne remonte au parent
-// (`onCommit`) qu'au blur/à la validation. Évite de resérialiser tout le
-// frontmatter à chaque caractère tapé, et évite surtout d'aller lire la
-// valeur courante d'un `<input>` DOM sous-jacent via l'évènement natif RN
-// (fragile côté react-native-web) — le brouillon EST la source de vérité
-// entre deux commits.
-function DraftTextField({
-  initialValue,
-  onCommit,
-  placeholder,
-  theme,
-  style,
-}: {
-  initialValue: string;
-  onCommit: (value: string) => void;
-  placeholder?: string;
-  theme: Theme;
-  style: object;
-}) {
-  // Resynchronise le brouillon quand `initialValue` change VRAIMENT (autre
-  // propriété sélectionnée, valeur changée ailleurs) — ajustement pendant
-  // le rendu plutôt que dans un effet (évite un flash "ancienne valeur"
-  // d'une frame ET la règle react-hooks/set-state-in-effect : c'est le
-  // correctif documenté par React pour "réinitialiser un état dérivé d'une
-  // prop qui change").
-  const [prevInitialValue, setPrevInitialValue] = useState(initialValue);
-  const [draft, setDraft] = useState(initialValue);
-  if (initialValue !== prevInitialValue) {
-    setPrevInitialValue(initialValue);
-    setDraft(initialValue);
-  }
-
-  const commit = () => {
-    if (draft !== initialValue) onCommit(draft);
-  };
-
-  return (
-    <TextInput
-      value={draft}
-      onChangeText={setDraft}
-      onBlur={commit}
-      onSubmitEditing={commit}
-      placeholder={placeholder}
-      placeholderTextColor={theme.textMuted}
-      style={style}
-    />
-  );
 }
 
 type Props = {

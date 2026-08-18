@@ -12,6 +12,7 @@ import { EditorView, type ReactCodeMirrorRef } from '@uiw/react-codemirror';
 
 import type { FormattingResult, Selection } from '../lib/mdxFormatting';
 import { NOTES_TOOLBAR_ACTIONS, type ToolbarAction } from '../lib/notesToolbarActions';
+import { useResizablePanel } from '../lib/useResizablePanel';
 import { findNodeByPath, flattenNotes, getChildrenAt, getParentRelPath } from '../lib/vaultTree';
 import { useVaults } from '../lib/sync/VaultsContext';
 import { usePreferences } from '../preferences/PreferencesContext';
@@ -19,11 +20,13 @@ import { CanvasEditor } from './CanvasEditor';
 import { ChartEditor } from './ChartEditor';
 import { EditorToolbar } from './EditorToolbar';
 import { EditPathDialog } from './EditPathDialog';
+import { ExcalidrawEditor } from './ExcalidrawEditor';
 import { MdxEditor } from './MdxEditor';
 import { MoveDialog } from './MoveDialog';
 import { NoteRenderer } from './NoteRenderer';
 import { OccurrencesPanel } from './OccurrencesPanel';
 import { PropertiesPanel } from './PropertiesPanel';
+import { ResizeHandle } from './ResizeHandle';
 import { RightSidebar, type SidebarTab } from './RightSidebar';
 import { SearchDialog } from './SearchDialog';
 import { VaultTreeView } from './VaultTreeView';
@@ -100,6 +103,21 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
   // côté du contenu quel qu'il soit.
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>('properties');
+  // Redimensionnement/repli au curseur des 2 barres latérales internes à
+  // cet écran (voir lib/useResizablePanel.ts, components/ResizeHandle.tsx —
+  // la 3e, la nav générale, est gérée par AppShell.tsx). Le panneau droit
+  // n'a volontairement PAS son propre `collapsed` persisté : sa visibilité
+  // reste entièrement pilotée par `sidebarOpen` ci-dessus (déjà exposé par
+  // le bouton ◀/▶ de l'en-tête) — `onCollapseIntent` fait juste converger
+  // le glisser-jusqu'à-zéro vers ce même bouton plutôt que d'introduire une
+  // deuxième notion de "fermé" qui pourrait diverger.
+  const explorerPanel = useResizablePanel('explorer', { min: 180, max: 480, edge: 1 });
+  const rightPanelWidth = useResizablePanel('rightPanel', {
+    min: 220,
+    max: 480,
+    edge: -1,
+    onCollapseIntent: () => setSidebarOpen(false),
+  });
   // Recherche globale (voir SearchDialog.tsx) — modale indépendante de
   // `activeNote`, contrairement à sidebarOpen/sidebarTab qui n'ont de sens
   // qu'avec une note ouverte.
@@ -475,6 +493,7 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
             { id: 'new-note', label: 'Nouvelle note' },
             { id: 'new-canvas', label: 'Nouveau canvas' },
             { id: 'new-chart', label: 'Nouveau graphique' },
+            { id: 'new-excalidraw', label: 'Nouveau excalidraw' },
             { id: 'new-folder', label: 'Nouveau dossier' },
           ]
         : node.type === 'folder'
@@ -482,6 +501,7 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
               { id: 'new-note-here', label: 'Nouvelle note ici' },
               { id: 'new-canvas-here', label: 'Nouveau canvas ici' },
               { id: 'new-chart-here', label: 'Nouveau graphique ici' },
+              { id: 'new-excalidraw-here', label: 'Nouveau excalidraw ici' },
               { id: 'new-folder-here', label: 'Nouveau dossier ici' },
               { id: 'rename', label: 'Renommer' },
               { id: 'move', label: 'Déplacer vers…' },
@@ -497,10 +517,12 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
         if (choice === 'new-note') void handleCreateNote();
         if (choice === 'new-canvas') void handleCreateNote(undefined, 'canvas');
         if (choice === 'new-chart') void handleCreateNote(undefined, 'chart');
+        if (choice === 'new-excalidraw') void handleCreateNote(undefined, 'excalidraw');
         if (choice === 'new-folder') void handleCreateFolder();
         if (node && choice === 'new-note-here') void handleCreateNote(node.relPath);
         if (node && choice === 'new-canvas-here') void handleCreateNote(node.relPath, 'canvas');
         if (node && choice === 'new-chart-here') void handleCreateNote(node.relPath, 'chart');
+        if (node && choice === 'new-excalidraw-here') void handleCreateNote(node.relPath, 'excalidraw');
         if (node && choice === 'new-folder-here') void handleCreateFolder(node.relPath);
         if (node && choice === 'rename') startRename(node);
         if (node && choice === 'move') startMove(node);
@@ -832,7 +854,10 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
     <View style={styles.row}>
       <View
         ref={listAreaRef}
-        style={[styles.list, { borderColor: theme.border, backgroundColor: theme.surface }]}
+        style={[
+          styles.list,
+          { width: explorerPanel.width, borderColor: theme.border, backgroundColor: theme.surface },
+        ]}
       >
         <View style={styles.listHeader}>
           <Text style={[styles.vaultPath, { color: theme.textMuted }]} numberOfLines={1}>
@@ -884,6 +909,14 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
           )}
         </ScrollView>
       </View>
+      <ResizeHandle
+        theme={theme}
+        side="left"
+        collapsed={explorerPanel.collapsed}
+        isDragging={explorerPanel.isDragging}
+        onMouseDown={explorerPanel.onHandleMouseDown}
+        onToggleCollapsed={explorerPanel.toggleCollapsed}
+      />
       <View style={styles.editor}>
         {activeNote ? (
           <>
@@ -937,6 +970,10 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
                 ) : activeNote.kind === 'chart' ? (
                   <View style={styles.editorBody}>
                     <ChartEditor relPath={activeNote.relPath} />
+                  </View>
+                ) : activeNote.kind === 'excalidraw' ? (
+                  <View style={styles.editorBody}>
+                    <ExcalidrawEditor relPath={activeNote.relPath} />
                   </View>
                 ) : (
                   <>
@@ -1046,24 +1083,39 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
               </View>
 
               {sidebarOpen && (
-                <RightSidebar theme={theme} activeTab={sidebarTab} onSelectTab={setSidebarTab}>
-                  {sidebarTab === 'properties' ? (
-                    <PropertiesPanel
-                      theme={theme}
-                      activeNote={activeNote}
-                      content={content}
-                      onChangeContent={handleChangeContent}
-                    />
-                  ) : (
-                    <OccurrencesPanel
-                      theme={theme}
-                      focusedWord={focusedOccurrenceWord}
-                      onFocusWord={setFocusedOccurrenceWord}
-                      onOpenNote={openNoteByRelPath}
-                      onChanged={() => void refreshOccurrences()}
-                    />
-                  )}
-                </RightSidebar>
+                <>
+                  <ResizeHandle
+                    theme={theme}
+                    side="right"
+                    collapsed={false}
+                    isDragging={rightPanelWidth.isDragging}
+                    onMouseDown={rightPanelWidth.onHandleMouseDown}
+                    onToggleCollapsed={() => setSidebarOpen(false)}
+                  />
+                  <RightSidebar
+                    theme={theme}
+                    activeTab={sidebarTab}
+                    onSelectTab={setSidebarTab}
+                    width={rightPanelWidth.width}
+                  >
+                    {sidebarTab === 'properties' ? (
+                      <PropertiesPanel
+                        theme={theme}
+                        activeNote={activeNote}
+                        content={content}
+                        onChangeContent={handleChangeContent}
+                      />
+                    ) : (
+                      <OccurrencesPanel
+                        theme={theme}
+                        focusedWord={focusedOccurrenceWord}
+                        onFocusWord={setFocusedOccurrenceWord}
+                        onOpenNote={openNoteByRelPath}
+                        onChanged={() => void refreshOccurrences()}
+                      />
+                    )}
+                  </RightSidebar>
+                </>
               )}
             </View>
           </>

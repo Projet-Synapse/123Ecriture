@@ -22,6 +22,7 @@ const NOTE_EXTENSIONS: Record<string, VaultEntryKind> = {
   '.md': 'markdown',
   '.canvas': 'canvas',
   '.chart': 'chart',
+  '.excalidraw': 'excalidraw',
 };
 
 const SNIPPET_RADIUS = 60;

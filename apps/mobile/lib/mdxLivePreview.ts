@@ -100,23 +100,37 @@ function buildDecorations(view: EditorView, colors: LivePreviewColors, callbacks
     if (match.kind === 'mark') {
       if (active) continue; // texte brut révélé pendant l'édition
       const styleClass = match.type === 'bold' ? 'font-weight:700' : 'font-style:italic';
+      // RangeSetBuilder exige des plages ajoutées dans l'ordre STRICTEMENT
+      // croissant de `from` — le marqueur ouvrant (from) doit donc être
+      // ajouté AVANT le contenu stylé (from+markerLength), lui-même avant
+      // le marqueur fermant. Les ajouter dans le mauvais ordre (contenu
+      // d'abord, marqueurs ensuite, comme précédemment) fait planter tout
+      // le builder pour CE document — CodeMirror désactive alors le
+      // ViewPlugin en entier, silencieusement, dès la première occurrence
+      // de gras/italique : c'est ce qui faisait ressembler le mode
+      // "Intermédiaire" au mode "Source" (aucune décoration nulle part),
+      // confirmé en lançant l'app réelle (console : "Ranges must be added
+      // sorted by `from` position and `startSide`").
+      builder.add(match.from, match.from + match.markerLength, Decoration.replace({}));
       builder.add(
         match.from + match.markerLength,
         match.to - match.markerLength,
         Decoration.mark({ attributes: { style: styleClass } }),
       );
-      builder.add(match.from, match.from + match.markerLength, Decoration.replace({}));
       builder.add(match.to - match.markerLength, match.to, Decoration.replace({}));
     } else if (match.kind === 'heading') {
       const sizeByLevel = [0, '1.5em', '1.3em', '1.15em', '1.05em', '1em', '1em'];
+      // Même contrainte d'ordre croissant que pour 'mark' ci-dessus : le
+      // préfixe masqué (from → contentFrom) doit être ajouté AVANT le
+      // contenu stylé (contentFrom → to), pas après.
+      if (!active) {
+        builder.add(match.from, match.contentFrom, Decoration.replace({}));
+      }
       builder.add(
         match.contentFrom,
         match.to,
         Decoration.mark({ attributes: { style: `font-weight:700;font-size:${sizeByLevel[match.level]}` } }),
       );
-      if (!active) {
-        builder.add(match.from, match.contentFrom, Decoration.replace({}));
-      }
     } else {
       // token : wikilink/tag/occurrence/embed
       if (active) continue; // texte brut révélé pendant l'édition

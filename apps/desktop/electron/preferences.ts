@@ -54,6 +54,14 @@ export const DEFAULT_PREFERENCES: Preferences = {
   editorDefaultMode: 'source',
   editorCloseBrackets: true,
   editorInlineTitle: false,
+  // Voir apps/mobile/lib/useResizablePanel.ts pour la logique de
+  // redimensionnement/repli au curseur elle-même — ceci n'est que l'état
+  // persisté par défaut.
+  sidebarLayout: {
+    nav: { width: 220, collapsed: false },
+    explorer: { width: 260, collapsed: false },
+    rightPanel: { width: 280, collapsed: false },
+  },
 };
 
 // Les 3 listes `*ToolbarOrder` (Notes/Canvas/Graphiques) ont besoin d'une

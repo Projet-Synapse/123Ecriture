@@ -5,7 +5,7 @@ import path from 'path';
 import crypto from 'crypto';
 
 import * as vaults from './vaults';
-import type { Task, TaskList, TaskListsData } from './types';
+import type { Subtask, Task, TaskAttachment, TaskList, TaskListsData } from './types';
 
 type GetWindow = () => BrowserWindow | null;
 
@@ -46,12 +46,33 @@ function getTaskListsFilePath(vaultPath: string): string {
   return path.join(vaultPath, '.123ecriture', 'tasklists.json');
 }
 
+// Tolère les tâches écrites avant l'ajout de description/sous-étapes/
+// pièces jointes (refonte façon Microsoft To Do) : normalise à la LECTURE
+// plutôt que de migrer le fichier sur disque — même esprit que
+// frontmatter.ts, pas de réécriture silencieuse tant que rien n'a été
+// modifié.
+function normalizeTask(task: Task): Task {
+  return {
+    ...task,
+    description: task.description ?? '',
+    subtasks: task.subtasks ?? [],
+    attachments: task.attachments ?? [],
+  };
+}
+
 function readTasks(vaultPath: string): Task[] {
   try {
-    return JSON.parse(fsSync.readFileSync(getTasksFilePath(vaultPath), 'utf8')) as Task[];
+    const raw = JSON.parse(fsSync.readFileSync(getTasksFilePath(vaultPath), 'utf8')) as Task[];
+    return raw.map(normalizeTask);
   } catch {
     return [];
   }
+}
+
+function findTaskOrThrow(tasks: Task[], id: string): Task {
+  const task = tasks.find((t) => t.id === id);
+  if (!task) throw new Error('Tâche introuvable.');
+  return task;
 }
 
 async function writeTasks(vaultPath: string, tasks: Task[]): Promise<Task[]> {
@@ -224,6 +245,9 @@ export function registerTasksHandlers(getWindow: GetWindow): void {
       done: false,
       createdAt: new Date().toISOString(),
       listId: activeListId,
+      description: '',
+      subtasks: [],
+      attachments: [],
     });
     await writeTasks(vaultPath, tasks);
     return tasks.filter((task) => task.listId === activeListId);
@@ -247,5 +271,124 @@ export function registerTasksHandlers(getWindow: GetWindow): void {
     const tasks = readTasks(vaultPath).filter((task) => task.id !== id);
     await writeTasks(vaultPath, tasks);
     return tasks.filter((task) => task.listId === activeListId);
+  });
+
+  // Renommage du texte ET édition de la description — un seul point
+  // d'entrée générique (`patch` partiel) plutôt que deux handlers quasi
+  // identiques, même esprit que `preferences:set`.
+  ipcMain.handle('tasks:update', async (_event, id: string, patch: { text?: string; description?: string }) => {
+    const vaultPath = getVaultPath();
+    if (!vaultPath) throw new Error('Aucun vault sélectionné');
+    const activeListId = getActiveListId(vaultPath);
+    const tasks = readTasks(vaultPath);
+    findTaskOrThrow(tasks, id);
+    const next = tasks.map((task) => {
+      if (task.id !== id) return task;
+      const text = patch.text !== undefined ? patch.text.trim() : task.text;
+      if (!text) throw new Error('Le texte de la tâche ne peut pas être vide.');
+      return { ...task, text, description: patch.description ?? task.description };
+    });
+    await writeTasks(vaultPath, next);
+    return next.filter((task) => task.listId === activeListId);
+  });
+
+  ipcMain.handle('tasks:add-subtask', async (_event, taskId: string, text: string) => {
+    const vaultPath = getVaultPath();
+    if (!vaultPath) throw new Error('Aucun vault sélectionné');
+    const activeListId = getActiveListId(vaultPath);
+    const trimmed = (text ?? '').trim();
+    if (!trimmed) throw new Error('Le texte de la sous-étape ne peut pas être vide.');
+    const tasks = readTasks(vaultPath);
+    findTaskOrThrow(tasks, taskId);
+    const subtask: Subtask = { id: crypto.randomUUID(), text: trimmed, done: false };
+    const next = tasks.map((task) =>
+      task.id === taskId ? { ...task, subtasks: [...task.subtasks, subtask] } : task,
+    );
+    await writeTasks(vaultPath, next);
+    return next.filter((task) => task.listId === activeListId);
+  });
+
+  ipcMain.handle(
+    'tasks:rename-subtask',
+    async (_event, taskId: string, subtaskId: string, text: string) => {
+      const vaultPath = getVaultPath();
+      if (!vaultPath) throw new Error('Aucun vault sélectionné');
+      const activeListId = getActiveListId(vaultPath);
+      const trimmed = (text ?? '').trim();
+      if (!trimmed) throw new Error('Le texte de la sous-étape ne peut pas être vide.');
+      const tasks = readTasks(vaultPath);
+      findTaskOrThrow(tasks, taskId);
+      const next = tasks.map((task) =>
+        task.id === taskId
+          ? {
+              ...task,
+              subtasks: task.subtasks.map((s) => (s.id === subtaskId ? { ...s, text: trimmed } : s)),
+            }
+          : task,
+      );
+      await writeTasks(vaultPath, next);
+      return next.filter((task) => task.listId === activeListId);
+    },
+  );
+
+  ipcMain.handle('tasks:toggle-subtask', async (_event, taskId: string, subtaskId: string) => {
+    const vaultPath = getVaultPath();
+    if (!vaultPath) throw new Error('Aucun vault sélectionné');
+    const activeListId = getActiveListId(vaultPath);
+    const tasks = readTasks(vaultPath);
+    findTaskOrThrow(tasks, taskId);
+    const next = tasks.map((task) =>
+      task.id === taskId
+        ? { ...task, subtasks: task.subtasks.map((s) => (s.id === subtaskId ? { ...s, done: !s.done } : s)) }
+        : task,
+    );
+    await writeTasks(vaultPath, next);
+    return next.filter((task) => task.listId === activeListId);
+  });
+
+  ipcMain.handle('tasks:remove-subtask', async (_event, taskId: string, subtaskId: string) => {
+    const vaultPath = getVaultPath();
+    if (!vaultPath) throw new Error('Aucun vault sélectionné');
+    const activeListId = getActiveListId(vaultPath);
+    const tasks = readTasks(vaultPath);
+    findTaskOrThrow(tasks, taskId);
+    const next = tasks.map((task) =>
+      task.id === taskId ? { ...task, subtasks: task.subtasks.filter((s) => s.id !== subtaskId) } : task,
+    );
+    await writeTasks(vaultPath, next);
+    return next.filter((task) => task.listId === activeListId);
+  });
+
+  // Pas de copie de fichier ICI : le renderer appelle déjà
+  // `window.vault.importAttachment()` (vault.ts, copie dans
+  // `<vault>/attachments/`, dédoublonnage inclus) et transmet juste le
+  // `{relPath, name}` résultant — ce handler se contente de l'ajouter à la
+  // tâche, pas de dupliquer un mécanisme d'import déjà existant.
+  ipcMain.handle('tasks:add-attachment', async (_event, taskId: string, attachment: TaskAttachment) => {
+    const vaultPath = getVaultPath();
+    if (!vaultPath) throw new Error('Aucun vault sélectionné');
+    const activeListId = getActiveListId(vaultPath);
+    const tasks = readTasks(vaultPath);
+    findTaskOrThrow(tasks, taskId);
+    const next = tasks.map((task) =>
+      task.id === taskId ? { ...task, attachments: [...task.attachments, attachment] } : task,
+    );
+    await writeTasks(vaultPath, next);
+    return next.filter((task) => task.listId === activeListId);
+  });
+
+  ipcMain.handle('tasks:remove-attachment', async (_event, taskId: string, relPath: string) => {
+    const vaultPath = getVaultPath();
+    if (!vaultPath) throw new Error('Aucun vault sélectionné');
+    const activeListId = getActiveListId(vaultPath);
+    const tasks = readTasks(vaultPath);
+    findTaskOrThrow(tasks, taskId);
+    const next = tasks.map((task) =>
+      task.id === taskId
+        ? { ...task, attachments: task.attachments.filter((a) => a.relPath !== relPath) }
+        : task,
+    );
+    await writeTasks(vaultPath, next);
+    return next.filter((task) => task.listId === activeListId);
   });
 }

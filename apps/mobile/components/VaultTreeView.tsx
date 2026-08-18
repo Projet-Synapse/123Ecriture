@@ -39,6 +39,7 @@ const NOTE_ICON_BY_KIND: Record<VaultEntryKind, string> = {
   markdown: '📝',
   canvas: '🎨',
   chart: '📊',
+  excalidraw: '🖍️',
 };
 
 export type RenameState = {

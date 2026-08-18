@@ -20,6 +20,7 @@ const RESULT_ICON: Record<SearchResultKind, string> = {
   markdown: '📝',
   canvas: '🎨',
   chart: '📊',
+  excalidraw: '🖍️',
   folder: '📁',
   attachment: '📎',
 };
@@ -168,7 +169,11 @@ export function SearchDialog({ theme, onOpenResult, onCancel }: Props) {
                 // informative plutôt que de prétendre à un clic qui ne
                 // ferait rien (règle CLAUDE.md : un bouton doit faire ce
                 // qu'il annonce).
-                const isOpenable = result.kind === 'markdown' || result.kind === 'canvas' || result.kind === 'chart';
+                const isOpenable =
+                  result.kind === 'markdown' ||
+                  result.kind === 'canvas' ||
+                  result.kind === 'chart' ||
+                  result.kind === 'excalidraw';
                 return (
                   <Pressable
                     key={result.relPath}

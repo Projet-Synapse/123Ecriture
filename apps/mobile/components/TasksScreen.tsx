@@ -3,17 +3,21 @@ import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-
 
 import { useVaults } from '../lib/sync/VaultsContext';
 import { usePreferences } from '../preferences/PreferencesContext';
+import { DraftTextField } from './DraftTextField';
 
 // Écran Tâches — module de productivité (voir docs/ARCHITECTURE.md §8).
 // Stocké dans le vault (.123ecriture/tasks.json + tasklists.json, voir
-// apps/desktop/electron/tasks.js) — chaque coffre a son propre jeu de
-// LISTES nommées (plusieurs listes, pas une seule liste plate comme avant),
-// et chaque liste ses propres tâches. Une seule liste "active" à la fois,
-// exactement comme un seul coffre "actif" à la fois (voir VaultsContext) —
-// même logique, un cran plus bas. Fonctionnel mais volontairement minimal :
-// pas encore de renommage/édition du texte d'une tâche une fois créée (à
-// supprimer/recréer en attendant), pas de sous-tâches, d'échéances ou de
-// priorités.
+// apps/desktop/electron/tasks.ts) — chaque coffre a son propre jeu de
+// LISTES nommées, chaque liste ses propres tâches. Une seule liste "active"
+// à la fois, même logique que le coffre actif (voir VaultsContext).
+//
+// Refonte façon Microsoft To Do (voir .claude/References/Sources.md §3) :
+// chaque tâche peut porter une description, des sous-étapes cochables et
+// des pièces jointes, et son texte reste éditable après création — les 4
+// manques que documentait l'ancienne version de ce commentaire sont
+// comblés. Une tâche "à plat" (checkbox + texte) reste la vue par défaut ;
+// cliquer son chevron déplie une "fiche" avec le reste, même idée que
+// PropertiesPanel.tsx/OccurrencesPanel.tsx pour les notes.
 export function TasksScreen() {
   const { theme } = usePreferences();
   const vault = typeof window !== 'undefined' ? window.vault : undefined;
@@ -28,10 +32,16 @@ export function TasksScreen() {
   const [draft, setDraft] = useState('');
   const [addError, setAddError] = useState<string | null>(null);
   const [listActionError, setListActionError] = useState<string | null>(null);
+  const [taskActionError, setTaskActionError] = useState<string | null>(null);
   const [renamingListId, setRenamingListId] = useState<string | null>(null);
   const [renameListDraft, setRenameListDraft] = useState('');
   const [showCreateListForm, setShowCreateListForm] = useState(false);
   const [createListDraft, setCreateListDraft] = useState('');
+  // Une seule "fiche" de tâche dépliée à la fois — même idée que le rail
+  // de RightSidebar.tsx, évite une liste qui s'étire dans tous les sens si
+  // plusieurs tâches étaient dépliées en même temps.
+  const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
+  const [newSubtaskDraft, setNewSubtaskDraft] = useState('');
 
   const refreshTaskLists = useCallback(async () => {
     if (!taskListsBridge) return;
@@ -45,11 +55,6 @@ export function TasksScreen() {
     setTasks(await tasksBridge.list());
   }, [tasksBridge]);
 
-  // Charge les listes au montage / changement de coffre, et s'abonne aux
-  // changements (créées/renommées/supprimées depuis n'importe où — pour
-  // l'instant, seul cet écran les modifie, mais même schéma que
-  // VaultsContext pour rester cohérent si un jour un deuxième point d'entrée
-  // apparaît).
   useEffect(() => {
     if (!vault || !vaultPath || !taskListsBridge) return;
     void (async () => {
@@ -67,16 +72,7 @@ export function TasksScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [vault, vaultPath, taskListsBridge]);
 
-  // Recharge les tâches à chaque changement de liste active (création,
-  // suppression, switch...) — le process principal sait déjà quelle liste
-  // est active, `tasks:list` renvoie toujours les bonnes tâches ; `tasks`
-  // ici ne fait que suivre `activeListId` pour rester affiché à jour.
   useEffect(() => {
-    // Pas besoin de vider `tasks` explicitement quand `activeListId` devient
-    // null (dernière liste supprimée) : le rendu bascule déjà sur l'état
-    // "Aucune liste" sans jamais lire `tasks` dans ce cas (voir plus bas,
-    // `!activeList ? ... : ...`) — la valeur reste simplement inutilisée
-    // jusqu'au prochain vrai chargement.
     if (!vault || !vaultPath || !activeListId) return;
     void (async () => {
       try {
@@ -104,6 +100,19 @@ export function TasksScreen() {
     } catch (error) {
       console.error('[tasklists] échec :', error);
       setListActionError(error instanceof Error ? error.message : String(error));
+    }
+  }, []);
+
+  // Même idée que runListAction, pour les actions sur une tâche/sous-étape/
+  // pièce jointe — regroupées ici puisqu'elles suivent toutes le même
+  // schéma (appel bridge → `setTasks` du résultat → erreur visible).
+  const runTaskAction = useCallback(async (action: () => Promise<Task[]>) => {
+    setTaskActionError(null);
+    try {
+      setTasks(await action());
+    } catch (error) {
+      console.error('[tasks] échec :', error);
+      setTaskActionError(error instanceof Error ? error.message : String(error));
     }
   }, []);
 
@@ -179,35 +188,107 @@ export function TasksScreen() {
       setTasks(await tasksBridge.add(text));
       setDraft('');
     } catch (error) {
-      // Visible dans l'UI, pas juste dans la console — un échec silencieux
-      // donnait l'impression que le bouton "ne faisait rien".
       console.error('[tasks] échec de l’ajout :', error);
       setAddError(error instanceof Error ? error.message : String(error));
     }
   }, [tasksBridge, draft]);
 
   const handleToggleTask = useCallback(
-    async (id: string) => {
-      if (!tasksBridge) return;
-      try {
-        setTasks(await tasksBridge.toggle(id));
-      } catch (error) {
-        console.error('[tasks] échec du basculement :', error);
-      }
-    },
-    [tasksBridge],
+    (id: string) => runTaskAction(async () => {
+      if (!tasksBridge) return tasks;
+      return tasksBridge.toggle(id);
+    }),
+    [tasksBridge, runTaskAction, tasks],
   );
 
   const handleRemoveTask = useCallback(
-    async (id: string) => {
-      if (!tasksBridge) return;
+    (id: string) => runTaskAction(async () => {
+      if (!tasksBridge) return tasks;
+      if (expandedTaskId === id) setExpandedTaskId(null);
+      return tasksBridge.remove(id);
+    }),
+    [tasksBridge, runTaskAction, tasks, expandedTaskId],
+  );
+
+  const handleRenameTask = useCallback(
+    (id: string, text: string) => runTaskAction(async () => {
+      if (!tasksBridge) return tasks;
+      return tasksBridge.update(id, { text });
+    }),
+    [tasksBridge, runTaskAction, tasks],
+  );
+
+  const handleChangeDescription = useCallback(
+    (id: string, description: string) => runTaskAction(async () => {
+      if (!tasksBridge) return tasks;
+      return tasksBridge.update(id, { description });
+    }),
+    [tasksBridge, runTaskAction, tasks],
+  );
+
+  const handleAddSubtask = useCallback(
+    async (taskId: string) => {
+      const text = newSubtaskDraft.trim();
+      if (!text || !tasksBridge) return;
+      setNewSubtaskDraft('');
+      await runTaskAction(() => tasksBridge.addSubtask(taskId, text));
+    },
+    [newSubtaskDraft, tasksBridge, runTaskAction],
+  );
+
+  const handleRenameSubtask = useCallback(
+    (taskId: string, subtaskId: string, text: string) =>
+      runTaskAction(async () => {
+        if (!tasksBridge) return tasks;
+        return tasksBridge.renameSubtask(taskId, subtaskId, text);
+      }),
+    [tasksBridge, runTaskAction, tasks],
+  );
+
+  const handleToggleSubtask = useCallback(
+    (taskId: string, subtaskId: string) =>
+      runTaskAction(async () => {
+        if (!tasksBridge) return tasks;
+        return tasksBridge.toggleSubtask(taskId, subtaskId);
+      }),
+    [tasksBridge, runTaskAction, tasks],
+  );
+
+  const handleRemoveSubtask = useCallback(
+    (taskId: string, subtaskId: string) =>
+      runTaskAction(async () => {
+        if (!tasksBridge) return tasks;
+        return tasksBridge.removeSubtask(taskId, subtaskId);
+      }),
+    [tasksBridge, runTaskAction, tasks],
+  );
+
+  // Réutilise le bridge vault GÉNÉRIQUE d'import de pièce jointe (voir
+  // NotesScreen.tsx, `handleInsertAttachment`) — pas de mécanisme d'import
+  // séparé pour les tâches, juste un ajout du `{relPath, name}` résultant
+  // sur la tâche (voir tasks.ts, `tasks:add-attachment`).
+  const handleAddAttachment = useCallback(
+    async (taskId: string) => {
+      if (!vault || !tasksBridge) return;
       try {
-        setTasks(await tasksBridge.remove(id));
+        const result = await vault.importAttachment();
+        if (!result) return; // dialogue annulé
+        await runTaskAction(() => tasksBridge.addAttachment(taskId, result));
       } catch (error) {
-        console.error('[tasks] échec de la suppression :', error);
+        console.error('[tasks] échec de l’ajout de la pièce jointe :', error);
+        setTaskActionError(error instanceof Error ? error.message : String(error));
       }
     },
-    [tasksBridge],
+    [vault, tasksBridge, runTaskAction],
+  );
+
+  const handleRemoveAttachment = useCallback(
+    (taskId: string, relPath: string) =>
+      runTaskAction(async () => {
+        if (!tasksBridge) return tasks;
+        return tasksBridge.removeAttachment(taskId, relPath);
+      }),
+    [tasksBridge, runTaskAction, tasks],
   );
 
   if (!vault || !tasksBridge) {
@@ -241,11 +322,129 @@ export function TasksScreen() {
   const activeList = taskLists.find((l) => l.id === activeListId) ?? null;
   const isRenamingActiveList = renamingListId === activeListId;
 
-  // Non cochées d'abord (ordre de création), cochées ensuite — évite que
-  // la liste "saute" visuellement au fil des cases cochées tout en gardant
-  // les tâches faites accessibles (annuler, supprimer) sans les mélanger.
   const pending = tasks.filter((task) => !task.done);
   const done = tasks.filter((task) => task.done);
+
+  const renderTask = (task: Task) => {
+    const isExpanded = expandedTaskId === task.id;
+    const doneSubtasks = task.subtasks.filter((s) => s.done).length;
+
+    return (
+      <View key={task.id} style={[styles.taskCard, { borderColor: theme.border }]}>
+        <View style={styles.taskRow}>
+          <Pressable
+            onPress={() => void handleToggleTask(task.id)}
+            style={[
+              styles.checkbox,
+              { borderColor: theme.border },
+              task.done && { backgroundColor: theme.accent, borderColor: theme.accent },
+            ]}
+          >
+            {task.done && <Text style={styles.checkboxMark}>✓</Text>}
+          </Pressable>
+          <DraftTextField
+            initialValue={task.text}
+            onCommit={(text) => text.trim() && void handleRenameTask(task.id, text.trim())}
+            theme={theme}
+            style={[
+              styles.taskTextInput,
+              { color: task.done ? theme.textMuted : theme.text },
+              task.done && styles.taskTextDone,
+            ] as unknown as object}
+          />
+          {task.subtasks.length > 0 && (
+            <Text style={[styles.subtaskBadge, { color: theme.textMuted, borderColor: theme.border }]}>
+              {doneSubtasks}/{task.subtasks.length}
+            </Text>
+          )}
+          <Pressable
+            onPress={() => setExpandedTaskId(isExpanded ? null : task.id)}
+            style={styles.chevronButton}
+            accessibilityLabel={isExpanded ? 'Masquer les détails' : 'Afficher les détails'}
+          >
+            <Text style={{ color: theme.textMuted }}>{isExpanded ? '▾' : '▸'}</Text>
+          </Pressable>
+          <Pressable onPress={() => void handleRemoveTask(task.id)} style={styles.removeButton}>
+            <Text style={{ color: theme.textMuted }}>✕</Text>
+          </Pressable>
+        </View>
+
+        {isExpanded && (
+          <View style={[styles.taskDetails, { borderColor: theme.border }]}>
+            <Text style={[styles.detailLabel, { color: theme.textMuted }]}>Description</Text>
+            <DraftTextField
+              initialValue={task.description}
+              onCommit={(text) => void handleChangeDescription(task.id, text)}
+              placeholder="Ajouter une description…"
+              multiline
+              theme={theme}
+              style={[styles.descriptionInput, { color: theme.text, borderColor: theme.border }] as unknown as object}
+            />
+
+            <Text style={[styles.detailLabel, { color: theme.textMuted }]}>Sous-étapes</Text>
+            {task.subtasks.map((subtask) => (
+              <View key={subtask.id} style={styles.subtaskRow}>
+                <Pressable
+                  onPress={() => void handleToggleSubtask(task.id, subtask.id)}
+                  style={[
+                    styles.checkboxSmall,
+                    { borderColor: theme.border },
+                    subtask.done && { backgroundColor: theme.accent, borderColor: theme.accent },
+                  ]}
+                >
+                  {subtask.done && <Text style={styles.checkboxMarkSmall}>✓</Text>}
+                </Pressable>
+                <DraftTextField
+                  initialValue={subtask.text}
+                  onCommit={(text) => text.trim() && void handleRenameSubtask(task.id, subtask.id, text.trim())}
+                  theme={theme}
+                  style={[
+                    styles.subtaskTextInput,
+                    { color: subtask.done ? theme.textMuted : theme.text },
+                    subtask.done && styles.taskTextDone,
+                  ] as unknown as object}
+                />
+                <Pressable onPress={() => void handleRemoveSubtask(task.id, subtask.id)} style={styles.removeButton}>
+                  <Text style={{ color: theme.textMuted }}>✕</Text>
+                </Pressable>
+              </View>
+            ))}
+            <View style={styles.addRow}>
+              <TextInput
+                value={newSubtaskDraft}
+                onChangeText={setNewSubtaskDraft}
+                onSubmitEditing={() => void handleAddSubtask(task.id)}
+                placeholder="Nouvelle sous-étape…"
+                placeholderTextColor={theme.textMuted}
+                style={[styles.input, { color: theme.text, borderColor: theme.border }]}
+              />
+              <Pressable
+                onPress={() => void handleAddSubtask(task.id)}
+                style={[styles.addButton, { backgroundColor: theme.accent }]}
+              >
+                <Text style={styles.buttonText}>Ajouter</Text>
+              </Pressable>
+            </View>
+
+            <Text style={[styles.detailLabel, { color: theme.textMuted }]}>Pièces jointes</Text>
+            {task.attachments.map((attachment) => (
+              <View key={attachment.relPath} style={styles.attachmentChip}>
+                <Text style={[styles.attachmentName, { color: theme.text }]} numberOfLines={1}>
+                  📎 {attachment.name}
+                </Text>
+                <Pressable onPress={() => void handleRemoveAttachment(task.id, attachment.relPath)}>
+                  <Text style={{ color: theme.textMuted }}>✕</Text>
+                </Pressable>
+              </View>
+            ))}
+            <Pressable onPress={() => void handleAddAttachment(task.id)} style={styles.addAttachmentButton}>
+              <Text style={{ color: theme.accent, fontSize: 12 }}>📎 Joindre un fichier</Text>
+            </Pressable>
+          </View>
+        )}
+      </View>
+    );
+  };
 
   return (
     <View style={styles.container}>
@@ -306,6 +505,7 @@ export function TasksScreen() {
         </View>
       )}
       {listActionError && <Text style={styles.error}>⚠️ {listActionError}</Text>}
+      {taskActionError && <Text style={styles.error}>⚠️ {taskActionError}</Text>}
 
       {!activeList ? (
         <Text style={[styles.muted, { color: theme.textMuted }]}>
@@ -335,32 +535,7 @@ export function TasksScreen() {
           {addError && <Text style={styles.error}>⚠️ {addError}</Text>}
 
           <ScrollView contentContainerStyle={styles.list}>
-            {[...pending, ...done].map((task) => (
-              <View key={task.id} style={[styles.taskRow, { borderColor: theme.border }]}>
-                <Pressable
-                  onPress={() => void handleToggleTask(task.id)}
-                  style={[
-                    styles.checkbox,
-                    { borderColor: theme.border },
-                    task.done && { backgroundColor: theme.accent, borderColor: theme.accent },
-                  ]}
-                >
-                  {task.done && <Text style={styles.checkboxMark}>✓</Text>}
-                </Pressable>
-                <Text
-                  style={[
-                    styles.taskText,
-                    { color: task.done ? theme.textMuted : theme.text },
-                    task.done && styles.taskTextDone,
-                  ]}
-                >
-                  {task.text}
-                </Text>
-                <Pressable onPress={() => void handleRemoveTask(task.id)} style={styles.removeButton}>
-                  <Text style={{ color: theme.textMuted }}>✕</Text>
-                </Pressable>
-              </View>
-            ))}
+            {[...pending, ...done].map(renderTask)}
             {tasks.length === 0 && (
               <Text style={[styles.muted, { color: theme.textMuted }]}>Aucune tâche pour l’instant.</Text>
             )}
@@ -454,14 +629,16 @@ const styles = StyleSheet.create({
   list: {
     gap: 8,
   },
+  taskCard: {
+    borderWidth: 1,
+    borderRadius: 8,
+  },
   taskRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
     paddingVertical: 8,
     paddingHorizontal: 10,
-    borderWidth: 1,
-    borderRadius: 8,
   },
   checkbox: {
     width: 20,
@@ -476,16 +653,85 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
   },
-  taskText: {
+  // `flex:1` + bordure transparente par défaut (cohérent visuellement avec
+  // le reste de la ligne) : le champ ne se distingue d'un simple <Text>
+  // qu'au focus, où `DraftTextField`/react-native-web affiche le curseur —
+  // pas besoin d'un style "mode édition" séparé.
+  taskTextInput: {
     flex: 1,
     fontSize: 14,
+    paddingVertical: 2,
   },
   taskTextDone: {
     textDecorationLine: 'line-through',
   },
+  subtaskBadge: {
+    fontSize: 11,
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  chevronButton: {
+    paddingHorizontal: 4,
+  },
   removeButton: {
     paddingHorizontal: 6,
     paddingVertical: 2,
+  },
+  taskDetails: {
+    borderTopWidth: 1,
+    padding: 10,
+    gap: 6,
+  },
+  detailLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    marginTop: 4,
+  },
+  descriptionInput: {
+    borderWidth: 1,
+    borderRadius: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    fontSize: 13,
+    minHeight: 60,
+  },
+  subtaskRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  checkboxSmall: {
+    width: 16,
+    height: 16,
+    borderRadius: 4,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkboxMarkSmall: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  subtaskTextInput: {
+    flex: 1,
+    fontSize: 13,
+  },
+  attachmentChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 4,
+  },
+  attachmentName: {
+    fontSize: 13,
+    flex: 1,
+  },
+  addAttachmentButton: {
+    paddingVertical: 4,
   },
   error: {
     color: '#dc2626',

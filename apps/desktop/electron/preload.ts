@@ -89,6 +89,19 @@ contextBridge.exposeInMainWorld('tasks', {
   add: (text: string) => ipcRenderer.invoke('tasks:add', text),
   toggle: (id: string) => ipcRenderer.invoke('tasks:toggle', id),
   remove: (id: string) => ipcRenderer.invoke('tasks:remove', id),
+  update: (id: string, patch: { text?: string; description?: string }) =>
+    ipcRenderer.invoke('tasks:update', id, patch),
+  addSubtask: (taskId: string, text: string) => ipcRenderer.invoke('tasks:add-subtask', taskId, text),
+  renameSubtask: (taskId: string, subtaskId: string, text: string) =>
+    ipcRenderer.invoke('tasks:rename-subtask', taskId, subtaskId, text),
+  toggleSubtask: (taskId: string, subtaskId: string) =>
+    ipcRenderer.invoke('tasks:toggle-subtask', taskId, subtaskId),
+  removeSubtask: (taskId: string, subtaskId: string) =>
+    ipcRenderer.invoke('tasks:remove-subtask', taskId, subtaskId),
+  addAttachment: (taskId: string, attachment: { relPath: string; name: string }) =>
+    ipcRenderer.invoke('tasks:add-attachment', taskId, attachment),
+  removeAttachment: (taskId: string, relPath: string) =>
+    ipcRenderer.invoke('tasks:remove-attachment', taskId, relPath),
 });
 
 contextBridge.exposeInMainWorld('calendar', {

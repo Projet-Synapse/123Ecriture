@@ -24,11 +24,22 @@ type Props = {
   activeTab: SidebarTab;
   onSelectTab: (tab: SidebarTab) => void;
   children: ReactNode;
+  // Redimensionnable au curseur depuis NotesScreen.tsx (voir
+  // lib/useResizablePanel.ts) — optionnelle, retombe sur la largeur fixe
+  // d'origine si omise (ex. futur appelant qui n'aurait pas encore ce
+  // besoin).
+  width?: number;
 };
 
-export function RightSidebar({ theme, activeTab, onSelectTab, children }: Props) {
+export function RightSidebar({ theme, activeTab, onSelectTab, children, width }: Props) {
   return (
-    <View style={[styles.container, { borderColor: theme.border, backgroundColor: theme.surface }]}>
+    <View
+      style={[
+        styles.container,
+        width !== undefined && { width },
+        { borderColor: theme.border, backgroundColor: theme.surface },
+      ]}
+    >
       <View style={[styles.rail, { borderColor: theme.border }]}>
         {TABS.map((tab) => {
           const isActive = tab.id === activeTab;

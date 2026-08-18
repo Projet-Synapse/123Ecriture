@@ -9,7 +9,7 @@ declare global {
   // walkTree dans apps/desktop/electron/vault.js) — pilote l'aiguillage de
   // NotesScreen.tsx vers l'éditeur MDX, CanvasEditor.tsx ou ChartEditor.tsx,
   // et l'icône affichée par VaultTreeView.tsx.
-  type VaultEntryKind = 'markdown' | 'canvas' | 'chart';
+  type VaultEntryKind = 'markdown' | 'canvas' | 'chart' | 'excalidraw';
 
   interface VaultEntry {
     relPath: string;
@@ -246,6 +246,19 @@ declare global {
     edges: CanvasEdge[];
   }
 
+  // Scène Excalidraw minimale (voir ExcalidrawEditor.tsx) — forme du
+  // fichier natif `.excalidraw` (https://excalidraw.com), pour rester
+  // compatible si le vrai outil de dessin (`@excalidraw/excalidraw`) est
+  // intégré plus tard ; `elements`/`appState` volontairement non typés
+  // finement tant qu'aucun outil ne les manipule vraiment (scaffolding
+  // seulement cette session, voir docs/ARCHITECTURE.md §4).
+  interface ExcalidrawData {
+    type: 'excalidraw';
+    version: number;
+    elements: unknown[];
+    appState: Record<string, unknown>;
+  }
+
   type UpdaterStatus =
     | { state: 'idle' }
     | { state: 'checking' }
@@ -296,7 +309,24 @@ declare global {
     editorDefaultMode: EditorViewMode;
     editorCloseBrackets: boolean;
     editorInlineTitle: boolean;
+    // Largeur/repli des 3 barres latérales redimensionnables au curseur
+    // (voir lib/useResizablePanel.ts, components/ResizeHandle.tsx) : la
+    // nav générale (AppShell.tsx), l'explorateur de fichiers et le panneau
+    // droit Propriétés/Occurrences (les deux dans NotesScreen.tsx).
+    // `collapsed` est un état séparé de `width` (pas juste width===0) pour
+    // pouvoir mémoriser la dernière largeur "dépliée" et la restaurer telle
+    // quelle en rouvrant.
+    sidebarLayout: SidebarLayoutState;
   }
+
+  interface SidebarPanelLayout {
+    width: number;
+    collapsed: boolean;
+  }
+
+  type SidebarPanelId = 'nav' | 'explorer' | 'rightPanel';
+
+  type SidebarLayoutState = Record<SidebarPanelId, SidebarPanelLayout>;
 
   interface PreferencesBridge {
     get: () => Promise<Preferences>;
@@ -315,12 +345,26 @@ declare global {
     show: (items: ContextMenuItem[]) => Promise<string | null>;
   }
 
+  interface Subtask {
+    id: string;
+    text: string;
+    done: boolean;
+  }
+
+  interface TaskAttachment {
+    relPath: string;
+    name: string;
+  }
+
   interface Task {
     id: string;
     text: string;
     done: boolean;
     createdAt: string;
     listId: string;
+    description: string;
+    subtasks: Subtask[];
+    attachments: TaskAttachment[];
   }
 
   interface TasksBridge {
@@ -328,6 +372,13 @@ declare global {
     add: (text: string) => Promise<Task[]>;
     toggle: (id: string) => Promise<Task[]>;
     remove: (id: string) => Promise<Task[]>;
+    update: (id: string, patch: { text?: string; description?: string }) => Promise<Task[]>;
+    addSubtask: (taskId: string, text: string) => Promise<Task[]>;
+    renameSubtask: (taskId: string, subtaskId: string, text: string) => Promise<Task[]>;
+    toggleSubtask: (taskId: string, subtaskId: string) => Promise<Task[]>;
+    removeSubtask: (taskId: string, subtaskId: string) => Promise<Task[]>;
+    addAttachment: (taskId: string, attachment: TaskAttachment) => Promise<Task[]>;
+    removeAttachment: (taskId: string, relPath: string) => Promise<Task[]>;
   }
 
   interface TaskList {

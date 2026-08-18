@@ -60,12 +60,14 @@ const EXTENSION_TO_KIND: Record<string, VaultEntryKind> = {
   '.md': 'markdown',
   '.canvas': 'canvas',
   '.chart': 'chart',
+  '.excalidraw': 'excalidraw',
 };
 
 const KIND_TO_EXTENSION: Record<VaultEntryKind, string> = {
   markdown: '.mdx',
   canvas: '.canvas',
   chart: '.chart',
+  excalidraw: '.excalidraw',
 };
 
 // Contenu initial d'un fichier fraîchement créé, selon son `kind` — gabarit
@@ -89,6 +91,13 @@ function defaultContentForKind(kind: VaultEntryKind, safeName: string): string {
       null,
       2,
     );
+  }
+  if (kind === 'excalidraw') {
+    // Forme du fichier natif `.excalidraw` (https://excalidraw.com) — vide
+    // mais valide, pour rester compatible si le vrai outil de dessin est
+    // intégré plus tard (scaffolding seulement cette session, voir
+    // ExcalidrawEditor.tsx).
+    return JSON.stringify({ type: 'excalidraw', version: 2, elements: [], appState: {} }, null, 2);
   }
   return `---\ntitle: ${safeName}\ncreated: ${new Date().toISOString()}\n---\n\n`;
 }

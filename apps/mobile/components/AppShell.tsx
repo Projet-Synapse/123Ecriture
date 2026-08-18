@@ -1,8 +1,10 @@
 import type { ReactNode } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
 import type { Section } from '../navigation';
+import { useResizablePanel } from '../lib/useResizablePanel';
 import { usePreferences } from '../preferences/PreferencesContext';
+import { ResizeHandle } from './ResizeHandle';
 import { VaultSwitcher } from './VaultSwitcher';
 
 // Coquille de navigation générale de l'app : panneau de sections (Notes,
@@ -24,11 +26,15 @@ export function AppShell({ sections, activeId, onSelect, children }: Props) {
   const { theme } = usePreferences();
   const { width } = useWindowDimensions();
   const isWide = width >= WIDE_BREAKPOINT;
+  // Redimensionnable/repliable au curseur (voir lib/useResizablePanel.ts) —
+  // seulement pertinent en mode barre latérale large ; en mode barre
+  // d'onglets (étroit), la nav n'a pas de largeur à faire varier.
+  const navPanel = useResizablePanel('nav', { min: 72, max: 360, edge: 1 });
 
   const nav = (
     <View
       style={[
-        isWide ? styles.sidebar : styles.tabBar,
+        isWide ? [styles.sidebar, { width: navPanel.width }] : styles.tabBar,
         { backgroundColor: theme.surface, borderColor: theme.border },
       ]}
     >
@@ -64,10 +70,29 @@ export function AppShell({ sections, activeId, onSelect, children }: Props) {
     <View
       style={[styles.root, { backgroundColor: theme.background }, isWide ? styles.rowLayout : styles.columnLayout]}
     >
-      {isWide && nav}
-      <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
-        {children}
-      </ScrollView>
+      {isWide && (
+        <>
+          <View style={styles.sidebarClip}>{nav}</View>
+          <ResizeHandle
+            theme={theme}
+            side="left"
+            collapsed={navPanel.collapsed}
+            isDragging={navPanel.isDragging}
+            onMouseDown={navPanel.onHandleMouseDown}
+            onToggleCollapsed={navPanel.toggleCollapsed}
+          />
+        </>
+      )}
+      {/* Vue simple (pas de ScrollView) : chaque écran gère son propre
+          scroll interne (NotesScreen.tsx a déjà le sien pour l'explorateur
+          ET pour l'éditeur, SettingsScreen.tsx/CalendarScreen.tsx idem) —
+          un ScrollView imbriquant un autre ScrollView casse la chaîne
+          flex:1 dont dépend un scroll indépendant sur le web : c'était le
+          scroll EXTÉRIEUR ici qui captait la molette au lieu du scroll
+          propre à l'explorateur de fichiers. Vérifié : seul
+          PlaceholderScreen.tsx n'a aucun ScrollView à lui (texte centré,
+          n'en a jamais eu besoin) — rien ne dépendait de celui-ci. */}
+      <View style={styles.content}>{children}</View>
       {!isWide && nav}
     </View>
   );
@@ -82,6 +107,12 @@ const styles = StyleSheet.create({
   },
   columnLayout: {
     flexDirection: 'column',
+  },
+  // `overflow: hidden` : masque proprement le contenu de la nav pendant
+  // qu'elle se réduit vers 0 au glisser/repli, plutôt que de le laisser
+  // déborder par-dessus le contenu principal.
+  sidebarClip: {
+    overflow: 'hidden',
   },
   sidebar: {
     width: 220,
@@ -122,8 +153,5 @@ const styles = StyleSheet.create({
   },
   content: {
     flex: 1,
-  },
-  contentContainer: {
-    flexGrow: 1,
   },
 });

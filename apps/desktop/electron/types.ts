@@ -8,7 +8,7 @@
 // leurs équivalents côté renderer (mêmes noms de champs) puisqu'elles
 // traversent le pont IPC telles quelles (voir preload.ts).
 
-export type VaultEntryKind = 'markdown' | 'canvas' | 'chart';
+export type VaultEntryKind = 'markdown' | 'canvas' | 'chart' | 'excalidraw';
 
 export interface VaultNoteNode {
   type: 'note';
@@ -56,12 +56,30 @@ export interface AppConfig {
   preferences?: Partial<Preferences>;
 }
 
+export interface Subtask {
+  id: string;
+  text: string;
+  done: boolean;
+}
+
+export interface TaskAttachment {
+  relPath: string;
+  name: string;
+}
+
 export interface Task {
   id: string;
   text: string;
   done: boolean;
   createdAt: string;
   listId: string;
+  // Ajoutés pour la refonte façon Microsoft To Do — voir tasks.ts,
+  // `normalizeTask` : absents des tâches créées avant cette fonctionnalité,
+  // toujours normalisés (repli sur ''/[]) à la LECTURE plutôt que migrés
+  // sur disque, même esprit tolérant que frontmatter.ts.
+  description: string;
+  subtasks: Subtask[];
+  attachments: TaskAttachment[];
 }
 
 export interface TaskList {
@@ -153,7 +171,17 @@ export interface Preferences {
   editorDefaultMode: EditorViewMode;
   editorCloseBrackets: boolean;
   editorInlineTitle: boolean;
+  sidebarLayout: SidebarLayoutState;
 }
+
+export interface SidebarPanelLayout {
+  width: number;
+  collapsed: boolean;
+}
+
+export type SidebarPanelId = 'nav' | 'explorer' | 'rightPanel';
+
+export type SidebarLayoutState = Record<SidebarPanelId, SidebarPanelLayout>;
 
 export type UpdaterStatus =
   | { state: 'idle' }
