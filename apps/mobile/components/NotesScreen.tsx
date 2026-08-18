@@ -13,7 +13,7 @@ import { EditorView, type ReactCodeMirrorRef } from '@uiw/react-codemirror';
 import type { FormattingResult, Selection } from '../lib/mdxFormatting';
 import { NOTES_TOOLBAR_ACTIONS, type ToolbarAction } from '../lib/notesToolbarActions';
 import { useResizablePanel } from '../lib/useResizablePanel';
-import { findNodeByPath, flattenNotes, getChildrenAt, getParentRelPath } from '../lib/vaultTree';
+import { findNodeByPath, flattenNotes, getAncestorRelPaths, getChildrenAt, getParentRelPath } from '../lib/vaultTree';
 import { useVaults } from '../lib/sync/VaultsContext';
 import { usePreferences } from '../preferences/PreferencesContext';
 import { CanvasEditor } from './CanvasEditor';
@@ -52,11 +52,33 @@ type ViewMode = 'source' | 'split' | 'reading';
 // VaultsContext (coffres multiples, voir apps/desktop/electron/vaults.js) —
 // cet écran ne connaît plus que le nom du coffre actif, pas comment il est
 // choisi/changé. Changer de DOSSIER PARENT : par "Déplacer vers…"
-// (MoveDialog) ou par édition manuelle du chemin complet (EditPathDialog).
-// Le glisser-déposer (curseur, voir l'effet dragstart/dragover/drop plus
-// bas), lui, ne fait QUE réordonner manuellement les éléments entre eux
-// (parmi leurs frères, même dossier parent) — pas changer de dossier, voir
-// vault:reorder dans apps/desktop/electron/vault.js.
+// (MoveDialog), par édition manuelle du chemin complet (EditPathDialog), ou
+// en glissant DANS un dossier (curseur, voir l'effet dragstart/dragover/
+// drop plus bas — zone centrale d'une ligne dossier). Le même glisser sert
+// aussi à réordonner entre frères (zones haut/bas d'une ligne) — voir
+// vault:move/vault:reorder dans apps/desktop/electron/vault.ts.
+//
+// //////////////////////////////////////////////////////////////////////
+// 🗂️ SOMMAIRE — ce que ce fichier fait EN PLUS de l'édition de note
+// (fichiers/explorateur, le reste — mode d'édition, barre d'outils,
+// occurrences... est propre à l'édition, pas à cette liste) :
+// //////////////////////////////////////////////////////////////////////
+// //1. Chargement de l'arborescence — refreshTree, ouverture d'une note
+//      demandée par un autre écran (pendingOpenRelPath).
+// //2. Ouverture d'une note — openNote (mémorise le dernier fichier ouvert
+//      par coffre), création (note/canvas/graphique/excalidraw/dossier).
+// //3. Fichier ouvert par défaut au démarrage (Paramètres → "Fichier
+//      ouvert par défaut") + révélation automatique dans l'explorateur
+//      (déplier les dossiers ancêtres, faire défiler jusqu'à la ligne).
+// //4. Renommer/déplacer/modifier le chemin/supprimer.
+// //5. Menu contextuel de l'explorateur (clic droit) + bouton d'ordre de
+//      tri.
+// //6. Glisser-déposer — réordonner entre frères OU déplacer dans un
+//      dossier, bascule automatique vers le tri "Manuel".
+// //7. Sauvegarde (autosave débouncée) + rendu (liste + éditeur actif).
+// Voir aussi apps/desktop/electron/vault.ts (backend fichiers),
+// VaultTreeView.tsx (rendu de l'explorateur), FilesLinksSection.tsx
+// (réglages).
 const AUTOSAVE_DELAY_MS = 600;
 
 type Status = 'idle' | 'saving' | 'saved' | 'error';
@@ -79,7 +101,7 @@ type Props = {
 };
 
 export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props = {}) {
-  const { preferences, theme, setFileSortMode } = usePreferences();
+  const { preferences, preferencesLoaded, theme, setFileSortMode } = usePreferences();
   const vault = typeof window !== 'undefined' ? window.vault : undefined;
   const contextMenuBridge = typeof window !== 'undefined' ? window.contextMenu : undefined;
   const { activeVaultPath: vaultPath } = useVaults();
@@ -150,6 +172,11 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
   const draggingRelPathRef = useRef<string | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const listAreaRef = useRef<View>(null);
+  // "Fichier ouvert par défaut" (voir l'effet dédié plus bas) : ne doit
+  // s'exécuter qu'UNE fois par coffre activé, pas à chaque re-render — une
+  // ref plutôt qu'un state, puisque ce n'est qu'un verrou interne, pas
+  // quelque chose que l'UI doit refléter.
+  const defaultOpenAttemptedForVaultRef = useRef<string | null>(null);
 
   // Référence vers l'EditorView CodeMirror actif (voir MdxEditor.tsx,
   // prop `onReady`) — permet de dispatcher des transactions (barre
@@ -163,6 +190,9 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
     .filter((item) => item.visible)
     .map((item) => NOTES_TOOLBAR_ACTIONS.find((action) => action.id === item.id))
     .filter((action): action is ToolbarAction => Boolean(action));
+
+  // //1. 🌳 CHARGEMENT DE L'ARBORESCENCE
+  // //////////////////////////////////////////////////////////////////////
 
   const refreshTree = useCallback(async () => {
     if (!vault) return;
@@ -249,6 +279,9 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
     }
   };
 
+  // //2. 📂 OUVERTURE ET CRÉATION
+  // //////////////////////////////////////////////////////////////////////
+
   const openNote = useCallback(
     async (node: VaultNoteNode) => {
       if (!vault) return;
@@ -261,6 +294,12 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
         // rouverte repart de ce mode plutôt que de garder celui de la note
         // précédemment ouverte dans la session.
         setViewMode(preferences.editorDefaultMode);
+        // Mémorisé PAR COFFRE (voir vault.ts) pour "Fichier ouvert par
+        // défaut" = "Dernier ouvert" — best-effort, une erreur ici ne doit
+        // pas empêcher l'ouverture elle-même (déjà réussie à ce stade).
+        void vault.setLastOpened(node.relPath).catch((error) => {
+          console.error('[vault] échec de la mémorisation du dernier fichier ouvert :', error);
+        });
       } catch (error) {
         console.error('[vault] échec de lecture de la note :', error);
         setStatus('error');
@@ -335,6 +374,109 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
     [vault, refreshTree, openNote, activeNote, preferences.newNoteLocation, preferences.newNoteCustomFolder],
   );
 
+  // //3. 🚀 FICHIER OUVERT PAR DÉFAUT + RÉVÉLATION DANS L'EXPLORATEUR
+  // //////////////////////////////////////////////////////////////////////
+
+  // "Fichier ouvert par défaut" (Paramètres → Gestion des fichiers et des
+  // liens) : quoi ouvrir au tout premier affichage d'un coffre. Ne
+  // s'exécute qu'UNE fois par coffre activé (`defaultOpenAttemptedForVaultRef`)
+  // — sans ce verrou, ré-ouvrir la même note via un lien interne ensuite ne
+  // redéclencherait rien de particulier, mais l'effet tournerait inutilement
+  // à chaque changement de `tree`/préférence si on l'y avait fait dépendre.
+  // Relit l'arborescence FRAÎCHE directement (comme l'effet
+  // `pendingOpenRelPath` ci-dessus) plutôt que de dépendre du state `tree`,
+  // qui pourrait ne pas encore être peuplé à ce stade.
+  useEffect(() => {
+    if (!vault || !vaultPath) return;
+    // Attend le VRAI chargement des préférences avant de lire
+    // `defaultOpenMode` — sinon cet effet s'exécutait avec
+    // `DEFAULT_PREFERENCES` (mode 'lastOpened' par défaut) avant que
+    // `bridge.get()` ait eu le temps de résoudre, posait quand même le
+    // verrou ci-dessous, et le VRAI mode configuré (ex. 'specific')
+    // n'avait alors plus jamais l'occasion de s'appliquer.
+    if (!preferencesLoaded) return;
+    if (defaultOpenAttemptedForVaultRef.current === vaultPath) return;
+    defaultOpenAttemptedForVaultRef.current = vaultPath;
+
+    void (async () => {
+      try {
+        if (preferences.defaultOpenMode === 'newNote') {
+          await handleCreateNote();
+          return;
+        }
+
+        const freshTree = await vault.listTree();
+
+        if (preferences.defaultOpenMode === 'specific' && preferences.defaultOpenSpecificPath) {
+          const found = findNodeByPath(freshTree, preferences.defaultOpenSpecificPath);
+          if (found && found.type === 'note') {
+            await openNote(found);
+            return;
+          }
+          // Chemin configuré mais introuvable (renommé/supprimé depuis) —
+          // repli silencieux sur "Sélectionne ou crée une note" plutôt
+          // qu'une erreur, même esprit que le reste de l'app.
+          return;
+        }
+
+        // 'lastOpened' (mode par défaut) : la dernière note ouverte DANS CE
+        // COFFRE (voir vault.ts, .123ecriture/state.json).
+        const lastRelPath = await vault.getLastOpened();
+        if (lastRelPath) {
+          const found = findNodeByPath(freshTree, lastRelPath);
+          if (found && found.type === 'note') await openNote(found);
+        }
+      } catch (error) {
+        console.error('[vault] échec de l’ouverture par défaut :', error);
+      }
+    })();
+  }, [
+    vault,
+    vaultPath,
+    preferencesLoaded,
+    preferences.defaultOpenMode,
+    preferences.defaultOpenSpecificPath,
+    handleCreateNote,
+    openNote,
+  ]);
+
+  // Quelle que soit la façon dont une note devient active (clic, lien
+  // interne, "fichier ouvert par défaut" ci-dessus, Calendrier, Canvas...),
+  // l'explorateur doit toujours la révéler : déplier ses dossiers ancêtres
+  // s'ils étaient repliés, puis faire défiler jusqu'à sa ligne. `requestAnimationFrame`
+  // laisse React peindre le déploiement AVANT de chercher la ligne dans le
+  // DOM — sinon `querySelector` pourrait s'exécuter avant que la ligne
+  // nouvellement dépliée n'existe.
+  useEffect(() => {
+    if (!activeNote) return;
+    const ancestors = getAncestorRelPaths(activeNote.relPath);
+    if (ancestors.length > 0) {
+      // Réagit à un changement de note active (prop/état externe), pas un
+      // état dérivable pendant le rendu : c'est exactement le rôle d'un
+      // effet.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setCollapsedPaths((prev) => {
+        if (!ancestors.some((a) => prev.has(a))) return prev;
+        const next = new Set(prev);
+        ancestors.forEach((a) => next.delete(a));
+        return next;
+      });
+    }
+
+    const container = listAreaRef.current as unknown as HTMLElement | null;
+    if (!container) return;
+    const frame = requestAnimationFrame(() => {
+      const row = container.querySelector(`[data-relpath="${CSS.escape(activeNote.relPath)}"]`);
+      row?.scrollIntoView({ block: 'nearest' });
+    });
+    return () => cancelAnimationFrame(frame);
+    // Volontairement keyé sur `activeNote?.relPath` (pas l'objet
+    // `activeNote` entier, qui change d'identité à chaque `openNote` même
+    // pour la MÊME note) : ne redéplier/rescroller que quand la note
+    // active change VRAIMENT.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeNote?.relPath]);
+
   const handleCreateFolder = useCallback(
     async (parentRelPath?: string) => {
       if (!vault) return;
@@ -347,6 +489,9 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
     },
     [vault, refreshTree],
   );
+
+  // //4. ✏️ RENOMMER / DÉPLACER / MODIFIER LE CHEMIN / SUPPRIMER
+  // //////////////////////////////////////////////////////////////////////
 
   const startRename = useCallback((node: VaultTreeNode) => {
     setRenamingRelPath(node.relPath);
@@ -521,6 +666,9 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
   // par mode, celle active préfixée ✅. Paramètres → Gestion des fichiers
   // et des liens propose déjà ce réglage ; ce bouton n'en est qu'un accès
   // direct depuis l'explorateur lui-même, pas un doublon de logique.
+  // //5. 🖱️ MENU CONTEXTUEL DE L'EXPLORATEUR + TRI
+  // //////////////////////////////////////////////////////////////////////
+
   const showSortMenu = useCallback(() => {
     if (!contextMenuBridge) return;
     const options: { id: FileSortMode; label: string }[] = [
@@ -532,7 +680,7 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
     void contextMenuBridge
       .show(options.map((o) => ({ id: o.id, label: o.id === preferences.fileSortMode ? `✅ ${o.label}` : o.label })))
       .then((choice) => {
-        if (choice) setFileSortMode(choice as FileSortMode);
+        if (choice) void setFileSortMode(choice as FileSortMode);
       });
   }, [contextMenuBridge, preferences.fileSortMode, setFileSortMode]);
 
@@ -610,6 +758,9 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
     container.addEventListener('contextmenu', handler);
     return () => container.removeEventListener('contextmenu', handler);
   }, [vaultPath, tree, contextMenuBridge, showContextMenuFor]);
+
+  // //6. 🖐️ GLISSER-DÉPOSER (réordonner / déplacer dans un dossier)
+  // //////////////////////////////////////////////////////////////////////
 
   // Glisser pour RÉORDONNER OU DÉPLACER DANS UN DOSSIER (curseur), même
   // mécanisme de délégation que le clic droit ci-dessus : un seul jeu
@@ -692,6 +843,10 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
     };
 
     const handleDrop = (event: DragEvent) => {
+      void handleDropAsync(event);
+    };
+
+    const handleDropAsync = async (event: DragEvent) => {
       const draggedRelPath = draggingRelPathRef.current;
       const insertion = draggedRelPath ? resolveInsertion(event, draggedRelPath) : null;
       draggingRelPathRef.current = null;
@@ -725,11 +880,6 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
         ...withoutDragged.slice(insertAt),
       ];
 
-      void vault
-        .reorder(parentRelPath, reordered)
-        .then(setTree)
-        .catch((error) => console.error('[vault] échec du réordonnancement :', error));
-
       // Un réordonnancement manuel n'a d'effet visible qu'en mode "Manuel"
       // (voir walkTree dans apps/desktop/electron/vault.ts, qui ignore
       // l'ordre enregistré dans les deux autres modes) — plutôt que
@@ -737,8 +887,29 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
       // glisser quoi que ce soit (sans quoi glisser ne fait rigoureusement
       // rien de visible, `draggable` restant à `false`), on bascule ICI,
       // seulement quand un glisser aboutit vraiment — l'intention "je veux
-      // ranger mes fichiers à la main" est alors sans ambiguïté.
-      if (preferences.fileSortMode !== 'manual') setFileSortMode('manual');
+      // ranger mes fichiers à la main" est alors sans ambiguïté. ATTENDU
+      // (pas fire-and-forget) AVANT `vault.reorder` : `preferences.set`
+      // écrit `fileSortMode` sur le DISQUE de façon asynchrone, et
+      // `vault:reorder` relit ce même fichier à CHAQUE appel côté main
+      // process pour décider s'il applique l'ordre glissé-déposé — sans
+      // cette attente, `vault:reorder` s'exécutait souvent encore avec
+      // l'ancien mode (ex. 'alphabetical'), ignorait l'ordre qu'on venait
+      // de lui donner, et le fichier glissé "revenait à sa place"
+      // instantanément (course gagnée par `vault.reorder`, perdue par
+      // l'écriture de préférence).
+      if (preferences.fileSortMode !== 'manual') {
+        try {
+          await setFileSortMode('manual');
+        } catch (error) {
+          console.error('[preferences] échec du passage en tri manuel :', error);
+        }
+      }
+
+      try {
+        setTree(await vault.reorder(parentRelPath, reordered));
+      } catch (error) {
+        console.error('[vault] échec du réordonnancement :', error);
+      }
     };
 
     const handleDragEnd = () => {
@@ -787,6 +958,9 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
       row.draggable = relPath !== renamingRelPath;
     });
   }, [tree, renamingRelPath]);
+
+  // //7. 💾 SAUVEGARDE + RENDU
+  // //////////////////////////////////////////////////////////////////////
 
   const scheduleSave = useCallback(
     (text: string) => {

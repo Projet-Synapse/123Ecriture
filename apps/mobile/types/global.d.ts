@@ -45,6 +45,10 @@ declare global {
     // process (voir vault.ts, `vault:delete`) — `deleted: false` si
     // l'utilisatrice a annulé, jamais de suppression silencieuse.
     delete: (relPath: string) => Promise<{ deleted: boolean }>;
+    // Voir Preferences.defaultOpenMode==='lastOpened' — par coffre (voir
+    // vault.ts, .123ecriture/state.json), pas app-level.
+    getLastOpened: () => Promise<string | null>;
+    setLastOpened: (relPath: string | null) => Promise<void>;
     ensureDailyNote: (dateIso: string) => Promise<VaultEntry>;
     reorder: (parentRelPath: string | undefined, orderedNames: string[]) => Promise<VaultTreeNode[]>;
     importAttachment: () => Promise<{ relPath: string; name: string } | null>;
@@ -296,6 +300,15 @@ declare global {
   // (sans la perdre : re-choisir 'manual' la restaure).
   type FileSortMode = 'alphabetical' | 'recent' | 'oldest' | 'manual';
 
+  // "Fichier ouvert par défaut" (voir NotesScreen.tsx, effet d'ouverture au
+  // démarrage) : 'lastOpened' rouvre la dernière note active de CE coffre
+  // (voir VaultBridge.getLastOpened/setLastOpened, .123ecriture/state.json
+  // côté vault.ts — par coffre, pas app-level, puisque "la dernière note"
+  // n'a de sens que dans le coffre où elle a été ouverte) ; 'newNote' crée
+  // une note vierge à chaque démarrage ; 'specific' ouvre toujours
+  // `defaultOpenSpecificPath` ci-dessous.
+  type DefaultOpenMode = 'lastOpened' | 'newNote' | 'specific';
+
   interface Preferences {
     themeMode: ThemeMode;
     accentColor: string;
@@ -308,6 +321,11 @@ declare global {
     newNoteLocation: NewNoteLocation;
     newNoteCustomFolder: string;
     fileSortMode: FileSortMode;
+    defaultOpenMode: DefaultOpenMode;
+    // relPath du fichier à ouvrir quand defaultOpenMode==='specific' — '' si
+    // aucun choisi (repli silencieux sur l'écran "Sélectionne ou crée une
+    // note", pas de crash).
+    defaultOpenSpecificPath: string;
     // Paramètres → Éditeur.
     editorFontSize: number;
     editorDefaultMode: EditorViewMode;

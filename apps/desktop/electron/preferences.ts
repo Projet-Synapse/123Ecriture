@@ -50,6 +50,8 @@ export const DEFAULT_PREFERENCES: Preferences = {
   newNoteLocation: 'vaultRoot',
   newNoteCustomFolder: '',
   fileSortMode: 'alphabetical',
+  defaultOpenMode: 'lastOpened',
+  defaultOpenSpecificPath: '',
   editorFontSize: 15,
   editorDefaultMode: 'source',
   editorCloseBrackets: true,

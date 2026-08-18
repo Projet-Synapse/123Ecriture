@@ -25,6 +25,8 @@ const DEFAULT_PREFERENCES: Preferences = {
   newNoteLocation: 'vaultRoot',
   newNoteCustomFolder: '',
   fileSortMode: 'alphabetical',
+  defaultOpenMode: 'lastOpened',
+  defaultOpenSpecificPath: '',
   editorFontSize: 15,
   editorDefaultMode: 'source',
   editorCloseBrackets: true,
@@ -40,21 +42,27 @@ type PreferencesContextValue = {
   preferences: Preferences;
   theme: Theme;
   colorScheme: 'light' | 'dark';
-  setThemeMode: (mode: ThemeMode) => void;
-  setAccentColor: (color: string) => void;
-  setNotesToolbarOrder: (order: ToolbarItemConfig[]) => void;
-  setCanvasToolbarOrder: (order: ToolbarItemConfig[]) => void;
-  setChartToolbarOrder: (order: ToolbarItemConfig[]) => void;
-  setAttachmentsFolder: (folder: string) => void;
-  setAutoCreateWikilinkTarget: (value: boolean) => void;
-  setNewNoteLocation: (location: NewNoteLocation) => void;
-  setNewNoteCustomFolder: (folder: string) => void;
-  setFileSortMode: (mode: FileSortMode) => void;
-  setEditorFontSize: (size: number) => void;
-  setEditorDefaultMode: (mode: EditorViewMode) => void;
-  setEditorCloseBrackets: (value: boolean) => void;
-  setEditorInlineTitle: (value: boolean) => void;
-  setSidebarPanelLayout: (id: SidebarPanelId, layout: SidebarPanelLayout) => void;
+  // Toutes renvoient une Promise qui se résout une fois l'écriture DISQUE
+  // terminée (pas seulement l'état React local) — voir `persist` plus bas
+  // pour pourquoi c'est nécessaire (course avec `vault:reorder`, qui relit
+  // `fileSortMode` depuis le disque à chaque appel).
+  setThemeMode: (mode: ThemeMode) => Promise<void>;
+  setAccentColor: (color: string) => Promise<void>;
+  setNotesToolbarOrder: (order: ToolbarItemConfig[]) => Promise<void>;
+  setCanvasToolbarOrder: (order: ToolbarItemConfig[]) => Promise<void>;
+  setChartToolbarOrder: (order: ToolbarItemConfig[]) => Promise<void>;
+  setAttachmentsFolder: (folder: string) => Promise<void>;
+  setAutoCreateWikilinkTarget: (value: boolean) => Promise<void>;
+  setNewNoteLocation: (location: NewNoteLocation) => Promise<void>;
+  setNewNoteCustomFolder: (folder: string) => Promise<void>;
+  setFileSortMode: (mode: FileSortMode) => Promise<void>;
+  setDefaultOpenMode: (mode: DefaultOpenMode) => Promise<void>;
+  setDefaultOpenSpecificPath: (relPath: string) => Promise<void>;
+  setEditorFontSize: (size: number) => Promise<void>;
+  setEditorDefaultMode: (mode: EditorViewMode) => Promise<void>;
+  setEditorCloseBrackets: (value: boolean) => Promise<void>;
+  setEditorInlineTitle: (value: boolean) => Promise<void>;
+  setSidebarPanelLayout: (id: SidebarPanelId, layout: SidebarPanelLayout) => Promise<void>;
   // Paramètres → Confidentialité et données. `undefined` si non disponible
   // (pas de pont Electron, ex. web/mobile) — laissé à la charge de l'écran
   // d'afficher/masquer les actions correspondantes, même logique de
@@ -62,6 +70,17 @@ type PreferencesContextValue = {
   resetPreferences: () => void;
   getConfigPath: (() => Promise<string>) | undefined;
   revealConfigFolder: (() => Promise<void>) | undefined;
+  // `false` tant que le premier `bridge.get()` n'a pas résolu (true
+  // immédiatement sans pont — web/mobile, rien à charger). Distingue "on ne
+  // sait pas encore" de "vraiment DEFAULT_PREFERENCES" : `preferences`
+  // vaut `DEFAULT_PREFERENCES` dans LES DEUX cas le temps du premier
+  // chargement, ce qui a fait planter une fois "Fichier ouvert par défaut"
+  // (NotesScreen.tsx) — un effet lisant `preferences.defaultOpenMode` trop
+  // tôt (avant la résolution du bridge) l'ouvrait toujours en 'lastOpened'
+  // (la valeur par défaut), jamais le VRAI mode configuré, et son verrou
+  // "une fois par coffre" empêchait tout second essai une fois les vraies
+  // préférences arrivées.
+  preferencesLoaded: boolean;
 };
 
 const PreferencesReactContext = createContext<PreferencesContextValue | null>(null);
@@ -70,24 +89,39 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
   const systemScheme = useColorScheme();
   const bridge = typeof window !== 'undefined' ? window.preferences : undefined;
   const [preferences, setPreferences] = useState<Preferences>(DEFAULT_PREFERENCES);
+  // Pas de pont (web/mobile) : rien à charger, "chargé" dès le départ.
+  const [preferencesLoaded, setPreferencesLoaded] = useState(!bridge);
 
   useEffect(() => {
     if (!bridge) return;
     void bridge
       .get()
       .then((stored) => setPreferences({ ...DEFAULT_PREFERENCES, ...stored }))
-      .catch((error) => console.error('[preferences] échec du chargement :', error));
+      .catch((error) => console.error('[preferences] échec du chargement :', error))
+      .finally(() => setPreferencesLoaded(true));
   }, [bridge]);
 
+  // Renvoie une Promise qui se résout une fois l'écriture DISQUE (pas
+  // seulement l'état React local) effectivement terminée — nécessaire pour
+  // les appelants qui doivent enchaîner une action qui dépend de cette
+  // préférence déjà persistée côté main process (ex. NotesScreen.tsx,
+  // `handleDrop` : `vault:reorder` relit `fileSortMode` depuis le disque à
+  // CHAQUE appel, donc appeler `setFileSortMode('manual')` sans attendre
+  // la fin réelle de l'écriture avant de réordonner crée une course où le
+  // réordonnancement se fait encore lire en mode 'alphabetical' — l'ordre
+  // glissé-déposé semble alors "revenir à sa place" puisque `vault:reorder`
+  // l'ignore silencieusement dans ce mode). Sans pont (web/mobile), résout
+  // immédiatement : rien à attendre, l'état local suffit.
   const persist = useCallback(
-    (partial: Partial<Preferences>) => {
-      setPreferences((prev) => {
-        const next = { ...prev, ...partial };
-        if (bridge) {
-          bridge.set(partial).catch((error) => console.error('[preferences] échec de sauvegarde :', error));
-        }
-        return next;
-      });
+    (partial: Partial<Preferences>): Promise<void> => {
+      setPreferences((prev) => ({ ...prev, ...partial }));
+      if (!bridge) return Promise.resolve();
+      return bridge.set(partial).then(
+        () => undefined,
+        (error) => {
+          console.error('[preferences] échec de sauvegarde :', error);
+        },
+      );
     },
     [bridge],
   );
@@ -123,6 +157,17 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     [persist],
   );
   const setFileSortMode = useCallback((mode: FileSortMode) => persist({ fileSortMode: mode }), [persist]);
+  // Paramètres → Gestion des fichiers et des liens → "Fichier ouvert par
+  // défaut" (voir NotesScreen.tsx, effet d'ouverture au démarrage) : quel
+  // fichier ouvrir à chaque lancement de l'app / changement de coffre.
+  const setDefaultOpenMode = useCallback(
+    (mode: DefaultOpenMode) => persist({ defaultOpenMode: mode }),
+    [persist],
+  );
+  const setDefaultOpenSpecificPath = useCallback(
+    (relPath: string) => persist({ defaultOpenSpecificPath: relPath }),
+    [persist],
+  );
   const setEditorFontSize = useCallback((size: number) => persist({ editorFontSize: size }), [persist]);
   const setEditorDefaultMode = useCallback(
     (mode: EditorViewMode) => persist({ editorDefaultMode: mode }),
@@ -167,6 +212,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
   const value = useMemo<PreferencesContextValue>(
     () => ({
       preferences,
+      preferencesLoaded,
       theme,
       colorScheme,
       setThemeMode,
@@ -179,6 +225,8 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       setNewNoteLocation,
       setNewNoteCustomFolder,
       setFileSortMode,
+      setDefaultOpenMode,
+      setDefaultOpenSpecificPath,
       setEditorFontSize,
       setEditorDefaultMode,
       setEditorCloseBrackets,
@@ -190,6 +238,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     }),
     [
       preferences,
+      preferencesLoaded,
       theme,
       colorScheme,
       setThemeMode,
@@ -202,6 +251,8 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       setNewNoteLocation,
       setNewNoteCustomFolder,
       setFileSortMode,
+      setDefaultOpenMode,
+      setDefaultOpenSpecificPath,
       setEditorFontSize,
       setEditorDefaultMode,
       setEditorCloseBrackets,

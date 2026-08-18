@@ -48,7 +48,7 @@ export function PersonalizationCard() {
       return;
     }
     setHexError(false);
-    setAccentColor(trimmed);
+    void setAccentColor(trimmed);
   };
 
   return (
@@ -62,7 +62,7 @@ export function PersonalizationCard() {
           return (
             <Pressable
               key={option.mode}
-              onPress={() => setThemeMode(option.mode)}
+              onPress={() => void setThemeMode(option.mode)}
               style={[
                 styles.modeButton,
                 { borderColor: theme.border },
@@ -82,7 +82,7 @@ export function PersonalizationCard() {
           return (
             <Pressable
               key={color}
-              onPress={() => setAccentColor(color)}
+              onPress={() => void setAccentColor(color)}
               style={[styles.swatch, { backgroundColor: color }, isActive && styles.swatchActive]}
             >
               {isActive && <Text style={styles.swatchCheck}>✓</Text>}

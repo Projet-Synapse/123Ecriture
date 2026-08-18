@@ -41,7 +41,7 @@ export function EditorSection() {
   const adjustFontSize = (delta: 1 | -1) => {
     const next = preferences.editorFontSize + delta;
     if (next < MIN_FONT_SIZE || next > MAX_FONT_SIZE) return;
-    setEditorFontSize(next);
+    void setEditorFontSize(next);
   };
 
   return (
@@ -83,7 +83,7 @@ export function EditorSection() {
             return (
               <Pressable
                 key={option.value}
-                onPress={() => setEditorDefaultMode(option.value)}
+                onPress={() => void setEditorDefaultMode(option.value)}
                 style={[
                   s.modeButton,
                   { borderColor: theme.border },
@@ -99,13 +99,13 @@ export function EditorSection() {
         <SettingsToggle
           label="Association automatique de crochets/guillemets"
           value={preferences.editorCloseBrackets}
-          onChange={setEditorCloseBrackets}
+          onChange={(value) => void setEditorCloseBrackets(value)}
           theme={theme}
         />
         <SettingsToggle
           label="Titre en ligne avec le contenu"
           value={preferences.editorInlineTitle}
-          onChange={setEditorInlineTitle}
+          onChange={(value) => void setEditorInlineTitle(value)}
           theme={theme}
         />
       </View>
@@ -116,7 +116,7 @@ export function EditorSection() {
         <ToolbarOrderEditor
           items={preferences.notesToolbarOrder}
           descriptions={NOTES_TOOLBAR_DESCRIPTIONS}
-          onChange={setNotesToolbarOrder}
+          onChange={(order) => void setNotesToolbarOrder(order)}
           theme={theme}
         />
       </View>
@@ -127,7 +127,7 @@ export function EditorSection() {
         <ToolbarOrderEditor
           items={preferences.canvasToolbarOrder}
           descriptions={CANVAS_TOOLBAR_DESCRIPTIONS}
-          onChange={setCanvasToolbarOrder}
+          onChange={(order) => void setCanvasToolbarOrder(order)}
           theme={theme}
         />
       </View>
@@ -138,7 +138,7 @@ export function EditorSection() {
         <ToolbarOrderEditor
           items={preferences.chartToolbarOrder}
           descriptions={CHART_TOOLBAR_DESCRIPTIONS}
-          onChange={setChartToolbarOrder}
+          onChange={(order) => void setChartToolbarOrder(order)}
           theme={theme}
         />
       </View>

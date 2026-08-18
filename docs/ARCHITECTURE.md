@@ -299,6 +299,48 @@ natives). Toute la logique testable vit dans `packages/`.
 >   pour un usage façon Airtable (données éditées interactivement →
 >   graphique automatique).
 
+> **Écart pragmatique (v0.1.17, fichiers/explorateur — organisation +
+> correctifs)** :
+> - **Régression de largeur de l'éditeur corrigée** : le correctif v0.1.16
+>   du scroll figé (`style={{display:'flex', flex:1, minHeight:0}}` sur
+>   `<CodeMirror>`, voir `MdxEditor.tsx`) manquait `flexDirection:'column'`
+>   — un `display:'flex'` brut sur un `<div>` qui n'est PAS un `View` React
+>   Native vaut `flex-direction:row` par défaut, donc l'unique enfant
+>   (`.cm-editor`) se dimensionnait à la largeur de son contenu au lieu de
+>   s'étirer, d'où "le fichier ne s'affiche qu'à la moitié de la page".
+> - **Glisser-déposer qui "revenait à sa place" corrigé** : course entre
+>   `vault:reorder` (relit `fileSortMode` depuis le DISQUE à chaque appel)
+>   et le passage en mode "Manuel" déclenché par le même glisser
+>   (`preferences:set`, écriture disque asynchrone) — `vault:reorder`
+>   s'exécutait souvent encore en mode 'alphabetical', ignorait l'ordre
+>   fraîchement donné. `PreferencesContext.tsx` : tous les setters
+>   renvoient maintenant une vraie `Promise<void>` (résolue après
+>   l'écriture disque, pas juste l'état React local) ; `NotesScreen.tsx`
+>   attend cette promesse avant d'appeler `vault:reorder`.
+> - **"Fichier ouvert par défaut"** (Paramètres → Gestion des fichiers et
+>   des liens) : Dernier ouvert / Nouvelle note / Fichier spécifique.
+>   "Dernier ouvert" par COFFRE (`.123ecriture/state.json`, voir
+>   `vault:get-last-opened`/`set-last-opened`), pas une préférence
+>   app-level. L'explorateur déplie toujours les dossiers ancêtres et
+>   défile jusqu'à la note active, quelle que soit la façon dont elle est
+>   devenue active (`NotesScreen.tsx`, effet dédié +
+>   `lib/vaultTree.ts#getAncestorRelPaths`). **Gotcha trouvé en testant** :
+>   l'effet d'ouverture par défaut lisait `preferences.defaultOpenMode`
+>   avant que le premier `bridge.get()` ait résolu, s'exécutait donc avec
+>   `DEFAULT_PREFERENCES` ('lastOpened') quel que soit le VRAI mode
+>   configuré, et son verrou "une fois par coffre" empêchait tout second
+>   essai une fois les vraies préférences chargées — d'où un nouveau
+>   `preferencesLoaded` (`PreferencesContext.tsx`) que cet effet attend.
+> - **Lignes de profondeur** dans l'explorateur (`VaultTreeView.tsx`) —
+>   une ligne verticale par ancêtre, empilées entre lignes consécutives
+>   pour donner l'illusion d'un trait continu (pas de vrai suivi de
+>   branche, volontairement simple).
+> - **Organisation du code** (fichiers/explorateur/paramètres des
+>   fichiers) : sommaires + chapitres numérotés (`//1.`, `//2.`...) ajoutés
+>   en tête et aux points d'articulation de `vault.ts`, `VaultTreeView.tsx`,
+>   `lib/vaultTree.ts`, `FilesLinksSection.tsx`, et (partiellement, vu sa
+>   taille et son périmètre mixte fichiers+édition) `NotesScreen.tsx`.
+
 //////////////////////////////////////////////////////////////////////////
 // 5. 💾 STOCKAGE LOCAL & ABSTRACTION MULTIPLATEFORME
 //////////////////////////////////////////////////////////////////////////

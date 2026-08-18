@@ -10,6 +10,31 @@ import type { FileSortMode, VaultEntryKind, VaultOrder, VaultTreeNode } from './
 
 type GetWindow = () => BrowserWindow | null;
 
+// ////////////////////////////////////////////////////////////////////////
+// 🗂️ SOMMAIRE — backend du vault (fichiers/dossiers du coffre actif)
+// ////////////////////////////////////////////////////////////////////////
+// //1. Types de fichiers et gabarits — extensions reconnues, kind, contenu
+//      initial par type (defaultContentForKind).
+// //2. Résolution de chemin et utilitaires — resolveInVault (garde-fou
+//      hors-vault), findAvailableName, escapeRegExp, guessMimeType.
+// //3. Ordre des fichiers — tri automatique (alphabétique/récent/ancien) ET
+//      ordre manuel glissé-déposé (.123ecriture/order.json).
+// //4. Dernier fichier ouvert — état PAR COFFRE (.123ecriture/state.json),
+//      voir Paramètres → "Fichier ouvert par défaut".
+// //5. Arborescence — walkTree, lit le disque + applique tri/ordre.
+// //6. Handlers IPC — Lecture (list-tree, read-note, pièces jointes,
+//      dernier fichier ouvert).
+// //7. Handlers IPC — Création/écriture (write-note, create-note/-folder,
+//      note journalière, import de pièce jointe).
+// //8. Handlers IPC — Organisation (reorder, rename, move, set-path,
+//      delete).
+// Voir aussi apps/mobile/components/VaultTreeView.tsx (rendu de
+// l'explorateur), NotesScreen.tsx (logique côté renderer : glisser-déposer,
+// clic droit, ouverture par défaut) et FilesLinksSection.tsx (réglages).
+
+// //1. 🗺️ TYPES DE FICHIERS ET GABARITS
+// ////////////////////////////////////////////////////////////////////////
+
 // Nom par défaut du dossier de pièces jointes — configurable depuis
 // Paramètres → Gestion des fichiers et des liens (voir
 // SettingsScreen.tsx/preferences.ts) ; ce fallback n'est utilisé qu'en
@@ -114,6 +139,9 @@ function getVaultPath(): string | null {
   return vaults.getActiveVaultPath();
 }
 
+// //2. 🔒 RÉSOLUTION DE CHEMIN ET UTILITAIRES
+// ////////////////////////////////////////////////////////////////////////
+
 // La fenêtre est sandboxée (contextIsolation, pas de nodeIntegration) donc
 // le renderer ne peut pas manipuler fs directement, mais mieux vaut quand
 // même ne jamais faire confiance à un relPath IPC sans vérifier qu'il reste
@@ -149,6 +177,9 @@ function findAvailableName(dir: string, candidate: string, extension = ''): stri
   return `${name}${extension}`;
 }
 
+// //3. 🔀 ORDRE DES FICHIERS
+// ////////////////////////////////////////////////////////////////////////
+
 function getOrderFilePath(vaultPath: string): string {
   return path.join(vaultPath, '.123ecriture', 'order.json');
 }
@@ -172,6 +203,38 @@ async function writeOrder(vaultPath: string, order: VaultOrder): Promise<VaultOr
   await fs.writeFile(filePath, JSON.stringify(order, null, 2), 'utf8');
   return order;
 }
+
+// //4. 📍 DERNIER FICHIER OUVERT
+// ////////////////////////////////////////////////////////////////////////
+
+function getStateFilePath(vaultPath: string): string {
+  return path.join(vaultPath, '.123ecriture', 'state.json');
+}
+
+// Dernière note ouverte DANS CE COFFRE — voir Paramètres → Gestion des
+// fichiers et des liens → "Fichier ouvert par défaut" = "Dernier ouvert"
+// (apps/mobile/components/NotesScreen.tsx). PAR coffre plutôt qu'une
+// préférence app-level (comme fileSortMode) : "la dernière note ouverte"
+// n'a de sens que dans le coffre où elle l'a été, pas globalement. Même
+// forme minimale que order.json/tasklists.json : un petit fichier dédié
+// dans .123ecriture/ plutôt qu'alourdir un fichier existant.
+function readLastOpened(vaultPath: string): string | null {
+  try {
+    const data = JSON.parse(fsSync.readFileSync(getStateFilePath(vaultPath), 'utf8')) as { lastOpenedRelPath?: string };
+    return data.lastOpenedRelPath ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function writeLastOpened(vaultPath: string, relPath: string | null): Promise<void> {
+  const filePath = getStateFilePath(vaultPath);
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.writeFile(filePath, JSON.stringify({ lastOpenedRelPath: relPath }, null, 2), 'utf8');
+}
+
+// //5. 🌳 ARBORESCENCE
+// ////////////////////////////////////////////////////////////////////////
 
 // Arborescence complète du vault : dossiers avec leurs enfants, notes en
 // feuilles. Tri par défaut : dossiers d'abord puis notes, alphabétique à
@@ -249,6 +312,9 @@ async function walkTree(dir: string, vaultRoot: string, order: VaultOrder): Prom
 }
 
 export function registerVaultHandlers(getWindow: GetWindow): void {
+  // //6. 📡 HANDLERS IPC — LECTURE
+  // //////////////////////////////////////////////////////////////////////
+
   // Gardé tel quel (nom + signature) car consommé directement par
   // NotesScreen.tsx/TasksScreen.tsx (écran vide "Choisir un dossier") —
   // délègue maintenant à vaults.js (ajoute+active le dossier choisi dans le
@@ -287,6 +353,9 @@ export function registerVaultHandlers(getWindow: GetWindow): void {
     if (!vaultPath) throw new Error('Aucun vault sélectionné');
     return fs.readFile(resolveInVault(vaultPath, relPath), 'utf8');
   });
+
+  // //7. 📡 HANDLERS IPC — CRÉATION / ÉCRITURE
+  // //////////////////////////////////////////////////////////////////////
 
   ipcMain.handle('vault:write-note', async (_event, relPath: string, content: string) => {
     const vaultPath = getVaultPath();
@@ -412,6 +481,9 @@ export function registerVaultHandlers(getWindow: GetWindow): void {
     const buffer = await fs.readFile(fullPath);
     return `data:${guessMimeType(fullPath)};base64,${buffer.toString('base64')}`;
   });
+
+  // //8. 📡 HANDLERS IPC — ORGANISATION (renommer/déplacer/supprimer)
+  // //////////////////////////////////////////////////////////////////////
 
   // Renomme une note ou un dossier (détection automatique du type via
   // fs.stat) — reste dans le même dossier parent, pas de déplacement.
@@ -584,5 +656,22 @@ export function registerVaultHandlers(getWindow: GetWindow): void {
 
     await fs.rm(fullPath, { recursive: true, force: true });
     return { deleted: true };
+  });
+
+  // Voir "Fichier ouvert par défaut" ci-dessus (readLastOpened/
+  // writeLastOpened) — le renderer appelle `setLastOpened` à chaque
+  // ouverture RÉUSSIE d'une note (voir NotesScreen.tsx, `openNote`), et
+  // `getLastOpened` une fois au démarrage/changement de coffre pour savoir
+  // quoi rouvrir.
+  ipcMain.handle('vault:get-last-opened', () => {
+    const vaultPath = getVaultPath();
+    if (!vaultPath) return null;
+    return readLastOpened(vaultPath);
+  });
+
+  ipcMain.handle('vault:set-last-opened', async (_event, relPath: string | null) => {
+    const vaultPath = getVaultPath();
+    if (!vaultPath) return;
+    await writeLastOpened(vaultPath, relPath);
   });
 }

@@ -59,7 +59,7 @@ export function useResizablePanel(
           options.onCollapseIntent();
         } else {
           const width = collapsed ? stored.width : clampWidth(current, options.min, options.max);
-          setSidebarPanelLayout(id, { width, collapsed });
+          void setSidebarPanelLayout(id, { width, collapsed });
         }
         return null;
       });
@@ -85,7 +85,7 @@ export function useResizablePanel(
   );
 
   const toggleCollapsed = useCallback(() => {
-    setSidebarPanelLayout(id, { width: stored.width, collapsed: !stored.collapsed });
+    void setSidebarPanelLayout(id, { width: stored.width, collapsed: !stored.collapsed });
   }, [id, setSidebarPanelLayout, stored.width, stored.collapsed]);
 
   return {

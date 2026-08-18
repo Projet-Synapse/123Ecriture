@@ -12,6 +12,9 @@ import type { Theme } from '../theme';
 // de parsemer des `as any` dans le JSX plus bas. Exportée : réutilisée telle
 // quelle par CanvasEditor.tsx pour les mêmes raisons (cartes/poignées de
 // connexion glissables).
+// //1. 🖱️ DRAGGABLEPRESSABLE
+// ////////////////////////////////////////////////////////////////////////
+
 export const DraggablePressable = Pressable as unknown as ComponentType<
   ComponentProps<typeof Pressable> & { draggable?: boolean }
 >;
@@ -21,6 +24,11 @@ export const DraggablePressable = Pressable as unknown as ComponentType<
 // dossiers repliés, état de renommage) et les actions vivent dans
 // NotesScreen — ce fichier ne fait qu'afficher et relayer les événements,
 // pour ne pas éparpiller la logique métier vault entre deux fichiers.
+//
+// //1. DraggablePressable — échappatoire de typage pour `draggable`.
+// //2. Props/rendu — une ligne par nœud (icône, nom, lignes de profondeur,
+//      indices de glisser-déposer), récursif sur les enfants d'un dossier.
+// //3. Styles.
 //
 // Le clic droit n'est PAS géré ici : chaque ligne porte juste un
 // `dataSet={{ relpath: ... }}` (converti en attribut data-relpath par
@@ -87,6 +95,9 @@ type Props = {
   dragEnabled?: boolean;
 };
 
+// //2. 🌳 PROPS/RENDU
+// ////////////////////////////////////////////////////////////////////////
+
 export function VaultTreeView({
   nodes,
   depth = 0,
@@ -122,7 +133,6 @@ export function VaultTreeView({
               dataSet={{ relpath: node.relPath }}
               style={[
                 styles.row,
-                { paddingLeft: 12 + depth * 16 },
                 !isFolder &&
                   node.relPath === activeRelPath && { backgroundColor: `${theme.accent}22` },
                 !isRenaming && dragEnabled && styles.rowDraggable,
@@ -130,6 +140,20 @@ export function VaultTreeView({
                 isDropInsideTarget && { backgroundColor: `${theme.accent}33`, borderRadius: 6 },
               ]}
             >
+              {/* Lignes de profondeur — une par ancêtre, pour se repérer
+                  dans une arborescence imbriquée sans compter les niveaux
+                  d'indentation à l'œil. `alignSelf:'stretch'` reprend la
+                  hauteur de CETTE ligne (toutes identiques, `numberOfLines`
+                  sur le nom) : empilées, plusieurs lignes consécutives à la
+                  même profondeur donnent l'illusion d'un trait continu —
+                  pas de vrai suivi de branche (une ligne s'arrête même si
+                  ce n'est pas le dernier enfant du dossier), volontairement
+                  simple pour une première version. */}
+              {Array.from({ length: depth }).map((_, i) => (
+                <View key={i} style={styles.indentGuideCell}>
+                  <View style={[styles.indentGuideLine, { backgroundColor: theme.border }]} />
+                </View>
+              ))}
               <Text style={styles.icon}>
                 {node.type === 'folder' ? (isCollapsed ? '📁' : '📂') : NOTE_ICON_BY_KIND[node.kind]}
               </Text>
@@ -178,16 +202,34 @@ export function VaultTreeView({
   );
 }
 
+// //3. 🎨 STYLES
+// ////////////////////////////////////////////////////////////////////////
+
 const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
     paddingVertical: 8,
+    paddingLeft: 12,
     paddingRight: 12,
   },
   icon: {
     fontSize: 14,
+  },
+  // Largeur (16px) alignée sur le pas d'indentation d'origine
+  // (`12 + depth * 16`, voir `insertionLine` plus bas, qui doit rester
+  // visuellement aligné) — le trait est centré dedans plutôt que collé à
+  // un bord, pour rester lisible même serré contre l'icône du niveau
+  // suivant.
+  indentGuideCell: {
+    width: 16,
+    alignSelf: 'stretch',
+    alignItems: 'center',
+  },
+  indentGuideLine: {
+    width: 1,
+    flex: 1,
   },
   rowDragging: {
     opacity: 0.4,

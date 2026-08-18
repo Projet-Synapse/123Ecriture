@@ -134,7 +134,15 @@ export function MdxEditor({
         // permet à `height:100%` de `.cm-editor` de se résoudre
         // normalement et à `.cm-scroller` (overflow-y:auto déjà géré en
         // interne par CodeMirror) de redevenir réellement scrollable.
-        style={{ display: 'flex', flex: 1, minHeight: 0 }}
+        // `flexDirection:'column'` est IMPÉRATIF ici : par défaut, un
+        // `display:'flex'` brut (ce div n'est pas un `View` React Native,
+        // ses props ne passent donc PAS par les défauts habituels de RN)
+        // vaut `flex-direction:row` — l'unique enfant (`.cm-editor`) se
+        // serait alors dimensionné à la largeur de SON CONTENU sur l'axe
+        // principal (horizontal) au lieu de s'étirer sur toute la largeur
+        // disponible. Régression trouvée après coup : c'est exactement ce
+        // qui causait "le fichier ne s'affiche qu'à la moitié de la page".
+        style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}
         theme="none"
         extensions={[editorTheme, ...extensions]}
         basicSetup={{

@@ -155,6 +155,11 @@ export type EditorViewMode = 'source' | 'split' | 'reading';
 // symétrique de 'recent' (plus ancien d'abord plutôt que plus récent).
 export type FileSortMode = 'alphabetical' | 'recent' | 'oldest' | 'manual';
 
+// "Fichier ouvert par défaut" — voir apps/mobile/components/NotesScreen.tsx
+// et VaultBridge.getLastOpened/setLastOpened (.123ecriture/state.json,
+// PAR coffre, voir vault.ts).
+export type DefaultOpenMode = 'lastOpened' | 'newNote' | 'specific';
+
 export interface Preferences {
   themeMode: ThemeMode;
   accentColor: string;
@@ -167,6 +172,8 @@ export interface Preferences {
   newNoteLocation: NewNoteLocation;
   newNoteCustomFolder: string;
   fileSortMode: FileSortMode;
+  defaultOpenMode: DefaultOpenMode;
+  defaultOpenSpecificPath: string;
   // Paramètres → Éditeur.
   editorFontSize: number;
   editorDefaultMode: EditorViewMode;

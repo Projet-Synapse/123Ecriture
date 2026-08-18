@@ -1,5 +1,12 @@
 // Fonctions pures sur l'arborescence du vault — séparées des composants
 // pour rester testables sans RN, comme lib/mdxFormatting.ts.
+//
+// //1. Recherche — findNodeByPath, getParentRelPath, getAncestorRelPaths.
+// //2. Listes dérivées — flattenNotes, getChildrenAt.
+// //3. Dossiers destination — collectFolderOptions (voir MoveDialog.tsx).
+
+// //1. 🔎 RECHERCHE
+// ////////////////////////////////////////////////////////////////////////
 
 // Retrouve un nœud (note ou dossier) par son relPath, en profondeur.
 // Utilisé par NotesScreen pour retrouver l'élément visé par un clic droit
@@ -25,6 +32,24 @@ export function getParentRelPath(relPath: string): string | undefined {
   return idx === -1 ? undefined : relPath.slice(0, idx);
 }
 
+// TOUS les dossiers ancêtres d'un relPath (du plus proche au plus
+// éloigné), racine exclue — utilisé par NotesScreen.tsx pour déplier
+// automatiquement le chemin menant à la note active (voir l'effet dédié),
+// quelle que soit la façon dont elle a été ouverte (clic, lien interne,
+// "fichier ouvert par défaut"...).
+export function getAncestorRelPaths(relPath: string): string[] {
+  const ancestors: string[] = [];
+  let current = getParentRelPath(relPath);
+  while (current) {
+    ancestors.push(current);
+    current = getParentRelPath(current);
+  }
+  return ancestors;
+}
+
+// //2. 📋 LISTES DÉRIVÉES
+// ////////////////////////////////////////////////////////////////////////
+
 // Liste plate de toutes les NOTES de l'arborescence (pas les dossiers) —
 // utilisé par CanvasEditor.tsx pour proposer un choix de note à référencer
 // dans une carte.
@@ -48,6 +73,9 @@ export function getChildrenAt(tree: VaultTreeNode[], parentRelPath: string | und
   const parent = findNodeByPath(tree, parentRelPath);
   return parent && parent.type === 'folder' ? parent.children : [];
 }
+
+// //3. 📁 DOSSIERS DESTINATION
+// ////////////////////////////////////////////////////////////////////////
 
 export type FolderOption = { relPath: string; label: string; depth: number };
 
