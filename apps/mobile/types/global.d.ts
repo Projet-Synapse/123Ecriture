@@ -41,6 +41,10 @@ declare global {
       destinationParentRelPath?: string,
     ) => Promise<{ relPath: string; name: string }>;
     setPath: (relPath: string, newRelPath: string) => Promise<{ relPath: string; name: string }>;
+    // Confirmation NATIVE (dialog.showMessageBox) déjà gérée côté main
+    // process (voir vault.ts, `vault:delete`) — `deleted: false` si
+    // l'utilisatrice a annulé, jamais de suppression silencieuse.
+    delete: (relPath: string) => Promise<{ deleted: boolean }>;
     ensureDailyNote: (dateIso: string) => Promise<VaultEntry>;
     reorder: (parentRelPath: string | undefined, orderedNames: string[]) => Promise<VaultTreeNode[]>;
     importAttachment: () => Promise<{ relPath: string; name: string } | null>;

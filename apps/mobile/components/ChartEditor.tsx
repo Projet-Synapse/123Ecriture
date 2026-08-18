@@ -349,12 +349,25 @@ export function ChartEditor({ relPath }: Props) {
               })}
             </View>
 
-            {chartSeries.length > 0 ? (
-              <ChartView type={data.chart.type} series={chartSeries} theme={theme} colorScheme={colorScheme} />
-            ) : (
+            {chartSeries.length === 0 ? (
               <Text style={[styles.muted, { color: theme.textMuted }]}>
                 Choisis une colonne d’étiquettes et au moins une colonne de valeurs.
               </Text>
+            ) : data.rows.length === 0 ? (
+              // `chartSeries` a bien une entrée par colonne de valeurs
+              // choisie même sans AUCUNE ligne de données (buildChartSeries
+              // ne filtre pas sur `rows.length`, juste sur la config) — sans
+              // ce cas, le graphique se rendait silencieusement VIDE (un
+              // simple axe sans barre, ou rien du tout pour un camembert),
+              // ce qui donnait l'impression que "les graphiques ne
+              // marchent pas" alors qu'il manquait juste des lignes
+              // remplies dans le tableau du dessus.
+              <Text style={[styles.muted, { color: theme.textMuted }]}>
+                Le graphique est configuré — ajoute des lignes (« + Ligne » ci-dessus) et remplis-les pour
+                le voir apparaître.
+              </Text>
+            ) : (
+              <ChartView type={data.chart.type} series={chartSeries} theme={theme} colorScheme={colorScheme} />
             )}
           </View>
         )}

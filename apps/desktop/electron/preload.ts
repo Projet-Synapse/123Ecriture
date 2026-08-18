@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld('vault', {
   move: (relPath: string, destinationParentRelPath?: string) =>
     ipcRenderer.invoke('vault:move', relPath, destinationParentRelPath),
   setPath: (relPath: string, newRelPath: string) => ipcRenderer.invoke('vault:set-path', relPath, newRelPath),
+  delete: (relPath: string) => ipcRenderer.invoke('vault:delete', relPath),
   ensureDailyNote: (dateIso: string) => ipcRenderer.invoke('vault:ensure-daily-note', dateIso),
   reorder: (parentRelPath: string | undefined, orderedNames: string[]) =>
     ipcRenderer.invoke('vault:reorder', parentRelPath, orderedNames),

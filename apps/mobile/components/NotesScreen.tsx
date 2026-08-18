@@ -79,7 +79,7 @@ type Props = {
 };
 
 export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props = {}) {
-  const { preferences, theme } = usePreferences();
+  const { preferences, theme, setFileSortMode } = usePreferences();
   const vault = typeof window !== 'undefined' ? window.vault : undefined;
   const contextMenuBridge = typeof window !== 'undefined' ? window.contextMenu : undefined;
   const { activeVaultPath: vaultPath } = useVaults();
@@ -432,6 +432,33 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
     [movingNode, performMove],
   );
 
+  // Confirmation NATIVE gérée côté main process (vault.ts, `vault:delete`) —
+  // ce handler n'a qu'à réagir au résultat : rafraîchir l'arborescence, et
+  // fermer l'éditeur si la note ouverte (ou un dossier qui la contenait)
+  // vient de disparaître, même logique que rename/move/setPath ci-dessus
+  // (`isPathAffected`).
+  const handleDeleteNode = useCallback(
+    async (node: VaultTreeNode) => {
+      if (!vault) return;
+      try {
+        const { deleted } = await vault.delete(node.relPath);
+        if (!deleted) return; // annulé dans la boîte de confirmation
+        setActiveNote((current) => {
+          if (!current) return current;
+          if (isPathAffected(current.relPath, node.relPath)) {
+            setContent('');
+            return null;
+          }
+          return current;
+        });
+        await refreshTree();
+      } catch (error) {
+        console.error('[vault] échec de la suppression :', error);
+      }
+    },
+    [vault, refreshTree],
+  );
+
   const startEditPath = useCallback((node: VaultTreeNode) => {
     setEditPathError(null);
     setEditingPathNode(node);
@@ -506,11 +533,13 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
               { id: 'rename', label: 'Renommer' },
               { id: 'move', label: 'Déplacer vers…' },
               { id: 'edit-path', label: 'Modifier le chemin' },
+              { id: 'delete', label: 'Supprimer' },
             ]
           : [
               { id: 'rename', label: 'Renommer' },
               { id: 'move', label: 'Déplacer vers…' },
               { id: 'edit-path', label: 'Modifier le chemin' },
+              { id: 'delete', label: 'Supprimer' },
             ];
 
       void contextMenuBridge.show(items).then((choice) => {
@@ -527,9 +556,10 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
         if (node && choice === 'rename') startRename(node);
         if (node && choice === 'move') startMove(node);
         if (node && choice === 'edit-path') startEditPath(node);
+        if (node && choice === 'delete') void handleDeleteNode(node);
       });
     },
-    [contextMenuBridge, handleCreateNote, handleCreateFolder, startRename, startMove, startEditPath],
+    [contextMenuBridge, handleCreateNote, handleCreateFolder, startRename, startMove, startEditPath, handleDeleteNode],
   );
 
   // Un seul écouteur "contextmenu" délégué sur tout le conteneur de la
@@ -654,6 +684,16 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
         .reorder(parentRelPath, reordered)
         .then(setTree)
         .catch((error) => console.error('[vault] échec du réordonnancement :', error));
+
+      // Un réordonnancement manuel n'a d'effet visible qu'en mode "Manuel"
+      // (voir walkTree dans apps/desktop/electron/vault.ts, qui ignore
+      // l'ordre enregistré dans les deux autres modes) — plutôt que
+      // d'exiger que l'utilisatrice bascule ce réglage AVANT de pouvoir
+      // glisser quoi que ce soit (sans quoi glisser ne fait rigoureusement
+      // rien de visible, `draggable` restant à `false`), on bascule ICI,
+      // seulement quand un glisser aboutit vraiment — l'intention "je veux
+      // ranger mes fichiers à la main" est alors sans ambiguïté.
+      if (preferences.fileSortMode !== 'manual') setFileSortMode('manual');
     };
 
     const handleDragEnd = () => {
@@ -672,6 +712,12 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
       container.removeEventListener('drop', handleDrop);
       container.removeEventListener('dragend', handleDragEnd);
     };
+    // `preferences.fileSortMode`/`setFileSortMode` volontairement absents
+    // des deps : cet effet ne doit se recréer (et redélégeur ses
+    // écouteurs) que si `vault`/`tree` changent, pas à chaque bascule de
+    // réglage — `handleDrop` lit `preferences.fileSortMode` au moment du
+    // DÉPÔT réel, pas besoin que l'effet lui-même en dépende.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [vault, tree]);
 
   // Pose l'attribut HTML `draggable` réel sur chaque ligne — react-native-
@@ -680,19 +726,22 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
   // ses sources), donc `draggable={...}` passé en prop à VaultTreeView
   // resterait un no-op silencieux sans ceci. Posé impérativement plutôt que
   // par prop, sur tous les `[data-relpath]` du conteneur, à chaque fois que
-  // la liste, le mode de tri, ou la ligne en cours de renommage change —
-  // c'est justement pourquoi le glisser-déposer n'a de sens qu'en mode
-  // 'manual' (voir Paramètres → Gestion des fichiers et des liens).
+  // la liste ou la ligne en cours de renommage change. TOUJOURS activé,
+  // quel que soit Paramètres → Gestion des fichiers et des liens → "Ordre
+  // des fichiers" — glisser un fichier fait désormais basculer ce réglage
+  // sur "Manuel" tout seul dès qu'un dépôt aboutit (voir handleDrop
+  // ci-dessus) plutôt que d'exiger ce réglage AU PRÉALABLE : le geste de
+  // glisser ne faisait sinon rigoureusement rien de visible en dehors du
+  // mode manuel, ce qui ressemblait à une fonctionnalité cassée.
   useEffect(() => {
     const container = listAreaRef.current as unknown as HTMLElement | null;
     if (!container) return;
-    const dragEnabled = preferences.fileSortMode === 'manual';
     const rows = container.querySelectorAll<HTMLElement>('[data-relpath]');
     rows.forEach((row) => {
       const relPath = row.getAttribute('data-relpath');
-      row.draggable = dragEnabled && relPath !== renamingRelPath;
+      row.draggable = relPath !== renamingRelPath;
     });
-  }, [tree, preferences.fileSortMode, renamingRelPath]);
+  }, [tree, renamingRelPath]);
 
   const scheduleSave = useCallback(
     (text: string) => {
@@ -889,7 +938,6 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
             onOpenNote={(node) => void openNote(node)}
             draggingRelPath={draggingRelPath}
             dragOverInsertion={dragOverInsertion}
-            dragEnabled={preferences.fileSortMode === 'manual'}
             rename={
               renamingRelPath
                 ? {

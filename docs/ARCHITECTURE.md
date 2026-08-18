@@ -230,6 +230,26 @@ natives). Toute la logique testable vit dans `packages/`.
 >   PRÉFÉRENCE (`preferences.sidebarLayout`, pas vault-scopé). Glisser sous
 >   la moitié de la largeur minimale replie automatiquement le panneau ; un
 >   chevron sur la poignée permet aussi de replier/déplier au clic.
+> - **Suppression** (v0.1.15) : `vault:delete` (apps/desktop/electron/
+>   vault.ts) — jusqu'ici volontairement absente de l'app (voir
+>   l'historique de ce fichier), ajoutée à la demande explicite de
+>   l'utilisatrice, mais avec une confirmation NATIVE
+>   (`dialog.showMessageBox`, jamais silencieuse) distinguant fichier de
+>   dossier (+tout son contenu). Item "Supprimer" dans le menu contextuel
+>   de l'explorateur (`NotesScreen.tsx`).
+> - **Glisser-déposer de l'explorateur** (v0.1.15) : ne dépendait plus que
+>   d'un réglage Paramètres → "Ordre des fichiers" = Manuel choisi AU
+>   PRÉALABLE pour que `draggable` soit posé sur les lignes — sinon glisser
+>   ne faisait rigoureusement rien de visible, ce qui ressemblait à une
+>   fonctionnalité cassée. `draggable` est maintenant TOUJOURS actif ; le
+>   dépôt qui aboutit bascule lui-même ce réglage sur "Manuel".
+> - **Graphiques** (v0.1.15) : un graphique configuré (colonnes
+>   étiquette+valeurs choisies) mais dont le tableau n'a encore AUCUNE
+>   ligne se rendait en silence sans rien afficher (axe vide) —
+>   `buildChartSeries` renvoie une série par colonne de valeurs même à 0
+>   ligne, `chartSeries.length > 0` ne suffisait donc pas à détecter ce
+>   cas. `ChartEditor.tsx` affiche maintenant un message explicite invitant
+>   à remplir des lignes tant qu'il n'y en a aucune.
 > - **Scroll de l'explorateur de fichiers indépendant du contenu** :
 >   `AppShell.tsx` enveloppait tout l'écran actif (donc les `ScrollView`
 >   internes de `NotesScreen.tsx`) dans un `ScrollView` supplémentaire —

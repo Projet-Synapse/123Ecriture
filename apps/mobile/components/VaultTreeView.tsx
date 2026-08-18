@@ -67,10 +67,12 @@ type Props = {
   // `draggable` + le trait d'insertion, aucune logique ici.
   draggingRelPath?: string | null;
   dragOverInsertion?: { relPath: string; edge: 'above' | 'below' } | null;
-  // Paramètres → Gestion des fichiers et des liens → "Ordre des fichiers" :
-  // le glisser-déposer n'a de sens qu'en mode 'manual' (voir walkTree dans
-  // apps/desktop/electron/vault.ts, qui ignore l'ordre enregistré dans les
-  // deux autres modes). Piloté uniquement pour le curseur ici (indice
+  // Toujours activé par défaut : glisser un fichier bascule maintenant
+  // lui-même Paramètres → Gestion des fichiers et des liens → "Ordre des
+  // fichiers" sur 'manual' dès qu'un dépôt aboutit (voir NotesScreen.tsx,
+  // `handleDrop`) plutôt que d'exiger ce réglage AU PRÉALABLE — glisser ne
+  // faisait sinon rigoureusement rien de visible tant qu'on n'était pas
+  // déjà en mode manuel. Piloté uniquement pour le curseur ici (indice
   // visuel) — l'attribut HTML `draggable` réel est posé IMPÉRATIVEMENT
   // depuis NotesScreen.tsx (voir son effet dédié) : react-native-web
   // 0.21 ne transmet PAS les props inconnues comme `draggable` jusqu'au

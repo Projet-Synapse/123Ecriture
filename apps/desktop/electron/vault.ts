@@ -543,4 +543,43 @@ export function registerVaultHandlers(getWindow: GetWindow): void {
       name: isNote ? path.basename(newFull, extension) : path.basename(newFull),
     };
   });
+
+  // Suppression — jusqu'ici volontairement absente (voir l'historique de ce
+  // fichier : "aucune suppression exposée", cohérent avec le fait que
+  // renommer/déplacer ne perdent jamais de contenu). Ajoutée à la demande
+  // explicite de l'utilisatrice, mais avec une confirmation NATIVE
+  // (`dialog.showMessageBox`, même mécanisme que `vault:choose-folder`)
+  // avant toute suppression réelle — jamais silencieuse, et le message
+  // distingue explicitement "note" de "dossier ET tout son contenu" pour
+  // qu'une suppression de dossier ne surprenne personne. Recours à
+  // `fs.rm(..., {recursive:true})` : fonctionne aussi bien pour un fichier
+  // que pour un dossier, pas besoin de deux chemins de code séparés.
+  ipcMain.handle('vault:delete', async (_event, relPath: string) => {
+    const vaultPath = getVaultPath();
+    if (!vaultPath) throw new Error('Aucun vault sélectionné');
+
+    const fullPath = resolveInVault(vaultPath, relPath);
+    if (!fsSync.existsSync(fullPath)) throw new Error('Élément introuvable.');
+    const isFolder = fsSync.statSync(fullPath).isDirectory();
+    const name = path.basename(fullPath);
+
+    const win = getWindow();
+    const messageBoxOptions = {
+      type: 'warning' as const,
+      buttons: ['Annuler', 'Supprimer'],
+      defaultId: 0,
+      cancelId: 0,
+      message: isFolder ? `Supprimer le dossier « ${name} » ?` : `Supprimer « ${name} » ?`,
+      detail: isFolder
+        ? 'Ce dossier et TOUT son contenu (notes, sous-dossiers, pièces jointes qu’il contient) seront supprimés définitivement.'
+        : 'Cette note sera supprimée définitivement.',
+    };
+    const { response } = win
+      ? await dialog.showMessageBox(win, messageBoxOptions)
+      : await dialog.showMessageBox(messageBoxOptions);
+    if (response !== 1) return { deleted: false };
+
+    await fs.rm(fullPath, { recursive: true, force: true });
+    return { deleted: true };
+  });
 }
