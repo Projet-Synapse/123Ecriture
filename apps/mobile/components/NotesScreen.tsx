@@ -25,6 +25,7 @@ import { MdxEditor } from './MdxEditor';
 import { MoveDialog } from './MoveDialog';
 import { NoteRenderer } from './NoteRenderer';
 import { OccurrencesPanel } from './OccurrencesPanel';
+import { PropertiesBlock } from './PropertiesBlock';
 import { PropertiesPanel } from './PropertiesPanel';
 import { ResizeHandle } from './ResizeHandle';
 import { RightSidebar, type SidebarTab } from './RightSidebar';
@@ -1300,6 +1301,16 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
                     {attachmentError && <Text style={styles.error}>⚠️ {attachmentError}</Text>}
                     {wikilinkNotice && <Text style={styles.error}>⚠️ {wikilinkNotice}</Text>}
 
+                    {viewMode !== 'source' && (
+                      <PropertiesBlock
+                        theme={theme}
+                        activeNote={activeNote}
+                        content={content}
+                        onChangeContent={handleChangeContent}
+                        tree={tree}
+                      />
+                    )}
+
                     {viewMode !== 'reading' && (
                       <EditorToolbar
                         items={toolbarActions.map((action) =>
@@ -1345,6 +1356,7 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
                           occurrenceWords={occurrenceWordList}
                           onCreateOccurrence={handleCreateOccurrence}
                           fontSize={preferences.editorFontSize}
+                          fontFamily={preferences.editorFontFamily}
                           closeBrackets={preferences.editorCloseBrackets}
                           onReady={(ref: ReactCodeMirrorRef) => {
                             viewRef.current = ref.view ?? null;
@@ -1378,6 +1390,7 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
                         activeNote={activeNote}
                         content={content}
                         onChangeContent={handleChangeContent}
+                        tree={tree}
                       />
                     ) : (
                       <OccurrencesPanel

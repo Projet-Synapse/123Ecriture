@@ -53,6 +53,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   defaultOpenMode: 'lastOpened',
   defaultOpenSpecificPath: '',
   editorFontSize: 15,
+  editorFontFamily: 'system',
   editorDefaultMode: 'source',
   editorCloseBrackets: true,
   editorInlineTitle: false,

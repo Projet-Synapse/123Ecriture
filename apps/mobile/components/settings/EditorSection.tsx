@@ -1,6 +1,7 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { CANVAS_TOOLBAR_DESCRIPTIONS } from '../../lib/canvasToolbarActions';
+import { EDITOR_FONT_STACKS } from '../MdxEditor';
 import { CHART_TOOLBAR_DESCRIPTIONS } from '../../lib/chartToolbarActions';
 import { NOTES_TOOLBAR_DESCRIPTIONS } from '../../lib/notesToolbarActions';
 import { usePreferences } from '../../preferences/PreferencesContext';
@@ -17,6 +18,14 @@ const DEFAULT_MODE_OPTIONS: { value: EditorViewMode; label: string }[] = [
   { value: 'reading', label: 'Aperçu' },
 ];
 
+const FONT_FAMILY_OPTIONS: { value: EditorFontFamily; label: string }[] = [
+  { value: 'system', label: 'Système' },
+  { value: 'sans', label: 'Sans-serif' },
+  { value: 'serif', label: 'Serif' },
+  { value: 'mono', label: 'Monospace' },
+  { value: 'dyslexic', label: 'Dyslexie' },
+];
+
 // Section "Éditeur" — réglages lus par MdxEditor.tsx et NotesScreen.tsx à
 // chaque ouverture/rendu de note (voir usages de `preferences.editorFontSize`,
 // `.editorDefaultMode`, `.editorCloseBrackets`, `.editorInlineTitle`), plus
@@ -30,6 +39,7 @@ export function EditorSection() {
     preferences,
     theme,
     setEditorFontSize,
+    setEditorFontFamily,
     setEditorDefaultMode,
     setEditorCloseBrackets,
     setEditorInlineTitle,
@@ -74,6 +84,33 @@ export function EditorSection() {
           >
             <Text style={{ color: theme.text }}>+</Text>
           </Pressable>
+        </View>
+
+        <Text style={[s.label, { color: theme.textMuted }]}>Police d’écriture</Text>
+        <View style={s.row}>
+          {FONT_FAMILY_OPTIONS.map((option) => {
+            const isActive = preferences.editorFontFamily === option.value;
+            return (
+              <Pressable
+                key={option.value}
+                onPress={() => void setEditorFontFamily(option.value)}
+                style={[
+                  s.modeButton,
+                  { borderColor: theme.border },
+                  isActive && { backgroundColor: theme.accent, borderColor: theme.accent },
+                ]}
+              >
+                <Text
+                  style={{
+                    color: isActive ? '#fff' : theme.text,
+                    fontFamily: option.value === 'system' ? undefined : EDITOR_FONT_STACKS[option.value],
+                  }}
+                >
+                  {option.label}
+                </Text>
+              </Pressable>
+            );
+          })}
         </View>
 
         <Text style={[s.label, { color: theme.textMuted }]}>Mode d’édition par défaut à l’ouverture</Text>

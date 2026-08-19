@@ -102,3 +102,24 @@ export function collectFolderOptions(
   }
   return options;
 }
+
+// //4. 🗺️ CHEMINS (fichiers + dossiers)
+// ////////////////////////////////////////////////////////////////////////
+
+export type PathOption = { relPath: string; label: string; depth: number; kind: 'folder' | 'note' };
+
+// Liste plate de TOUS les nœuds (dossiers ET notes), pour la mini page de
+// navigation du type de propriété "Chemin" (voir PropertyValueField.tsx) —
+// contrairement à collectFolderOptions, ne filtre rien : on peut y choisir
+// aussi bien un dossier qu'un fichier.
+export function collectPathOptions(nodes: VaultTreeNode[], depth = 0, options: PathOption[] = []): PathOption[] {
+  for (const node of nodes) {
+    if (node.type === 'folder') {
+      options.push({ relPath: node.relPath, label: node.name, depth, kind: 'folder' });
+      collectPathOptions(node.children, depth + 1, options);
+    } else {
+      options.push({ relPath: node.relPath, label: node.name, depth, kind: 'note' });
+    }
+  }
+  return options;
+}

@@ -116,7 +116,8 @@ contextBridge.exposeInMainWorld('calendar', {
 
 contextBridge.exposeInMainWorld('properties', {
   list: () => ipcRenderer.invoke('properties:list'),
-  create: (name: string, type: string) => ipcRenderer.invoke('properties:create', name, type),
+  create: (name: string, type: string, options?: string[]) =>
+    ipcRenderer.invoke('properties:create', name, type, options),
   update: (id: string, patch: unknown) => ipcRenderer.invoke('properties:update', id, patch),
   remove: (id: string) => ipcRenderer.invoke('properties:remove', id),
 });

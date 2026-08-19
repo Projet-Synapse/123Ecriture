@@ -7,6 +7,18 @@ import { createLivePreviewExtension } from '../lib/mdxLivePreview';
 import { createOccurrenceAutocomplete } from '../lib/occurrenceAutocomplete';
 import type { Theme } from '../theme';
 
+// Piles de police web-safe pour Paramètres → Éditeur → Police d'écriture.
+// 'system' garde le comportement d'origine ('inherit', hérite de la police
+// système du thème global) ; les autres sont des piles CSS classiques —
+// aucune n'a besoin d'un fichier de police embarqué.
+export const EDITOR_FONT_STACKS: Record<EditorFontFamily, string> = {
+  system: 'inherit',
+  sans: '"Segoe UI", Helvetica, Arial, sans-serif',
+  serif: 'Georgia, "Times New Roman", serif',
+  mono: '"Fira Code", "JetBrains Mono", Consolas, monospace',
+  dyslexic: '"OpenDyslexic", "Comic Sans MS", sans-serif',
+};
+
 // Éditeur MDX — remplace l'ancien `TextInput` brut pour les modes "Source"
 // et "Intermédiaire" (voir NotesScreen.tsx). Un seul composant pour les
 // deux modes : `livePreview=false` = CodeMirror nu (texte brut, comme un
@@ -40,6 +52,7 @@ type Props = {
   // alignées sur DEFAULT_PREFERENCES pour rester utilisable si le composant
   // est monté sans ces props (ex. anciens appelants, tests).
   fontSize?: number;
+  fontFamily?: EditorFontFamily;
   closeBrackets?: boolean;
 };
 
@@ -54,6 +67,7 @@ export function MdxEditor({
   onCreateOccurrence,
   onReady,
   fontSize = 15,
+  fontFamily = 'system',
   closeBrackets = true,
 }: Props) {
   const editorTheme = useMemo(
@@ -66,13 +80,13 @@ export function MdxEditor({
           fontSize: `${fontSize}px`,
         },
         '.cm-content': { padding: '16px', caretColor: theme.accent },
-        '.cm-scroller': { fontFamily: 'inherit', lineHeight: '1.6' },
+        '.cm-scroller': { fontFamily: EDITOR_FONT_STACKS[fontFamily], lineHeight: '1.6' },
         '&.cm-focused .cm-cursor': { borderLeftColor: theme.accent },
         '&.cm-focused .cm-selectionBackground, ::selection': { backgroundColor: `${theme.accent}33` },
         '.cm-gutters': { display: 'none' },
         '.cm-activeLine': { backgroundColor: 'transparent' },
       }),
-    [theme, fontSize],
+    [theme, fontSize, fontFamily],
   );
 
   const liveExtension = useMemo(
