@@ -6,6 +6,7 @@ import { usePropertyValues } from '../lib/usePropertyValues';
 import { TYPE_ICONS } from '../lib/propertyTypes';
 import type { Theme } from '../theme';
 import { AddPropertyButton } from './AddPropertyButton';
+import { DraftTextField } from './DraftTextField';
 import { PropertyValueField } from './PropertyValueField';
 
 // Onglet "Propriétés" de la barre latérale (voir RightSidebar.tsx,
@@ -39,7 +40,7 @@ type Props = {
 
 export function PropertiesPanel({ theme, activeNote, content, onChangeContent, tree }: Props) {
   const propertiesBridge = typeof window !== 'undefined' ? window.properties : undefined;
-  const { definitions } = usePropertyDefinitions();
+  const { definitions, update } = usePropertyDefinitions();
   const { data, definitionsUsedOnNote, availableToAdd, setValue, addValue, removeValue } = usePropertyValues(
     content,
     onChangeContent,
@@ -88,9 +89,18 @@ export function PropertiesPanel({ theme, activeNote, content, onChangeContent, t
           {definitionsUsedOnNote.map((def) => (
             <View key={def.id} style={styles.valueRow}>
               <Text style={{ fontSize: 12 }}>{TYPE_ICONS[def.type]}</Text>
-              <Text style={[styles.valueLabel, { color: theme.textMuted }]} numberOfLines={1}>
-                {def.name}
-              </Text>
+              {/* Renomme la propriété dans le SCHÉMA global (voir Paramètres →
+                  Gestion des propriétés) — se répercute partout où elle est
+                  utilisée, pas seulement sur cette note. */}
+              <DraftTextField
+                initialValue={def.name}
+                onCommit={(value) => {
+                  const trimmed = value.trim();
+                  if (trimmed && trimmed !== def.name) void update(def.id, { name: trimmed });
+                }}
+                theme={theme}
+                style={[styles.valueLabelInput, { color: theme.textMuted }]}
+              />
               <PropertyValueField
                 def={def}
                 value={data[def.name]}
@@ -135,6 +145,12 @@ const styles = StyleSheet.create({
   valueLabel: {
     width: 70,
     fontSize: 12,
+  },
+  valueLabelInput: {
+    width: 70,
+    fontSize: 12,
+    paddingVertical: 2,
+    paddingHorizontal: 2,
   },
   readonlyValue: {
     flex: 1,

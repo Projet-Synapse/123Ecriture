@@ -34,6 +34,13 @@ export function AddPropertyButton({ available, onAdd, theme }: Props) {
         <Text style={{ color: theme.accent, fontSize: 14, fontWeight: '600' }}>+</Text>
       </Pressable>
       {open && (
+        // EN FLUX NORMAL (pas `position: 'absolute'`) — un popover flottant
+        // ici s'ouvrait vers le bas et chevauchait visuellement la barre
+        // d'outils de l'éditeur juste en dessous, quelle que soit la marge
+        // ajoutée autour de la carte "Propriétés" (bug rapporté : le "+" "en
+        // conflit visuel avec la barre des tâches"). En flux normal, cette
+        // liste POUSSE le reste du contenu vers le bas au lieu de le
+        // recouvrir — plus de chevauchement possible, par construction.
         <View style={[styles.popover, { backgroundColor: theme.surface, borderColor: theme.border }]}>
           {available.length === 0 ? (
             <Text style={[styles.muted, { color: theme.textMuted }]}>
@@ -81,8 +88,11 @@ export function AddPropertyButton({ available, onAdd, theme }: Props) {
 
 const styles = StyleSheet.create({
   wrap: {
-    position: 'relative',
     alignSelf: 'flex-start',
+    // Étire le popover à la largeur du parent (la carte "Propriétés")
+    // plutôt que de rester collé à la largeur du bouton "+" — voir
+    // `alignSelf: 'stretch'` ci-dessous sur `popover`.
+    width: '100%',
   },
   button: {
     width: 28,
@@ -93,21 +103,13 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   popover: {
-    position: 'absolute',
-    top: '100%',
-    left: 0,
-    marginTop: 4,
-    width: 220,
+    alignSelf: 'stretch',
+    marginTop: 6,
+    maxWidth: 260,
     borderWidth: 1,
     borderRadius: 8,
     padding: 6,
     gap: 4,
-    zIndex: 30,
-    shadowColor: '#000',
-    shadowOpacity: 0.15,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 4,
   },
   filterInput: {
     borderWidth: 1,

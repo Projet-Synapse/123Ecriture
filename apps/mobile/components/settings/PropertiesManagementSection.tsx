@@ -22,15 +22,25 @@ function TypePicker({
   value,
   onSelect,
   theme,
+  open,
+  onToggle,
 }: {
   value: PropertyType;
   onSelect: (type: PropertyType) => void;
   theme: Theme;
+  open: boolean;
+  // Levé au composant parent (voir PropertiesManagementSection ci-dessous)
+  // plutôt qu'un state local à chaque instance : plusieurs propriétés dans
+  // la liste, donc plusieurs TypePicker en même temps — sans exclusivité,
+  // ouvrir le sélecteur d'une ligne puis celui d'une autre laissait les DEUX
+  // popovers ouverts en même temps, chacun en `position: 'absolute'`, et ils
+  // se chevauchaient visuellement avec les lignes voisines (bug rapporté :
+  // "les boutons se rentrent dedans").
+  onToggle: () => void;
 }) {
-  const [open, setOpen] = useState(false);
   return (
     <View style={styles.typePickerWrap}>
-      <Pressable onPress={() => setOpen((v) => !v)} style={[styles.typeChip, { borderColor: theme.border }]}>
+      <Pressable onPress={onToggle} style={[styles.typeChip, { borderColor: theme.border }]}>
         <Text style={{ color: theme.textMuted, fontSize: 11 }}>
           {TYPE_ICONS[value]} {TYPE_LABELS[value]}
         </Text>
@@ -42,7 +52,7 @@ function TypePicker({
               key={type}
               onPress={() => {
                 onSelect(type);
-                setOpen(false);
+                onToggle();
               }}
               style={styles.typeOption}
             >
@@ -61,6 +71,10 @@ export function PropertiesManagementSection() {
   const { bridge, definitions, error, create, update, remove } = usePropertyDefinitions();
   const [newName, setNewName] = useState('');
   const [newType, setNewType] = useState<PropertyType>('text');
+  // Un seul sélecteur de type ouvert à la fois — voir le commentaire de
+  // TypePicker plus haut. `'new'` désigne celui de la ligne de création tout
+  // en bas, les autres valeurs sont des `PropertyDefinition.id`.
+  const [openTypePickerId, setOpenTypePickerId] = useState<string | null>(null);
 
   const submitCreate = () => {
     const name = newName.trim();
@@ -104,7 +118,13 @@ export function PropertiesManagementSection() {
                 theme={theme}
                 style={[styles.defNameInput, { color: theme.text, borderColor: theme.border }]}
               />
-              <TypePicker value={def.type} onSelect={(type) => void update(def.id, { type })} theme={theme} />
+              <TypePicker
+                value={def.type}
+                onSelect={(type) => void update(def.id, { type })}
+                theme={theme}
+                open={openTypePickerId === def.id}
+                onToggle={() => setOpenTypePickerId((current) => (current === def.id ? null : def.id))}
+              />
               <Pressable onPress={() => void remove(def.id)} style={styles.rowRemove}>
                 <Text style={{ color: theme.textMuted }}>🗑️</Text>
               </Pressable>
@@ -142,7 +162,13 @@ export function PropertiesManagementSection() {
             placeholderTextColor={theme.textMuted}
             style={[styles.createInput, { color: theme.text, borderColor: theme.border }]}
           />
-          <TypePicker value={newType} onSelect={setNewType} theme={theme} />
+          <TypePicker
+            value={newType}
+            onSelect={setNewType}
+            theme={theme}
+            open={openTypePickerId === 'new'}
+            onToggle={() => setOpenTypePickerId((current) => (current === 'new' ? null : 'new'))}
+          />
           <Pressable onPress={submitCreate} style={[styles.createButton, { backgroundColor: theme.accent }]}>
             <Text style={styles.createButtonText}>Créer</Text>
           </Pressable>
@@ -166,14 +192,25 @@ const styles = StyleSheet.create({
   },
   defBlock: {
     gap: 6,
+    // Sépare visuellement chaque propriété de la suivante — sans ça, des
+    // lignes consécutives très compactes (juste 6px de gap) + un popover de
+    // sélecteur de type ouvert (voir TypePicker) donnaient l'impression que
+    // les rangées "se rentraient dedans" (bug rapporté).
+    paddingBottom: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: 'rgba(128,128,128,0.25)',
   },
   defRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
+    // Filet de sécurité : sur un panneau étroit, empile plutôt que de
+    // laisser le nom/le chip de type/la poubelle se chevaucher.
+    flexWrap: 'wrap',
   },
   defNameInput: {
     flex: 1,
+    minWidth: 100,
     borderWidth: 1,
     borderRadius: 6,
     paddingVertical: 6,
@@ -218,7 +255,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderRadius: 8,
     padding: 4,
-    zIndex: 30,
+    zIndex: 100,
     shadowColor: '#000',
     shadowOpacity: 0.15,
     shadowRadius: 6,
@@ -238,9 +275,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 6,
     marginTop: 4,
+    flexWrap: 'wrap',
   },
   createInput: {
     flex: 1,
+    minWidth: 140,
     borderWidth: 1,
     borderRadius: 6,
     paddingVertical: 6,
