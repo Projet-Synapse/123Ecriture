@@ -1,6 +1,53 @@
 {
     "version": "2.0.0",
     "tasks": [
+        // Chaîne de vérification avant lancement (voir CLAUDE.md § Habitudes) —
+        // fait remonter les erreurs de lint/type dans le panneau "Problems" de
+        // VS Code, et FAIT ÉCHOUER le préLaunchTask de la config de débogage
+        // en cas d'erreur : "F5" refuse d'ouvrir l'app tant que le code ne
+        // compile/lint pas proprement, plutôt que de lancer une build qui
+        // tourne malgré des erreurs silencieuses (esbuild, utilisé pour le
+        // bundle Electron, ignore les erreurs de type — seul tsc les voit).
+        {
+            "label": "vérifier : lint (mobile)",
+            "type": "shell",
+            "command": "pnpm --filter @123ecriture/mobile lint",
+            "problemMatcher": ["$eslint-stylish"],
+            "presentation": { "reveal": "silent", "panel": "dedicated", "group": "verify" }
+        },
+        {
+            "label": "vérifier : lint (desktop)",
+            "type": "shell",
+            "command": "pnpm --filter @123ecriture/desktop lint",
+            "problemMatcher": ["$eslint-stylish"],
+            "presentation": { "reveal": "silent", "panel": "dedicated", "group": "verify" }
+        },
+        {
+            "label": "vérifier : typecheck (mobile)",
+            "type": "shell",
+            "command": "pnpm --filter @123ecriture/mobile typecheck",
+            "problemMatcher": ["$tsc"],
+            "presentation": { "reveal": "silent", "panel": "dedicated", "group": "verify" }
+        },
+        {
+            "label": "vérifier : typecheck (desktop)",
+            "type": "shell",
+            "command": "pnpm --filter @123ecriture/desktop typecheck",
+            "problemMatcher": ["$tsc"],
+            "presentation": { "reveal": "silent", "panel": "dedicated", "group": "verify" }
+        },
+        {
+            "label": "vérifier : tout le code (lint + typecheck)",
+            "dependsOn": [
+                "vérifier : lint (mobile)",
+                "vérifier : lint (desktop)",
+                "vérifier : typecheck (mobile)",
+                "vérifier : typecheck (desktop)"
+            ],
+            "dependsOrder": "parallel",
+            "problemMatcher": []
+        },
+
         {
             "label": "mobile: démarrer le serveur web (Expo)",
             "type": "shell",
@@ -41,16 +88,18 @@
             }
         },
         {
-            "label": "app: préparer le débogage (serveur web + bundle Electron)",
+            "label": "app: préparer le débogage (vérifier + serveur web + bundle Electron)",
             "dependsOn": [
+                "vérifier : tout le code (lint + typecheck)",
                 "mobile: démarrer le serveur web (Expo)",
                 "desktop: bundler le process principal (dev, sourcemaps)"
             ],
-            // Les deux tâches sont indépendantes (le bundle Electron ne dépend
-            // pas du serveur Expo pour se construire, seulement pour se charger
-            // une fois lancé) — les lancer en parallèle plutôt qu'en séquence
-            // fait gagner quelques secondes à chaque lancement.
-            "dependsOrder": "parallel",
+            // Séquentiel et DANS CET ORDRE : la vérification tourne et doit
+            // réussir avant que le serveur web/le bundle ne démarrent — si
+            // "vérifier : tout le code" échoue, VS Code arrête la chaîne et
+            // propose "Continuer quand même ?" plutôt que de lancer l'app en
+            // silence avec des erreurs dedans.
+            "dependsOrder": "sequence",
             "problemMatcher": []
         }
     ]
