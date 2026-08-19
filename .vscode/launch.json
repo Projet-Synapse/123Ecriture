@@ -38,7 +38,7 @@
             // au renderer" ci-dessous pour poser des breakpoints côté React.
             "args": ["--remote-debugging-port=9222", "."],
             "outFiles": ["${workspaceFolder}/apps/desktop/electron-dist/**/*.js"],
-            "preLaunchTask": "app: préparer le débogage (serveur web + bundle Electron)",
+            "preLaunchTask": "app: préparer le débogage (vérifier + serveur web + bundle Electron)",
             "console": "integratedTerminal",
             "outputCapture": "std",
             // Piège vérifié en conditions réelles (voir CLAUDE.md "Comportement" :
