@@ -1,0 +1,50 @@
+name: CI
+
+# Contrairement à release.yml (déclenché uniquement sur un tag vX.Y.Z), ce
+# workflow tourne sur CHAQUE push et CHAQUE pull request — pour attraper une
+# régression au moment où elle est introduite plutôt qu'à la prochaine
+# release (le seul filet jusqu'ici). N'apparaissait qu'en local, dépendant
+# de la discipline de la session en cours, à quoi ce workflow ajoute
+# maintenant un filet indépendant.
+on:
+  push:
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Installe les dépendances du monorepo
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Tests (logique pure, apps/mobile/lib)
+        run: pnpm test
+
+      - name: Build (export web Expo + bundle Electron)
+        # Mêmes commandes que release.yml, sans --publish : attrape une
+        # régression de build (ex. erreur de bundling qu'un simple
+        # typecheck ne verrait pas) sans attendre le prochain tag poussé.
+        # Secrets optionnels ici (contrairement à release.yml) : une PR
+        # externe n'y a pas accès, le build doit rester vert même sans eux
+        # (voir apps/mobile/lib/sync/supabaseClient.ts, repli sur `null`).
+        run: |
+          pnpm --filter @123ecriture/mobile build:web
+          pnpm --filter @123ecriture/desktop build:electron
+        env:
+          EXPO_PUBLIC_SUPABASE_URL: ${{ secrets.EXPO_PUBLIC_SUPABASE_URL }}
+          EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_ANON_KEY }}
