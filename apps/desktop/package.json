@@ -8,6 +8,7 @@
   "main": "electron-dist/main.js",
   "scripts": {
     "build:electron": "esbuild electron/main.ts electron/preload.ts --bundle --platform=node --external:electron --outdir=electron-dist --format=cjs",
+    "build:electron:dev": "esbuild electron/main.ts electron/preload.ts --bundle --platform=node --external:electron --outdir=electron-dist --format=cjs --sourcemap",
     "dev": "pnpm build:electron && electron .",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",

@@ -4,7 +4,8 @@
     // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
     "configurations": [
-        
+        {"type":"node","request":"launch","name":"Run eslint","runtimeExecutable":"eslint","cwd":"${workspaceFolder}/node_modules/eslint-config-expo","args":[]},
+
         {
             "type": "node",
             "request": "launch",
@@ -13,6 +14,64 @@
                 "<node_internals>/**"
             ],
             "program": "${file}"
+        },
+
+        // 123Ecriture desktop — voir CLAUDE.md "Architecture" pour le
+        // pourquoi de la séparation main process (Electron, Node) / renderer
+        // (build web Expo chargé dans la fenêtre). Débogue le PROCESS
+        // PRINCIPAL (apps/desktop/electron/*.ts) avec de vrais breakpoints
+        // TypeScript, via les sourcemaps du build de dev (build:electron:dev).
+        // Le renderer se charge depuis http://localhost:8081 (serveur Expo,
+        // démarré par la préLaunchTask) — mode dev tant que l'app n'est pas
+        // packagée (isDev = !app.isPackaged dans main.ts).
+        {
+            "type": "node",
+            "request": "launch",
+            "name": "Electron : process principal (desktop)",
+            "cwd": "${workspaceFolder}/apps/desktop",
+            "runtimeExecutable": "${workspaceFolder}/apps/desktop/node_modules/.bin/electron",
+            "windows": {
+                "runtimeExecutable": "${workspaceFolder}/apps/desktop/node_modules/.bin/electron.cmd"
+            },
+            // --remote-debugging-port ouvre le protocole DevTools sur les
+            // fenêtres (renderer) de l'app — utilisé par la config "Attacher
+            // au renderer" ci-dessous pour poser des breakpoints côté React.
+            "args": ["--remote-debugging-port=9222", "."],
+            "outFiles": ["${workspaceFolder}/apps/desktop/electron-dist/**/*.js"],
+            "preLaunchTask": "app: préparer le débogage (serveur web + bundle Electron)",
+            "console": "integratedTerminal",
+            "outputCapture": "std",
+            // Piège vérifié en conditions réelles (voir CLAUDE.md "Comportement" :
+            // toujours tester avant d'affirmer que c'est fait) : ce
+            // dev container exporte ELECTRON_RUN_AS_NODE=1 dans le shell, ce
+            // qui fait tourner le binaire "electron" comme du Node.js brut
+            // au lieu de lancer la vraie app (aucune fenêtre, échec silencieux
+            // ou "bad option" selon les flags). `null` retire la variable de
+            // l'environnement de CE process de débogage uniquement.
+            "env": { "ELECTRON_RUN_AS_NODE": null }
+        },
+
+        // Renderer = le build web Expo (React Native Web) chargé dans la
+        // fenêtre Electron — un contexte Chromium normal, donc un simple
+        // "attach" Chrome DevTools suffit (pas de type "node" ici). À
+        // utiliser seul (l'app doit déjà tourner, lancée par la config
+        // ci-dessus ou `pnpm dev:desktop`) ou via le compound plus bas.
+        {
+            "type": "chrome",
+            "request": "attach",
+            "name": "Electron : attacher au renderer",
+            "port": 9222,
+            "webRoot": "${workspaceFolder}/apps/mobile"
+        }
+    ],
+    "compounds": [
+        {
+            "name": "Electron : app complète (main + renderer)",
+            "configurations": [
+                "Electron : process principal (desktop)",
+                "Electron : attacher au renderer"
+            ],
+            "stopAll": true
         }
     ]
 }

@@ -1,0 +1,57 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "mobile: démarrer le serveur web (Expo)",
+            "type": "shell",
+            "command": "pnpm --filter @123ecriture/mobile web",
+            // Reste ouvert (serveur de dev) — c'est ce que apps/desktop/electron/main.ts
+            // charge en mode dev (isDev = !app.isPackaged), voir DEV_URL/http://localhost:8081.
+            "isBackground": true,
+            "problemMatcher": {
+                "owner": "expo",
+                "pattern": {
+                    // Aucune erreur réelle attendue ici (juste pour satisfaire le
+                    // schéma d'un problemMatcher) — les vraies erreurs de bundling
+                    // s'affichent dans le terminal du serveur Expo lui-même.
+                    "regexp": "^ERROR\\s+(.*)$",
+                    "message": 1
+                },
+                "background": {
+                    "activeOnStart": true,
+                    "beginsPattern": "Starting Metro Bundler",
+                    "endsPattern": "Web Bundled|Waiting on"
+                }
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated",
+                "group": "app"
+            }
+        },
+        {
+            "label": "desktop: bundler le process principal (dev, sourcemaps)",
+            "type": "shell",
+            "command": "pnpm --filter @123ecriture/desktop build:electron:dev",
+            "problemMatcher": ["$tsc"],
+            "presentation": {
+                "reveal": "silent",
+                "panel": "dedicated",
+                "group": "app"
+            }
+        },
+        {
+            "label": "app: préparer le débogage (serveur web + bundle Electron)",
+            "dependsOn": [
+                "mobile: démarrer le serveur web (Expo)",
+                "desktop: bundler le process principal (dev, sourcemaps)"
+            ],
+            // Les deux tâches sont indépendantes (le bundle Electron ne dépend
+            // pas du serveur Expo pour se construire, seulement pour se charger
+            // une fois lancé) — les lancer en parallèle plutôt qu'en séquence
+            // fait gagner quelques secondes à chaque lancement.
+            "dependsOrder": "parallel",
+            "problemMatcher": []
+        }
+    ]
+}
