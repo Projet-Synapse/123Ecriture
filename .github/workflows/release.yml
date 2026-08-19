@@ -37,8 +37,30 @@ jobs:
                  --draft \
                  --title "${TAG#v}"
 
+  # Gate qui manquait : ce workflow ne lançait jamais lint/typecheck/tests,
+  # seulement les builds (esbuild ne fait AUCUNE vérification de type, il
+  # transpile juste — une vraie erreur TypeScript peut produire un bundle
+  # qui se construit sans broncher). Le pre-commit hook local (voir
+  # .husky/pre-commit, CLAUDE.md § Habitudes) réduit le risque mais est
+  # contournable (`--no-verify`) et ne tourne de toute façon jamais ICI, sur
+  # GitHub Actions — ce job est le vrai verrou côté release. Tourne en
+  # parallèle de create-release (indépendant), `build` attend les deux.
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+
   build:
-    needs: create-release
+    needs: [create-release, verify]
     strategy:
       fail-fast: false
       matrix:
