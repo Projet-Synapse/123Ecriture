@@ -91,13 +91,48 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-# Note : electron-builder publie par défaut la Release GitHub en DRAFT.
-# Après un push de tag, va sur l'onglet "Releases" du dépôt, vérifie les 3
-# installateurs (Linux/Windows/macOS non signés — attends-toi à un
-# avertissement Gatekeeper/SmartScreen faute de certificat de signature),
-# puis publie-la manuellement quand tu es prêt·e.
-#
-# Auto-update (electron-updater, voir apps/desktop/electron/main.ts) : le
+  # Publication automatique — voir CLAUDE.md "CI / release". Décision
+  # explicite (pas un défaut technique) : electron-updater tourne avec
+  # autoDownload/autoInstallOnAppQuit (apps/desktop/electron/updater.ts), et
+  # ne voit que les Releases PUBLIÉES (jamais les brouillons) — publier ici
+  # équivaut donc à déployer immédiatement vers toutes les installations
+  # existantes, sans relecture humaine entre "ça build" et "ça part". Ne
+  # tourne qu'une fois les 3 builds (Linux/Windows/macOS) réussis
+  # (`needs: build`, échoue si un seul des trois échoue — pas de publication
+  # partielle) ET seulement après avoir vérifié que les 3 installateurs sont
+  # bien attachés : garde-fou contre exactement le bug déjà rencontré une
+  # fois (tag poussé sans bump de version dans apps/desktop/package.json →
+  # electron-builder résout la mauvaise Release cible et skippe l'upload en
+  # silence, laissant un brouillon vide avec seulement l'archive "Source
+  # code" auto-générée par GitHub).
+  publish-release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Vérifie que les 3 installateurs sont bien présents, puis publie
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ github.ref_name }}"
+          REPO="${{ github.repository }}"
+          ASSETS=$(gh release view "$TAG" --repo "$REPO" --json assets --jq '.assets[].name')
+          echo "Assets attachés :"
+          echo "$ASSETS"
+
+          missing=0
+          for pattern in '\.exe$' '\.dmg$' '\.AppImage$'; do
+            if ! echo "$ASSETS" | grep -Eq "$pattern"; then
+              echo "::error::Installateur manquant pour le motif '$pattern' — publication annulée, le brouillon reste en l'état pour inspection."
+              missing=1
+            fi
+          done
+          if [ "$missing" -eq 1 ]; then
+            exit 1
+          fi
+
+          gh release edit "$TAG" --repo "$REPO" --draft=false
+
+# Auto-update (electron-updater, voir apps/desktop/electron/updater.ts) : le
 # dépôt doit être PUBLIC pour que l'app installée puisse consulter les
 # Releases GitHub sans authentification. Sur un dépôt privé, la vérification
 # de mise à jour échoue silencieusement (l'app démarre quand même).
