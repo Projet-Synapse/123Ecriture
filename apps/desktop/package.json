@@ -1,6 +1,6 @@
 {
   "name": "@123ecriture/desktop",
-  "version": "0.1.20",
+  "version": "0.1.21",
   "description": "123Ecriture — application d'écriture et de productivité (version desktop)",
   "author": "Catelina",
   "repository": "https://github.com/catelyn2332-design/123Ecriture.git",
@@ -66,9 +66,6 @@
     "mac": {
       "target": ["dmg"],
       "category": "public.app-category.productivity"
-    },
-    "dmg": {
-      "writeUpdateInfo": false
     }
   }
 }

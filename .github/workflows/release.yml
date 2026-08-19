@@ -110,18 +110,27 @@ jobs:
         # que sur ce workflow (déclenché sur tag) ; les scripts pnpm locaux
         # (package:linux/win/mac) passent --publish never.
         #
-        # apps/desktop/package.json → build.nsis.differentialPackage=false
-        # et build.dmg.writeUpdateInfo=false : désactive la génération des
-        # .exe.blockmap/.dmg.blockmap (index de blocs pour les mises à jour
-        # DIFFÉRENTIELLES d'electron-updater, voir electron/updater.ts) —
-        # décision explicite de l'utilisatrice pour une liste d'assets plus
-        # propre sur GitHub. latest*.yml restent générés (indispensables,
-        # c'est ce qui indique à l'app qu'une mise à jour existe) ; seul
-        # l'aspect "delta" disparaît — l'auto-update télécharge désormais
-        # toujours l'installateur complet plutôt qu'un patch des blocs
-        # modifiés (fonctionnellement identique, juste plus lourd par mise
-        # à jour). Rien à faire côté .AppImage : pas de blockmap pour ce
-        # format.
+        # apps/desktop/package.json → build.nsis.differentialPackage=false :
+        # désactive la génération du .exe.blockmap (index de blocs pour les
+        # mises à jour DIFFÉRENTIELLES d'electron-updater, voir
+        # electron/updater.ts) — décision explicite de l'utilisatrice pour
+        # une liste d'assets plus propre sur GitHub. latest.yml reste
+        # généré (indispensable, c'est ce qui indique à l'app Windows
+        # qu'une mise à jour existe) ; seul l'aspect "delta" disparaît —
+        # l'auto-update télécharge désormais toujours l'installateur complet
+        # plutôt qu'un patch des blocs modifiés.
+        #
+        # PAS de `dmg.writeUpdateInfo=false` équivalent côté macOS : testé
+        # une fois (v0.1.20), et contrairement à ce que documentation/
+        # recherche suggéraient, cette option désactive la génération de
+        # latest-mac.yml EN MÊME TEMPS que le .dmg.blockmap — pas de bascule
+        # plus fine côté electron-builder pour ne retirer que le blockmap.
+        # Sans latest-mac.yml, les installations macOS existantes ne
+        # détectent plus du tout les nouvelles releases (vérifié : la
+        # release v0.1.20 publiée sans ce fichier ne s'est jamais proposée
+        # comme mise à jour). Le .dmg.blockmap reste donc généré : seul
+        # compromis qui ne casse pas l'auto-update macOS. Rien à faire côté
+        # .AppImage : pas de blockmap pour ce format de toute façon.
         run: pnpm --filter @123ecriture/desktop exec electron-builder ${{ matrix.flag }} --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
