@@ -111,18 +111,23 @@ export interface CalendarEventInput {
   notes?: string;
 }
 
-export type PropertyType = 'text' | 'list' | 'number' | 'checkbox' | 'date' | 'datetime';
+export type PropertyType = 'text' | 'list' | 'number' | 'checkbox' | 'date' | 'datetime' | 'path' | 'options';
 
 export interface PropertyDefinition {
   id: string;
   name: string;
   type: PropertyType;
   createdAt: string;
+  // Uniquement pour type==='options' — liste des valeurs proposées (ex.
+  // ["🟠 En cours", "🔴 Bloqué", "🟡 En attente"]), configurée dans
+  // Paramètres → Gestion des propriétés. Absent/vide pour les autres types.
+  options?: string[];
 }
 
 export interface PropertyPatch {
   name?: string;
   type?: PropertyType;
+  options?: string[];
 }
 
 export interface OccurrenceEntry {
@@ -147,6 +152,10 @@ export interface ToolbarItemConfig {
 export type NewNoteLocation = 'vaultRoot' | 'sameFolder' | 'custom';
 
 export type EditorViewMode = 'source' | 'split' | 'reading';
+
+// Police de l'éditeur — voir apps/mobile/components/MdxEditor.tsx
+// (EDITOR_FONT_STACKS) pour les piles CSS correspondantes.
+export type EditorFontFamily = 'system' | 'sans' | 'serif' | 'mono' | 'dyslexic';
 
 // Ordre des fichiers/dossiers dans l'explorateur (voir walkTree dans
 // vault.ts) — 'manual' applique la réorganisation glisser-déposer déjà
@@ -176,6 +185,7 @@ export interface Preferences {
   defaultOpenSpecificPath: string;
   // Paramètres → Éditeur.
   editorFontSize: number;
+  editorFontFamily: EditorFontFamily;
   editorDefaultMode: EditorViewMode;
   editorCloseBrackets: boolean;
   editorInlineTitle: boolean;

@@ -22,7 +22,16 @@ import type { PropertyDefinition, PropertyPatch, PropertyType } from './types';
 // rattachée à aucune définition du schéma) si sa propriété est renommée ou
 // supprimée — choix assumé pour rester simple, cohérent avec le reste de
 // l'app qui ne fait jamais de migration silencieuse de contenu.
-const PROPERTY_TYPES: PropertyType[] = ['text', 'list', 'number', 'checkbox', 'date', 'datetime'];
+const PROPERTY_TYPES: PropertyType[] = [
+  'text',
+  'list',
+  'number',
+  'checkbox',
+  'date',
+  'datetime',
+  'path',
+  'options',
+];
 
 function getVaultPath(): string | null {
   return vaults.getActiveVaultPath();
@@ -51,6 +60,16 @@ function isPropertyType(value: unknown): value is PropertyType {
   return typeof value === 'string' && (PROPERTY_TYPES as string[]).includes(value);
 }
 
+// Type 'options' uniquement — normalise en tableau de chaînes non vides,
+// trim(). `undefined` reste `undefined` (pas de champ `options` à écrire du
+// tout pour les autres types), une liste vide devient `[]` (pas d'options
+// configurées pour l'instant, pas une erreur).
+function normalizeOptions(value: unknown): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) throw new Error('La liste d’options est invalide.');
+  return value.map((item) => String(item).trim()).filter((item) => item.length > 0);
+}
+
 export function registerPropertiesHandlers(): void {
   ipcMain.handle('properties:list', () => {
     const vaultPath = getVaultPath();
@@ -58,7 +77,7 @@ export function registerPropertiesHandlers(): void {
     return readProperties(vaultPath);
   });
 
-  ipcMain.handle('properties:create', async (_event, name: string, type: unknown) => {
+  ipcMain.handle('properties:create', async (_event, name: string, type: unknown, options?: unknown) => {
     const vaultPath = getVaultPath();
     if (!vaultPath) throw new Error('Aucun vault sélectionné');
     const trimmed = (name ?? '').trim();
@@ -69,7 +88,14 @@ export function registerPropertiesHandlers(): void {
     if (properties.some((p) => p.name.toLowerCase() === trimmed.toLowerCase())) {
       throw new Error('Une propriété porte déjà ce nom.');
     }
-    properties.push({ id: crypto.randomUUID(), name: trimmed, type, createdAt: new Date().toISOString() });
+    const normalizedOptions = normalizeOptions(options);
+    properties.push({
+      id: crypto.randomUUID(),
+      name: trimmed,
+      type,
+      createdAt: new Date().toISOString(),
+      ...(normalizedOptions !== undefined ? { options: normalizedOptions } : {}),
+    });
     return writeProperties(vaultPath, properties);
   });
 
@@ -91,6 +117,9 @@ export function registerPropertiesHandlers(): void {
     if (patch?.type !== undefined) {
       if (!isPropertyType(patch.type)) throw new Error('Type de propriété invalide.');
       existing.type = patch.type;
+    }
+    if (patch?.options !== undefined) {
+      existing.options = normalizeOptions(patch.options);
     }
     return writeProperties(vaultPath, properties);
   });

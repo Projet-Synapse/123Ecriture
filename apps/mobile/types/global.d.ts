@@ -122,23 +122,28 @@ declare global {
   // Schéma global de propriétés typées (voir PropertiesPanel.tsx) — ne
   // porte que la DÉFINITION (nom + type) ; les valeurs vivent dans le
   // frontmatter YAML de chaque note (voir lib/frontmatter.ts).
-  type PropertyType = 'text' | 'list' | 'number' | 'checkbox' | 'date' | 'datetime';
+  type PropertyType = 'text' | 'list' | 'number' | 'checkbox' | 'date' | 'datetime' | 'path' | 'options';
 
   interface PropertyDefinition {
     id: string;
     name: string;
     type: PropertyType;
     createdAt: string;
+    // Uniquement pour type==='options' — liste des valeurs proposées (ex.
+    // ["🟠 En cours", "🔴 Bloqué"]), configurée dans Paramètres → Gestion
+    // des propriétés.
+    options?: string[];
   }
 
   interface PropertyPatch {
     name?: string;
     type?: PropertyType;
+    options?: string[];
   }
 
   interface PropertiesBridge {
     list: () => Promise<PropertyDefinition[]>;
-    create: (name: string, type: PropertyType) => Promise<PropertyDefinition[]>;
+    create: (name: string, type: PropertyType, options?: string[]) => Promise<PropertyDefinition[]>;
     update: (id: string, patch: PropertyPatch) => Promise<PropertyDefinition[]>;
     remove: (id: string) => Promise<PropertyDefinition[]>;
   }
@@ -294,6 +299,12 @@ declare global {
 
   type EditorViewMode = 'source' | 'split' | 'reading';
 
+  // Police de l'éditeur (voir MdxEditor.tsx, `.cm-scroller`) — polices web-
+  // safe/multiplateforme uniquement (pas de chargement de fichier de police
+  // custom pour l'instant), 'system' garde le comportement actuel
+  // (`fontFamily: 'inherit'`, hérite de la police système du thème).
+  type EditorFontFamily = 'system' | 'sans' | 'serif' | 'mono' | 'dyslexic';
+
   // Ordre des fichiers/dossiers dans l'explorateur (voir walkTree dans
   // apps/desktop/electron/vault.ts) — 'manual' applique la réorganisation
   // glisser-déposer déjà enregistrée ; les deux autres modes l'ignorent
@@ -328,6 +339,7 @@ declare global {
     defaultOpenSpecificPath: string;
     // Paramètres → Éditeur.
     editorFontSize: number;
+    editorFontFamily: EditorFontFamily;
     editorDefaultMode: EditorViewMode;
     editorCloseBrackets: boolean;
     editorInlineTitle: boolean;

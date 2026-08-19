@@ -8,6 +8,7 @@ import { EditorSection } from './settings/EditorSection';
 import { FilesLinksSection } from './settings/FilesLinksSection';
 import { PersonalizationCard } from './PersonalizationCard';
 import { PrivacyDataSection } from './settings/PrivacyDataSection';
+import { PropertiesManagementSection } from './settings/PropertiesManagementSection';
 
 // Écran Paramètres — sous-navigation à 6 sections (voir .claude/CLAUDE.md :
 // "complexifier autant que possible" les réglages, et
@@ -20,7 +21,7 @@ import { PrivacyDataSection } from './settings/PrivacyDataSection';
 // que celui de AppShell.
 const SETTINGS_WIDE_BREAKPOINT = 900;
 
-type SettingsSectionId = 'personalization' | 'account' | 'files' | 'editor' | 'privacy' | 'about';
+type SettingsSectionId = 'personalization' | 'account' | 'files' | 'editor' | 'properties' | 'privacy' | 'about';
 
 type SettingsSectionDef = {
   id: SettingsSectionId;
@@ -33,6 +34,7 @@ const SETTINGS_SECTIONS: SettingsSectionDef[] = [
   { id: 'account', label: 'Compte et synchronisation', icon: '👤' },
   { id: 'files', label: 'Gestion des fichiers et des liens', icon: '🗂️' },
   { id: 'editor', label: 'Éditeur', icon: '✍️' },
+  { id: 'properties', label: 'Gestion des propriétés', icon: '🏷️' },
   { id: 'privacy', label: 'Confidentialité et données', icon: '🔒' },
   { id: 'about', label: 'À propos', icon: 'ℹ️' },
 ];
@@ -47,6 +49,8 @@ function renderSection(id: SettingsSectionId) {
       return <FilesLinksSection />;
     case 'editor':
       return <EditorSection />;
+    case 'properties':
+      return <PropertiesManagementSection />;
     case 'privacy':
       return <PrivacyDataSection />;
     case 'about':

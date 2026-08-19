@@ -28,6 +28,7 @@ const DEFAULT_PREFERENCES: Preferences = {
   defaultOpenMode: 'lastOpened',
   defaultOpenSpecificPath: '',
   editorFontSize: 15,
+  editorFontFamily: 'system',
   editorDefaultMode: 'source',
   editorCloseBrackets: true,
   editorInlineTitle: false,
@@ -59,6 +60,7 @@ type PreferencesContextValue = {
   setDefaultOpenMode: (mode: DefaultOpenMode) => Promise<void>;
   setDefaultOpenSpecificPath: (relPath: string) => Promise<void>;
   setEditorFontSize: (size: number) => Promise<void>;
+  setEditorFontFamily: (family: EditorFontFamily) => Promise<void>;
   setEditorDefaultMode: (mode: EditorViewMode) => Promise<void>;
   setEditorCloseBrackets: (value: boolean) => Promise<void>;
   setEditorInlineTitle: (value: boolean) => Promise<void>;
@@ -169,6 +171,10 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     [persist],
   );
   const setEditorFontSize = useCallback((size: number) => persist({ editorFontSize: size }), [persist]);
+  const setEditorFontFamily = useCallback(
+    (family: EditorFontFamily) => persist({ editorFontFamily: family }),
+    [persist],
+  );
   const setEditorDefaultMode = useCallback(
     (mode: EditorViewMode) => persist({ editorDefaultMode: mode }),
     [persist],
@@ -228,6 +234,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       setDefaultOpenMode,
       setDefaultOpenSpecificPath,
       setEditorFontSize,
+      setEditorFontFamily,
       setEditorDefaultMode,
       setEditorCloseBrackets,
       setEditorInlineTitle,
@@ -254,6 +261,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       setDefaultOpenMode,
       setDefaultOpenSpecificPath,
       setEditorFontSize,
+      setEditorFontFamily,
       setEditorDefaultMode,
       setEditorCloseBrackets,
       setEditorInlineTitle,

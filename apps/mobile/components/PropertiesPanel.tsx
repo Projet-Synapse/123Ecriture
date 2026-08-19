@@ -1,54 +1,33 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import { parseFrontmatter, serializeFrontmatter, type FrontmatterData } from '../lib/frontmatter';
+import { parseFrontmatter } from '../lib/frontmatter';
+import { usePropertyDefinitions } from '../lib/usePropertyDefinitions';
+import { usePropertyValues } from '../lib/usePropertyValues';
+import { TYPE_ICONS } from '../lib/propertyTypes';
 import type { Theme } from '../theme';
+import { AddPropertyButton } from './AddPropertyButton';
 import { DraftTextField } from './DraftTextField';
+import { PropertyValueField } from './PropertyValueField';
 
 // Onglet "Propriétés" de la barre latérale (voir RightSidebar.tsx,
-// NotesScreen.tsx) — deux sections : les VALEURS de la note actuellement
-// ouverte (lues/écrites dans son frontmatter, voir lib/frontmatter.ts) et
-// la GESTION du schéma global (créer/renommer/changer de type/supprimer une
-// propriété, `.123ecriture/properties.json` via apps/desktop/electron/
-// properties.js). Renommer/changer le type/supprimer une définition ne
-// touche QUE le schéma, jamais les valeurs déjà écrites dans les notes
-// (voir le commentaire d'en-tête de properties.js).
-const TYPE_LABELS: Record<PropertyType, string> = {
-  text: 'Texte',
-  list: 'Liste',
-  number: 'Nombre',
-  checkbox: 'Case à cocher',
-  date: 'Date',
-  datetime: 'Date et heure',
-};
-
-const TYPE_ORDER: PropertyType[] = ['text', 'list', 'number', 'checkbox', 'date', 'datetime'];
-
-function defaultValueForType(type: PropertyType): unknown {
-  if (type === 'checkbox') return false;
-  if (type === 'number') return 0;
-  if (type === 'list') return [];
-  return '';
-}
-
-function formatValueForInput(type: PropertyType, value: unknown): string {
-  if (type === 'list') return Array.isArray(value) ? value.join(', ') : String(value ?? '');
-  if (value === null || value === undefined) return '';
-  return String(value);
-}
-
-function parseInputForType(type: PropertyType, text: string): unknown {
-  if (type === 'number') {
-    const parsed = Number(text.trim());
-    return Number.isFinite(parsed) ? parsed : 0;
-  }
-  if (type === 'list') {
-    return text
-      .split(',')
-      .map((item) => item.trim())
-      .filter((item) => item.length > 0);
-  }
-  return text;
+// NotesScreen.tsx) — édition des VALEURS de la note actuellement ouverte,
+// façon capture de référence (.claude/References/image-4.png) : une icône
+// par ligne, un widget dédié par type (voir PropertyValueField.tsx), et un
+// bouton "+" pour ajouter une propriété existante plutôt qu'un champ texte
+// libre. Le SCHÉMA global (créer/renommer/changer de type/supprimer une
+// propriété, options du type "Options"…) se configure maintenant dans
+// Paramètres → Gestion des propriétés (voir
+// settings/PropertiesManagementSection.tsx) — ce panneau ne fait plus que
+// consommer ce schéma. Même données/logique que PropertiesBlock.tsx (bloc
+// en haut de note) via lib/usePropertyValues.ts.
+function formatTimestamp(value: number): string {
+  return new Date(value).toLocaleString('fr-FR', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }
 
 type Props = {
@@ -56,90 +35,17 @@ type Props = {
   activeNote: VaultEntry | null;
   content: string;
   onChangeContent: (text: string) => void;
+  tree?: VaultTreeNode[];
 };
 
-export function PropertiesPanel({ theme, activeNote, content, onChangeContent }: Props) {
+export function PropertiesPanel({ theme, activeNote, content, onChangeContent, tree }: Props) {
   const propertiesBridge = typeof window !== 'undefined' ? window.properties : undefined;
-  const contextMenuBridge = typeof window !== 'undefined' ? window.contextMenu : undefined;
-
-  const [definitions, setDefinitions] = useState<PropertyDefinition[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [newName, setNewName] = useState('');
-  const [newType, setNewType] = useState<PropertyType>('text');
-
-  const refresh = useCallback(async () => {
-    if (!propertiesBridge) return;
-    setDefinitions(await propertiesBridge.list());
-  }, [propertiesBridge]);
-
-  useEffect(() => {
-    void (async () => {
-      try {
-        await refresh();
-      } catch (err) {
-        console.error('[properties] échec du chargement initial :', err);
-      }
-    })();
-  }, [refresh]);
-
-  const runAction = useCallback(async (action: () => Promise<PropertyDefinition[]>) => {
-    setError(null);
-    try {
-      setDefinitions(await action());
-    } catch (err) {
-      console.error('[properties] échec :', err);
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  }, []);
-
-  const { data, body } = useMemo(() => parseFrontmatter(content), [content]);
-
-  const commitData = useCallback(
-    (nextData: FrontmatterData) => {
-      onChangeContent(serializeFrontmatter(nextData, body));
-    },
-    [onChangeContent, body],
+  const { definitions, update } = usePropertyDefinitions();
+  const { data, definitionsUsedOnNote, availableToAdd, setValue, addValue, removeValue } = usePropertyValues(
+    content,
+    onChangeContent,
+    definitions,
   );
-
-  const usedNames = useMemo(() => new Set(Object.keys(data)), [data]);
-  const availableToAdd = definitions.filter((def) => !usedNames.has(def.name));
-
-  const showAddValuePicker = useCallback(() => {
-    if (!contextMenuBridge || availableToAdd.length === 0) return;
-    void contextMenuBridge.show(availableToAdd.map((def) => ({ id: def.id, label: def.name }))).then((id) => {
-      const def = availableToAdd.find((d) => d.id === id);
-      if (!def) return;
-      commitData({ ...data, [def.name]: defaultValueForType(def.type) });
-    });
-  }, [contextMenuBridge, availableToAdd, data, commitData]);
-
-  const removeValue = useCallback(
-    (name: string) => {
-      const next = { ...data };
-      delete next[name];
-      commitData(next);
-    },
-    [data, commitData],
-  );
-
-  const showTypePicker = useCallback(
-    (onSelect: (type: PropertyType) => void) => {
-      if (!contextMenuBridge) return;
-      void contextMenuBridge
-        .show(TYPE_ORDER.map((type) => ({ id: type, label: TYPE_LABELS[type] })))
-        .then((choice) => {
-          if (choice) onSelect(choice as PropertyType);
-        });
-    },
-    [contextMenuBridge],
-  );
-
-  const submitCreateProperty = useCallback(async () => {
-    const name = newName.trim();
-    if (!name || !propertiesBridge) return;
-    setNewName('');
-    await runAction(() => propertiesBridge.create(name, newType));
-  }, [newName, newType, propertiesBridge, runAction]);
 
   if (!propertiesBridge) {
     return (
@@ -152,105 +58,65 @@ export function PropertiesPanel({ theme, activeNote, content, onChangeContent }:
   }
 
   const isMarkdownNote = activeNote?.kind === 'markdown';
-  const definitionsUsedOnNote = definitions.filter((def) => usedNames.has(def.name));
+  const createdRaw = parseFrontmatter(content).data.created;
+  const createdLabel =
+    typeof createdRaw === 'string' && !Number.isNaN(Date.parse(createdRaw))
+      ? formatTimestamp(Date.parse(createdRaw))
+      : '—';
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <Text style={[styles.sectionTitle, { color: theme.text }]}>Propriétés de cette note</Text>
+      <Text style={[styles.sectionTitle, { color: theme.text }]}>Propriétés</Text>
       {!isMarkdownNote ? (
         <Text style={[styles.muted, { color: theme.textMuted }]}>
           Seules les notes (pas les canvas/graphiques) ont des propriétés.
         </Text>
       ) : (
         <>
-          {definitionsUsedOnNote.length === 0 && (
-            <Text style={[styles.muted, { color: theme.textMuted }]}>Aucune propriété sur cette note.</Text>
-          )}
+          <View style={styles.valueRow}>
+            <Text style={{ fontSize: 12 }}>➕</Text>
+            <Text style={[styles.valueLabel, { color: theme.textMuted }]}>Créé</Text>
+            <Text style={[styles.readonlyValue, { color: theme.text }]}>{createdLabel}</Text>
+          </View>
+          <View style={styles.valueRow}>
+            <Text style={{ fontSize: 12 }}>✏️</Text>
+            <Text style={[styles.valueLabel, { color: theme.textMuted }]}>Modifié</Text>
+            <Text style={[styles.readonlyValue, { color: theme.text }]}>
+              {activeNote ? formatTimestamp(activeNote.modifiedAt) : '—'}
+            </Text>
+          </View>
+
           {definitionsUsedOnNote.map((def) => (
             <View key={def.id} style={styles.valueRow}>
-              <Text style={[styles.valueLabel, { color: theme.textMuted }]} numberOfLines={1}>
-                {def.name}
+              <Text style={{ fontSize: 12 }}>{TYPE_ICONS[def.type]}</Text>
+              {/* Renomme la propriété dans le SCHÉMA global (voir Paramètres →
+                  Gestion des propriétés) — se répercute partout où elle est
+                  utilisée, pas seulement sur cette note. */}
+              <DraftTextField
+                initialValue={def.name}
+                onCommit={(value) => {
+                  const trimmed = value.trim();
+                  if (trimmed && trimmed !== def.name) void update(def.id, { name: trimmed });
+                }}
+                theme={theme}
+                style={[styles.valueLabelInput, { color: theme.textMuted }]}
+              />
+              <PropertyValueField
+                def={def}
+                value={data[def.name]}
+                onChange={(value) => setValue(def.name, value)}
+                theme={theme}
+                tree={tree}
+              />
+              <Text onPress={() => removeValue(def.name)} style={[styles.rowRemove, { color: theme.textMuted }]}>
+                ✕
               </Text>
-              {def.type === 'checkbox' ? (
-                <Pressable
-                  onPress={() => commitData({ ...data, [def.name]: !data[def.name] })}
-                  style={[styles.checkbox, { borderColor: theme.border }]}
-                >
-                  <Text style={{ color: theme.accent }}>{data[def.name] ? '☑' : '☐'}</Text>
-                </Pressable>
-              ) : (
-                <DraftTextField
-                  initialValue={formatValueForInput(def.type, data[def.name])}
-                  onCommit={(text) => commitData({ ...data, [def.name]: parseInputForType(def.type, text) })}
-                  placeholder={
-                    def.type === 'date' ? 'AAAA-MM-JJ' : def.type === 'datetime' ? 'AAAA-MM-JJ HH:MM' : ''
-                  }
-                  theme={theme}
-                  style={[styles.valueInput, { color: theme.text, borderColor: theme.border }]}
-                />
-              )}
-              <Pressable onPress={() => removeValue(def.name)} style={styles.rowRemove}>
-                <Text style={{ color: theme.textMuted }}>✕</Text>
-              </Pressable>
             </View>
           ))}
-          {availableToAdd.length > 0 && (
-            <Pressable onPress={showAddValuePicker} style={styles.addButton}>
-              <Text style={{ color: theme.accent, fontSize: 12 }}>+ Ajouter une propriété</Text>
-            </Pressable>
-          )}
+
+          <AddPropertyButton available={availableToAdd} onAdd={addValue} theme={theme} />
         </>
       )}
-
-      <View style={[styles.divider, { backgroundColor: theme.border }]} />
-
-      <Text style={[styles.sectionTitle, { color: theme.text }]}>Gérer les propriétés</Text>
-      {error && <Text style={styles.error}>⚠️ {error}</Text>}
-      {definitions.length === 0 && (
-        <Text style={[styles.muted, { color: theme.textMuted }]}>Aucune propriété définie pour l’instant.</Text>
-      )}
-      {definitions.map((def) => (
-        <View key={def.id} style={styles.defRow}>
-          <DraftTextField
-            initialValue={def.name}
-            onCommit={(value) => {
-              const trimmed = value.trim();
-              if (trimmed) void runAction(() => propertiesBridge.update(def.id, { name: trimmed }));
-            }}
-            theme={theme}
-            style={[styles.defNameInput, { color: theme.text, borderColor: theme.border }]}
-          />
-          <Pressable
-            onPress={() => showTypePicker((type) => void runAction(() => propertiesBridge.update(def.id, { type })))}
-            style={[styles.typeChip, { borderColor: theme.border }]}
-          >
-            <Text style={{ color: theme.textMuted, fontSize: 11 }}>{TYPE_LABELS[def.type]}</Text>
-          </Pressable>
-          <Pressable onPress={() => void runAction(() => propertiesBridge.remove(def.id))} style={styles.rowRemove}>
-            <Text style={{ color: theme.textMuted }}>🗑️</Text>
-          </Pressable>
-        </View>
-      ))}
-
-      <View style={styles.createRow}>
-        <TextInput
-          value={newName}
-          onChangeText={setNewName}
-          onSubmitEditing={() => void submitCreateProperty()}
-          placeholder="Nouvelle propriété…"
-          placeholderTextColor={theme.textMuted}
-          style={[styles.createInput, { color: theme.text, borderColor: theme.border }]}
-        />
-        <Pressable onPress={() => showTypePicker(setNewType)} style={[styles.typeChip, { borderColor: theme.border }]}>
-          <Text style={{ color: theme.textMuted, fontSize: 11 }}>{TYPE_LABELS[newType]}</Text>
-        </Pressable>
-        <Pressable
-          onPress={() => void submitCreateProperty()}
-          style={[styles.createButton, { backgroundColor: theme.accent }]}
-        >
-          <Text style={styles.createButtonText}>Créer</Text>
-        </Pressable>
-      </View>
     </ScrollView>
   );
 }
@@ -271,85 +137,26 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 18,
   },
-  error: {
-    color: '#dc2626',
-    fontSize: 12,
-  },
-  divider: {
-    height: 1,
-    marginVertical: 8,
-  },
   valueRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
   },
   valueLabel: {
-    width: 80,
+    width: 70,
     fontSize: 12,
   },
-  valueInput: {
-    flex: 1,
-    borderWidth: 1,
-    borderRadius: 6,
-    paddingVertical: 4,
-    paddingHorizontal: 6,
+  valueLabelInput: {
+    width: 70,
     fontSize: 12,
+    paddingVertical: 2,
+    paddingHorizontal: 2,
   },
-  checkbox: {
+  readonlyValue: {
     flex: 1,
-    borderWidth: 1,
-    borderRadius: 6,
-    paddingVertical: 4,
-    alignItems: 'center',
+    fontSize: 12,
   },
   rowRemove: {
     paddingHorizontal: 4,
-  },
-  addButton: {
-    paddingVertical: 4,
-  },
-  defRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  defNameInput: {
-    flex: 1,
-    borderWidth: 1,
-    borderRadius: 6,
-    paddingVertical: 4,
-    paddingHorizontal: 6,
-    fontSize: 12,
-  },
-  typeChip: {
-    borderWidth: 1,
-    borderRadius: 10,
-    paddingVertical: 4,
-    paddingHorizontal: 8,
-  },
-  createRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginTop: 4,
-  },
-  createInput: {
-    flex: 1,
-    borderWidth: 1,
-    borderRadius: 6,
-    paddingVertical: 4,
-    paddingHorizontal: 6,
-    fontSize: 12,
-  },
-  createButton: {
-    borderRadius: 6,
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-  },
-  createButtonText: {
-    color: '#fff',
-    fontSize: 12,
-    fontWeight: '600',
   },
 });

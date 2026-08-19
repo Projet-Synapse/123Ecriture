@@ -10,6 +10,7 @@ import {
 
 import { EditorView, type ReactCodeMirrorRef } from '@uiw/react-codemirror';
 
+import { parseFrontmatter, serializeFrontmatter } from '../lib/frontmatter';
 import type { FormattingResult, Selection } from '../lib/mdxFormatting';
 import { NOTES_TOOLBAR_ACTIONS, type ToolbarAction } from '../lib/notesToolbarActions';
 import { useResizablePanel } from '../lib/useResizablePanel';
@@ -25,6 +26,7 @@ import { MdxEditor } from './MdxEditor';
 import { MoveDialog } from './MoveDialog';
 import { NoteRenderer } from './NoteRenderer';
 import { OccurrencesPanel } from './OccurrencesPanel';
+import { PropertiesBlock } from './PropertiesBlock';
 import { PropertiesPanel } from './PropertiesPanel';
 import { ResizeHandle } from './ResizeHandle';
 import { RightSidebar, type SidebarTab } from './RightSidebar';
@@ -988,6 +990,20 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
     scheduleSave(text);
   };
 
+  // Le bloc "Propriétés" (PropertiesBlock.tsx) affiche déjà le frontmatter
+  // de façon structurée en mode Intermédiaire/Aperçu — sans ça, le bloc YAML
+  // brut ("---\ntitre: ...\n---") apparaissait EN PLUS, en texte littéral,
+  // dans l'éditeur/le rendu juste en dessous : deux représentations de la
+  // même donnée à l'écran (bug rapporté). En mode Source, `content` reste
+  // inchangé (le YAML brut redevient la seule représentation, directement
+  // éditable). `bodyOnly`/`handleChangeBody` reconstruisent le frontmatter
+  // complet à l'écriture à partir du dernier `data` connu (le bloc
+  // Propriétés écrit lui-même dans `content` en parallèle via son propre
+  // serializeFrontmatter — les deux restent cohérents puisqu'ils partent du
+  // même state `content`).
+  const { data: frontmatterData, body: bodyOnly } = useMemo(() => parseFrontmatter(content), [content]);
+  const handleChangeBody = (newBody: string) => handleChangeContent(serializeFrontmatter(frontmatterData, newBody));
+
   // Dispatché directement sur l'EditorView (pas de setContent/scheduleSave
   // ici) : le changement + la nouvelle sélection partent dans UNE seule
   // transaction CodeMirror, et c'est le `onChange` de MdxEditor (déclenché
@@ -1300,6 +1316,27 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
                     {attachmentError && <Text style={styles.error}>⚠️ {attachmentError}</Text>}
                     {wikilinkNotice && <Text style={styles.error}>⚠️ {wikilinkNotice}</Text>}
 
+                    {/* Mode Intermédiaire uniquement ici (avant la barre d'outils/CodeMirror) —
+                        en mode Aperçu, la même carte est rendue PLUS BAS, à
+                        l'intérieur du ScrollView de lecture, pour qu'elle défile
+                        avec le reste de la note au lieu de rester figée en haut
+                        (bug rapporté). CodeMirror gère son propre scroll interne
+                        (voir MdxEditor.tsx) — l'y imbriquer de la même façon
+                        casserait exactement le genre de flexbug déjà rencontré
+                        sur cet éditeur (éditeur figé/largeur cassée) ; la carte
+                        reste donc fixe au-dessus en Intermédiaire, mais
+                        repliable (voir PropertiesBlock.tsx) pour rester moins
+                        gênante pendant la frappe. */}
+                    {viewMode === 'split' && (
+                      <PropertiesBlock
+                        theme={theme}
+                        activeNote={activeNote}
+                        content={content}
+                        onChangeContent={handleChangeContent}
+                        tree={tree}
+                      />
+                    )}
+
                     {viewMode !== 'reading' && (
                       <EditorToolbar
                         items={toolbarActions.map((action) =>
@@ -1326,8 +1363,20 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
                     <View style={styles.editorBody}>
                       {viewMode === 'reading' ? (
                         <ScrollView style={styles.previewFull}>
-                          <NoteRenderer
+                          {/* À l'intérieur du ScrollView (pas au-dessus, contrairement
+                              au mode Intermédiaire) : défile avec le reste de la note
+                              plutôt que de rester figée en haut — possible ici sans
+                              risque, `NoteRenderer` est un simple rendu, pas un
+                              CodeMirror avec son propre scroll interne à préserver. */}
+                          <PropertiesBlock
+                            theme={theme}
+                            activeNote={activeNote}
                             content={content}
+                            onChangeContent={handleChangeContent}
+                            tree={tree}
+                          />
+                          <NoteRenderer
+                            content={bodyOnly}
                             theme={theme}
                             onOpenWikilink={(t) => void handleOpenWikilink(t)}
                             knownOccurrenceWords={knownOccurrenceWords}
@@ -1336,8 +1385,8 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
                         </ScrollView>
                       ) : (
                         <MdxEditor
-                          value={content}
-                          onChange={handleChangeContent}
+                          value={viewMode === 'source' ? content : bodyOnly}
+                          onChange={viewMode === 'source' ? handleChangeContent : handleChangeBody}
                           livePreview={viewMode === 'split'}
                           theme={theme}
                           onOpenWikilink={(t) => void handleOpenWikilink(t)}
@@ -1345,6 +1394,7 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
                           occurrenceWords={occurrenceWordList}
                           onCreateOccurrence={handleCreateOccurrence}
                           fontSize={preferences.editorFontSize}
+                          fontFamily={preferences.editorFontFamily}
                           closeBrackets={preferences.editorCloseBrackets}
                           onReady={(ref: ReactCodeMirrorRef) => {
                             viewRef.current = ref.view ?? null;
@@ -1378,6 +1428,7 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
                         activeNote={activeNote}
                         content={content}
                         onChangeContent={handleChangeContent}
+                        tree={tree}
                       />
                     ) : (
                       <OccurrencesPanel
