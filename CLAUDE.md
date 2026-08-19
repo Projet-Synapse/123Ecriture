@@ -2,6 +2,38 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Comportement
+
+Règles que l'utilisatrice attend voir respectées systématiquement, pas seulement quand elles sont rappelées en cours de session :
+
+- **Poser des questions plutôt que supposer.** Un questionnaire à n'importe quel moment est bienvenu — ça évite les malentendus et affine le travail, ça ne ralentit pas la session.
+- **Tester réellement avant d'affirmer que c'est fait.** Une modification de code ne doit jamais casser silencieusement quelque chose qui marchait. C'est impératif sur les zones à plus haute exigence (régression silencieuse par nature) :
+  - la stabilité des interfaces en général, sur chaque plateforme (Windows/Linux/macOS au minimum aujourd'hui) ;
+  - la connexion au compte (auth Supabase) ;
+  - la sauvegarde et la gestion générale des données (écriture/lecture de fichiers, sync, résolution de conflit).
+  Lint/typecheck/build qui passent ne suffisent pas à eux seuls sur ces zones — lancer l'app réellement (`pnpm dev:desktop`) a déjà permis de trouver des bugs invisibles autrement (éditeur figé, Live Preview silencieusement désactivé).
+- **Un bouton ou composant ajouté doit être fonctionnel avant d'être considéré terminé**, minimum avec ces deux caractéristiques : on peut cliquer dessus, et il produit ce qu'il est censé faire. Pas de placeholder livré comme si c'était fini.
+
+## Habitudes et commandes à utiliser automatiquement
+
+- **Poster une liste de tâches explicite** (une vraie checklist, pas juste du texte) au début d'un travail à plusieurs étapes, et la tenir à jour au fil de l'avancement.
+- **Une fois une demande de code terminée et vérifiée**, builder et préparer la release :
+  1. bump la version dans `apps/desktop/package.json` **et** `apps/mobile/package.json` (les deux, à la même valeur, jamais déjà utilisée — voir le piège documenté sous "CI / release") ;
+  2. vérifier : `pnpm lint && pnpm typecheck && pnpm test && pnpm build`, et un vrai lancement de l'app sur les zones sensibles listées ci-dessus ;
+  3. commit, tag `vX.Y.Z`, push.
+  Depuis le 2026-08-19, la CI construit **et publie automatiquement** la release une fois les 3 builds plateforme verts (voir "CI / release" ci-dessous) — il n'y a plus d'étape de relecture manuelle après le push du tag, donc l'étape 2 (vérifier + smoke-test) doit être faite **avant** de tagger, pas après.
+- **Demander les permissions nécessaires groupées, à la fin d'une tâche, avant un build** — plutôt que de contourner silencieusement un refus ou de redemander une à une en cours de route.
+- `.github/workflows/ci.yml` tourne désormais sur chaque push/PR (lint, typecheck, tests, build) — un filet supplémentaire, pas un substitut à la vérification locale avant de considérer un travail fini.
+
+## Conventions de code
+
+- **Commentaires et messages de commit en français**, préfixe `<type> : <description>` sur les commits (`feat :`, `fix :`, `chore :`...).
+- Les commentaires expliquent surtout le **pourquoi** (y compris les impasses et bugs déjà rencontrés) — lire le commentaire au-dessus d'un bout de code non trivial avant de le modifier, le raisonnement y est généralement déjà.
+- **Présentation des fichiers** : pour s'y repérer plus facilement, une bonne organisation est attendue sur les fichiers conséquents — titre, sommaire, chapitrage (`//1.`, `//2.`...) aux points d'articulation.
+- **ESLint est bloquant** — aucune erreur de lint ne doit passer, ni en local ni en CI.
+- Pas de nouveau package partagé (`packages/*`) avant un vrai **second consommateur réel** — voir "Architecture" ci-dessous ; en attendant, la logique va dans `apps/mobile/lib/` et les handlers IPC dans `apps/desktop/electron/`.
+- `docs/ARCHITECTURE.md` est un document vivant : chaque déviation architecturale significative par rapport au plan d'origine s'y enregistre comme un "écart pragmatique" plutôt que de diverger silencieusement du document.
+
 ## Commands
 
 Monorepo managed with pnpm workspaces + Turborepo (`pnpm@10.32.1`, Node >=18). Run from the repo root unless noted.
@@ -14,6 +46,7 @@ pnpm dev:desktop        # build the Electron main process then launch it (apps/d
 
 pnpm lint               # turbo run lint — both packages
 pnpm typecheck          # turbo run typecheck (tsc --noEmit) — both packages
+pnpm test               # turbo run test — apps/mobile only (apps/desktop has no test script, turbo skips it)
 pnpm build              # turbo run build — both packages
 ```
 
@@ -79,12 +112,8 @@ Opt-in, manual, desktop-only so far. Auth (`apps/desktop/electron/auth.ts` + `ap
 
 ## CI / release
 
+`.github/workflows/ci.yml` triggers on every push and pull request: lint → typecheck → test → build. Independent safety net, doesn't replace verifying locally before considering work done (see "Habitudes" above).
+
 `.github/workflows/release.yml` triggers only on a pushed `v*` tag — never on a plain commit/branch push. It builds Windows/Linux/macOS via `electron-builder --publish always`, drafts a GitHub Release with the installers attached, then (as of 2026-08-19, explicit user decision) a final `publish-release` job **auto-publishes it** (`gh release edit --draft=false`) once all 3 builds succeed AND the 3 installers (`.exe`/`.dmg`/`.AppImage`) are confirmed attached — if any is missing, publishing is skipped and the draft is left for inspection instead. There is no human review step between "build succeeded" and "shipped": `electron-updater` (`apps/desktop/electron/updater.ts`, `autoDownload`/`autoInstallOnAppQuit`) only sees published releases, so publishing = immediate rollout to every existing install. **Always bump the version and smoke-test before tagging** — pushing the tag is the real point of no return now, not a later manual "Publish" click.
 
 **Known trap**: `electron-builder` resolves which release to publish to from the `version` field in `apps/desktop/package.json`, *not* from the git tag name. If you push a tag without bumping both `apps/desktop/package.json` and `apps/mobile/package.json` to match, the build silently skips uploading all installer assets (logs show `skipped publishing ... reason=existing type not compatible`) — the `publish-release` job's asset check catches this and refuses to publish, but the underlying mismatch still needs fixing (bump both `package.json` versions in the same commit that gets tagged, keep them equal, and use a version that hasn't already been tagged).
-
-## Conventions specific to this repo
-
-- Code comments and commit messages are in **French**, using a `<type> : <description>` prefix on commits (`feat :`, `fix :`, `chore :`...).
-- Comments frequently explain *why*, including dead ends and bugs already hit (e.g. flexbox height bugs in the CodeMirror wrapper, IPC race conditions) — read the comment above a piece of non-obvious code before changing it, the reasoning is usually already there.
-- `docs/ARCHITECTURE.md` is the living design doc: each shipped deviation from the original plan is recorded inline as an "écart pragmatique" (pragmatic deviation) rather than silently diverging from the doc — update it when you make an architecturally significant choice that isn't already covered.
