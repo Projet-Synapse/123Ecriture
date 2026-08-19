@@ -60,9 +60,15 @@
     "win": {
       "target": ["nsis"]
     },
+    "nsis": {
+      "differentialPackage": false
+    },
     "mac": {
       "target": ["dmg"],
       "category": "public.app-category.productivity"
+    },
+    "dmg": {
+      "writeUpdateInfo": false
     }
   }
 }
