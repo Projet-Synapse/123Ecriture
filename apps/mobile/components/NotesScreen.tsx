@@ -193,6 +193,19 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
     .map((item) => NOTES_TOOLBAR_ACTIONS.find((action) => action.id === item.id))
     .filter((action): action is ToolbarAction => Boolean(action));
 
+  // Raccourcis clavier de mise en forme (voir MdxEditor.tsx, prop
+  // `shortcuts`) — dérivés de TOUTES les actions connues, pas seulement
+  // `toolbarActions` (visibles) : masquer un bouton dans Paramètres est une
+  // préférence d'affichage, pas une désactivation de la fonctionnalité —
+  // le raccourci clavier continue de fonctionner même bouton masqué.
+  const noteShortcuts = useMemo(
+    () =>
+      NOTES_TOOLBAR_ACTIONS.filter((action): action is ToolbarAction & { shortcut: string } =>
+        Boolean(action.shortcut),
+      ).map((action) => ({ key: action.shortcut, run: action.run })),
+    [],
+  );
+
   // //1. 🌳 CHARGEMENT DE L'ARBORESCENCE
   // //////////////////////////////////////////////////////////////////////
 
@@ -1339,23 +1352,11 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
 
                     {viewMode !== 'reading' && (
                       <EditorToolbar
-                        items={toolbarActions.map((action) =>
-                          action.subActions
-                            ? {
-                                id: action.id,
-                                label: action.label,
-                                subItems: action.subActions.map((sub) => ({
-                                  id: sub.id,
-                                  label: sub.label,
-                                  onPress: () => applyFormatting(sub.run),
-                                })),
-                              }
-                            : {
-                                id: action.id,
-                                label: action.label,
-                                onPress: () => applyFormatting(action.run as NonNullable<typeof action.run>),
-                              },
-                        )}
+                        items={toolbarActions.map((action) => ({
+                          id: action.id,
+                          label: action.label,
+                          onPress: () => applyFormatting(action.run),
+                        }))}
                         theme={theme}
                       />
                     )}
@@ -1396,6 +1397,7 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
                           fontSize={preferences.editorFontSize}
                           fontFamily={preferences.editorFontFamily}
                           closeBrackets={preferences.editorCloseBrackets}
+                          shortcuts={noteShortcuts}
                           onReady={(ref: ReactCodeMirrorRef) => {
                             viewRef.current = ref.view ?? null;
                           }}

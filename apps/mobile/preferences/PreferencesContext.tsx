@@ -3,7 +3,7 @@ import { useColorScheme } from 'react-native';
 
 import { DEFAULT_CANVAS_TOOLBAR_ORDER } from '../lib/canvasToolbarActions';
 import { DEFAULT_CHART_TOOLBAR_ORDER } from '../lib/chartToolbarActions';
-import { DEFAULT_NOTES_TOOLBAR_ORDER } from '../lib/notesToolbarActions';
+import { DEFAULT_NOTES_TOOLBAR_ORDER, normalizeNotesToolbarOrder } from '../lib/notesToolbarActions';
 import { darkTheme, lightTheme, type Theme } from '../theme';
 
 // Point central de la personnalisation de l'interface (voir
@@ -98,7 +98,15 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     if (!bridge) return;
     void bridge
       .get()
-      .then((stored) => setPreferences({ ...DEFAULT_PREFERENCES, ...stored }))
+      .then((stored) => {
+        const merged = { ...DEFAULT_PREFERENCES, ...stored };
+        // Voir notesToolbarActions.ts : convertit un ordre enregistré avant
+        // l'éclatement du groupe "H" (id 'heading-group') vers les 6
+        // niveaux individuels, sans quoi ce bouton disparaîtrait de la
+        // barre pour une utilisatrice ayant déjà personnalisé son ordre.
+        merged.notesToolbarOrder = normalizeNotesToolbarOrder(merged.notesToolbarOrder);
+        setPreferences(merged);
+      })
       .catch((error) => console.error('[preferences] échec du chargement :', error))
       .finally(() => setPreferencesLoaded(true));
   }, [bridge]);
