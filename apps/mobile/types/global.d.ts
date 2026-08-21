@@ -53,6 +53,12 @@ declare global {
     reorder: (parentRelPath: string | undefined, orderedNames: string[]) => Promise<VaultTreeNode[]>;
     importAttachment: () => Promise<{ relPath: string; name: string } | null>;
     readAttachmentDataUrl: (relPath: string) => Promise<string>;
+    // Voir "Dupliquer" dans le menu contextuel de NotesScreen.tsx — copie
+    // dans le MÊME dossier, suffixée " (copie)"/" (copie 2)"...
+    duplicate: (relPath: string) => Promise<VaultEntry>;
+    // Voir la bascule Fichiers/Tags de NotesScreen.tsx — chargé à la
+    // demande (pas de flux poussé), voir apps/desktop/electron/search.ts.
+    listTags: () => Promise<TagGroup[]>;
   }
 
   interface VaultRegistryEntry {
@@ -194,6 +200,20 @@ declare global {
 
   interface SearchBridge {
     run: (query: string, options?: SearchOptions) => Promise<SearchResult[]>;
+  }
+
+  // Vue dédiée aux tags (voir NotesScreen.tsx, bascule Fichiers/Tags à côté
+  // du bouton de tri ⇅) — un `#mot-clé` peut apparaître dans plusieurs
+  // notes, d'où ce regroupement (voir VaultBridge.listTags,
+  // apps/desktop/electron/search.ts).
+  interface TagNoteRef {
+    relPath: string;
+    name: string;
+  }
+
+  interface TagGroup {
+    tag: string;
+    notes: TagNoteRef[];
   }
 
   // Contenu d'un fichier `.chart` (voir defaultContentForKind dans
@@ -351,6 +371,11 @@ declare global {
     // pouvoir mémoriser la dernière largeur "dépliée" et la restaurer telle
     // quelle en rouvrant.
     sidebarLayout: SidebarLayoutState;
+    // Notes épinglées (voir NotesScreen.tsx, section "⭐ Favoris" en tête de
+    // l'explorateur) — relPaths bruts ; un chemin qui ne correspond plus à
+    // rien (renommé/supprimé depuis) est ignoré silencieusement à
+    // l'affichage (findNodeByPath), jamais purgé automatiquement ici.
+    favoriteRelPaths: string[];
   }
 
   interface SidebarPanelLayout {

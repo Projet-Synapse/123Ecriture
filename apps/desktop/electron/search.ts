@@ -4,7 +4,7 @@ import path from 'path';
 import { load } from 'js-yaml';
 
 import * as vaults from './vaults';
-import type { SearchOptions, SearchResult, SearchResultKind, VaultEntryKind } from './types';
+import type { SearchOptions, SearchResult, SearchResultKind, TagGroup, VaultEntryKind } from './types';
 
 // Module "Recherche globale" (voir .claude/References/Sources.md §2,
 // bouton en haut de l'explorateur de fichiers) : parcourt le coffre à la
@@ -192,10 +192,54 @@ async function runSearch(vaultPath: string, query: string, options: SearchOption
   return results;
 }
 
+// Vue dédiée aux tags (voir NotesScreen.tsx, bascule Fichiers/Tags) —
+// réutilise le même parcours + la même extraction de tags que la recherche
+// globale ci-dessus (walkAll, parseFrontmatter, TAG_PATTERN via
+// extractTags) plutôt que de dupliquer une seconde fois cette logique, déjà
+// dupliquée une fois volontairement entre ce fichier et
+// apps/mobile/lib/markdownPlugins.ts (voir le commentaire de TAG_PATTERN
+// plus haut) — inutile d'ajouter une TROISIÈME copie côté main process
+// alors qu'un seul module la porte déjà ici. Regroupe par tag (un
+// `#mot-clé` pouvant apparaître dans plusieurs notes), trié
+// alphabétiquement.
+async function listTags(vaultPath: string): Promise<TagGroup[]> {
+  const entries = await walkAll(vaultPath, vaultPath);
+  const notesByTag = new Map<string, { relPath: string; name: string }[]>();
+
+  for (const entry of entries) {
+    if (entry.isFolder || entry.kind !== 'markdown') continue;
+    let content: string;
+    try {
+      content = await fs.readFile(entry.fullPath, 'utf8');
+    } catch {
+      // Fichier illisible entre le listage et la lecture — ignoré plutôt
+      // que de faire échouer tout le chargement pour un seul fichier (même
+      // esprit que runSearch ci-dessus).
+      continue;
+    }
+    const { body } = parseFrontmatter(content);
+    for (const tag of extractTags(body)) {
+      const notes = notesByTag.get(tag) ?? [];
+      notes.push({ relPath: entry.relPath, name: entry.name });
+      notesByTag.set(tag, notes);
+    }
+  }
+
+  return [...notesByTag.entries()]
+    .map(([tag, notes]) => ({ tag, notes }))
+    .sort((a, b) => a.tag.localeCompare(b.tag, 'fr'));
+}
+
 export function registerSearchHandlers(): void {
   ipcMain.handle('vault:search', async (_event, query: string, options?: SearchOptions) => {
     const vaultPath = getVaultPath();
     if (!vaultPath) return [];
     return runSearch(vaultPath, query, options);
+  });
+
+  ipcMain.handle('vault:list-tags', async () => {
+    const vaultPath = getVaultPath();
+    if (!vaultPath) return [];
+    return listTags(vaultPath);
   });
 }

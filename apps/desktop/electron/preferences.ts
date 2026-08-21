@@ -65,6 +65,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
     explorer: { width: 260, collapsed: false },
     rightPanel: { width: 280, collapsed: false },
   },
+  favoriteRelPaths: [],
 };
 
 // Les 3 listes `*ToolbarOrder` (Notes/Canvas/Graphiques) ont besoin d'une

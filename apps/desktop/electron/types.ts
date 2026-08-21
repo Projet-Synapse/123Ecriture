@@ -190,6 +190,13 @@ export interface Preferences {
   editorCloseBrackets: boolean;
   editorInlineTitle: boolean;
   sidebarLayout: SidebarLayoutState;
+  // Notes épinglées (voir NotesScreen.tsx, section "⭐ Favoris" en tête de
+  // l'explorateur) — relPaths bruts plutôt qu'un registre séparé sous
+  // .123ecriture/ : une préférence app-level comme le reste de ce fichier,
+  // pas du contenu de vault. Un chemin qui ne correspond plus à rien
+  // (renommé/supprimé depuis) est ignoré silencieusement à l'affichage
+  // (voir findNodeByPath côté renderer), jamais purgé automatiquement ici.
+  favoriteRelPaths: string[];
 }
 
 export interface SidebarPanelLayout {
@@ -239,4 +246,20 @@ export interface SearchResult {
 export interface SearchOptions {
   propertyId?: string;
   propertyValue?: string;
+}
+
+// Vue dédiée aux tags (voir NotesScreen.tsx, bascule Fichiers/Tags à côté
+// du bouton de tri) — un `#mot-clé` peut apparaître dans plusieurs notes,
+// d'où ce regroupement plutôt qu'une simple liste de notes. Construit par
+// vault:list-tags (voir search.ts, qui réutilise déjà TAG_PATTERN/
+// extractTags pour la recherche globale) à la demande, jamais tenu à jour
+// en tâche de fond.
+export interface TagNoteRef {
+  relPath: string;
+  name: string;
+}
+
+export interface TagGroup {
+  tag: string;
+  notes: TagNoteRef[];
 }

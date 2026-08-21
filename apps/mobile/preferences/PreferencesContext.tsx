@@ -37,6 +37,7 @@ const DEFAULT_PREFERENCES: Preferences = {
     explorer: { width: 260, collapsed: false },
     rightPanel: { width: 280, collapsed: false },
   },
+  favoriteRelPaths: [],
 };
 
 type PreferencesContextValue = {
@@ -65,6 +66,13 @@ type PreferencesContextValue = {
   setEditorCloseBrackets: (value: boolean) => Promise<void>;
   setEditorInlineTitle: (value: boolean) => Promise<void>;
   setSidebarPanelLayout: (id: SidebarPanelId, layout: SidebarPanelLayout) => Promise<void>;
+  // Notes épinglées (voir NotesScreen.tsx, menu contextuel "Ajouter aux
+  // favoris"/"Retirer des favoris" + section "⭐ Favoris" de l'explorateur) —
+  // bascule l'appartenance de `relPath` à `favoriteRelPaths` en une seule
+  // opération, plutôt que de laisser chaque appelant reconstruire le
+  // tableau à la main (même esprit que les autres setters ci-dessus, qui
+  // persistent directement).
+  toggleFavorite: (relPath: string) => Promise<void>;
   // Paramètres → Confidentialité et données. `undefined` si non disponible
   // (pas de pont Electron, ex. web/mobile) — laissé à la charge de l'écran
   // d'afficher/masquer les actions correspondantes, même logique de
@@ -204,6 +212,16 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       persist({ sidebarLayout: { ...preferences.sidebarLayout, [id]: layout } }),
     [persist, preferences.sidebarLayout],
   );
+  const toggleFavorite = useCallback(
+    (relPath: string) => {
+      const current = preferences.favoriteRelPaths;
+      const next = current.includes(relPath)
+        ? current.filter((path) => path !== relPath)
+        : [...current, relPath];
+      return persist({ favoriteRelPaths: next });
+    },
+    [persist, preferences.favoriteRelPaths],
+  );
 
   const resetPreferences = useCallback(() => {
     setPreferences(DEFAULT_PREFERENCES);
@@ -247,6 +265,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       setEditorCloseBrackets,
       setEditorInlineTitle,
       setSidebarPanelLayout,
+      toggleFavorite,
       resetPreferences,
       getConfigPath,
       revealConfigFolder,
@@ -274,6 +293,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       setEditorCloseBrackets,
       setEditorInlineTitle,
       setSidebarPanelLayout,
+      toggleFavorite,
       resetPreferences,
       getConfigPath,
       revealConfigFolder,
