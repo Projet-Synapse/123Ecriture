@@ -197,6 +197,13 @@ export interface Preferences {
   // (renommé/supprimé depuis) est ignoré silencieusement à l'affichage
   // (voir findNodeByPath côté renderer), jamais purgé automatiquement ici.
   favoriteRelPaths: string[];
+  // Paramètres → Compte et synchronisation : synchronise automatiquement
+  // (au démarrage + à intervalle régulier) plutôt que seulement sur clic de
+  // "Synchroniser maintenant" — voir apps/mobile/lib/sync/SyncStatusContext.tsx
+  // pour le déclenchement réel. `false` par défaut : la sync manuelle reste
+  // le comportement historique, ce choix n'est jamais fait à la place de
+  // l'utilisatrice.
+  autoSyncEnabled: boolean;
 }
 
 export interface SidebarPanelLayout {

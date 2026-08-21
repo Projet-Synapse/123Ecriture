@@ -3,6 +3,7 @@ import { Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-na
 
 import type { Section } from '../navigation';
 import { useResizablePanel } from '../lib/useResizablePanel';
+import { useSyncStatus } from '../lib/sync/SyncStatusContext';
 import { usePreferences } from '../preferences/PreferencesContext';
 import { ResizeHandle } from './ResizeHandle';
 import { VaultSwitcher } from './VaultSwitcher';
@@ -39,6 +40,7 @@ export function AppShell({ sections, activeId, onSelect, children }: Props) {
       ]}
     >
       {isWide && <VaultSwitcher />}
+      {isWide && <SyncStatusChip />}
       {sections.map((section) => {
         const isActive = section.id === activeId;
         return (
@@ -93,10 +95,76 @@ export function AppShell({ sections, activeId, onSelect, children }: Props) {
           PlaceholderScreen.tsx n'a aucun ScrollView à lui (texte centré,
           n'en a jamais eu besoin) — rien ne dépendait de celui-ci. */}
       <View style={styles.content}>{children}</View>
+      {!isWide && (
+        <View style={[styles.narrowSyncRow, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+          <SyncStatusChip compact />
+        </View>
+      )}
       {!isWide && nav}
     </View>
   );
 }
+
+// Puce de statut de synchro globale — voir SyncStatusContext.tsx. N'affiche
+// RIEN tant qu'aucun coffre cloud n'est effectivement lié (cloudSyncConfigured
+// à `false`) : avant ça, un "Non synchronisé" permanent n'aurait aucun sens
+// puisque rien n'est configuré (même garde-fou que AccountSyncSection.tsx).
+// `compact` (barre du bas, écrans étroits) masque le libellé texte et ne
+// garde que l'icône, pour ne pas déborder d'une barre déjà dense.
+function SyncStatusChip({ compact }: { compact?: boolean }) {
+  const { theme } = usePreferences();
+  const syncStatus = useSyncStatus();
+
+  if (!syncStatus.cloudSyncConfigured) return null;
+
+  let icon = '○';
+  let label = 'Non synchronisé';
+  let color = theme.textMuted;
+
+  if (syncStatus.status === 'syncing') {
+    icon = '⟳';
+    label = 'Synchronisation…';
+    color = theme.accent;
+  } else if (syncStatus.status === 'error') {
+    icon = '⚠';
+    label = 'Erreur de sync';
+    color = SYNC_WARNING_COLOR;
+  } else if (syncStatus.status === 'success' && syncStatus.lastSyncedAt) {
+    if (syncStatus.lastConflicts > 0) {
+      icon = '⚠';
+      label = `${syncStatus.lastConflicts} conflit(s)`;
+      color = SYNC_WARNING_COLOR;
+    } else {
+      const synced = new Date(syncStatus.lastSyncedAt);
+      const hh = String(synced.getHours()).padStart(2, '0');
+      const mm = String(synced.getMinutes()).padStart(2, '0');
+      icon = '✓';
+      label = `Synchronisé à ${hh}:${mm}`;
+      color = theme.textMuted;
+    }
+  }
+
+  return (
+    <Pressable
+      onPress={() => void syncStatus.runSync()}
+      style={[styles.syncChip, compact && styles.syncChipCompact]}
+      accessibilityLabel={label}
+    >
+      <Text style={[styles.syncChipIcon, { color }]}>{icon}</Text>
+      {!compact && (
+        <Text style={[styles.syncChipLabel, { color }]} numberOfLines={1}>
+          {label}
+        </Text>
+      )}
+    </Pressable>
+  );
+}
+
+// Même rouge que settingsStyles.error (#dc2626) — pas de token dédié
+// "erreur"/"danger" dans theme.ts pour l'instant (voir theme.ts, encore
+// minimal), donc réutilisation littérale plutôt qu'invention d'une nouvelle
+// couleur ad hoc.
+const SYNC_WARNING_COLOR = '#dc2626';
 
 const styles = StyleSheet.create({
   root: {
@@ -153,5 +221,37 @@ const styles = StyleSheet.create({
   },
   content: {
     flex: 1,
+  },
+  // Puce de statut de synchro — voir SyncStatusChip ci-dessus. Placée sous
+  // VaultSwitcher en mode large (même colonne, même largeur).
+  syncChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginHorizontal: 8,
+    marginBottom: 8,
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+  },
+  syncChipCompact: {
+    marginHorizontal: 0,
+    marginBottom: 0,
+    paddingVertical: 2,
+    paddingHorizontal: 0,
+  },
+  syncChipIcon: {
+    fontSize: 13,
+  },
+  syncChipLabel: {
+    flex: 1,
+    fontSize: 11,
+  },
+  // Barre du bas, écrans étroits : rangée fine juste au-dessus des onglets
+  // pour l'indicateur compact (icône seule) — évite de surcharger la
+  // barre d'onglets elle-même, déjà dense (voir tabBar ci-dessus).
+  narrowSyncRow: {
+    alignItems: 'center',
+    paddingVertical: 2,
+    borderTopWidth: 1,
   },
 });

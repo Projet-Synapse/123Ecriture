@@ -376,6 +376,13 @@ declare global {
     // rien (renommé/supprimé depuis) est ignoré silencieusement à
     // l'affichage (findNodeByPath), jamais purgé automatiquement ici.
     favoriteRelPaths: string[];
+    // Paramètres → Compte et synchronisation : synchronise automatiquement
+    // (au démarrage + à intervalle régulier) plutôt que seulement sur clic
+    // de "Synchroniser maintenant" — voir lib/sync/SyncStatusContext.tsx
+    // pour le déclenchement réel. `false` par défaut : la sync manuelle
+    // reste le comportement historique, ce choix n'est jamais fait à la
+    // place de l'utilisatrice.
+    autoSyncEnabled: boolean;
   }
 
   interface SidebarPanelLayout {

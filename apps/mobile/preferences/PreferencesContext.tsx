@@ -38,6 +38,9 @@ const DEFAULT_PREFERENCES: Preferences = {
     rightPanel: { width: 280, collapsed: false },
   },
   favoriteRelPaths: [],
+  // Sync manuelle par défaut — choix déjà tranché (voir CLAUDE.md), ne
+  // JAMAIS passer à `true` ici.
+  autoSyncEnabled: false,
 };
 
 type PreferencesContextValue = {
@@ -73,6 +76,10 @@ type PreferencesContextValue = {
   // tableau à la main (même esprit que les autres setters ci-dessus, qui
   // persistent directement).
   toggleFavorite: (relPath: string) => Promise<void>;
+  // Paramètres → Compte et synchronisation, bascule "Synchroniser
+  // automatiquement" — voir lib/sync/SyncStatusContext.tsx pour l'effet qui
+  // la consomme réellement (démarrage + intervalle).
+  setAutoSyncEnabled: (value: boolean) => Promise<void>;
   // Paramètres → Confidentialité et données. `undefined` si non disponible
   // (pas de pont Electron, ex. web/mobile) — laissé à la charge de l'écran
   // d'afficher/masquer les actions correspondantes, même logique de
@@ -223,6 +230,8 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     [persist, preferences.favoriteRelPaths],
   );
 
+  const setAutoSyncEnabled = useCallback((value: boolean) => persist({ autoSyncEnabled: value }), [persist]);
+
   const resetPreferences = useCallback(() => {
     setPreferences(DEFAULT_PREFERENCES);
     if (bridge) {
@@ -266,6 +275,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       setEditorInlineTitle,
       setSidebarPanelLayout,
       toggleFavorite,
+      setAutoSyncEnabled,
       resetPreferences,
       getConfigPath,
       revealConfigFolder,
@@ -294,6 +304,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       setEditorInlineTitle,
       setSidebarPanelLayout,
       toggleFavorite,
+      setAutoSyncEnabled,
       resetPreferences,
       getConfigPath,
       revealConfigFolder,

@@ -8,6 +8,7 @@ import { PlaceholderScreen } from './components/PlaceholderScreen';
 import { SettingsScreen } from './components/SettingsScreen';
 import { TasksScreen } from './components/TasksScreen';
 import { AuthProvider } from './lib/sync/AuthContext';
+import { SyncStatusProvider } from './lib/sync/SyncStatusContext';
 import { VaultsProvider } from './lib/sync/VaultsContext';
 import { SECTIONS } from './navigation';
 import { PreferencesProvider } from './preferences/PreferencesContext';
@@ -60,7 +61,12 @@ export default function App() {
     <PreferencesProvider>
       <AuthProvider>
         <VaultsProvider>
-          <Root />
+          {/* Après Auth/Vaults : la sync a besoin d'une session ET d'un
+              coffre actif pour savoir s'il y a quoi que ce soit à
+              synchroniser (voir SyncStatusContext.tsx). */}
+          <SyncStatusProvider>
+            <Root />
+          </SyncStatusProvider>
         </VaultsProvider>
       </AuthProvider>
     </PreferencesProvider>
