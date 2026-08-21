@@ -13,6 +13,7 @@ import { EditorView, type ReactCodeMirrorRef } from '@uiw/react-codemirror';
 import { parseFrontmatter, serializeFrontmatter } from '../lib/frontmatter';
 import type { FormattingResult, Selection } from '../lib/mdxFormatting';
 import { NOTES_TOOLBAR_ACTIONS, type ToolbarAction } from '../lib/notesToolbarActions';
+import { openSearchResult } from '../lib/searchResults';
 import { useResizablePanel } from '../lib/useResizablePanel';
 import {
   findNodeByPath,
@@ -24,6 +25,7 @@ import {
 } from '../lib/vaultTree';
 import { useVaults } from '../lib/sync/VaultsContext';
 import { usePreferences } from '../preferences/PreferencesContext';
+import type { NotesActions } from './AppShell';
 import { CanvasEditor } from './CanvasEditor';
 import { ChartEditor } from './ChartEditor';
 import { EditorToolbar } from './EditorToolbar';
@@ -111,9 +113,29 @@ type Props = {
   // passer par un autre écran redéclencherait l'ouverture en boucle).
   pendingOpenRelPath?: string | null;
   onOpenedPendingNote?: () => void;
+  // Ouvrir un résultat de recherche globale "tâche"/"évènement" (voir
+  // SearchDialog ci-dessous) bascule sur un AUTRE écran — cet écran ne sait
+  // ouvrir que des notes, donc il remonte la demande à App.tsx via ces deux
+  // callbacks (même généralisation que `onRequestOpenNote` de
+  // CalendarScreen.tsx, voir lib/searchResults.ts `openSearchResult`).
+  onRequestOpenTask?: (taskListId: string, taskId: string) => void;
+  onRequestOpenCalendarDate?: (date: string) => void;
+  // Enregistre "Nouvelle note"/"Nouveau dossier" auprès de App.tsx pour que
+  // CommandPalette.tsx (Ctrl/Cmd+K, monté dans AppShell.tsx — donc HORS de
+  // cet écran) puisse les déclencher quand Notes est l'écran actif. Solution
+  // la plus simple qui reste correcte : un registre à UNE entrée (pas un
+  // registre générique par écran), puisque seul Notes expose ce genre
+  // d'action pour l'instant.
+  onRegisterActions?: (actions: NotesActions) => void;
 };
 
-export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props = {}) {
+export function NotesScreen({
+  pendingOpenRelPath,
+  onOpenedPendingNote,
+  onRequestOpenTask,
+  onRequestOpenCalendarDate,
+  onRegisterActions,
+}: Props = {}) {
   const { preferences, preferencesLoaded, theme, setFileSortMode, toggleFavorite } = usePreferences();
   const vault = typeof window !== 'undefined' ? window.vault : undefined;
   const contextMenuBridge = typeof window !== 'undefined' ? window.contextMenu : undefined;
@@ -531,6 +553,19 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
     },
     [vault, refreshTree],
   );
+
+  // Enregistre "Nouvelle note"/"Nouveau dossier" pour CommandPalette.tsx
+  // (voir Props.onRegisterActions ci-dessus) — sans argument explicite : la
+  // palette de commandes déclenche toujours la création "générique" (même
+  // résolution d'emplacement par défaut que le bouton "+ Nouvelle note" de
+  // l'en-tête), jamais "...ici" (qui n'a de sens que depuis le menu
+  // contextuel d'un élément précis de l'arborescence).
+  useEffect(() => {
+    onRegisterActions?.({
+      createNote: () => void handleCreateNote(),
+      createFolder: () => void handleCreateFolder(),
+    });
+  }, [onRegisterActions, handleCreateNote, handleCreateFolder]);
 
   // //4. ✏️ RENOMMER / DÉPLACER / MODIFIER LE CHEMIN / SUPPRIMER
   // //////////////////////////////////////////////////////////////////////
@@ -1830,9 +1865,19 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
       {searchOpen && (
         <SearchDialog
           theme={theme}
-          onOpenResult={(relPath) => {
+          onOpenResult={(result) => {
             setSearchOpen(false);
-            openNoteByRelPath(relPath);
+            // Note/canvas/graphique/excalidraw : s'ouvre directement ICI
+            // (openNoteByRelPath, pas besoin de repasser par App.tsx
+            // puisqu'on est déjà sur Notes) — tâche/évènement : remontés à
+            // App.tsx via onRequestOpenTask/onRequestOpenCalendarDate, qui
+            // basculent d'écran ET révèlent l'élément (voir Props
+            // ci-dessus).
+            openSearchResult(result, {
+              openNote: openNoteByRelPath,
+              openTask: (taskListId, taskId) => onRequestOpenTask?.(taskListId, taskId),
+              openCalendarEvent: (date) => onRequestOpenCalendarDate?.(date),
+            });
           }}
           onCancel={() => setSearchOpen(false)}
         />

@@ -1,10 +1,11 @@
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode, type RefObject } from 'react';
 import { Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
 import type { Section } from '../navigation';
 import { useResizablePanel } from '../lib/useResizablePanel';
 import { useSyncStatus } from '../lib/sync/SyncStatusContext';
 import { usePreferences } from '../preferences/PreferencesContext';
+import { CommandPalette } from './CommandPalette';
 import { ResizeHandle } from './ResizeHandle';
 import { VaultSwitcher } from './VaultSwitcher';
 
@@ -13,17 +14,43 @@ import { VaultSwitcher } from './VaultSwitcher';
 // barre latérale (écrans larges : desktop/web/tablette) et barre d'onglets
 // en bas (écrans étroits : téléphone) — un même composant pour toutes les
 // plateformes, cohérent avec la vision « app multiplateforme » de
-// docs/ARCHITECTURE.md.
+// docs/ARCHITECTURE.md. Présente sur TOUS les écrans (elle englobe
+// `children`), c'est donc ici que vit le raccourci global Ctrl/Cmd+K de la
+// palette de commandes (voir CommandPalette.tsx) — un seul écouteur clavier
+// pour toute l'app plutôt qu'un par écran.
 const WIDE_BREAKPOINT = 720;
+
+// "Nouvelle note"/"Nouveau dossier" ne concernent que l'écran Notes (voir
+// NotesScreen.tsx) — enregistrées par lui auprès de App.tsx dès qu'il est
+// monté, pour que CommandPalette (montée ICI, HORS de NotesScreen) puisse
+// les proposer/déclencher sans que ce composant-coquille n'ait besoin de
+// connaître l'écran Notes en détail.
+export type NotesActions = {
+  createNote: () => void;
+  createFolder: () => void;
+};
 
 type Props = {
   sections: Section[];
   activeId: string;
   onSelect: (id: string) => void;
   children: ReactNode;
+  notesActionsRef: RefObject<NotesActions | null>;
+  onRequestOpenNote: (relPath: string) => void;
+  onRequestOpenTask: (taskListId: string, taskId: string) => void;
+  onRequestOpenCalendarDate: (date: string) => void;
 };
 
-export function AppShell({ sections, activeId, onSelect, children }: Props) {
+export function AppShell({
+  sections,
+  activeId,
+  onSelect,
+  children,
+  notesActionsRef,
+  onRequestOpenNote,
+  onRequestOpenTask,
+  onRequestOpenCalendarDate,
+}: Props) {
   const { theme } = usePreferences();
   const { width } = useWindowDimensions();
   const isWide = width >= WIDE_BREAKPOINT;
@@ -31,6 +58,24 @@ export function AppShell({ sections, activeId, onSelect, children }: Props) {
   // seulement pertinent en mode barre latérale large ; en mode barre
   // d'onglets (étroit), la nav n'a pas de largeur à faire varier.
   const navPanel = useResizablePanel('nav', { min: 72, max: 360, edge: 1 });
+
+  // Ctrl/Cmd+K global (n'importe quel écran) — dégradé gracieusement si
+  // `window` n'existe pas (mobile natif, pas de clavier physique standard).
+  // Cmd sur macOS, Ctrl ailleurs — même détection que le reste de l'app pour
+  // les raccourcis (voir MdxEditor.tsx, `shortcuts`).
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const isMac = /Mac|iPhone|iPad/.test(navigator.platform ?? '');
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const modifierPressed = isMac ? event.metaKey : event.ctrlKey;
+      if (!modifierPressed || event.key.toLowerCase() !== 'k') return;
+      event.preventDefault();
+      setCommandPaletteOpen((open) => !open);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   const nav = (
     <View
@@ -101,6 +146,20 @@ export function AppShell({ sections, activeId, onSelect, children }: Props) {
         </View>
       )}
       {!isWide && nav}
+
+      {commandPaletteOpen && (
+        <CommandPalette
+          theme={theme}
+          sections={sections}
+          activeId={activeId}
+          onSelect={onSelect}
+          notesActionsRef={notesActionsRef}
+          onRequestOpenNote={onRequestOpenNote}
+          onRequestOpenTask={onRequestOpenTask}
+          onRequestOpenCalendarDate={onRequestOpenCalendarDate}
+          onClose={() => setCommandPaletteOpen(false)}
+        />
+      )}
     </View>
   );
 }

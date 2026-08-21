@@ -3,6 +3,8 @@ import fs from 'fs/promises';
 import path from 'path';
 import { load } from 'js-yaml';
 
+import { readEvents } from './calendar';
+import { getTaskLists, readTasks } from './tasks';
 import * as vaults from './vaults';
 import type { SearchOptions, SearchResult, SearchResultKind, TagGroup, VaultEntryKind } from './types';
 
@@ -104,6 +106,89 @@ function buildSnippet(text: string, matchIndex: number, matchLength: number): st
   return `${prefix}${text.slice(start, end).replace(/\s+/g, ' ').trim()}${suffix}`;
 }
 
+// Étend la recherche globale aux TÂCHES (voir electron/tasks.ts) — cherche
+// le texte de la tâche ET sa description, un résultat par tâche
+// correspondante. `taskId`/`taskListId` (pas de `relPath`, une tâche n'a pas
+// de fichier) portent de quoi la rouvrir côté renderer (voir
+// lib/searchResults.ts, `openSearchResult`).
+function searchTasks(vaultPath: string, needle: string): SearchResult[] {
+  // Assure la migration (listId attribué à toute tâche créée avant les
+  // listes multiples) avant de lire — sans ça une tâche legacy remonterait
+  // sans `taskListId` exploitable pour la rouvrir.
+  getTaskLists(vaultPath);
+  const results: SearchResult[] = [];
+
+  for (const task of readTasks(vaultPath)) {
+    const textIndex = task.text.toLowerCase().indexOf(needle);
+    if (textIndex !== -1) {
+      results.push({
+        relPath: '',
+        name: task.text,
+        kind: 'task',
+        matchType: 'title',
+        taskId: task.id,
+        taskListId: task.listId,
+      });
+      continue;
+    }
+
+    const description = task.description ?? '';
+    const descriptionIndex = description.toLowerCase().indexOf(needle);
+    if (descriptionIndex !== -1) {
+      results.push({
+        relPath: '',
+        name: task.text,
+        kind: 'task',
+        matchType: 'content',
+        snippet: buildSnippet(description, descriptionIndex, needle.length),
+        taskId: task.id,
+        taskListId: task.listId,
+      });
+    }
+  }
+
+  return results;
+}
+
+// Étend la recherche globale aux ÉVÈNEMENTS du calendrier (voir
+// electron/calendar.ts) — cherche le titre ET les notes de l'évènement.
+// `eventDate` (AAAA-MM-JJ) suffit à révéler le bon jour côté renderer
+// (CalendarScreen.tsx, `openDay`) ; `eventId` sert surtout de clé de rendu.
+function searchCalendarEvents(vaultPath: string, needle: string): SearchResult[] {
+  const results: SearchResult[] = [];
+
+  for (const event of readEvents(vaultPath)) {
+    const titleIndex = event.title.toLowerCase().indexOf(needle);
+    if (titleIndex !== -1) {
+      results.push({
+        relPath: '',
+        name: event.title,
+        kind: 'calendar-event',
+        matchType: 'title',
+        eventId: event.id,
+        eventDate: event.date,
+      });
+      continue;
+    }
+
+    const notes = event.notes ?? '';
+    const notesIndex = notes.toLowerCase().indexOf(needle);
+    if (notesIndex !== -1) {
+      results.push({
+        relPath: '',
+        name: event.title,
+        kind: 'calendar-event',
+        matchType: 'content',
+        snippet: buildSnippet(notes, notesIndex, needle.length),
+        eventId: event.id,
+        eventDate: event.date,
+      });
+    }
+  }
+
+  return results;
+}
+
 async function runSearch(vaultPath: string, query: string, options: SearchOptions | undefined): Promise<SearchResult[]> {
   const trimmedQuery = (query ?? '').trim();
   const propertyId = options?.propertyId;
@@ -181,6 +266,14 @@ async function runSearch(vaultPath: string, query: string, options: SearchOption
         snippet: buildSnippet(body, contentIndex, needle.length),
       });
     }
+  }
+
+  // Tâches et évènements du calendrier n'ont pas de frontmatter/propriétés
+  // — un filtre par propriété actif les exclut donc entièrement plutôt que
+  // de les inclure à tort (ils ne peuvent jamais satisfaire ce filtre).
+  if (trimmedQuery && !propertyId) {
+    results.push(...searchTasks(vaultPath, needle));
+    results.push(...searchCalendarEvents(vaultPath, needle));
   }
 
   // Titre d'abord, puis mots-clés, puis contenu, puis propriété seule —
