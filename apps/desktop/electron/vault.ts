@@ -75,7 +75,12 @@ function guessMimeType(fileName: string): string {
 // voir NotesScreen.tsx) et l'icône dans VaultTreeView.tsx. `.canvas` aligné
 // sur JSON Canvas (https://jsoncanvas.org), `.chart` sur le format maison
 // déjà utilisé par sheets.js (voir defaultContentForKind ci-dessous).
-const EXTENSION_TO_KIND: Record<string, VaultEntryKind> = {
+// Exportée : c'est aussi la liste faisant foi des extensions reconnues comme
+// contenu de vault ailleurs dans le process principal (voir sync.ts —
+// walkAndHash doit couvrir exactement les mêmes extensions que walkTree ici,
+// sinon un type de fichier peut être visible dans l'arborescence mais
+// invisible pour la synchro, silencieusement).
+export const EXTENSION_TO_KIND: Record<string, VaultEntryKind> = {
   '.mdx': 'markdown',
   // Fichiers `.md` importés depuis Obsidian (ou tout autre éditeur
   // Markdown standard) — reconnus comme notes au même titre que `.mdx`,
