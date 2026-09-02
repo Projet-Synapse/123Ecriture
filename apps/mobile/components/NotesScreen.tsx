@@ -990,6 +990,69 @@ export function NotesScreen({ pendingOpenRelPath, onOpenedPendingNote }: Props =
     scheduleSave(text);
   };
 
+  // Contenu courant tenu à jour dans une ref (plutôt qu'ajouté aux deps de
+  // flushSave ci-dessous) : sinon flushSave changerait d'identité à chaque
+  // frappe, ce qui réenregistrerait l'écouteur clavier global à chaque
+  // frappe pour rien (voir l'effet Ctrl/Cmd+S/K/N plus bas).
+  const contentRef = useRef(content);
+  useEffect(() => {
+    contentRef.current = content;
+  }, [content]);
+
+  // Sauvegarde immédiate (Ctrl/Cmd+S) : court-circuite le debounce de
+  // scheduleSave plutôt que d'attendre AUTOSAVE_DELAY_MS — l'autosave existe
+  // déjà pour ne rien perdre, mais un raccourci "Enregistrer" qui attend
+  // quand même 600ms avant d'écrire donnerait l'impression de ne rien faire.
+  const flushSave = useCallback(() => {
+    if (!vault || !activeNote) return;
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    setStatus('saving');
+    void (async () => {
+      try {
+        await vault.writeNote(activeNote.relPath, contentRef.current);
+        setStatus('saved');
+        await refreshTree();
+      } catch (error) {
+        console.error('[vault] échec de sauvegarde immédiate (Ctrl+S) :', error);
+        setStatus('error');
+      }
+    })();
+  }, [vault, activeNote, refreshTree]);
+
+  // Raccourcis clavier globaux (Ctrl sur Windows/Linux, Cmd sur macOS) —
+  // absents jusqu'ici de toute l'app (voir l'analyse ergonomie), pourtant
+  // attendus dans un éditeur de notes façon Obsidian : Ctrl/Cmd+S force la
+  // sauvegarde immédiate, Ctrl/Cmd+K ouvre la recherche globale (déjà
+  // accessible via le bouton 🔍), Ctrl/Cmd+N crée une nouvelle note (même
+  // emplacement par défaut que le bouton "+ Nouvelle note"). Web/Electron
+  // uniquement (`window` n'existe pas sur natif) — `preventDefault` évite
+  // que le navigateur n'ouvre sa propre boîte de dialogue "Enregistrer
+  // sous"/recherche de page sur Ctrl+S/Ctrl+K.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey)) return;
+      switch (event.key.toLowerCase()) {
+        case 's':
+          event.preventDefault();
+          flushSave();
+          break;
+        case 'k':
+          event.preventDefault();
+          setSearchOpen(true);
+          break;
+        case 'n':
+          event.preventDefault();
+          void handleCreateNote();
+          break;
+        default:
+          break;
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [flushSave, handleCreateNote]);
+
   // Le bloc "Propriétés" (PropertiesBlock.tsx) affiche déjà le frontmatter
   // de façon structurée en mode Intermédiaire/Aperçu — sans ça, le bloc YAML
   // brut ("---\ntitre: ...\n---") apparaissait EN PLUS, en texte littéral,

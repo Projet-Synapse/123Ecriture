@@ -44,68 +44,87 @@ export function AboutSection() {
     }
   }, [updater]);
 
+  // Raccourcis clavier (Ctrl sur Windows/Linux, Cmd sur macOS) — voir
+  // NotesScreen.tsx pour l'implémentation. Section purement informative
+  // (pas de bridge), affichée AVANT le early-return `!updater` ci-dessous
+  // puisque ces raccourcis fonctionnent aussi en web, pas seulement desktop.
+  const shortcuts = (
+    <View style={[s.card, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+      <Text style={[s.cardTitle, { color: theme.text }]}>Raccourcis clavier</Text>
+      <Text style={[s.cardValue, { color: theme.textMuted }]}>Ctrl/Cmd + S — Enregistrer la note</Text>
+      <Text style={[s.cardValue, { color: theme.textMuted }]}>Ctrl/Cmd + K — Recherche globale</Text>
+      <Text style={[s.cardValue, { color: theme.textMuted }]}>Ctrl/Cmd + N — Nouvelle note</Text>
+    </View>
+  );
+
   if (!updater) {
     return (
-      <Text style={[s.muted, { color: theme.textMuted }]}>
-        Les mises à jour sont disponibles sur la version desktop pour l’instant.
-      </Text>
+      <>
+        {shortcuts}
+        <Text style={[s.muted, { color: theme.textMuted }]}>
+          Les mises à jour sont disponibles sur la version desktop pour l’instant.
+        </Text>
+      </>
     );
   }
 
   return (
-    <View style={[s.card, { backgroundColor: theme.surface, borderColor: theme.border }]}>
-      <Text style={[s.cardTitle, { color: theme.text }]}>Mises à jour</Text>
-      <Text style={[s.cardValue, { color: theme.textMuted }]}>Version installée : {version ?? '…'}</Text>
+    <>
+      {shortcuts}
+      <View style={[s.card, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+        <Text style={[s.cardTitle, { color: theme.text }]}>Mises à jour</Text>
+        <Text style={[s.cardValue, { color: theme.textMuted }]}>Version installée : {version ?? '…'}</Text>
 
-      {status.state === 'idle' && (
-        <View style={s.statusRow}>
-          <ActivityIndicator size="small" color={theme.accent} />
-          <Text style={{ color: theme.textMuted }}>Initialisation…</Text>
-        </View>
-      )}
+        {status.state === 'idle' && (
+          <View style={s.statusRow}>
+            <ActivityIndicator size="small" color={theme.accent} />
+            <Text style={{ color: theme.textMuted }}>Initialisation…</Text>
+          </View>
+        )}
 
-      {status.state === 'checking' && (
-        <View style={s.statusRow}>
-          <ActivityIndicator size="small" color={theme.accent} />
-          <Text style={{ color: theme.textMuted }}>Vérification…</Text>
-        </View>
-      )}
+        {status.state === 'checking' && (
+          <View style={s.statusRow}>
+            <ActivityIndicator size="small" color={theme.accent} />
+            <Text style={{ color: theme.textMuted }}>Vérification…</Text>
+          </View>
+        )}
 
-      {status.state === 'up-to-date' && (
-        <>
-          <Text style={{ color: theme.textMuted }}>✅ À jour.</Text>
-          <Pressable onPress={() => void handleCheckForUpdates()} style={[s.button, { backgroundColor: theme.accent }]}>
-            <Text style={s.buttonText}>Vérifier les mises à jour</Text>
-          </Pressable>
-        </>
-      )}
+        {status.state === 'up-to-date' && (
+          <>
+            <Text style={{ color: theme.textMuted }}>✅ À jour.</Text>
+            <Pressable onPress={() => void handleCheckForUpdates()} style={[s.button, { backgroundColor: theme.accent }]}>
+              <Text style={s.buttonText}>Vérifier les mises à jour</Text>
+            </Pressable>
+          </>
+        )}
 
-      {status.state === 'downloading' && (
-        <View style={s.statusRow}>
-          <ActivityIndicator size="small" color={theme.accent} />
-          <Text style={{ color: theme.textMuted }}>
-            Téléchargement de la v{status.version ?? '?'}… {status.percent}%
-          </Text>
-        </View>
-      )}
+        {status.state === 'downloading' && (
+          <View style={s.statusRow}>
+            <ActivityIndicator size="small" color={theme.accent} />
+            <Text style={{ color: theme.textMuted }}>
+              Téléchargement de la v{status.version ?? '?'}… {status.percent}%
+            </Text>
+          </View>
+        )}
 
-      {status.state === 'ready' && (
-        <>
-          <Text style={{ color: theme.textMuted }}>🎉 Version {status.version} prête à installer.</Text>
-          <Pressable onPress={() => void handleInstall()} style={[s.button, { backgroundColor: theme.accent }]}>
-            <Text style={s.buttonText}>Redémarrer et installer</Text>
-          </Pressable>
-        </>
-      )}
+        {status.state === 'ready' && (
+          <>
+            <Text style={{ color: theme.textMuted }}>🎉 Version {status.version} prête à installer.</Text>
+            <Pressable onPress={() => void handleInstall()} style={[s.button, { backgroundColor: theme.accent }]}>
+              <Text style={s.buttonText}>Redémarrer et installer</Text>
+            </Pressable>
+          </>
+        )}
 
-      {status.state === 'error' && (
-        <>
-          <Text style={s.error}>⚠️ {status.message}</Text>
-          <Pressable onPress={() => void handleCheckForUpdates()} style={[s.button, { backgroundColor: theme.accent }]}>
-            <Text style={s.buttonText}>Réessayer</Text>
-          </Pressable>
-        </>
-      )}
-    </View>
+        {status.state === 'error' && (
+          <>
+            <Text style={s.error}>⚠️ {status.message}</Text>
+            <Pressable onPress={() => void handleCheckForUpdates()} style={[s.button, { backgroundColor: theme.accent }]}>
+              <Text style={s.buttonText}>Réessayer</Text>
+            </Pressable>
+          </>
+        )}
+      </View>
+    </>
   );
 }
