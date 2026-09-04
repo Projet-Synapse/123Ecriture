@@ -279,6 +279,34 @@ export function NotesScreen({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [vault, vaultPath]);
 
+  // //1.5 ⌨️ RACCOURCI CLAVIER — RECHERCHE GLOBALE
+  // //////////////////////////////////////////////////////////////////////
+
+  // Ctrl/Cmd+K ouvre la recherche (voir SearchDialog.tsx) — jusqu'ici
+  // uniquement accessible au clic sur la loupe de listHeaderActions
+  // ci-dessous, gros point de friction pour qui vient d'un éditeur façon
+  // Obsidian/Notion où ce raccourci est automatique. `document` n'existe
+  // que côté web/desktop (react-native-web) — sur mobile natif cet effet
+  // ne s'attache jamais, même garde que useResizablePanel.ts. `K` seul
+  // (sans modificateur) n'est PAS intercepté : ne doit jamais gêner la
+  // frappe normale dans l'éditeur ou un champ de renommage.
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey)) return;
+      if (event.key !== 'k' && event.key !== 'K') return;
+      // preventDefault : sur le build web, Ctrl/Cmd+K focus sinon la barre
+      // d'adresse du navigateur (Chrome/Firefox) au lieu d'ouvrir la
+      // recherche de l'app.
+      event.preventDefault();
+      setSearchOpen(true);
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
   const refreshOccurrences = useCallback(async () => {
     if (!occurrencesBridge) return;
     setOccurrenceEntries(await occurrencesBridge.list());
