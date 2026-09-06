@@ -1,0 +1,26 @@
+# Configuration de .github/workflows/label.yml (actions/labeler@v4).
+# Applique une etiquette selon les chemins modifies par la pull request.
+
+desktop:
+  - apps/desktop/**/*
+
+mobile:
+  - apps/mobile/**/*
+
+supabase:
+  - supabase/**/*
+
+docs:
+  - docs/**/*
+
+ci:
+  - .github/**/*
+
+dependencies:
+  - package.json
+  - pnpm-lock.yaml
+  - pnpm-workspace.yaml
+  - turbo.json
+
+documentation:
+  - '**/*.md'
