@@ -3,7 +3,7 @@
   "version": "0.1.21",
   "description": "123Ecriture — application d'écriture et de productivité (version desktop)",
   "author": "Catelina",
-  "repository": "https://github.com/catelyn2332-design/123Ecriture.git",
+  "repository": "https://github.com/Projet-Synapse/123Ecriture.git",
   "private": true,
   "main": "electron-dist/main.js",
   "scripts": {
@@ -32,7 +32,9 @@
     "productName": "123Ecriture",
     "executableName": "123ecriture",
     "publish": {
-      "provider": "github"
+      "provider": "github",
+      "owner": "Projet-Synapse",
+      "repo": "123Ecriture"
     },
     "artifactName": "${productName}.${ext}",
     "directories": {

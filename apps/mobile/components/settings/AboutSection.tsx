@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, Text, View } from 'react-native';
 
 import { usePreferences } from '../../preferences/PreferencesContext';
+import { SettingsToggle } from './SettingsToggle';
 import { settingsStyles as s } from './settingsStyles';
 
 // Section "À propos" — version installée + statut du updater, déplacée
@@ -14,6 +15,7 @@ export function AboutSection() {
 
   const [version, setVersion] = useState<string | null>(null);
   const [status, setStatus] = useState<UpdaterStatus>({ state: 'idle' });
+  const [autoUpdate, setAutoUpdate] = useState(true);
 
   useEffect(() => {
     if (!updater) return;
@@ -25,8 +27,28 @@ export function AboutSection() {
     // Paramètres afficherait un état par défaut périmé tant qu'aucun
     // nouvel événement n'arrive.
     void updater.getStatus().then(setStatus);
+    void updater.getAutoUpdate().then(setAutoUpdate).catch(() => {});
     const unsubscribe = updater.onStatusChange(setStatus);
     return unsubscribe;
+  }, [updater]);
+
+  const handleToggleAutoUpdate = useCallback(
+    async (next: boolean) => {
+      if (!updater) return;
+      setAutoUpdate(next);
+      try {
+        const applied = await updater.setAutoUpdate(next);
+        setAutoUpdate(applied);
+      } catch {
+        setAutoUpdate(!next);
+      }
+    },
+    [updater],
+  );
+
+  const handleDownload = useCallback(async () => {
+    if (!updater) return;
+    await updater.download();
   }, [updater]);
 
   const handleCheckForUpdates = useCallback(async () => {
@@ -98,6 +120,15 @@ export function AboutSection() {
           </>
         )}
 
+        {status.state === 'available' && (
+          <>
+            <Text style={{ color: theme.textMuted }}>⬇️ Version {status.version} disponible.</Text>
+            <Pressable onPress={() => void handleDownload()} style={[s.button, { backgroundColor: theme.accent }]}>
+              <Text style={s.buttonText}>Télécharger la mise à jour</Text>
+            </Pressable>
+          </>
+        )}
+
         {status.state === 'downloading' && (
           <View style={s.statusRow}>
             <ActivityIndicator size="small" color={theme.accent} />
@@ -115,6 +146,18 @@ export function AboutSection() {
             </Pressable>
           </>
         )}
+
+        <SettingsToggle
+          label="Mise à jour automatique"
+          value={autoUpdate}
+          onChange={(next) => void handleToggleAutoUpdate(next)}
+          theme={theme}
+        />
+        <Text style={{ color: theme.textMuted, fontSize: 12 }}>
+          {autoUpdate
+            ? 'Téléchargée en arrière-plan puis installée à la fermeture de l’application.'
+            : 'Recherche, téléchargement et installation manuels.'}
+        </Text>
 
         {status.state === 'error' && (
           <>
