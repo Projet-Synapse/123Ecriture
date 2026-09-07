@@ -282,30 +282,16 @@ export function NotesScreen({
   // //1.5 ⌨️ RACCOURCI CLAVIER — RECHERCHE GLOBALE
   // //////////////////////////////////////////////////////////////////////
 
-  // Ctrl/Cmd+K ouvre la recherche (voir SearchDialog.tsx) — jusqu'ici
-  // uniquement accessible au clic sur la loupe de listHeaderActions
-  // ci-dessous, gros point de friction pour qui vient d'un éditeur façon
-  // Obsidian/Notion où ce raccourci est automatique. `document` n'existe
-  // que côté web/desktop (react-native-web) — sur mobile natif cet effet
-  // ne s'attache jamais, même garde que useResizablePanel.ts. `K` seul
-  // (sans modificateur) n'est PAS intercepté : ne doit jamais gêner la
-  // frappe normale dans l'éditeur ou un champ de renommage.
-  useEffect(() => {
-    if (typeof document === 'undefined') return;
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (!(event.metaKey || event.ctrlKey)) return;
-      if (event.key !== 'k' && event.key !== 'K') return;
-      // preventDefault : sur le build web, Ctrl/Cmd+K focus sinon la barre
-      // d'adresse du navigateur (Chrome/Firefox) au lieu d'ouvrir la
-      // recherche de l'app.
-      event.preventDefault();
-      setSearchOpen(true);
-    };
-
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, []);
+  // Ctrl/Cmd+K reste accessible ici uniquement au clic sur la loupe de
+  // listHeaderActions ci-dessous (voir SearchDialog.tsx) — le raccourci
+  // CLAVIER Ctrl/Cmd+K, lui, appartient exclusivement à AppShell.tsx
+  // (ouvre CommandPalette, qui inclut les mêmes résultats de recherche
+  // globale, voir son commentaire d'en-tête). Un doublon existait ici
+  // (cet effet + celui plus bas qui gère aussi S/N) ET dans AppShell :
+  // Ctrl/Cmd+K ouvrait SIMULTANÉMENT SearchDialog et CommandPalette, deux
+  // modales empilées — bug corrigé en retirant tout listener clavier K de
+  // cet écran plutôt que d'en avoir un par écran (c'était déjà l'intention
+  // documentée dans AppShell.tsx, juste pas respectée jusqu'ici).
 
   const refreshOccurrences = useCallback(async () => {
     if (!occurrencesBridge) return;
@@ -1165,12 +1151,14 @@ export function NotesScreen({
   // Raccourcis clavier globaux (Ctrl sur Windows/Linux, Cmd sur macOS) —
   // absents jusqu'ici de toute l'app (voir l'analyse ergonomie), pourtant
   // attendus dans un éditeur de notes façon Obsidian : Ctrl/Cmd+S force la
-  // sauvegarde immédiate, Ctrl/Cmd+K ouvre la recherche globale (déjà
-  // accessible via le bouton 🔍), Ctrl/Cmd+N crée une nouvelle note (même
-  // emplacement par défaut que le bouton "+ Nouvelle note"). Web/Electron
-  // uniquement (`window` n'existe pas sur natif) — `preventDefault` évite
-  // que le navigateur n'ouvre sa propre boîte de dialogue "Enregistrer
-  // sous"/recherche de page sur Ctrl+S/Ctrl+K.
+  // sauvegarde immédiate, Ctrl/Cmd+N crée une nouvelle note (même
+  // emplacement par défaut que le bouton "+ Nouvelle note"). Ctrl/Cmd+K
+  // n'est PAS géré ici : ce raccourci appartient exclusivement à
+  // AppShell.tsx (CommandPalette) — le gérer aussi ici ouvrait EN PLUS
+  // SearchDialog par-dessus la palette (bug corrigé, voir le commentaire
+  // du §1.5 plus haut). Web/Electron uniquement (`window` n'existe pas sur
+  // natif) — `preventDefault` évite que le navigateur n'ouvre sa propre
+  // boîte de dialogue "Enregistrer sous" sur Ctrl+S.
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -1179,10 +1167,6 @@ export function NotesScreen({
         case 's':
           event.preventDefault();
           flushSave();
-          break;
-        case 'k':
-          event.preventDefault();
-          setSearchOpen(true);
           break;
         case 'n':
           event.preventDefault();

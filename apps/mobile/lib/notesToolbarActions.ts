@@ -26,6 +26,7 @@ export type ToolbarActionId =
   | 'h6'
   | 'bold'
   | 'italic'
+  | 'strikethrough'
   | 'code'
   | 'quote'
   | 'bullet'
@@ -62,12 +63,29 @@ export const NOTES_TOOLBAR_ACTIONS: ToolbarAction[] = [
   ...HEADING_ACTIONS,
   { id: 'bold', label: 'G', run: (text, sel) => wrapSelection(text, sel, '**'), shortcut: 'Mod-b' },
   { id: 'italic', label: 'I', run: (text, sel) => wrapSelection(text, sel, '_'), shortcut: 'Mod-i' },
+  // Mod-Shift-x : convention reprise de Google Docs/la plupart des
+  // éditeurs pour le barré, libre à cet endroit (pas déjà pris ailleurs
+  // dans ce tableau).
+  {
+    id: 'strikethrough',
+    label: 'S̶',
+    run: (text, sel) => wrapSelection(text, sel, '~~'),
+    shortcut: 'Mod-Shift-x',
+  },
   { id: 'code', label: '</>', run: (text, sel) => wrapSelection(text, sel, '`'), shortcut: 'Mod-e' },
   // Mod-Shift-7/8/9 : suite mnémotechnique liste numérotée/à puces/citation
   // (7/8 reprennent la convention Google Docs/Word pour les listes).
   { id: 'quote', label: '❝', run: (text, sel) => toggleLinePrefix(text, sel, '> '), shortcut: 'Mod-Shift-9' },
   { id: 'bullet', label: '•', run: (text, sel) => toggleLinePrefix(text, sel, '- '), shortcut: 'Mod-Shift-8' },
   { id: 'numbered', label: '1.', run: (text, sel) => toggleNumberedList(text, sel), shortcut: 'Mod-Shift-7' },
+  // Pas de bouton "liste de tâches" ici volontairement : `- [ ] texte`
+  // resterait affiché tel quel (crochets littéraux) en Aperçu, aucune des
+  // extensions markdown-it configurées dans lib/markdownPlugins.ts ne
+  // rendant une vraie case à cocher — un bouton qui ne produit pas ce
+  // qu'il annonce n'a pas sa place ici (voir CLAUDE.md, "un bouton ajouté
+  // doit être fonctionnel"). Ajouter une vraie case à cocher cliquable
+  // demanderait d'abord ce rendu (et son pendant Live Preview) ; la
+  // fonctionnalité "tâches" complète existe déjà séparément (TasksScreen).
   { id: 'link', label: '🔗', run: (text, sel) => insertLink(text, sel), shortcut: 'Mod-k' },
   { id: 'table', label: '▦', run: (text, sel) => insertTable(text, sel) },
 ];
@@ -83,6 +101,7 @@ export const NOTES_TOOLBAR_DESCRIPTIONS: Record<ToolbarActionId, string> = {
   h6: 'Titre 6',
   bold: 'Gras',
   italic: 'Italique',
+  strikethrough: 'Barré',
   code: 'Code',
   quote: 'Citation',
   bullet: 'Liste à puces',
