@@ -333,6 +333,9 @@ declare global {
     | { state: 'idle' }
     | { state: 'checking' }
     | { state: 'up-to-date' }
+    // Uniquement en mise à jour manuelle (option désactivée) : le
+    // téléchargement attend le clic sur « Télécharger ».
+    | { state: 'available'; version: string }
     | { state: 'downloading'; version?: string; percent: number }
     | { state: 'ready'; version: string }
     | { state: 'error'; message: string };
@@ -342,6 +345,9 @@ declare global {
     getStatus: () => Promise<UpdaterStatus>;
     check: () => Promise<void>;
     quitAndInstall: () => Promise<void>;
+    getAutoUpdate: () => Promise<boolean>;
+    setAutoUpdate: (enabled: boolean) => Promise<boolean>;
+    download: () => Promise<{ ok: boolean; error?: string }>;
     onStatusChange: (callback: (status: UpdaterStatus) => void) => () => void;
   }
 

@@ -1,17 +1,28 @@
 import { app, ipcMain, type BrowserWindow } from 'electron';
 import { autoUpdater } from 'electron-updater';
 
+import { readConfig, writeConfig } from './config';
 import type { UpdaterStatus } from './types';
 
 type GetWindow = () => BrowserWindow | null;
 
 // Traqueur de mise à jour piloté depuis l'UI (écran Paramètres), plutôt que
-// la notification OS silencieuse utilisée jusque-là. Le téléchargement
-// reste automatique dès qu'une mise à jour est détectée (autoDownload) ;
-// seule l'installation (qui redémarre l'app) attend une action explicite
-// via "Redémarrer et installer" — voir SettingsScreen.tsx.
-autoUpdater.autoDownload = true;
-autoUpdater.autoInstallOnAppQuit = true;
+// la notification OS silencieuse utilisée jusque-là. L'option « mise à jour
+// automatique » (config.json app-level, via updater:get-auto / :set-auto)
+// pilote les deux drapeaux :
+//   - activée (défaut, comportement historique) : une version détectée se
+//     télécharge toute seule et l'installeur remplace l'app silencieusement à
+//     la prochaine fermeture — « Redémarrer et installer » reste disponible
+//     pour ne pas attendre ;
+//   - désactivée : tout est manuel (vérifier → télécharger → redémarrer).
+let autoUpdateEnabled = readConfig().autoUpdate ?? true;
+
+function applyAutoFlags(): void {
+  autoUpdater.autoDownload = autoUpdateEnabled;
+  autoUpdater.autoInstallOnAppQuit = autoUpdateEnabled;
+}
+
+applyAutoFlags();
 // Diagnostic : sans logger, electron-updater ne journalise quasiment rien.
 // console suffit comme logger (il expose bien info/warn/error/debug) —
 // visible dans la console de l'app en dev, et dans les logs du processus en
@@ -64,7 +75,14 @@ export function registerUpdaterHandlers(getWindow: GetWindow): void {
     broadcastStatus(getWindow, { state: 'checking' });
   });
   autoUpdater.on('update-available', (info) => {
-    broadcastStatus(getWindow, { state: 'downloading', version: info.version, percent: 0 });
+    // En auto, le téléchargement démarre tout seul (autoDownload) — l'état
+    // passe donc directement à « downloading ». En manuel, on annonce la
+    // version disponible et on attend le clic sur « Télécharger ».
+    if (autoUpdateEnabled) {
+      broadcastStatus(getWindow, { state: 'downloading', version: info.version, percent: 0 });
+    } else {
+      broadcastStatus(getWindow, { state: 'available', version: info.version });
+    }
   });
   autoUpdater.on('update-not-available', () => {
     broadcastStatus(getWindow, { state: 'up-to-date' });
@@ -82,6 +100,24 @@ export function registerUpdaterHandlers(getWindow: GetWindow): void {
   ipcMain.handle('updater:get-version', () => app.getVersion());
   ipcMain.handle('updater:get-status', () => currentStatus);
   ipcMain.handle('updater:check', () => performCheck(getWindow));
+  ipcMain.handle('updater:get-auto', () => autoUpdateEnabled);
+  ipcMain.handle('updater:set-auto', (_event, enabled: unknown) => {
+    autoUpdateEnabled = Boolean(enabled);
+    writeConfig({ autoUpdate: autoUpdateEnabled });
+    applyAutoFlags();
+    return autoUpdateEnabled;
+  });
+
+  // Mode manuel uniquement (en auto, electron-updater télécharge tout seul).
+  ipcMain.handle('updater:download', async () => {
+    try {
+      await autoUpdater.downloadUpdate();
+      return { ok: true };
+    } catch (error) {
+      broadcastStatus(getWindow, { state: 'error', message: String(error) });
+      return { ok: false, error: String(error) };
+    }
+  });
 
   ipcMain.handle('updater:quit-and-install', () => {
     try {

@@ -57,6 +57,9 @@ contextBridge.exposeInMainWorld('updater', {
   getStatus: () => ipcRenderer.invoke('updater:get-status'),
   check: () => ipcRenderer.invoke('updater:check'),
   quitAndInstall: () => ipcRenderer.invoke('updater:quit-and-install'),
+  getAutoUpdate: () => ipcRenderer.invoke('updater:get-auto'),
+  setAutoUpdate: (enabled: boolean) => ipcRenderer.invoke('updater:set-auto', enabled),
+  download: () => ipcRenderer.invoke('updater:download'),
   onStatusChange: (callback: (status: unknown) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, status: unknown) => callback(status);
     ipcRenderer.on('updater:status', handler);

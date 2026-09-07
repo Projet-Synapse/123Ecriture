@@ -54,6 +54,8 @@ export interface AppConfig {
   activeVaultId?: string | null;
   vaultPath?: string;
   preferences?: Partial<Preferences>;
+  // Option « mise à jour automatique » pilotée par updater.ts (défaut : true).
+  autoUpdate?: boolean;
 }
 
 export interface Subtask {
@@ -245,6 +247,9 @@ export type UpdaterStatus =
   | { state: 'idle' }
   | { state: 'checking' }
   | { state: 'up-to-date' }
+  // Uniquement en mise à jour MANUELLE (option désactivée) : une version
+  // plus récente existe, le téléchargement attend le clic sur « Télécharger ».
+  | { state: 'available'; version: string }
   | { state: 'downloading'; version?: string; percent: number }
   | { state: 'ready'; version: string }
   | { state: 'error'; message: string };
