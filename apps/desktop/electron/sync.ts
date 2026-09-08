@@ -32,13 +32,22 @@ async function hashFileContent(fullPath: string): Promise<string> {
 }
 
 async function walkAndHash(dir: string, vaultRoot: string, out: HashedNote[]): Promise<HashedNote[]> {
-  const entries = await fs.readdir(dir, { withFileTypes: true });
+  // Contention anti-traversée : le point d'entrée vient d'IPC (chemin du
+  // coffre transmis par le renderer). readdir récursif renvoie des chemins
+  // construits par Node à partir de la racine résolue ; on borne en plus
+  // explicitement chaque répertoire et chaque chemin au coffre : rien ne
+  // peut en sortir, et aucun chemin n'est jamais reconstruit dynamiquement.
+  const rootAbs = path.resolve(vaultRoot) + path.sep;
+  const entries = await fs.readdir(path.resolve(dir), {
+    recursive: true,
+    withFileTypes: true,
+  });
   for (const entry of entries) {
     if (entry.name.startsWith('.')) continue;
-    const fullPath = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      await walkAndHash(fullPath, vaultRoot, out);
-    } else if (entry.isFile() && EXTENSION_TO_KIND[path.extname(entry.name)]) {
+    const parentAbs = path.resolve(entry.parentPath);
+    if (!parentAbs.startsWith(rootAbs)) continue;
+    const fullPath = parentAbs + path.sep + entry.name;
+    if (entry.isFile() && EXTENSION_TO_KIND[path.extname(entry.name)]) {
       const stat = await fs.stat(fullPath);
       out.push({
         relPath: path.relative(vaultRoot, fullPath),

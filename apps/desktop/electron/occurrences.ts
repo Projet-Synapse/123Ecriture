@@ -50,14 +50,23 @@ function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-async function walkMdxFiles(dir: string, out: string[] = []): Promise<string[]> {
-  const entries = await fs.readdir(dir, { withFileTypes: true });
+async function walkMdxFiles(root: string, out: string[] = []): Promise<string[]> {
+  // Contention anti-traversée : le point d'entrée vient d'IPC (chemin du
+  // coffre transmis par le renderer). readdir récursif renvoie des chemins
+  // construits par Node à partir de la racine résolue ; on borne en plus
+  // explicitement chaque répertoire et chaque chemin au coffre : rien ne
+  // peut en sortir, et aucun chemin n'est jamais reconstruit dynamiquement.
+  const rootAbs = path.resolve(root) + path.sep;
+  const entries = await fs.readdir(path.resolve(root), {
+    recursive: true,
+    withFileTypes: true,
+  });
   for (const entry of entries) {
     if (entry.name.startsWith('.')) continue;
-    const fullPath = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      await walkMdxFiles(fullPath, out);
-    } else if (entry.isFile() && entry.name.endsWith('.mdx')) {
+    const parentAbs = path.resolve(entry.parentPath);
+    if (!parentAbs.startsWith(rootAbs)) continue;
+    const fullPath = parentAbs + path.sep + entry.name;
+    if (entry.isFile() && entry.name.endsWith('.mdx')) {
       out.push(fullPath);
     }
   }
