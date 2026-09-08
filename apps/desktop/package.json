@@ -36,7 +36,7 @@
       "owner": "Projet-Synapse",
       "repo": "123Ecriture"
     },
-    "artifactName": "${productName}.${ext}",
+    "artifactName": "${productName} Setup ${version}.${ext}",
     "directories": {
       "output": "release"
     },

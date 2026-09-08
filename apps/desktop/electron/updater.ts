@@ -10,12 +10,15 @@ type GetWindow = () => BrowserWindow | null;
 // la notification OS silencieuse utilisée jusque-là. L'option « mise à jour
 // automatique » (config.json app-level, via updater:get-auto / :set-auto)
 // pilote les deux drapeaux :
-//   - activée (défaut, comportement historique) : une version détectée se
-//     télécharge toute seule et l'installeur remplace l'app silencieusement à
-//     la prochaine fermeture — « Redémarrer et installer » reste disponible
-//     pour ne pas attendre ;
-//   - désactivée : tout est manuel (vérifier → télécharger → redémarrer).
-let autoUpdateEnabled = readConfig().autoUpdate ?? true;
+//   - activée : une version détectée se télécharge toute seule et
+//     l'installeur remplace l'app silencieusement à la prochaine fermeture —
+//     « Redémarrer et installer » reste disponible pour ne pas attendre ;
+//   - désactivée (défaut, comme dans les apps sœurs) : tout est manuel
+//     (vérifier → télécharger → redémarrer). Le défaut automatique lançait
+//     l'installeur NSIS à CHAQUE fermeture tant que la version installée
+//     restait en deçà du flux GitHub, perçu comme une réinstallation
+//     permanente ; autant laisser l'utilisateur l'activer explicitement.
+let autoUpdateEnabled = readConfig().autoUpdate ?? false;
 
 function applyAutoFlags(): void {
   autoUpdater.autoDownload = autoUpdateEnabled;
