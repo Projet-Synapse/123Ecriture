@@ -1,5 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Modal,
+  type NativeSyntheticEvent,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  type TextInputKeyPressEventData,
+  View,
+} from 'react-native';
 
 import { isSearchResultOpenable, SEARCH_MATCH_LABEL, SEARCH_RESULT_ICON, searchResultKey } from '../lib/searchResults';
 import type { Theme } from '../theme';
@@ -44,6 +55,12 @@ export function SearchDialog({ theme, onOpenResult, onCancel }: Props) {
   const [selectedProperty, setSelectedProperty] = useState<PropertyDefinition | null>(null);
   const [propertyValue, setPropertyValue] = useState('');
 
+  // Sélection clavier dans la liste de résultats — absente jusqu'ici alors
+  // que CommandPalette.tsx (même coquille modale, mêmes résultats de
+  // recherche) l'a déjà : gros point de friction, on ouvrait Ctrl/Cmd+K pour
+  // chercher puis on devait quitter le clavier pour attraper la souris.
+  const [selectedIndex, setSelectedIndex] = useState(0);
+
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Vrai dès qu'il y a une requête active (texte ou filtre) — la liste de
   // résultats affichée se base là-dessus plutôt que de vider `results` via
@@ -77,6 +94,51 @@ export function SearchDialog({ theme, onOpenResult, onCancel }: Props) {
     };
   }, [query, selectedProperty, propertyValue, searchBridge, hasQuery]);
 
+  // Recale la sélection au premier résultat à chaque changement de liste
+  // (nouvelle requête, filtre changé...) — évite une sélection périmée
+  // pointant sur un élément qui a disparu. Ajustement PENDANT le rendu
+  // (comparaison à un état, pas un effet) : même idiome que
+  // CommandPalette.tsx (`lastItemsSignature`), lui-même repris du correctif
+  // documenté par React pour "réinitialiser un état dérivé d'une valeur qui
+  // change".
+  const resultsSignature = `${query}:${selectedProperty?.id ?? ''}:${propertyValue}:${results.length}`;
+  const [lastResultsSignature, setLastResultsSignature] = useState(resultsSignature);
+  if (lastResultsSignature !== resultsSignature) {
+    setLastResultsSignature(resultsSignature);
+    if (selectedIndex !== 0) setSelectedIndex(0);
+  }
+
+  // Active le résultat sélectionné — n'ouvre que s'il est réellement
+  // ouvrable (dossiers/pièces jointes affichés mais non cliquables, voir
+  // `isOpenable` plus bas), même règle qu'un clic sur la ligne.
+  const activateSelected = () => {
+    const result = results[selectedIndex];
+    if (result && isSearchResultOpenable(result.kind)) onOpenResult(result);
+  };
+
+  // Navigation clavier (flèches/Échap) — posée sur `onKeyPress` du
+  // TextInput ci-dessous, PAS sur un `window.addEventListener('keydown', ...)`
+  // (contrairement à CommandPalette.tsx, dont l'équivalent ne fonctionne en
+  // réalité JAMAIS pendant la frappe — vérifié en lançant l'app : à corriger
+  // là-bas séparément). En cause, react-native-web lui-même : le TextInput
+  // appelle `e.stopPropagation()` sur CHAQUE keydown (voir
+  // node_modules/react-native-web/.../exports/TextInput/index.js,
+  // `handleKeyDown`, "Prevent key events bubbling (see #612)") — tant que ce
+  // champ a le focus (`autoFocus`, donc en permanence ici), AUCUN écouteur
+  // `window`/`document` ne reçoit jamais la touche. Seul un `onKeyPress`
+  // posé directement sur le TextInput fonctionne de façon fiable — même
+  // idiome que VaultTreeView.tsx (Échap pour annuler un renommage).
+  const handleSearchKeyPress = (event: NativeSyntheticEvent<TextInputKeyPressEventData>) => {
+    const key = event.nativeEvent.key;
+    if (key === 'Escape') {
+      onCancel();
+      return;
+    }
+    if (!hasQuery || results.length === 0) return;
+    if (key === 'ArrowDown') setSelectedIndex((i) => Math.min(results.length - 1, i + 1));
+    else if (key === 'ArrowUp') setSelectedIndex((i) => Math.max(0, i - 1));
+  };
+
   const pickProperty = () => {
     if (!contextMenuBridge) return;
     void contextMenuBridge
@@ -104,6 +166,11 @@ export function SearchDialog({ theme, onOpenResult, onCancel }: Props) {
             autoFocus
             value={query}
             onChangeText={setQuery}
+            // Repli clavier natif (mobile, pas d'écouteur `window`) — active
+            // le résultat actuellement sélectionné, même comportement
+            // qu'Entrée sur desktop.
+            onSubmitEditing={activateSelected}
+            onKeyPress={handleSearchKeyPress}
             placeholder="Rechercher un fichier, du texte, un #mot-clé…"
             placeholderTextColor={theme.textMuted}
             style={[styles.input, { color: theme.text, borderColor: theme.border }]}
@@ -153,13 +220,19 @@ export function SearchDialog({ theme, onOpenResult, onCancel }: Props) {
             )}
             {!loading &&
               hasQuery &&
-              results.map((result) => {
+              results.map((result, index) => {
                 const isOpenable = isSearchResultOpenable(result.kind);
+                const isSelected = index === selectedIndex;
                 return (
                   <Pressable
                     key={searchResultKey(result)}
                     onPress={isOpenable ? () => onOpenResult(result) : undefined}
-                    style={[styles.result, { borderColor: theme.border }, !isOpenable && styles.resultDisabled]}
+                    style={[
+                      styles.result,
+                      { borderColor: theme.border },
+                      !isOpenable && styles.resultDisabled,
+                      isSelected && { backgroundColor: `${theme.accent}22` },
+                    ]}
                   >
                     <Text style={styles.resultIcon}>{SEARCH_RESULT_ICON[result.kind]}</Text>
                     <View style={styles.resultBody}>

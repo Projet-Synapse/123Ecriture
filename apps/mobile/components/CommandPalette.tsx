@@ -1,5 +1,16 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
-import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Modal,
+  type NativeSyntheticEvent,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  type TextInputKeyPressEventData,
+  View,
+} from 'react-native';
 
 import { isSearchResultOpenable, openSearchResult, SEARCH_MATCH_LABEL, SEARCH_RESULT_ICON, searchResultKey } from '../lib/searchResults';
 import type { Section } from '../navigation';
@@ -168,38 +179,27 @@ export function CommandPalette({
     onClose();
   };
 
-  // Navigation clavier globale (flèches/Entrée/Échap) — voir AppShell.tsx
-  // pour le raccourci d'OUVERTURE (Ctrl/Cmd+K) ; celui-ci gère la nav UNE
-  // FOIS la palette ouverte, réenregistré à chaque changement de liste/
-  // sélection (léger, pas de souci de perf pour une modale).
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        onClose();
-        return;
-      }
-      if (event.key === 'ArrowDown') {
-        event.preventDefault();
-        setSelectedIndex((i) => Math.min(items.length - 1, i + 1));
-        return;
-      }
-      if (event.key === 'ArrowUp') {
-        event.preventDefault();
-        setSelectedIndex((i) => Math.max(0, i - 1));
-        return;
-      }
-      if (event.key === 'Enter') {
-        event.preventDefault();
-        const item = items[selectedIndex];
-        if (item) activateItem(item);
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [items, selectedIndex]);
+  // Navigation clavier (flèches/Échap) — posée sur `onKeyPress` du
+  // TextInput ci-dessous, PAS sur un `window.addEventListener('keydown', ...)`
+  // comme avant : ce dernier ne se déclenchait en réalité JAMAIS (bug
+  // découvert en lançant l'app réellement, voir SearchDialog.tsx pour le
+  // même correctif et l'explication complète). En cause, react-native-web
+  // lui-même : le TextInput appelle `e.stopPropagation()` sur CHAQUE
+  // keydown (voir node_modules/react-native-web/.../exports/TextInput/
+  // index.js, `handleKeyDown`, "Prevent key events bubbling (see #612)") —
+  // tant que ce champ a le focus (`autoFocus`, donc en permanence ici),
+  // AUCUN écouteur `window`/`document` ne reçoit jamais la touche. Entrée
+  // reste gérée séparément par `onSubmitEditing` ci-dessous (déclenché en
+  // interne par le TextInput lui-même, donc fiable).
+  const handleQueryKeyPress = (event: NativeSyntheticEvent<TextInputKeyPressEventData>) => {
+    const key = event.nativeEvent.key;
+    if (key === 'Escape') {
+      onClose();
+      return;
+    }
+    if (key === 'ArrowDown') setSelectedIndex((i) => Math.min(items.length - 1, i + 1));
+    else if (key === 'ArrowUp') setSelectedIndex((i) => Math.max(0, i - 1));
+  };
 
   return (
     <Modal visible transparent animationType="fade" onRequestClose={onClose}>
@@ -216,6 +216,7 @@ export function CommandPalette({
               const item = items[selectedIndex];
               if (item) activateItem(item);
             }}
+            onKeyPress={handleQueryKeyPress}
             placeholder="Tapez une commande ou recherchez…"
             placeholderTextColor={theme.textMuted}
             style={[styles.input, { color: theme.text, borderColor: theme.border }]}
