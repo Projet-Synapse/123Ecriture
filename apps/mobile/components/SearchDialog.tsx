@@ -1,7 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { isSearchResultOpenable, SEARCH_MATCH_LABEL, SEARCH_RESULT_ICON, searchResultKey } from '../lib/searchResults';
+import {
+  isSearchResultOpenable,
+  SEARCH_MATCH_LABEL,
+  SEARCH_RESULT_ICON,
+  searchResultKey,
+  splitMatchSegments,
+} from '../lib/searchResults';
 import type { Theme } from '../theme';
 
 // Recherche globale — voir .claude/References/Sources.md §2 : "un petit
@@ -15,6 +21,10 @@ import type { Theme } from '../theme';
 // par propriété replié par défaut. Toute la recherche vit côté Electron
 // (window.search — voir apps/desktop/electron/search.ts) : ce composant
 // n'est que l'UI, il ne parcourt jamais le coffre lui-même.
+//
+// Navigation clavier (↑↓ + Entrée, même idiome que CommandPalette.tsx),
+// compteur de résultats et surlignage des correspondances (titre + extrait
+// via splitMatchSegments) — les mains restent au clavier du début à la fin.
 const SEARCH_DEBOUNCE_MS = 300;
 
 type Props = {
@@ -38,6 +48,7 @@ export function SearchDialog({ theme, onOpenResult, onCancel }: Props) {
   const [results, setResults] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [selectedIndex, setSelectedIndex] = useState(0);
 
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [properties, setProperties] = useState<PropertyDefinition[]>([]);
@@ -77,6 +88,48 @@ export function SearchDialog({ theme, onOpenResult, onCancel }: Props) {
     };
   }, [query, selectedProperty, propertyValue, searchBridge, hasQuery]);
 
+  // Recale la sélection au premier résultat à chaque nouvelle liste
+  // (nouvelle recherche) — ajustement PENDANT le rendu sur comparaison
+  // d'état, même correctif documenté par React que CommandPalette.tsx
+  // (`lastItemsSignature`) et DraftTextField.tsx (`prevInitialValue`) ;
+  // un setState direct dans un effet est refusé par la règle
+  // react-hooks/set-state-in-effect.
+  const [lastResults, setLastResults] = useState(results);
+  if (lastResults !== results) {
+    setLastResults(results);
+    if (selectedIndex !== 0) setSelectedIndex(0);
+  }
+
+  // Navigation clavier ↑↓/Entrée — seuls les résultats OUVRABLES
+  // réagissent à Entrée (dossier/pièce jointe : la ligne reste
+  // informative, isSearchResultOpenable).
+  const openResult = (result: SearchResult | undefined) => {
+    if (result && isSearchResultOpenable(result.kind)) onOpenResult(result);
+  };
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        setSelectedIndex((index) => Math.min(results.length - 1, index + 1));
+        return;
+      }
+      if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        setSelectedIndex((index) => Math.max(0, index - 1));
+        return;
+      }
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        openResult(results[selectedIndex]);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [results, selectedIndex]);
+
   const pickProperty = () => {
     if (!contextMenuBridge) return;
     void contextMenuBridge
@@ -104,6 +157,9 @@ export function SearchDialog({ theme, onOpenResult, onCancel }: Props) {
             autoFocus
             value={query}
             onChangeText={setQuery}
+            // Repli clavier natif (mobile, pas d'écouteur `window`) — ouvre
+            // le résultat sélectionné, même comportement qu'Entrée desktop.
+            onSubmitEditing={() => openResult(results[selectedIndex])}
             placeholder="Rechercher un fichier, du texte, un #mot-clé…"
             placeholderTextColor={theme.textMuted}
             style={[styles.input, { color: theme.text, borderColor: theme.border }]}
@@ -151,24 +207,54 @@ export function SearchDialog({ theme, onOpenResult, onCancel }: Props) {
             {!loading && !error && hasQuery && results.length === 0 && (
               <Text style={[styles.muted, { color: theme.textMuted }]}>Aucun résultat.</Text>
             )}
+            {!loading && !error && hasQuery && results.length > 0 && (
+              <Text style={[styles.resultCount, { color: theme.textMuted }]}>
+                {results.length} résultat{results.length > 1 ? 's' : ''}
+              </Text>
+            )}
             {!loading &&
               hasQuery &&
-              results.map((result) => {
+              results.map((result, index) => {
                 const isOpenable = isSearchResultOpenable(result.kind);
+                const isSelected = index === selectedIndex;
                 return (
                   <Pressable
                     key={searchResultKey(result)}
                     onPress={isOpenable ? () => onOpenResult(result) : undefined}
-                    style={[styles.result, { borderColor: theme.border }, !isOpenable && styles.resultDisabled]}
+                    style={[
+                      styles.result,
+                      { borderColor: theme.border },
+                      !isOpenable && styles.resultDisabled,
+                      isSelected && { backgroundColor: `${theme.accent}22` },
+                    ]}
                   >
                     <Text style={styles.resultIcon}>{SEARCH_RESULT_ICON[result.kind]}</Text>
                     <View style={styles.resultBody}>
                       <Text style={{ color: theme.text }} numberOfLines={1}>
-                        {result.name}
+                        {splitMatchSegments(result.name, query).map((segment, segmentIndex) =>
+                          segment.isMatch ? (
+                            <Text key={segmentIndex} style={[styles.matched, { backgroundColor: `${theme.accent}33` }]}>
+                              {segment.text}
+                            </Text>
+                          ) : (
+                            <Text key={segmentIndex}>{segment.text}</Text>
+                          ),
+                        )}
                       </Text>
                       {result.snippet && (
                         <Text style={[styles.snippet, { color: theme.textMuted }]} numberOfLines={2}>
-                          {result.snippet}
+                          {splitMatchSegments(result.snippet, query).map((segment, segmentIndex) =>
+                            segment.isMatch ? (
+                              <Text
+                                key={segmentIndex}
+                                style={[styles.matched, { backgroundColor: `${theme.accent}33` }]}
+                              >
+                                {segment.text}
+                              </Text>
+                            ) : (
+                              <Text key={segmentIndex}>{segment.text}</Text>
+                            ),
+                          )}
                         </Text>
                       )}
                     </View>
@@ -246,6 +332,16 @@ const styles = StyleSheet.create({
   muted: {
     fontSize: 13,
     padding: 8,
+  },
+  resultCount: {
+    fontSize: 12,
+    paddingHorizontal: 8,
+    paddingBottom: 4,
+  },
+  // Segment correspondant à la requête (splitMatchSegments) — fond accent
+  // translucide + graisse, lisible sur les deux thèmes.
+  matched: {
+    fontWeight: '700',
   },
   error: {
     color: '#dc2626',

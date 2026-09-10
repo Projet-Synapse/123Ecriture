@@ -25,3 +25,6 @@ apps/desktop/electron-dist/
 # OS / éditeurs
 .DS_Store
 *.log
+
+# État local du hook Mimosa (sessions de scan, pas du code)
+.mimosa/

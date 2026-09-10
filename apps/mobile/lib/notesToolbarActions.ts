@@ -121,17 +121,35 @@ export const DEFAULT_NOTES_TOOLBAR_ORDER: { id: ToolbarActionId; visible: boolea
 // visibilité. Ajoute aussi en fin de liste toute action absente de l'ordre
 // stocké (même logique que le merge `{...DEFAULT_PREFERENCES, ...stored}` :
 // un futur nouveau bouton doit apparaître visible plutôt que masqué).
+//
+// Dédoublonnage : un ordre réel observé en prod contenait les niveaux
+// individuels ET le groupe restant en fin ([h1, h3, h2, …, heading-group]) —
+// l'expansion dupliquait alors h1/h2/h3 (boutons en double dans la barre +
+// warning React "two children with the same key"). On garde la PREMIÈRE
+// occurrence (celle que l'utilisatrice a positionnée elle-même), la
+// position du groupe n'apportant rien par définition.
 export function normalizeNotesToolbarOrder(order: ToolbarItemConfig[]): ToolbarItemConfig[] {
   const expanded: ToolbarItemConfig[] = [];
+  // Set<string> (pas ToolbarActionId) : `item.id` vient du disque, qui
+  // tolère des ids inconnus/obsolètes ('heading-group' ou pire).
+  const seen = new Set<string>();
+  const pushUnique = (item: ToolbarItemConfig) => {
+    if (seen.has(item.id)) return;
+    seen.add(item.id);
+    expanded.push(item);
+  };
   for (const item of order) {
     if ((item.id as string) === 'heading-group') {
-      HEADING_ACTIONS.forEach((heading) => expanded.push({ id: heading.id, visible: item.visible }));
+      HEADING_ACTIONS.forEach((heading) => pushUnique({ id: heading.id, visible: item.visible }));
     } else {
-      expanded.push(item);
+      pushUnique(item);
     }
   }
   for (const action of NOTES_TOOLBAR_ACTIONS) {
-    if (!expanded.some((item) => item.id === action.id)) expanded.push({ id: action.id, visible: true });
+    if (!seen.has(action.id)) {
+      seen.add(action.id);
+      expanded.push({ id: action.id, visible: true });
+    }
   }
   return expanded;
 }

@@ -3,6 +3,7 @@ import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-
 
 import { useVaults } from '../lib/sync/VaultsContext';
 import { usePreferences } from '../preferences/PreferencesContext';
+import { ConfirmDialog } from './ConfirmDialog';
 import { DraftTextField } from './DraftTextField';
 
 // Écran Tâches — module de productivité (voir docs/ARCHITECTURE.md §8).
@@ -53,6 +54,17 @@ export function TasksScreen({ pendingOpenTask, onOpenedPendingTask }: Props = {}
   // plusieurs tâches étaient dépliées en même temps.
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
   const [newSubtaskDraft, setNewSubtaskDraft] = useState('');
+  // Supprimer une liste = suppression EN CASCADE de toutes ses tâches
+  // (voir apps/desktop/electron/tasks.ts, "panier jetable") — la plus
+  // destructive de l'app, elle passe donc par ConfirmDialog, contrairement
+  // aux suppressions simples (tâche/sous-étape) qui restent directes :
+  // re-taper une tâche perdue reste supportable, une liste entière non.
+  const [confirmDeleteList, setConfirmDeleteList] = useState<TaskList | null>(null);
+  // Masquage des tâches terminées — pur confort de lecture sur une longue
+  // liste, état local volontairement NON persisté (contrairement au mode
+  // de tri des fichiers) : c'est un besoin de session ("voir ce qui
+  // reste"), pas une préférence d'app.
+  const [hideCompleted, setHideCompleted] = useState(false);
 
   const refreshTaskLists = useCallback(async () => {
     if (!taskListsBridge) return;
@@ -506,7 +518,11 @@ export function TasksScreen({ pendingOpenTask, onOpenedPendingTask }: Props = {}
             <Pressable onPress={() => startRenameList(activeList)} style={styles.listHeaderAction}>
               <Text style={{ color: theme.textMuted }}>✏️</Text>
             </Pressable>
-            <Pressable onPress={() => void handleRemoveList(activeList.id)} style={styles.listHeaderAction}>
+            <Pressable
+              onPress={() => setConfirmDeleteList(activeList)}
+              style={styles.listHeaderAction}
+              accessibilityLabel={`Supprimer la liste ${activeList.name}`}
+            >
               <Text style={{ color: theme.textMuted }}>🗑️</Text>
             </Pressable>
           </>
@@ -570,13 +586,51 @@ export function TasksScreen({ pendingOpenTask, onOpenedPendingTask }: Props = {}
           </View>
           {addError && <Text style={styles.error}>⚠️ {addError}</Text>}
 
+          {/* Compteur + masquage des terminées — "N à faire" se suffit
+              quand tout est en cours ; le bouton n'apparaît qu'une fois
+              qu'il y a au moins une tâche terminée à masquer. */}
+          <View style={styles.listMetaRow}>
+            <Text style={[styles.listMetaText, { color: theme.textMuted }]}>
+              {pending.length} à faire{done.length > 0 ? ` · ${done.length} terminée${done.length > 1 ? 's' : ''}` : ''}
+            </Text>
+            {done.length > 0 && (
+              <Pressable
+                onPress={() => setHideCompleted((prev) => !prev)}
+                accessibilityLabel={hideCompleted ? 'Afficher les tâches terminées' : 'Masquer les tâches terminées'}
+              >
+                <Text style={[styles.listMetaAction, { color: theme.accent }]}>
+                  {hideCompleted ? 'Afficher les terminées' : 'Masquer les terminées'}
+                </Text>
+              </Pressable>
+            )}
+          </View>
+
           <ScrollView contentContainerStyle={styles.list}>
-            {[...pending, ...done].map(renderTask)}
+            {[...pending, ...(hideCompleted ? [] : done)].map(renderTask)}
             {tasks.length === 0 && (
               <Text style={[styles.muted, { color: theme.textMuted }]}>Aucune tâche pour l’instant.</Text>
             )}
+            {tasks.length > 0 && pending.length === 0 && hideCompleted && (
+              <Text style={[styles.muted, { color: theme.textMuted }]}>
+                Toutes les tâches sont terminées — affiche les terminées pour les revoir.
+              </Text>
+            )}
           </ScrollView>
         </>
+      )}
+
+      {/* Confirmation de suppression de liste — jamais montée sans liste
+          ciblée, `onSettled` referme dans tous les cas (succès OU échec,
+          l'erreur reste visible via listActionError). */}
+      {confirmDeleteList && (
+        <ConfirmDialog
+          theme={theme}
+          title={`Supprimer « ${confirmDeleteList.name} » ?`}
+          message={`La liste et ses ${tasks.length} tâche${tasks.length > 1 ? 's' : ''} seront supprimées définitivement.`}
+          onConfirm={() => handleRemoveList(confirmDeleteList.id)}
+          onCancel={() => setConfirmDeleteList(null)}
+          onSettled={() => setConfirmDeleteList(null)}
+        />
       )}
     </View>
   );
@@ -624,6 +678,20 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
+  },
+  // Compteur "N à faire · M terminées" + bascule de masquage
+  listMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  listMetaText: {
+    fontSize: 13,
+  },
+  listMetaAction: {
+    fontSize: 13,
+    fontWeight: '500',
   },
   listSwitcher: {
     flex: 1,

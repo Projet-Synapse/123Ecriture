@@ -1,4 +1,4 @@
-import { autocompletion, type Completion, type CompletionContext, type CompletionResult } from '@codemirror/autocomplete';
+import { type Completion, type CompletionContext, type CompletionResult } from '@codemirror/autocomplete';
 
 // Autocomplétion des {{occurrences}} dans MdxEditor.tsx — se déclenche dès
 // `{{`, ne propose QUE les mots déjà dans le dictionnaire personnel (voir
@@ -13,6 +13,11 @@ import { autocompletion, type Completion, type CompletionContext, type Completio
 // frappe — passer des refs mutables plutôt que reconstruire l'extension à
 // chaque changement du dictionnaire, qui perturberait l'état interne du
 // popup d'autocomplétion en cours d'utilisation.
+//
+// On exporte la SOURCE (pas une extension `autocompletion()` complète) :
+// `autocompletion()` est singleton côté CodeMirror, or l'éditeur propose
+// AUSSI les [[wikilinks]] (lib/wikilinkAutocomplete.ts) — MdxEditor.tsx
+// monte les deux sources dans une seule et même instance.
 
 export type OccurrenceAutocompleteOptions = {
   getKnownWords: () => string[];
@@ -23,7 +28,7 @@ function closeToken(word: string) {
   return `${word}}}`;
 }
 
-function occurrenceCompletionSource(options: OccurrenceAutocompleteOptions) {
+export function occurrenceCompletionSource(options: OccurrenceAutocompleteOptions) {
   return (context: CompletionContext): CompletionResult | null => {
     const match = context.matchBefore(/\{\{[^}]*/);
     if (!match) return null;
@@ -64,8 +69,4 @@ function occurrenceCompletionSource(options: OccurrenceAutocompleteOptions) {
     if (completions.length === 0) return null;
     return { from, options: completions, filter: false };
   };
-}
-
-export function createOccurrenceAutocomplete(options: OccurrenceAutocompleteOptions) {
-  return autocompletion({ override: [occurrenceCompletionSource(options)] });
 }

@@ -62,7 +62,12 @@ export function AppShell({
   // Ctrl/Cmd+K global (n'importe quel écran) — dégradé gracieusement si
   // `window` n'existe pas (mobile natif, pas de clavier physique standard).
   // Cmd sur macOS, Ctrl ailleurs — même détection que le reste de l'app pour
-  // les raccourcis (voir MdxEditor.tsx, `shortcuts`).
+  // les raccourcis (voir MdxEditor.tsx, `shortcuts`). L'ÉDITEUR a priorité
+  // quand il a le focus : son keymap Mod-k (insérer un lien, voir
+  // notesToolbarActions.ts) fait preventDefault() sur l'évènement natif —
+  // sans ce garde, la palette s'ouvrait PAR-DESSUS l'insertion du lien.
+  // Réciproquement, NotesScreen n'écoute plus Ctrl+K du tout : avant, un
+  // seul Ctrl+K y ouvrait la recherche globale ET cette palette superposées.
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -70,6 +75,7 @@ export function AppShell({
     const handleKeyDown = (event: KeyboardEvent) => {
       const modifierPressed = isMac ? event.metaKey : event.ctrlKey;
       if (!modifierPressed || event.key.toLowerCase() !== 'k') return;
+      if (event.defaultPrevented) return;
       event.preventDefault();
       setCommandPaletteOpen((open) => !open);
     };

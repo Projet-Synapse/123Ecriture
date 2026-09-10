@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, Text, View } from 'react-native';
 
+import {
+  NOTES_TOOLBAR_ACTIONS,
+  NOTES_TOOLBAR_DESCRIPTIONS,
+  NOTES_TOOLBAR_SHORTCUT_LABELS,
+} from '../../lib/notesToolbarActions';
 import { usePreferences } from '../../preferences/PreferencesContext';
 import { SettingsToggle } from './SettingsToggle';
 import { settingsStyles as s } from './settingsStyles';
@@ -66,16 +71,42 @@ export function AboutSection() {
     }
   }, [updater]);
 
-  // Raccourcis clavier (Ctrl sur Windows/Linux, Cmd sur macOS) — voir
-  // NotesScreen.tsx pour l'implémentation. Section purement informative
-  // (pas de bridge), affichée AVANT le early-return `!updater` ci-dessous
-  // puisque ces raccourcis fonctionnent aussi en web, pas seulement desktop.
+  // Raccourcis clavier (Ctrl sur Windows/Linux, Cmd sur macOS) —
+  // génération depuis les REGISTRES réels plutôt qu'une liste codée en dur
+  // qui avait déjà dérivé (elle décrivait Ctrl+K "Recherche globale" alors
+  // qu'il ouvre la palette de commandes, et ignorait tout le formatage).
+  // Sources : NOTES_TOOLBAR_ACTIONS/NOTES_TOOLBAR_SHORTCUT_LABELS pour
+  // l'éditeur (lib/notesToolbarActions.ts — la même source que la barre
+  // d'outils et Paramètres → Éditeur), implémentations pour les globaux
+  // (AppShell.tsx palette, NotesScreen.tsx S/N, MdxEditor.tsx recherche
+  // dans la note). Section purement informative (pas de bridge), affichée
+  // AVANT le early-return `!updater` ci-dessous puisque ces raccourcis
+  // fonctionnent aussi en web, pas seulement desktop.
+  const globalShortcutRows: [string, string][] = [
+    ['Ctrl/Cmd + K', 'Palette de commandes & recherche globale'],
+    ['Ctrl/Cmd + K (dans l’éditeur)', 'Insérer un lien'],
+    ['Ctrl/Cmd + N', 'Nouvelle note'],
+    ['Ctrl/Cmd + S', 'Enregistrer la note'],
+    ['Ctrl/Cmd + F', 'Rechercher dans la note'],
+  ];
+  const formattingShortcutRows: [string, string][] = NOTES_TOOLBAR_ACTIONS.filter(
+    (action) => action.shortcut,
+  ).map((action) => [
+    NOTES_TOOLBAR_SHORTCUT_LABELS[action.id] ?? '',
+    NOTES_TOOLBAR_DESCRIPTIONS[action.id],
+  ]);
+  const shortcutRow = ([keys, label]: [string, string]) => (
+    <Text key={`${keys} — ${label}`} style={[s.cardValue, { color: theme.textMuted }]}>
+      {keys} — {label}
+    </Text>
+  );
   const shortcuts = (
     <View style={[s.card, { backgroundColor: theme.surface, borderColor: theme.border }]}>
       <Text style={[s.cardTitle, { color: theme.text }]}>Raccourcis clavier</Text>
-      <Text style={[s.cardValue, { color: theme.textMuted }]}>Ctrl/Cmd + S — Enregistrer la note</Text>
-      <Text style={[s.cardValue, { color: theme.textMuted }]}>Ctrl/Cmd + K — Recherche globale</Text>
-      <Text style={[s.cardValue, { color: theme.textMuted }]}>Ctrl/Cmd + N — Nouvelle note</Text>
+      <Text style={[s.label, { color: theme.text }]}>Généraux</Text>
+      {globalShortcutRows.map(shortcutRow)}
+      <Text style={[s.label, { color: theme.text }]}>Formatage (dans l’éditeur)</Text>
+      {formattingShortcutRows.map(shortcutRow)}
     </View>
   );
 
