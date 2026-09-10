@@ -76,3 +76,25 @@ describe('findLiveMatches — tri', () => {
     expect(froms).toEqual([...froms].sort((a, b) => a - b));
   });
 });
+
+describe('findLiveMatches — chevauchements', () => {
+  // Garde-fou du crash "Ranges must be added sorted by `from`" (voir
+  // findLiveMatches) : deux syntaxes imbriquées font replonger le
+  // RangeSetBuilder en arrière → CodeMirror désactive tout le plugin.
+  it('un gras contenant un wikilink : ne garde que le gras (premier trié)', () => {
+    const matches = findLiveMatches('avant **voir [[Note]]** après');
+    expect(matches.some((m) => m.kind === 'mark')).toBe(true);
+    expect(matches.some((m) => m.kind === 'token')).toBe(false);
+  });
+
+  it('un italique englobant un gras : ne garde que l’italique', () => {
+    const matches = findLiveMatches('_du **gras** dedans_');
+    expect(matches.filter((m) => m.kind === 'mark')).toHaveLength(1);
+    expect(matches[0]).toMatchObject({ kind: 'mark', type: 'italic' });
+  });
+
+  it('des correspondances simplement adjacentes sont toutes conservées', () => {
+    const matches = findLiveMatches('**a** puis [[b]] puis #tag');
+    expect(matches).toHaveLength(3);
+  });
+});

@@ -279,33 +279,12 @@ export function NotesScreen({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [vault, vaultPath]);
 
-  // //1.5 ⌨️ RACCOURCI CLAVIER — RECHERCHE GLOBALE
-  // //////////////////////////////////////////////////////////////////////
-
-  // Ctrl/Cmd+K ouvre la recherche (voir SearchDialog.tsx) — jusqu'ici
-  // uniquement accessible au clic sur la loupe de listHeaderActions
-  // ci-dessous, gros point de friction pour qui vient d'un éditeur façon
-  // Obsidian/Notion où ce raccourci est automatique. `document` n'existe
-  // que côté web/desktop (react-native-web) — sur mobile natif cet effet
-  // ne s'attache jamais, même garde que useResizablePanel.ts. `K` seul
-  // (sans modificateur) n'est PAS intercepté : ne doit jamais gêner la
-  // frappe normale dans l'éditeur ou un champ de renommage.
-  useEffect(() => {
-    if (typeof document === 'undefined') return;
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (!(event.metaKey || event.ctrlKey)) return;
-      if (event.key !== 'k' && event.key !== 'K') return;
-      // preventDefault : sur le build web, Ctrl/Cmd+K focus sinon la barre
-      // d'adresse du navigateur (Chrome/Firefox) au lieu d'ouvrir la
-      // recherche de l'app.
-      event.preventDefault();
-      setSearchOpen(true);
-    };
-
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, []);
+  // (Ctrl/Cmd+K — palette de commandes/recherche globale — vit dans
+  // AppShell.tsx, UN seul écouteur pour toute l'app : cet écran n'en a
+  // plus de propre. Historique : deux listeners parallèles ici ouvraient
+  // la SearchDialog SOUS la palette superposée ; la palette intègre déjà
+  // la recherche globale (voir CommandPalette.tsx) et la loupe 🔍 de
+  // listHeaderActions reste le clic dédié aux filtres par propriété.)
 
   const refreshOccurrences = useCallback(async () => {
     if (!occurrencesBridge) return;
@@ -329,6 +308,10 @@ export function NotesScreen({
     [occurrenceEntries],
   );
   const occurrenceWordList = useMemo(() => occurrenceEntries.map((entry) => entry.word), [occurrenceEntries]);
+  // Noms des notes pour l'autocomplétion `[[` (voir MdxEditor.tsx/
+  // lib/wikilinkAutocomplete.ts) — recalculé quand l'arbre change
+  // (création/renommage/déplacement), pas à la frappe.
+  const noteNameList = useMemo(() => flattenNotes(tree).map((note) => note.name), [tree]);
 
   // Créer un mot à la volée depuis l'autocomplétion `{{` (voir
   // MdxEditor.tsx/lib/occurrenceAutocomplete.ts) — même bridge que
@@ -1163,14 +1146,14 @@ export function NotesScreen({
   }, [vault, activeNote, refreshTree]);
 
   // Raccourcis clavier globaux (Ctrl sur Windows/Linux, Cmd sur macOS) —
-  // absents jusqu'ici de toute l'app (voir l'analyse ergonomie), pourtant
-  // attendus dans un éditeur de notes façon Obsidian : Ctrl/Cmd+S force la
-  // sauvegarde immédiate, Ctrl/Cmd+K ouvre la recherche globale (déjà
-  // accessible via le bouton 🔍), Ctrl/Cmd+N crée une nouvelle note (même
-  // emplacement par défaut que le bouton "+ Nouvelle note"). Web/Electron
-  // uniquement (`window` n'existe pas sur natif) — `preventDefault` évite
-  // que le navigateur n'ouvre sa propre boîte de dialogue "Enregistrer
-  // sous"/recherche de page sur Ctrl+S/Ctrl+K.
+  // Ctrl/Cmd+S force la sauvegarde immédiate, Ctrl/Cmd+N crée une nouvelle
+  // note (même emplacement par défaut que le bouton "+ Nouvelle note").
+  // Ctrl/Cmd+K (palette/recherche globale) vit dans AppShell.tsx, pas ici
+  // — voir le commentaire du bloc retiré ci-dessus ("1.5"). La recherche
+  // DANS la note (Ctrl/Cmd+F) vit dans MdxEditor.tsx (keymap CodeMirror).
+  // Web/Electron uniquement (`window` n'existe pas sur natif) —
+  // `preventDefault` évite que le navigateur n'ouvre sa propre boîte de
+  // dialogue "Enregistrer sous" sur Ctrl+S.
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -1179,10 +1162,6 @@ export function NotesScreen({
         case 's':
           event.preventDefault();
           flushSave();
-          break;
-        case 'k':
-          event.preventDefault();
-          setSearchOpen(true);
           break;
         case 'n':
           event.preventDefault();
@@ -1867,6 +1846,7 @@ export function NotesScreen({
                           onOpenOccurrence={handleOpenOccurrence}
                           occurrenceWords={occurrenceWordList}
                           onCreateOccurrence={handleCreateOccurrence}
+                          noteNames={noteNameList}
                           fontSize={preferences.editorFontSize}
                           fontFamily={preferences.editorFontFamily}
                           closeBrackets={preferences.editorCloseBrackets}

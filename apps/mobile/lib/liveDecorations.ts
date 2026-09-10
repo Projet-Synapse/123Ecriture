@@ -142,10 +142,19 @@ function findOccurrences(text: string): TokenMatch[] {
   return matches;
 }
 
-// Toutes les correspondances du document, triées par position — pas de
-// déduplication de chevauchement : les syntaxes reconnues ne se recoupent
-// pas entre elles dans l'usage attendu (pas de gras imbriqué dans un lien,
-// etc. — cut v1 assumé, voir le plan).
+// Toutes les correspondances du document, triées par position, SANS
+// chevauchement : mdxLivePreview.ts alimente un RangeSetBuilder CodeMirror
+// qui exige des plages ajoutées dans l'ordre strictement croissant — deux
+// correspondances imbriquées (ex. `**[[lien]]**` : gras contenant un
+// wikilink) faisaient ajouter les morceaux du gras PUIS revenir en arrière
+// pour le wikilink → "Ranges must be added sorted by `from` position and
+// `startSide`" → CodeMirror désactive le ViewPlugin ENTIERS et en silence
+// pour tout le document : le mode "Intermédiaire" retombait visuellement
+// en mode "Source" sans explication (bug observé au lancement réel, même
+// famille que celui documenté dans mdxLivePreview.ts pour l'ordre
+// intra-correspondance). La première correspondance triée gagne, la
+// syntaxe imbriquée reste en texte brut — cut v1 assumé, cohérent avec
+// "pas de gras imbriqué dans un lien" ci-dessus.
 export function findLiveMatches(text: string): LiveMatch[] {
   const matches: LiveMatch[] = [
     ...findBold(text),
@@ -156,5 +165,13 @@ export function findLiveMatches(text: string): LiveMatch[] {
     ...findOccurrences(text),
   ];
   matches.sort((a, b) => a.from - b.from);
-  return matches;
+
+  const nonOverlapping: LiveMatch[] = [];
+  let lastTo = -1;
+  for (const match of matches) {
+    if (match.from < lastTo) continue; // chevauche la correspondance retenue
+    nonOverlapping.push(match);
+    lastTo = match.to;
+  }
+  return nonOverlapping;
 }

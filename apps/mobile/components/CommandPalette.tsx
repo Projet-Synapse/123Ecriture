@@ -1,7 +1,14 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { isSearchResultOpenable, openSearchResult, SEARCH_MATCH_LABEL, SEARCH_RESULT_ICON, searchResultKey } from '../lib/searchResults';
+import {
+  isSearchResultOpenable,
+  openSearchResult,
+  SEARCH_MATCH_LABEL,
+  SEARCH_RESULT_ICON,
+  searchResultKey,
+  splitMatchSegments,
+} from '../lib/searchResults';
 import type { Section } from '../navigation';
 import type { Theme } from '../theme';
 import type { NotesActions } from './AppShell';
@@ -264,11 +271,30 @@ export function CommandPalette({
                     <Text style={styles.resultIcon}>{SEARCH_RESULT_ICON[result.kind]}</Text>
                     <View style={styles.resultBody}>
                       <Text style={{ color: theme.text }} numberOfLines={1}>
-                        {result.name}
+                        {splitMatchSegments(result.name, query).map((segment, segmentIndex) =>
+                          segment.isMatch ? (
+                            <Text key={segmentIndex} style={[styles.matched, { backgroundColor: `${theme.accent}33` }]}>
+                              {segment.text}
+                            </Text>
+                          ) : (
+                            <Text key={segmentIndex}>{segment.text}</Text>
+                          ),
+                        )}
                       </Text>
                       {result.snippet && (
                         <Text style={[styles.snippet, { color: theme.textMuted }]} numberOfLines={1}>
-                          {result.snippet}
+                          {splitMatchSegments(result.snippet, query).map((segment, segmentIndex) =>
+                            segment.isMatch ? (
+                              <Text
+                                key={segmentIndex}
+                                style={[styles.matched, { backgroundColor: `${theme.accent}33` }]}
+                              >
+                                {segment.text}
+                              </Text>
+                            ) : (
+                              <Text key={segmentIndex}>{segment.text}</Text>
+                            ),
+                          )}
                         </Text>
                       )}
                     </View>
@@ -340,6 +366,11 @@ const styles = StyleSheet.create({
   snippet: {
     fontSize: 12,
     marginTop: 2,
+  },
+  // Segment correspondant à la requête (splitMatchSegments) — même style
+  // que SearchDialog.tsx pour rester indiscernable entre les deux UI.
+  matched: {
+    fontWeight: '700',
   },
   matchType: {
     fontSize: 11,

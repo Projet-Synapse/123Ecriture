@@ -2,11 +2,14 @@ import { useMemo } from 'react';
 import { StyleSheet, View } from 'react-native';
 import CodeMirror, { EditorView, type ReactCodeMirrorRef } from '@uiw/react-codemirror';
 import { markdown } from '@codemirror/lang-markdown';
+import { autocompletion } from '@codemirror/autocomplete';
+import { search as searchExtension, searchKeymap } from '@codemirror/search';
 import { keymap } from '@codemirror/view';
 import { Prec } from '@codemirror/state';
 
 import { createLivePreviewExtension } from '../lib/mdxLivePreview';
-import { createOccurrenceAutocomplete } from '../lib/occurrenceAutocomplete';
+import { occurrenceCompletionSource } from '../lib/occurrenceAutocomplete';
+import { wikilinkCompletionSource } from '../lib/wikilinkAutocomplete';
 import type { FormattingResult, Selection } from '../lib/mdxFormatting';
 import type { Theme } from '../theme';
 
@@ -50,6 +53,11 @@ type Props = {
   // taper `{{` ne propose simplement aucune suggestion.
   occurrenceWords?: string[];
   onCreateOccurrence?: (word: string) => Promise<void>;
+  // Noms des notes du coffre pour l'autocomplétion `[[` (voir
+  // lib/wikilinkAutocomplete.ts) — la résolution d'un wikilink se fait par
+  // NOM (comme handleOpenWikilink dans NotesScreen.tsx), pas par chemin.
+  // Optionnel pour la même raison qu'occurrenceWords.
+  noteNames?: string[];
   onReady?: (ref: ReactCodeMirrorRef) => void;
   // Paramètres → Éditeur (voir PreferencesContext.tsx). Valeurs par défaut
   // alignées sur DEFAULT_PREFERENCES pour rester utilisable si le composant
@@ -76,6 +84,7 @@ export function MdxEditor({
   onOpenOccurrence,
   occurrenceWords,
   onCreateOccurrence,
+  noteNames,
   onReady,
   fontSize = 15,
   fontFamily = 'system',
@@ -97,6 +106,23 @@ export function MdxEditor({
         '&.cm-focused .cm-selectionBackground, ::selection': { backgroundColor: `${theme.accent}33` },
         '.cm-gutters': { display: 'none' },
         '.cm-activeLine': { backgroundColor: 'transparent' },
+        // Panneau de recherche dans la note (Ctrl/Cmd+F, voir
+        // searchExtensions plus bas) : sans ça il reste blanc/gris CodeMirror
+        // même en thème sombre — incohérent avec le reste de l'app.
+        '.cm-panels': {
+          backgroundColor: theme.surface,
+          color: theme.text,
+          borderColor: theme.border,
+          fontFamily: 'inherit',
+        },
+        '.cm-panels input, .cm-panels button': {
+          backgroundColor: theme.background,
+          color: theme.text,
+          borderColor: theme.border,
+        },
+        '.cm-panels label': { color: theme.textMuted },
+        '.cm-searchMatch': { backgroundColor: `${theme.accent}44` },
+        '.cm-searchMatch-selected': { backgroundColor: `${theme.accent}88` },
       }),
     [theme, fontSize, fontFamily],
   );
@@ -110,23 +136,29 @@ export function MdxEditor({
     [theme, onOpenWikilink, onOpenOccurrence],
   );
 
-  // Recréée seulement quand le dictionnaire ou le callback de création
-  // changent VRAIMENT (une mutation du dictionnaire — création/renommage/
-  // suppression — pas à chaque frappe : `occurrenceWords` ne bouge pas
-  // pendant la frappe normale) : pas besoin de l'échappatoire "ref lue dans
-  // une closure figée" pour rester à jour. Remplace la complétion par
-  // défaut de `basicSetup` (désactivée explicitement plus bas) : les deux
-  // ne doivent pas coexister, `autocompletion()` est une extension
-  // singleton côté CodeMirror.
-  const occurrenceAutocomplete = useMemo(
+  // Recréée seulement quand le dictionnaire, la liste de notes ou les
+  // callbacks changent VRAIMENT (une mutation — création/renommage/
+  // suppression — pas à chaque frappe : ces listes ne bougent pas pendant
+  // la frappe normale) : pas besoin de l'échappatoire "ref lue dans une
+  // closure figée" pour rester à jour. UNE SEULE instance `autocompletion()`
+  // (singleton côté CodeMirror) portant les DEUX sources — `{{occurrences}}`
+  // (lib/occurrenceAutocomplete.ts) et [[wikilinks]] (lib/
+  // wikilinkAutocomplete.ts) : déclencheurs disjoints, la 1re source qui
+  // retourne non-null gagne.
+  const completionExtension = useMemo(
     () =>
-      createOccurrenceAutocomplete({
-        getKnownWords: () => occurrenceWords ?? [],
-        onCreateWord: async (word) => {
-          await onCreateOccurrence?.(word);
-        },
+      autocompletion({
+        override: [
+          occurrenceCompletionSource({
+            getKnownWords: () => occurrenceWords ?? [],
+            onCreateWord: async (word) => {
+              await onCreateOccurrence?.(word);
+            },
+          }),
+          wikilinkCompletionSource(() => noteNames ?? []),
+        ],
       }),
-    [occurrenceWords, onCreateOccurrence],
+    [occurrenceWords, onCreateOccurrence, noteNames],
   );
 
   // `Prec.highest` : garantit que ces raccourcis gagnent sur les bindings
@@ -155,11 +187,22 @@ export function MdxEditor({
     );
   }, [shortcuts]);
 
+  // Recherche/remplacement DANS la note (Ctrl/Cmd+F) — panneau natif
+  // CodeMirror (@codemirror/search) : champ de recherche + remplacer,
+  // navigation Occurrence suivant/précédent, surlignage des correspondances
+  // dans le texte. `top: true` : le panneau s'ouvre au-dessus du contenu
+  // (façon éditeur de texte classique) plutôt qu'en bas, où la barre de
+  // formatage risque de le chevaucher. `searchKeymap` fournit Mod-f/F3/
+  // Mod-g/Échap — aucun conflit avec les raccourcis maison (Mod-b/i/e/k,
+  // Mod-1-6, Mod-Shift-7/8/9, voir lib/notesToolbarActions.ts), et ces
+  // derniers gagnent de toute façon via Prec.highest ci-dessus.
+  const searchExtensions = useMemo(() => [searchExtension({ top: true }), keymap.of(searchKeymap)], []);
+
   const extensions = useMemo(() => {
-    const base = [markdown(), EditorView.lineWrapping, occurrenceAutocomplete];
+    const base = [markdown(), EditorView.lineWrapping, completionExtension, ...searchExtensions];
     const withShortcuts = shortcutsExtension ? [...base, shortcutsExtension] : base;
     return livePreview ? [...withShortcuts, liveExtension] : withShortcuts;
-  }, [livePreview, liveExtension, occurrenceAutocomplete, shortcutsExtension]);
+  }, [livePreview, liveExtension, completionExtension, shortcutsExtension, searchExtensions]);
 
   return (
     <View style={styles.container}>

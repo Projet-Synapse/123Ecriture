@@ -61,6 +61,35 @@ export type SearchResultOpenHandlers = {
   openCalendarEvent: (date: string) => void;
 };
 
+// Segment de texte avec drapeau "c'est ici que la requête matche" —
+// consommé par SearchDialog.tsx/CommandPalette.tsx pour surligner les
+// correspondances dans le titre et l'extrait (Text RN imbriqués : le
+// composant applique le style, ce helper reste pur).
+export type MatchSegment = { text: string; isMatch: boolean };
+
+// Découpe `text` en segments en marquant TOUTES les occurrences (insensible
+// à la casse) de `query`. Requête vide/absente → un seul segment non
+// marqué (le rendu n'a alors rien à surligner, état initial d'une
+// recherche pas encore tapée).
+export function splitMatchSegments(text: string, query: string): MatchSegment[] {
+  const needle = query.trim();
+  if (!needle) return [{ text, isMatch: false }];
+
+  const lowerText = text.toLowerCase();
+  const lowerNeedle = needle.toLowerCase();
+  const segments: MatchSegment[] = [];
+  let cursor = 0;
+  let index = lowerText.indexOf(lowerNeedle, cursor);
+  while (index !== -1) {
+    if (index > cursor) segments.push({ text: text.slice(cursor, index), isMatch: false });
+    segments.push({ text: text.slice(index, index + needle.length), isMatch: true });
+    cursor = index + needle.length;
+    index = lowerText.indexOf(lowerNeedle, cursor);
+  }
+  if (cursor < text.length) segments.push({ text: text.slice(cursor), isMatch: false });
+  return segments;
+}
+
 // Aiguille un résultat cliqué vers le bon handler — le seul point commun
 // entre SearchDialog.tsx (déjà sur l'écran Notes, ouvre directement) et
 // CommandPalette.tsx (n'importe quel écran, passe par les callbacks
