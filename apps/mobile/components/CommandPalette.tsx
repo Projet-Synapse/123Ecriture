@@ -9,6 +9,7 @@ import {
   searchResultKey,
   splitMatchSegments,
 } from '../lib/searchResults';
+import { useScrollIntoView } from '../lib/useScrollIntoView';
 import type { Section } from '../navigation';
 import type { Theme } from '../theme';
 import type { NotesActions } from './AppShell';
@@ -81,6 +82,10 @@ export function CommandPalette({
   const [loading, setLoading] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Suit la sélection flèches pour la garder dans la zone visible (voir
+  // lib/useScrollIntoView.ts pour la forme "handlers inline" imposée par
+  // react-hooks/refs).
+  const { scrollRef, recordItemLayout, handleListLayout, handleListScroll, ensureVisible } = useScrollIntoView();
 
   // Actions statiques — "Nouvelle note"/"Nouveau dossier" ne sont proposées
   // QUE si Notes est déjà l'écran actif : solution la plus simple qui reste
@@ -189,12 +194,16 @@ export function CommandPalette({
       }
       if (event.key === 'ArrowDown') {
         event.preventDefault();
-        setSelectedIndex((i) => Math.min(items.length - 1, i + 1));
+        const next = Math.min(items.length - 1, selectedIndex + 1);
+        setSelectedIndex(next);
+        ensureVisible(next);
         return;
       }
       if (event.key === 'ArrowUp') {
         event.preventDefault();
-        setSelectedIndex((i) => Math.max(0, i - 1));
+        const next = Math.max(0, selectedIndex - 1);
+        setSelectedIndex(next);
+        ensureVisible(next);
         return;
       }
       if (event.key === 'Enter') {
@@ -228,12 +237,18 @@ export function CommandPalette({
             style={[styles.input, { color: theme.text, borderColor: theme.border }]}
           />
 
-          <ScrollView style={styles.resultsList}>
+          <ScrollView
+            ref={scrollRef}
+            onLayout={(event) => handleListLayout(event)}
+            onScroll={(event) => handleListScroll(event)}
+            style={styles.resultsList}
+          >
             {filteredActions.map((action, index) => {
               const isSelected = index === selectedIndex;
               return (
                 <Pressable
                   key={action.id}
+                  onLayout={(event) => recordItemLayout(index, event)}
                   onPress={() => activateItem({ type: 'action', action })}
                   style={[
                     styles.result,
@@ -261,6 +276,7 @@ export function CommandPalette({
                 return (
                   <Pressable
                     key={searchResultKey(result)}
+                    onLayout={(event) => recordItemLayout(index, event)}
                     onPress={() => activateItem({ type: 'result', result })}
                     style={[
                       styles.result,

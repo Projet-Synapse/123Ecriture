@@ -6,6 +6,7 @@ import { useSyncStatus } from '../../lib/sync/SyncStatusContext';
 import { linkVaultToCloud, runSync as runSyncEngine, type SyncSummary } from '../../lib/sync/syncEngine';
 import { useVaults } from '../../lib/sync/VaultsContext';
 import { usePreferences } from '../../preferences/PreferencesContext';
+import { ConfirmDialog } from '../ConfirmDialog';
 import { SettingsToggle } from './SettingsToggle';
 import { settingsStyles as s } from './settingsStyles';
 
@@ -43,6 +44,11 @@ export function AccountSyncSection() {
   const [createDraft, setCreateDraft] = useState('');
   const [syncingVaultId, setSyncingVaultId] = useState<string | null>(null);
   const [syncResults, setSyncResults] = useState<Record<string, { summary?: SyncSummary; error?: string }>>({});
+  // Retirer un coffre n'efface rien sur le disque (vaults.ts ne filtre que
+  // le registre), mais un ✕ frôlé délierait aussi sa liaison cloud — d'où
+  // la même confirmation que la suppression de liste de tâches
+  // (ConfirmDialog), plutôt qu'un retrait immédiat au simple clic.
+  const [confirmRemoveVault, setConfirmRemoveVault] = useState<VaultRegistryEntry | null>(null);
 
   const runVaultAction = useCallback(async (action: () => Promise<void>) => {
     setVaultActionError(null);
@@ -204,7 +210,11 @@ export function AccountSyncSection() {
                     <Text style={{ color: theme.textMuted }}>✏️</Text>
                   </Pressable>
                 )}
-                <Pressable onPress={() => void runVaultAction(() => removeVault(v.id))} style={styles.vaultRowAction}>
+                <Pressable
+                  onPress={() => setConfirmRemoveVault(v)}
+                  style={styles.vaultRowAction}
+                  accessibilityLabel={`Retirer le coffre ${v.name}`}
+                >
                   <Text style={{ color: theme.textMuted }}>✕</Text>
                 </Pressable>
               </View>
@@ -311,6 +321,21 @@ export function AccountSyncSection() {
             </View>
           )}
         </View>
+      )}
+
+      {/* Confirmation de retrait de coffre — `onSettled` referme dans tous
+          les cas (succès OU échec, l'erreur restant visible via
+          vaultActionError), même montage que TasksScreen.tsx. */}
+      {confirmRemoveVault && (
+        <ConfirmDialog
+          theme={theme}
+          title={`Retirer « ${confirmRemoveVault.name} » ?`}
+          message="Le coffre sera retiré de la liste (ses fichiers restent sur le disque, rien n'est effacé). Un coffre lié au cloud devra être relié pour resynchroniser."
+          confirmLabel="Retirer"
+          onConfirm={() => removeVault(confirmRemoveVault.id)}
+          onCancel={() => setConfirmRemoveVault(null)}
+          onSettled={() => setConfirmRemoveVault(null)}
+        />
       )}
     </View>
   );

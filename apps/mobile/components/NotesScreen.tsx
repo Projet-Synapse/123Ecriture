@@ -222,6 +222,24 @@ export function NotesScreen({
   } | null>(null);
   const draggingRelPathRef = useRef<string | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Note active tenue à jour dans une ref, même rôle que `contentRef`
+  // ci-dessous : flusher l'autosave en attente au changement de note
+  // (openNote) sans dépendre du state `activeNote` d'une closure créée à un
+  // rendu antérieur.
+  const activeNoteRef = useRef<VaultEntry | null>(activeNote);
+  useEffect(() => {
+    activeNoteRef.current = activeNote;
+  }, [activeNote]);
+  // Contenu courant tenu à jour dans une ref (plutôt qu'ajouté aux deps de
+  // flushSave/openNote) : sinon elles changeraient d'identité à chaque
+  // frappe, ce qui réenregistrerait l'écouteur clavier global à chaque
+  // frappe pour rien (voir l'effet Ctrl/Cmd+S/K/N plus bas). Déclaré ici
+  // (avant openNote qui le lit) : react-hooks/immutability exige que la
+  // mutation de la ref précède sa capture par un hook.
+  const contentRef = useRef(content);
+  useEffect(() => {
+    contentRef.current = content;
+  }, [content]);
   const listAreaRef = useRef<View>(null);
   // "Fichier ouvert par défaut" (voir l'effet dédié plus bas) : ne doit
   // s'exécuter qu'UNE fois par coffre activé, pas à chaque re-render — une
@@ -361,6 +379,21 @@ export function NotesScreen({
     async (node: VaultNoteNode) => {
       if (!vault) return;
       try {
+        // Sauvegarde débouncée en attente de la note QUITTÉE : flush AVANT
+        // le changement. Le timer du debounce garde sa closure (le contenu
+        // serait de toute façon écrit au bon relPath), mais ses
+        // setStatus/refreshTree tardifs s'appliquaient à la NOUVELLE note
+        // déjà affichée — et fermer l'app dans la fenêtre des 600 ms
+        // perdait la frappe. Pas de refreshTree ici : best-effort, le
+        // prochain enregistrement rafraîchira l'arbre.
+        if (saveTimer.current && activeNoteRef.current && activeNoteRef.current.relPath !== node.relPath) {
+          clearTimeout(saveTimer.current);
+          saveTimer.current = null;
+          const leftNote = activeNoteRef.current;
+          void vault.writeNote(leftNote.relPath, contentRef.current).catch((error) => {
+            console.error('[vault] échec de la sauvegarde différée au changement de note :', error);
+          });
+        }
         const text = await vault.readNote(node.relPath);
         setActiveNote(node);
         setContent(text);
@@ -1116,15 +1149,6 @@ export function NotesScreen({
     scheduleSave(text);
   };
 
-  // Contenu courant tenu à jour dans une ref (plutôt qu'ajouté aux deps de
-  // flushSave ci-dessous) : sinon flushSave changerait d'identité à chaque
-  // frappe, ce qui réenregistrerait l'écouteur clavier global à chaque
-  // frappe pour rien (voir l'effet Ctrl/Cmd+S/K/N plus bas).
-  const contentRef = useRef(content);
-  useEffect(() => {
-    contentRef.current = content;
-  }, [content]);
-
   // Sauvegarde immédiate (Ctrl/Cmd+S) : court-circuite le debounce de
   // scheduleSave plutôt que d'attendre AUTOSAVE_DELAY_MS — l'autosave existe
   // déjà pour ne rien perdre, mais un raccourci "Enregistrer" qui attend
@@ -1174,6 +1198,24 @@ export function NotesScreen({
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [flushSave, handleCreateNote]);
+
+  // Dernier filet pour la même fenêtre de debouncing : fermer la fenêtre
+  // dans les 600 ms suivant une frappe perdait la frappe silencieusement.
+  // Best-effort assumé — ipcRenderer.invoke est asynchrone et le renderer
+  // peut être détruit avant la résolution, mais le message est déjà parti
+  // au main process, qui termine l'écriture de son côté.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handleBeforeUnload = () => {
+      const note = activeNoteRef.current;
+      if (!saveTimer.current || !note) return;
+      clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+      void vault?.writeNote(note.relPath, contentRef.current).catch(() => undefined);
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [vault]);
 
   // Le bloc "Propriétés" (PropertiesBlock.tsx) affiche déjà le frontmatter
   // de façon structurée en mode Intermédiaire/Aperçu — sans ça, le bloc YAML

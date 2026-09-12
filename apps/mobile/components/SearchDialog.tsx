@@ -8,6 +8,7 @@ import {
   searchResultKey,
   splitMatchSegments,
 } from '../lib/searchResults';
+import { useScrollIntoView } from '../lib/useScrollIntoView';
 import type { Theme } from '../theme';
 
 // Recherche globale — voir .claude/References/Sources.md §2 : "un petit
@@ -49,6 +50,10 @@ export function SearchDialog({ theme, onOpenResult, onCancel }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedIndex, setSelectedIndex] = useState(0);
+  // Suit la sélection flèches pour la garder dans la zone visible (voir
+  // lib/useScrollIntoView.ts pour la forme "handlers inline" imposée par
+  // react-hooks/refs).
+  const { scrollRef, recordItemLayout, handleListLayout, handleListScroll, ensureVisible } = useScrollIntoView();
 
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [properties, setProperties] = useState<PropertyDefinition[]>([]);
@@ -112,12 +117,16 @@ export function SearchDialog({ theme, onOpenResult, onCancel }: Props) {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'ArrowDown') {
         event.preventDefault();
-        setSelectedIndex((index) => Math.min(results.length - 1, index + 1));
+        const next = Math.min(results.length - 1, selectedIndex + 1);
+        setSelectedIndex(next);
+        ensureVisible(next);
         return;
       }
       if (event.key === 'ArrowUp') {
         event.preventDefault();
-        setSelectedIndex((index) => Math.max(0, index - 1));
+        const next = Math.max(0, selectedIndex - 1);
+        setSelectedIndex(next);
+        ensureVisible(next);
         return;
       }
       if (event.key === 'Enter') {
@@ -196,7 +205,12 @@ export function SearchDialog({ theme, onOpenResult, onCancel }: Props) {
             </>
           )}
 
-          <ScrollView style={styles.resultsList}>
+          <ScrollView
+            ref={scrollRef}
+            onLayout={(event) => handleListLayout(event)}
+            onScroll={(event) => handleListScroll(event)}
+            style={styles.resultsList}
+          >
             {loading && (
               <View style={styles.statusRow}>
                 <ActivityIndicator size="small" color={theme.accent} />
@@ -220,6 +234,7 @@ export function SearchDialog({ theme, onOpenResult, onCancel }: Props) {
                 return (
                   <Pressable
                     key={searchResultKey(result)}
+                    onLayout={(event) => recordItemLayout(index, event)}
                     onPress={isOpenable ? () => onOpenResult(result) : undefined}
                     style={[
                       styles.result,

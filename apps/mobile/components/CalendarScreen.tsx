@@ -4,6 +4,7 @@ import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 
 import {
   buildMonthGrid,
   compareTimes,
+  dayLabel,
   monthLabel,
   normalizeTimeInput,
   shiftIsoDate,
@@ -56,6 +57,7 @@ export function CalendarScreen({ onRequestOpenNote, pendingOpenDate, onOpenedPen
   const [newEventTitle, setNewEventTitle] = useState('');
   const [newEventTime, setNewEventTime] = useState('');
   const [newEventAllDay, setNewEventAllDay] = useState(false);
+  const [newEventNotes, setNewEventNotes] = useState('');
   const [dayActionError, setDayActionError] = useState<string | null>(null);
   // Édition d'un évènement existant (✎ dans le panneau du jour) — un seul
   // évènement édité à la fois, même idée que `renamingRelPath` de
@@ -65,6 +67,12 @@ export function CalendarScreen({ onRequestOpenNote, pendingOpenDate, onOpenedPen
   const [editTitle, setEditTitle] = useState('');
   const [editTime, setEditTime] = useState('');
   const [editDate, setEditDate] = useState('');
+  // `allDay` est éditable AUSSI en édition (le champ existait au création
+  // mais le patch ne le transportait jamais — transformer un évènement
+  // horodaté en évènement "toute la journée" était impossible sans passer
+  // par events.json à la main).
+  const [editAllDay, setEditAllDay] = useState(false);
+  const [editNotes, setEditNotes] = useState('');
 
   const refresh = useCallback(async () => {
     if (!vault || !calendarBridge) return;
@@ -152,6 +160,7 @@ export function CalendarScreen({ onRequestOpenNote, pendingOpenDate, onOpenedPen
     setNewEventTitle('');
     setNewEventTime('');
     setNewEventAllDay(false);
+    setNewEventNotes('');
     setDayActionError(null);
     setEditingEventId(null);
   };
@@ -213,37 +222,43 @@ export function CalendarScreen({ onRequestOpenNote, pendingOpenDate, onOpenedPen
           date: selectedDate,
           allDay: newEventAllDay,
           time,
+          notes: newEventNotes.trim(),
         }),
       );
       setNewEventTitle('');
       setNewEventTime('');
       setNewEventAllDay(false);
+      setNewEventNotes('');
       setDayActionError(null);
     } catch (error) {
       console.error('[calendar] échec de l’ajout de l’évènement :', error);
       setDayActionError(error instanceof Error ? error.message : String(error));
     }
-  }, [calendarBridge, selectedDate, newEventTitle, newEventTime, newEventAllDay]);
+  }, [calendarBridge, selectedDate, newEventTitle, newEventTime, newEventAllDay, newEventNotes]);
 
   const startEditEvent = useCallback((event: CalendarEvent) => {
     setEditingEventId(event.id);
     setEditTitle(event.title);
     setEditTime(event.time ?? '');
     setEditDate(event.date);
+    setEditAllDay(event.allDay);
+    setEditNotes(event.notes ?? '');
     setDayActionError(null);
   }, []);
 
   const cancelEditEvent = useCallback(() => setEditingEventId(null), []);
 
-  // "Enregistrer" de l'édition (✎) — titre/heure/date d'un coup via
-  // calendar:update-event. Titre vide : garde l'ancien plutôt que de
-  // créer un évènement sans nom (le champ part prérempli, un effacement
-  // accidentel ne doit pas détruire l'information).
+  // "Enregistrer" de l'édition (✎) — titre/heure/date/allDay/notes d'un
+  // coup via calendar:update-event. Titre vide : garde l'ancien plutôt que
+  // de créer un évènement sans nom (le champ part prérempli, un effacement
+  // accidentel ne doit pas détruire l'information). Basculer "toute la
+  // journée" écrase l'heure (null), conformément au modèle (time = null si
+  // allDay).
   const submitEditEvent = useCallback(
     async (event: CalendarEvent) => {
       if (!calendarBridge) return;
       let time: string | null = null;
-      if (!event.allDay && editTime.trim()) {
+      if (!editAllDay && editTime.trim()) {
         const normalized = normalizeTimeInput(editTime);
         if (!normalized) {
           setDayActionError('Heure invalide — format attendu HH:MM (ex. 09:30).');
@@ -256,7 +271,9 @@ export function CalendarScreen({ onRequestOpenNote, pendingOpenDate, onOpenedPen
           await calendarBridge.updateEvent(event.id, {
             title: editTitle.trim() || event.title,
             date: editDate,
-            ...(event.allDay ? {} : { time }),
+            allDay: editAllDay,
+            time: editAllDay ? null : time,
+            notes: editNotes,
           }),
         );
         setEditingEventId(null);
@@ -266,7 +283,7 @@ export function CalendarScreen({ onRequestOpenNote, pendingOpenDate, onOpenedPen
         setDayActionError(error instanceof Error ? error.message : String(error));
       }
     },
-    [calendarBridge, editTitle, editTime, editDate],
+    [calendarBridge, editTitle, editTime, editDate, editAllDay, editNotes],
   );
 
   const handleRemoveEvent = useCallback(
@@ -315,6 +332,9 @@ export function CalendarScreen({ onRequestOpenNote, pendingOpenDate, onOpenedPen
   }
 
   const selectedDayEvents = selectedDate ? (eventsByDate.get(selectedDate) ?? []) : [];
+  // Titre localisé du panneau du jour — calculé ici (et non en JSX) parce
+  // que `selectedDate` n'y est pas narrow-able malgré le `visible` du Modal.
+  const selectedDayLabel = selectedDate ? dayLabel(selectedDate) : '';
 
   return (
     <View style={styles.container}>
@@ -386,7 +406,7 @@ export function CalendarScreen({ onRequestOpenNote, pendingOpenDate, onOpenedPen
             style={[styles.dayPanel, { backgroundColor: theme.surface }]}
             onPress={(e) => e.stopPropagation()}
           >
-            <Text style={[styles.dayPanelTitle, { color: theme.text }]}>{selectedDate}</Text>
+            <Text style={[styles.dayPanelTitle, { color: theme.text }]}>{selectedDayLabel}</Text>
 
             <Pressable
               onPress={() => void handleOpenDailyNote()}
@@ -409,15 +429,27 @@ export function CalendarScreen({ onRequestOpenNote, pendingOpenDate, onOpenedPen
                       placeholderTextColor={theme.textMuted}
                       style={[styles.input, { color: theme.text, borderColor: theme.border }]}
                     />
-                    {!ev.allDay && (
-                      <TextInput
-                        value={editTime}
-                        onChangeText={setEditTime}
-                        placeholder="HH:MM"
-                        placeholderTextColor={theme.textMuted}
-                        style={[styles.input, styles.timeInput, { color: theme.text, borderColor: theme.border }]}
-                      />
-                    )}
+                    <View style={styles.formRow}>
+                      {!editAllDay && (
+                        <TextInput
+                          value={editTime}
+                          onChangeText={setEditTime}
+                          placeholder="HH:MM"
+                          placeholderTextColor={theme.textMuted}
+                          style={[styles.input, styles.timeInput, { color: theme.text, borderColor: theme.border }]}
+                        />
+                      )}
+                      <Pressable
+                        onPress={() => setEditAllDay((prev) => !prev)}
+                        style={[
+                          styles.allDayToggle,
+                          { borderColor: theme.border },
+                          editAllDay && { backgroundColor: theme.accent, borderColor: theme.accent },
+                        ]}
+                      >
+                        <Text style={{ color: editAllDay ? '#fff' : theme.textMuted }}>Toute la journée</Text>
+                      </Pressable>
+                    </View>
                     <View style={styles.editDateRow}>
                       <Text style={[styles.editDateLabel, { color: theme.textMuted }]}>Jour</Text>
                       <Pressable onPress={() => setEditDate((d) => shiftIsoDate(d, -1))} style={styles.navButton}>
@@ -428,6 +460,14 @@ export function CalendarScreen({ onRequestOpenNote, pendingOpenDate, onOpenedPen
                         <Text style={{ color: theme.text }}>▶</Text>
                       </Pressable>
                     </View>
+                    <TextInput
+                      value={editNotes}
+                      onChangeText={setEditNotes}
+                      placeholder="Notes (optionnel)…"
+                      placeholderTextColor={theme.textMuted}
+                      multiline
+                      style={[styles.input, styles.notesInput, { color: theme.text, borderColor: theme.border }]}
+                    />
                     <View style={styles.editActionsRow}>
                       <Pressable onPress={cancelEditEvent} style={styles.editCancelButton}>
                         <Text style={{ color: theme.textMuted }}>Annuler</Text>
@@ -442,9 +482,16 @@ export function CalendarScreen({ onRequestOpenNote, pendingOpenDate, onOpenedPen
                   </View>
                 ) : (
                   <View key={ev.id} style={[styles.dayEventRow, { borderColor: theme.border }]}>
-                    <Text style={[styles.dayEventText, { color: theme.text }]}>
-                      {ev.allDay ? 'Toute la journée' : ev.time || '—'} · {ev.title}
-                    </Text>
+                    <View style={styles.dayEventMain}>
+                      <Text style={[styles.dayEventText, { color: theme.text }]}>
+                        {ev.allDay ? 'Toute la journée' : ev.time || '—'} · {ev.title}
+                      </Text>
+                      {Boolean(ev.notes) && (
+                        <Text style={[styles.dayEventNotes, { color: theme.textMuted }]} numberOfLines={2}>
+                          {ev.notes}
+                        </Text>
+                      )}
+                    </View>
                     <Pressable
                       onPress={() => startEditEvent(ev)}
                       style={styles.removeButton}
@@ -496,6 +543,14 @@ export function CalendarScreen({ onRequestOpenNote, pendingOpenDate, onOpenedPen
                 <Text style={{ color: newEventAllDay ? '#fff' : theme.textMuted }}>Toute la journée</Text>
               </Pressable>
             </View>
+            <TextInput
+              value={newEventNotes}
+              onChangeText={setNewEventNotes}
+              placeholder="Notes (optionnel)…"
+              placeholderTextColor={theme.textMuted}
+              multiline
+              style={[styles.input, styles.notesInput, { color: theme.text, borderColor: theme.border }]}
+            />
             <Pressable
               onPress={() => void handleAddEvent()}
               style={[styles.button, { backgroundColor: theme.accent }]}
@@ -640,9 +695,17 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderBottomWidth: 1,
   },
+  // Colonne titre + notes éventuelle — les boutons ✎/✕ restent alignés en
+  // haut de la ligne même quand la note prend deux lignes.
+  dayEventMain: {
+    flex: 1,
+    gap: 2,
+  },
   dayEventText: {
     fontSize: 13,
-    flex: 1,
+  },
+  dayEventNotes: {
+    fontSize: 12,
   },
   // Formulaire d'édition d'un évènement (✎) — remplace la ligne le temps
   // de l'édition ; bordure accent pour le distinguer d'une ligne de
@@ -700,6 +763,12 @@ const styles = StyleSheet.create({
   },
   timeInput: {
     width: 90,
+  },
+  // Notes d'évènement multilignes — hauteur bornée pour qu'une note longue
+  // ne fasse pas déborder le panneau du jour.
+  notesInput: {
+    minHeight: 40,
+    maxHeight: 100,
   },
   allDayToggle: {
     flex: 1,

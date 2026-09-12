@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildMonthGrid, compareTimes, monthLabel, normalizeTimeInput, shiftIsoDate, toIsoDate } from './calendarDates';
+import {
+  buildMonthGrid,
+  compareTimes,
+  dayLabel,
+  monthLabel,
+  normalizeTimeInput,
+  shiftIsoDate,
+  toIsoDate,
+} from './calendarDates';
 
 describe('toIsoDate', () => {
   it('formate en AAAA-MM-JJ avec zéros de tête', () => {
@@ -12,6 +20,14 @@ describe('toIsoDate', () => {
 describe('monthLabel', () => {
   it('donne le nom du mois en français + année', () => {
     expect(monthLabel(2026, 7)).toBe('Août 2026');
+  });
+});
+
+describe('dayLabel', () => {
+  it('donne le jour de la semaine + date complète en français', () => {
+    // 12 septembre 2026 = un samedi.
+    expect(dayLabel('2026-09-12')).toBe('Samedi 12 septembre 2026');
+    expect(dayLabel('2026-01-01')).toBe('Jeudi 1 janvier 2026');
   });
 });
 

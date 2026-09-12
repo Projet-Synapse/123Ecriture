@@ -341,6 +341,39 @@ natives). Toute la logique testable vit dans `packages/`.
 >   `lib/vaultTree.ts`, `FilesLinksSection.tsx`, et (partiellement, vu sa
 >   taille et son périmètre mixte fichiers+édition) `NotesScreen.tsx`.
 
+> **Écart pragmatique (v0.4.0, productivité — échéances/déplacement/
+> dialogues)** :
+> - **`Task.dueDate`** (AAAA-MM-JJ optionnel, `null` = pas d'échéance) :
+>   même schéma tolérant que `description`/`subtasks`/`attachments`
+>   (normalisé à la lecture par `normalizeTask`, pas de migration sur
+>   disque). Logique pure (normalisation de saisie, statut en retard/
+>   aujourd'hui/à venir, format court, tri) extraite dans
+>   `apps/mobile/lib/taskDueDates.ts` + tests, même convention que
+>   `calendarDates.ts`. `tasks:update` accepte maintenant aussi `listId`
+>   (déplacer une tâche vers une autre liste — validé contre le registre
+>   des listes côté main process).
+> - **`CalendarEvent.notes` exposé dans l'UI** : le champ existait depuis
+>   l'origine dans `events.json` et le type, mais aucun formulaire ne le
+>   transportait — il est maintenant éditable (ajout ET édition) et affiché
+>   dans le panneau du jour. L'édition transporte aussi `allDay`
+>   (transformer un évènement horodaté en "toute la journée" est enfin
+>   possible sans éditer `events.json` à la main).
+> - **`lib/useScrollIntoView.ts`** (nouveau hook) : scroll-into-view de la
+>   sélection clavier, partagé par CommandPalette/SearchDialog/MoveDialog —
+>   sans lui, ↓↑ continuait "en coulisses" dès que la sélection dépassait
+>   la hauteur visible.
+> - **MoveDialog** : champ de filtre (nom ou chemin complet) + navigation
+>   ↓↑/Entrée avec saut des entrées désactivées — la liste plate d'un
+>   vault à nombreux dossiers était invivable sans filtre.
+> - **Autosave** : la sauvegarde débouncée en attente (600 ms) est flushée
+>   au changement de note (`openNote`) et au `beforeunload` de la fenêtre —
+>   avant, fermer l'app ou changer de note dans cette fenêtre perdait la
+>   frappe ou déclenchait des setStatus/refreshTree tardifs sur la
+>   NOUVELLE note.
+> - **Retrait de coffre confirmé** (`AccountSyncSection.tsx`) via
+>   `ConfirmDialog` : un ✕ frôlé retirait le coffre (et sa liaison cloud)
+>   sans retour.
+
 //////////////////////////////////////////////////////////////////////////
 // 5. 💾 STOCKAGE LOCAL & ABSTRACTION MULTIPLATEFORME
 //////////////////////////////////////////////////////////////////////////

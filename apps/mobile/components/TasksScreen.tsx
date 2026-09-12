@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { useVaults } from '../lib/sync/VaultsContext';
+import { compareByDueDate, dueDateStatus, formatDueDate, normalizeDueDateInput } from '../lib/taskDueDates';
 import { usePreferences } from '../preferences/PreferencesContext';
 import { ConfirmDialog } from './ConfirmDialog';
 import { DraftTextField } from './DraftTextField';
@@ -65,6 +66,9 @@ export function TasksScreen({ pendingOpenTask, onOpenedPendingTask }: Props = {}
   // de tri des fichiers) : c'est un besoin de session ("voir ce qui
   // reste"), pas une préférence d'app.
   const [hideCompleted, setHideCompleted] = useState(false);
+  // Tri "par échéance" (croissant, sans échéance en fin) en alternance avec
+  // l'ordre d'ajout — même non-persistence volontaire que hideCompleted.
+  const [sortByDueDate, setSortByDueDate] = useState(false);
 
   const refreshTaskLists = useCallback(async () => {
     if (!taskListsBridge) return;
@@ -274,6 +278,45 @@ export function TasksScreen({ pendingOpenTask, onOpenedPendingTask }: Props = {}
     [tasksBridge, runTaskAction, tasks],
   );
 
+  // Champ libre au commit différé (DraftTextField) : vide = retire
+  // l'échéance, sinon normalisé via normalizeDueDateInput — un format non
+  // reconnu est refusé avec message plutôt que silencieusement écrasé.
+  const handleChangeDueDate = useCallback(
+    (id: string, raw: string) => {
+      const trimmed = raw.trim();
+      if (!trimmed) {
+        void runTaskAction(async () => {
+          if (!tasksBridge) return tasks;
+          return tasksBridge.update(id, { dueDate: null });
+        });
+        return;
+      }
+      const normalized = normalizeDueDateInput(trimmed);
+      if (!normalized) {
+        setTaskActionError('Date d’échéance invalide — formats attendus : AAAA-MM-JJ ou JJ/MM/AAAA.');
+        return;
+      }
+      void runTaskAction(async () => {
+        if (!tasksBridge) return tasks;
+        return tasksBridge.update(id, { dueDate: normalized });
+      });
+    },
+    [tasksBridge, runTaskAction, tasks],
+  );
+
+  // Déplacer la tâche vers une AUTRE liste (voir tasks:update, patch
+  // listId) : elle disparaît de la liste affichée au retour du bridge
+  // (filtrage par liste active côté main process).
+  const handleMoveTaskToList = useCallback(
+    (id: string, listId: string) =>
+      runTaskAction(async () => {
+        if (!tasksBridge) return tasks;
+        if (expandedTaskId === id) setExpandedTaskId(null);
+        return tasksBridge.update(id, { listId });
+      }),
+    [tasksBridge, runTaskAction, tasks, expandedTaskId],
+  );
+
   const handleAddSubtask = useCallback(
     async (taskId: string) => {
       const text = newSubtaskDraft.trim();
@@ -372,10 +415,26 @@ export function TasksScreen({ pendingOpenTask, onOpenedPendingTask }: Props = {}
 
   const pending = tasks.filter((task) => !task.done);
   const done = tasks.filter((task) => task.done);
+  const sortedPending = sortByDueDate
+    ? [...pending].sort((a, b) => compareByDueDate(a.dueDate, b.dueDate))
+    : pending;
+  // Libellé + couleur du badge d'échéance selon le jour courant — "en
+  // retard" reste informatif même cochée (la donnée survit au tri).
+  const dueDateBadge = (task: Task): { label: string; color: string } | null => {
+    if (!task.dueDate) return null;
+    const status = dueDateStatus(task.dueDate);
+    if (!status) return null;
+    const formatted = formatDueDate(task.dueDate);
+    if (task.done) return { label: `📅 ${formatted}`, color: theme.textMuted };
+    if (status === 'today') return { label: "📅 Aujourd'hui", color: '#d97706' };
+    if (status === 'overdue') return { label: `⏰ ${formatted}`, color: '#dc2626' };
+    return { label: `📅 ${formatted}`, color: theme.textMuted };
+  };
 
   const renderTask = (task: Task) => {
     const isExpanded = expandedTaskId === task.id;
     const doneSubtasks = task.subtasks.filter((s) => s.done).length;
+    const dueBadge = dueDateBadge(task);
 
     return (
       <View key={task.id} style={[styles.taskCard, { borderColor: theme.border }]}>
@@ -400,6 +459,11 @@ export function TasksScreen({ pendingOpenTask, onOpenedPendingTask }: Props = {}
               task.done && styles.taskTextDone,
             ] as unknown as object}
           />
+          {dueBadge && (
+            <Text style={[styles.dueBadge, { color: dueBadge.color }]} numberOfLines={1}>
+              {dueBadge.label}
+            </Text>
+          )}
           {task.subtasks.length > 0 && (
             <Text style={[styles.subtaskBadge, { color: theme.textMuted, borderColor: theme.border }]}>
               {doneSubtasks}/{task.subtasks.length}
@@ -428,6 +492,34 @@ export function TasksScreen({ pendingOpenTask, onOpenedPendingTask }: Props = {}
               theme={theme}
               style={[styles.descriptionInput, { color: theme.text, borderColor: theme.border }] as unknown as object}
             />
+
+            <Text style={[styles.detailLabel, { color: theme.textMuted }]}>Échéance</Text>
+            <DraftTextField
+              initialValue={task.dueDate ?? ''}
+              onCommit={(raw) => handleChangeDueDate(task.id, raw)}
+              placeholder="AAAA-MM-JJ ou JJ/MM/AAAA — vider pour retirer"
+              theme={theme}
+              style={[styles.dueDateInput, { color: theme.text, borderColor: theme.border }] as unknown as object}
+            />
+
+            {taskLists.length > 1 && (
+              <Pressable
+                onPress={() => {
+                  if (!contextMenuBridge) return;
+                  void contextMenuBridge
+                    .show(taskLists.filter((list) => list.id !== task.listId).map((list) => ({ id: list.id, label: list.name })))
+                    .then((choice) => {
+                      if (choice) void handleMoveTaskToList(task.id, choice);
+                    });
+                }}
+                style={styles.moveListRow}
+                accessibilityLabel="Déplacer la tâche vers une autre liste"
+              >
+                <Text style={{ color: theme.accent, fontSize: 12 }} numberOfLines={1}>
+                  ↪ Déplacer vers une autre liste…
+                </Text>
+              </Pressable>
+            )}
 
             <Text style={[styles.detailLabel, { color: theme.textMuted }]}>Sous-étapes</Text>
             {task.subtasks.map((subtask) => (
@@ -527,6 +619,19 @@ export function TasksScreen({ pendingOpenTask, onOpenedPendingTask }: Props = {}
             </Pressable>
           </>
         )}
+        {/* Toujours visible (l'entrée "Nouvelle liste" n'existait avant que
+            dans le menu contextuel du sélecteur de liste) — le gros bouton
+            ci-dessous reste pour l'écran vide, où un CTA explicite vaut
+            mieux qu'une icône. */}
+        {activeList && !isRenamingActiveList && (
+          <Pressable
+            onPress={() => setShowCreateListForm((prev) => !prev)}
+            style={styles.listHeaderAction}
+            accessibilityLabel="Nouvelle liste"
+          >
+            <Text style={{ color: theme.textMuted }}>➕</Text>
+          </Pressable>
+        )}
         {!activeList && (
           <Pressable
             onPress={() => setShowCreateListForm((prev) => !prev)}
@@ -586,27 +691,40 @@ export function TasksScreen({ pendingOpenTask, onOpenedPendingTask }: Props = {}
           </View>
           {addError && <Text style={styles.error}>⚠️ {addError}</Text>}
 
-          {/* Compteur + masquage des terminées — "N à faire" se suffit
-              quand tout est en cours ; le bouton n'apparaît qu'une fois
-              qu'il y a au moins une tâche terminée à masquer. */}
+          {/* Compteur + masquage/tri — "N à faire" se suffit quand tout est
+              en cours ; chaque bouton n'apparaît qu'une fois qu'il a quelque
+              chose à faire (au moins une terminée à masquer / une échéance à
+              trier). */}
           <View style={styles.listMetaRow}>
             <Text style={[styles.listMetaText, { color: theme.textMuted }]}>
               {pending.length} à faire{done.length > 0 ? ` · ${done.length} terminée${done.length > 1 ? 's' : ''}` : ''}
             </Text>
-            {done.length > 0 && (
-              <Pressable
-                onPress={() => setHideCompleted((prev) => !prev)}
-                accessibilityLabel={hideCompleted ? 'Afficher les tâches terminées' : 'Masquer les tâches terminées'}
-              >
-                <Text style={[styles.listMetaAction, { color: theme.accent }]}>
-                  {hideCompleted ? 'Afficher les terminées' : 'Masquer les terminées'}
-                </Text>
-              </Pressable>
-            )}
+            <View style={styles.listMetaActions}>
+              {pending.some((task) => task.dueDate) && (
+                <Pressable
+                  onPress={() => setSortByDueDate((prev) => !prev)}
+                  accessibilityLabel={sortByDueDate ? 'Revenir à l’ordre d’ajout' : 'Trier par échéance'}
+                >
+                  <Text style={[styles.listMetaAction, { color: theme.accent }]}>
+                    {sortByDueDate ? 'Tri : échéance' : 'Trier par échéance'}
+                  </Text>
+                </Pressable>
+              )}
+              {done.length > 0 && (
+                <Pressable
+                  onPress={() => setHideCompleted((prev) => !prev)}
+                  accessibilityLabel={hideCompleted ? 'Afficher les tâches terminées' : 'Masquer les tâches terminées'}
+                >
+                  <Text style={[styles.listMetaAction, { color: theme.accent }]}>
+                    {hideCompleted ? 'Afficher les terminées' : 'Masquer les terminées'}
+                  </Text>
+                </Pressable>
+              )}
+            </View>
           </View>
 
           <ScrollView contentContainerStyle={styles.list}>
-            {[...pending, ...(hideCompleted ? [] : done)].map(renderTask)}
+            {[...sortedPending, ...(hideCompleted ? [] : done)].map(renderTask)}
             {tasks.length === 0 && (
               <Text style={[styles.muted, { color: theme.textMuted }]}>Aucune tâche pour l’instant.</Text>
             )}
@@ -685,6 +803,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 8,
+  },
+  // Regroupe "Trier par échéance" et "Masquer les terminées" quand les deux
+  // sont présents (sinon les deux libellés se partagent mal l'espace).
+  listMetaActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
   },
   listMetaText: {
     fontSize: 13,
@@ -776,6 +901,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
     paddingVertical: 2,
   },
+  // Badge 📅/⏰ d'échéance — sans bordure (contrairement au badge de
+  // sous-étapes) : c'est une date informative, pas un compteur.
+  dueBadge: {
+    fontSize: 11,
+    flexShrink: 1,
+  },
   chevronButton: {
     paddingHorizontal: 4,
   },
@@ -801,6 +932,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     fontSize: 13,
     minHeight: 60,
+  },
+  // Une ligne seulement (contrairement à la description multiligne) : une
+  // échéance est courte par nature, pas un texte à rédiger.
+  dueDateInput: {
+    borderWidth: 1,
+    borderRadius: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    fontSize: 13,
+  },
+  moveListRow: {
+    paddingVertical: 4,
   },
   subtaskRow: {
     flexDirection: 'row',

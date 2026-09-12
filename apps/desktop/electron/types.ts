@@ -77,11 +77,14 @@ export interface Task {
   listId: string;
   // Ajoutés pour la refonte façon Microsoft To Do — voir tasks.ts,
   // `normalizeTask` : absents des tâches créées avant cette fonctionnalité,
-  // toujours normalisés (repli sur ''/[]) à la LECTURE plutôt que migrés
-  // sur disque, même esprit tolérant que frontmatter.ts.
+  // toujours normalisés (repli sur ''/[]/null) à la LECTURE plutôt que
+  // migrés sur disque, même esprit tolérant que frontmatter.ts.
   description: string;
   subtasks: Subtask[];
   attachments: TaskAttachment[];
+  // Date d'échéance optionnelle (AAAA-MM-JJ, null = pas d'échéance) —
+  // normalisée elle aussi pour les tâches plus anciennes.
+  dueDate?: string | null;
 }
 
 export interface TaskList {

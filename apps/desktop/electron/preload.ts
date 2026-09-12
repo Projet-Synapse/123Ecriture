@@ -97,7 +97,7 @@ contextBridge.exposeInMainWorld('tasks', {
   add: (text: string) => ipcRenderer.invoke('tasks:add', text),
   toggle: (id: string) => ipcRenderer.invoke('tasks:toggle', id),
   remove: (id: string) => ipcRenderer.invoke('tasks:remove', id),
-  update: (id: string, patch: { text?: string; description?: string }) =>
+  update: (id: string, patch: { text?: string; description?: string; dueDate?: string | null; listId?: string }) =>
     ipcRenderer.invoke('tasks:update', id, patch),
   addSubtask: (taskId: string, text: string) => ipcRenderer.invoke('tasks:add-subtask', taskId, text),
   renameSubtask: (taskId: string, subtaskId: string, text: string) =>
