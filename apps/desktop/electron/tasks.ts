@@ -47,16 +47,17 @@ function getTaskListsFilePath(vaultPath: string): string {
 }
 
 // Tolère les tâches écrites avant l'ajout de description/sous-étapes/
-// pièces jointes (refonte façon Microsoft To Do) : normalise à la LECTURE
-// plutôt que de migrer le fichier sur disque — même esprit que
-// frontmatter.ts, pas de réécriture silencieuse tant que rien n'a été
-// modifié.
+// pièces jointes (refonte façon Microsoft To Do) puis de la date
+// d'échéance : normalise à la LECTURE plutôt que de migrer le fichier sur
+// disque — même esprit que frontmatter.ts, pas de réécriture silencieuse
+// tant que rien n'a été modifié.
 function normalizeTask(task: Task): Task {
   return {
     ...task,
     description: task.description ?? '',
     subtasks: task.subtasks ?? [],
     attachments: task.attachments ?? [],
+    dueDate: task.dueDate ?? null,
   };
 }
 
@@ -283,24 +284,45 @@ export function registerTasksHandlers(getWindow: GetWindow): void {
     return tasks.filter((task) => task.listId === activeListId);
   });
 
-  // Renommage du texte ET édition de la description — un seul point
-  // d'entrée générique (`patch` partiel) plutôt que deux handlers quasi
-  // identiques, même esprit que `preferences:set`.
-  ipcMain.handle('tasks:update', async (_event, id: string, patch: { text?: string; description?: string }) => {
-    const vaultPath = getVaultPath();
-    if (!vaultPath) throw new Error('Aucun vault sélectionné');
-    const activeListId = getActiveListId(vaultPath);
-    const tasks = readTasks(vaultPath);
-    findTaskOrThrow(tasks, id);
-    const next = tasks.map((task) => {
-      if (task.id !== id) return task;
-      const text = patch.text !== undefined ? patch.text.trim() : task.text;
-      if (!text) throw new Error('Le texte de la tâche ne peut pas être vide.');
-      return { ...task, text, description: patch.description ?? task.description };
-    });
-    await writeTasks(vaultPath, next);
-    return next.filter((task) => task.listId === activeListId);
-  });
+  // Renommage du texte, édition de la description, échéance et déplacement
+  // vers une AUTRE liste — un seul point d'entrée générique (`patch`
+  // partiel) plutôt que quatre handlers quasi identiques, même esprit que
+  // `preferences:set`. `dueDate` suit le modèle de `time` des évènements
+  // (calendar.ts) : string AAAA-MM-JJ ou null, validé par l'appelant
+  // (normalizeDueDateInput côté renderer) — le main process ne revalide
+  // que le FORMAT, pas le sens. `listId` doit désigner une liste existante.
+  ipcMain.handle(
+    'tasks:update',
+    async (
+      _event,
+      id: string,
+      patch: { text?: string; description?: string; dueDate?: string | null; listId?: string },
+    ) => {
+      const vaultPath = getVaultPath();
+      if (!vaultPath) throw new Error('Aucun vault sélectionné');
+      const activeListId = getActiveListId(vaultPath);
+      if (patch.listId !== undefined) findListOrThrow(migrateTaskLists(vaultPath).lists, patch.listId);
+      if (patch.dueDate !== undefined && patch.dueDate !== null && !/^\d{4}-\d{2}-\d{2}$/.test(patch.dueDate)) {
+        throw new Error('Date d’échéance invalide (attendu AAAA-MM-JJ).');
+      }
+      const tasks = readTasks(vaultPath);
+      findTaskOrThrow(tasks, id);
+      const next = tasks.map((task) => {
+        if (task.id !== id) return task;
+        const text = patch.text !== undefined ? patch.text.trim() : task.text;
+        if (!text) throw new Error('Le texte de la tâche ne peut pas être vide.');
+        return {
+          ...task,
+          text,
+          description: patch.description ?? task.description,
+          dueDate: patch.dueDate !== undefined ? patch.dueDate : (task.dueDate ?? null),
+          listId: patch.listId ?? task.listId,
+        };
+      });
+      await writeTasks(vaultPath, next);
+      return next.filter((task) => task.listId === activeListId);
+    },
+  );
 
   ipcMain.handle('tasks:add-subtask', async (_event, taskId: string, text: string) => {
     const vaultPath = getVaultPath();

@@ -474,6 +474,9 @@ declare global {
     description: string;
     subtasks: Subtask[];
     attachments: TaskAttachment[];
+    // Date d'échéance optionnelle (AAAA-MM-JJ, null = pas d'échéance) —
+    // miroir manuel de apps/desktop/electron/types.ts (voir CLAUDE.md).
+    dueDate?: string | null;
   }
 
   interface TasksBridge {
@@ -481,7 +484,10 @@ declare global {
     add: (text: string) => Promise<Task[]>;
     toggle: (id: string) => Promise<Task[]>;
     remove: (id: string) => Promise<Task[]>;
-    update: (id: string, patch: { text?: string; description?: string }) => Promise<Task[]>;
+    update: (
+      id: string,
+      patch: { text?: string; description?: string; dueDate?: string | null; listId?: string },
+    ) => Promise<Task[]>;
     addSubtask: (taskId: string, text: string) => Promise<Task[]>;
     renameSubtask: (taskId: string, subtaskId: string, text: string) => Promise<Task[]>;
     toggleSubtask: (taskId: string, subtaskId: string) => Promise<Task[]>;

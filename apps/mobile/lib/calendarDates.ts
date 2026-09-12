@@ -43,6 +43,19 @@ export function monthLabel(year: number, month: number): string {
   return `${MONTH_NAMES[month]} ${year}`;
 }
 
+const WEEKDAYS_FULL = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche'];
+
+// "Vendredi 12 septembre 2026" — titre du panneau du jour (avant : la date
+// ISO brute, lisible mais peu naturelle). Même tableaux internes que
+// monthLabel : déterministe et testable quel que soit l'environnement.
+export function dayLabel(dateIso: string): string {
+  const [year, month, day] = dateIso.split('-').map(Number);
+  const date = new Date(year, month - 1, day);
+  const weekday = WEEKDAYS_FULL[(date.getDay() + 6) % 7];
+  const capitalized = weekday.charAt(0).toUpperCase() + weekday.slice(1);
+  return `${capitalized} ${day} ${MONTH_NAMES[month - 1].toLowerCase()} ${year}`;
+}
+
 // Grille fixe de 6 semaines × 7 jours (toujours 42 cases, même hauteur
 // visuelle d'un mois à l'autre) — semaines commençant le lundi. `today` est
 // un paramètre (pas `new Date()` interne) pour rester testable de façon
