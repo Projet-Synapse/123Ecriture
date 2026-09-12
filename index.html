@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>123Ecriture — Écriture et productivité, local-first</title>
+  <meta name="description" content="123Ecriture : application d'écriture et de productivité local-first. Vos notes sont des fichiers MDX sur votre appareil, la synchronisation est optionnelle. Windows, macOS, Linux et Android." />
+  <link rel="icon" type="image/png" href="apps/mobile/assets/favicon.png" />
+  <style>
+    :root {
+      color-scheme: light dark;
+      --background: #ffffff;
+      --surface: #f5f5f7;
+      --text: #111114;
+      --text-muted: #6b7280;
+      --accent: #4f46e5;
+      --accent-soft: rgba(79, 70, 229, 0.1);
+      --border: #e5e7eb;
+      --shadow: 0 10px 30px rgba(17, 17, 20, 0.08);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --background: #111114;
+        --surface: #1c1c22;
+        --text: #f5f5f7;
+        --text-muted: #9ca3af;
+        --accent: #818cf8;
+        --accent-soft: rgba(129, 140, 248, 0.14);
+        --border: #2a2a33;
+        --shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+      }
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body {
+      background: var(--background);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+    a { color: var(--accent); }
+
+    .container { max-width: 960px; margin: 0 auto; padding: 0 1.25rem; }
+
+    header {
+      padding: 4.5rem 0 3rem;
+      text-align: center;
+      background:
+        radial-gradient(60% 90% at 50% 0%, var(--accent-soft), transparent 70%);
+    }
+    .badge {
+      display: inline-block;
+      padding: 0.25rem 0.9rem;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: var(--surface);
+      color: var(--text-muted);
+      font-size: 0.85rem;
+      margin-bottom: 1.25rem;
+    }
+    h1 { font-size: clamp(2.1rem, 5vw, 3.2rem); line-height: 1.15; letter-spacing: -0.02em; }
+    h1 .accent { color: var(--accent); }
+    .tagline {
+      margin: 1rem auto 0;
+      max-width: 42rem;
+      color: var(--text-muted);
+      font-size: 1.1rem;
+    }
+    .cta { margin-top: 2rem; display: flex; gap: 0.75rem; justify-content: center; flex-wrap: wrap; }
+    .btn {
+      display: inline-block;
+      padding: 0.7rem 1.5rem;
+      border-radius: 0.6rem;
+      text-decoration: none;
+      font-weight: 600;
+      transition: transform 0.15s ease, box-shadow 0.15s ease;
+    }
+    .btn:hover { transform: translateY(-2px); }
+    .btn-primary { background: var(--accent); color: #fff; box-shadow: var(--shadow); }
+    .btn-secondary { border: 1px solid var(--border); color: var(--text); background: var(--surface); }
+
+    section { padding: 2.5rem 0; }
+    h2 { font-size: 1.5rem; letter-spacing: -0.01em; margin-bottom: 1.5rem; }
+
+    .features {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 1rem;
+    }
+    .feature {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 0.75rem;
+      padding: 1.25rem;
+    }
+    .feature h3 { font-size: 1.05rem; margin-bottom: 0.4rem; }
+    .feature p { color: var(--text-muted); font-size: 0.95rem; }
+    .feature .icon { font-size: 1.4rem; display: block; margin-bottom: 0.5rem; }
+
+    .downloads { background: var(--surface); border-block: 1px solid var(--border); }
+    .download-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 1rem;
+    }
+    .download {
+      display: flex;
+      flex-direction: column;
+      gap: 0.2rem;
+      align-items: center;
+      padding: 1.1rem;
+      background: var(--background);
+      border: 1px solid var(--border);
+      border-radius: 0.75rem;
+      text-decoration: none;
+      color: var(--text);
+      transition: transform 0.15s ease, border-color 0.15s ease;
+    }
+    .download:hover { transform: translateY(-2px); border-color: var(--accent); }
+    .download .os { font-size: 1.3rem; }
+    .download .name { font-weight: 600; }
+    .download .hint { color: var(--text-muted); font-size: 0.85rem; }
+
+    .local-first {
+      border: 1px solid var(--border);
+      border-radius: 0.75rem;
+      padding: 1.5rem;
+      background:
+        radial-gradient(80% 120% at 0% 0%, var(--accent-soft), transparent 60%),
+        var(--surface);
+    }
+    .local-first p { color: var(--text-muted); max-width: 46rem; }
+    .local-first strong { color: var(--text); }
+
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 2rem 0 3rem;
+      color: var(--text-muted);
+      font-size: 0.9rem;
+      text-align: center;
+    }
+    footer a { color: inherit; }
+    .loading-hint { color: var(--text-muted); font-size: 0.9rem; text-align: center; margin-top: 1rem; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="container">
+      <span class="badge">🧠 Projet Synapse — version <span id="version">0.4</span></span>
+      <h1><span class="accent">123Ecriture</span>, votre atelier d'écriture local-first</h1>
+      <p class="tagline">
+        Notes, tâches et calendrier dans un seul coffre de fichiers MDX qui reste
+        sur votre appareil. Un compte est optionnel : il ne sert qu'à synchroniser.
+      </p>
+      <div class="cta">
+        <a class="btn btn-primary" href="https://github.com/Projet-Synapse/123Ecriture/releases/latest">Télécharger la dernière version</a>
+        <a class="btn btn-secondary" href="https://github.com/Projet-Synapse/123Ecriture">Voir le code source</a>
+      </div>
+    </div>
+  </header>
+
+  <section>
+    <div class="container">
+      <h2>Ce que vous y trouverez</h2>
+      <div class="features">
+        <div class="feature">
+          <span class="icon">✍️</span>
+          <h3>Éditeur Markdown &amp; MDX</h3>
+          <p>Un éditeur puissant avec coloration, recherche dans la note et aperçu. Vos notes sont de vrais fichiers MDX, lisibles par n'importe quel autre outil.</p>
+        </div>
+        <div class="feature">
+          <span class="icon">🔗</span>
+          <h3>Wikilinks</h3>
+          <p>Reliez vos notes entre elles avec des [[liens]] et tissez votre propre réseau de connaissances.</p>
+        </div>
+        <div class="feature">
+          <span class="icon">📅</span>
+          <h3>Calendrier &amp; tâches</h3>
+          <p>Des évènements datés et des listes de tâches cochables, versionnés avec vos notes dans le coffre.</p>
+        </div>
+        <div class="feature">
+          <span class="icon">🗄️</span>
+          <h3>Coffre local</h3>
+          <p>Local-first : le fichier sur disque est la source de vérité. Aucun serveur requis pour lire ou écrire.</p>
+        </div>
+        <div class="feature">
+          <span class="icon">☁️</span>
+          <h3>Synchronisation optionnelle</h3>
+          <p>Un compte (Supabase) permet de synchroniser le coffre entre vos appareils. Jamais un passage obligé.</p>
+        </div>
+        <div class="feature">
+          <span class="icon">🌗</span>
+          <h3>Thèmes clair &amp; sombre</h3>
+          <p>Une interface sobre qui suit vos préférences système, pensée pour de longues sessions d'écriture.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="downloads">
+    <div class="container">
+      <h2>Télécharger</h2>
+      <div class="download-grid">
+        <a class="download" id="dl-windows" href="https://github.com/Projet-Synapse/123Ecriture/releases/latest">
+          <span class="os">🪟</span>
+          <span class="name">Windows</span>
+          <span class="hint">installeur .exe</span>
+        </a>
+        <a class="download" id="dl-macos" href="https://github.com/Projet-Synapse/123Ecriture/releases/latest">
+          <span class="os">🍎</span>
+          <span class="name">macOS</span>
+          <span class="hint">image .dmg</span>
+        </a>
+        <a class="download" id="dl-linux" href="https://github.com/Projet-Synapse/123Ecriture/releases/latest">
+          <span class="os">🐧</span>
+          <span class="name">Linux</span>
+          <span class="hint">.AppImage</span>
+        </a>
+        <a class="download" id="dl-android" href="https://github.com/Projet-Synapse/123Ecriture/releases/latest">
+          <span class="os">🤖</span>
+          <span class="name">Android</span>
+          <span class="hint">.apk</span>
+        </a>
+      </div>
+      <p class="loading-hint" id="release-note">
+        Les liens ci-dessus pointent vers la page des releases.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <div class="container">
+      <div class="local-first">
+        <h2>Pourquoi « local-first » ?</h2>
+        <p>
+          Vos écritures vous appartiennent. <strong>Le fichier MDX sur votre disque est la
+          source de vérité</strong> : vous pouvez l'ouvrir, le sauvegarder, le versionner ou le
+          déplacer sans jamais dépendre de 123Ecriture. Le cloud n'est qu'un mécanisme de
+          sauvegarde et de synchronisation, activé seulement si vous le décidez.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <div class="container">
+      <p>
+        123Ecriture fait partie du
+        <a href="https://github.com/Projet-Synapse">Projet Synapse</a> —
+        code source sous licence, contributions bienvenues sur
+        <a href="https://github.com/Projet-Synapse/123Ecriture">GitHub</a>.
+      </p>
+    </div>
+  </footer>
+
+  <script>
+    // Remplit les liens de téléchargement avec les fichiers de la dernière
+    // release publiée ; en cas d'échec (API indisponible, quota…), les liens
+    // de repli vers la page des releases restent en place.
+    (function () {
+      var EXTENSIONS = {
+        'dl-windows': '.exe',
+        'dl-macos': '.dmg',
+        'dl-linux': '.AppImage',
+        'dl-android': '.apk'
+      };
+      fetch('https://api.github.com/repos/Projet-Synapse/123Ecriture/releases/latest')
+        .then(function (res) { if (!res.ok) throw new Error(res.status); return res.json(); })
+        .then(function (release) {
+          var assets = release.assets || [];
+          Object.keys(EXTENSIONS).forEach(function (id) {
+            var link = document.getElementById(id);
+            if (!link) return;
+            var match = assets.find(function (a) { return a.name.endsWith(EXTENSIONS[id]); });
+            if (match) link.href = match.browser_download_url;
+          });
+          var tag = String(release.tag_name || '').replace(/^v/, '');
+          if (tag) {
+            document.getElementById('version').textContent = tag;
+            var note = document.getElementById('release-note');
+            note.textContent = 'Liens directs vers la version ' + tag +
+              '. Une autre plateforme ? Consultez toutes les releases.';
+          }
+        })
+        .catch(function () { /* repli : liens vers la page des releases */ });
+    })();
+  </script>
+</body>
+</html>
