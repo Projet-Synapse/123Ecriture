@@ -73,6 +73,22 @@ export function AppShell({
     if (typeof window === 'undefined') return;
     const isMac = /Mac|iPhone|iPad/.test(navigator.platform ?? '');
     const handleKeyDown = (event: KeyboardEvent) => {
+      // Alt+1..4 : saut direct aux sections dans l'ordre de la barre
+      // latérale (Notes, Tâches, Calendrier, Paramètres). Alt plutôt que
+      // Ctrl/Cmd : Mod-1..6 est DÉJÀ pris par les titres H1-H6 de
+      // l'éditeur (voir notesToolbarActions.ts) — un Ctrl+chiffre ferait
+      // deux choses selon le focus, alors qu'Alt+chiffre est libre
+      // partout dans l'app. Ctrl+K (palette) reste le chemin "aller à…"
+      // en deux temps.
+      if (event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
+        const index = Number(event.key) - 1;
+        const section = Number.isInteger(index) && index >= 0 ? sections[index] : undefined;
+        if (section) {
+          event.preventDefault();
+          onSelect(section.id);
+          return;
+        }
+      }
       const modifierPressed = isMac ? event.metaKey : event.ctrlKey;
       if (!modifierPressed || event.key.toLowerCase() !== 'k') return;
       if (event.defaultPrevented) return;
@@ -81,7 +97,7 @@ export function AppShell({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
+  }, [sections, onSelect]);
 
   const nav = (
     <View
@@ -92,7 +108,7 @@ export function AppShell({
     >
       {isWide && <VaultSwitcher />}
       {isWide && <SyncStatusChip />}
-      {sections.map((section) => {
+      {sections.map((section, index) => {
         const isActive = section.id === activeId;
         return (
           <Pressable
@@ -102,6 +118,7 @@ export function AppShell({
               isWide ? styles.navItemWide : styles.navItemNarrow,
               isActive && { backgroundColor: `${theme.accent}22` },
             ]}
+            accessibilityLabel={index < 9 ? `${section.label} (Alt+${index + 1})` : section.label}
           >
             <Text style={styles.navIcon}>{section.icon}</Text>
             <Text

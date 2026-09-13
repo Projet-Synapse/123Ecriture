@@ -223,19 +223,51 @@ function getStateFilePath(vaultPath: string): string {
 // n'a de sens que dans le coffre où elle l'a été, pas globalement. Même
 // forme minimale que order.json/tasklists.json : un petit fichier dédié
 // dans .123ecriture/ plutôt qu'alourdir un fichier existant.
-function readLastOpened(vaultPath: string): string | null {
+// state.json porte aujourd'hui DEUX choses : le dernier fichier ouvert ET
+// les dossiers repliés de l'explorateur (les deux sont de l'état d'UI PAR
+// coffre, qui voyage avec lui — même logique que lastOpened). Un seul objet
+// lu/écrit en read-modify-write : deux écrivains indépendants qui
+// réécriraient chacun LEUR champ écraseraient celui de l'autre.
+type VaultState = {
+  lastOpenedRelPath?: string | null;
+  collapsedRelPaths?: string[];
+};
+
+function readVaultState(vaultPath: string): VaultState {
   try {
-    const data = JSON.parse(fsSync.readFileSync(getStateFilePath(vaultPath), 'utf8')) as { lastOpenedRelPath?: string };
-    return data.lastOpenedRelPath ?? null;
+    const data = JSON.parse(fsSync.readFileSync(getStateFilePath(vaultPath), 'utf8')) as VaultState;
+    return data && typeof data === 'object' ? data : {};
   } catch {
-    return null;
+    return {};
   }
 }
 
-async function writeLastOpened(vaultPath: string, relPath: string | null): Promise<void> {
+async function writeVaultState(vaultPath: string, patch: VaultState): Promise<void> {
   const filePath = getStateFilePath(vaultPath);
+  const next = { ...readVaultState(vaultPath), ...patch };
   await fs.mkdir(path.dirname(filePath), { recursive: true });
-  await fs.writeFile(filePath, JSON.stringify({ lastOpenedRelPath: relPath }, null, 2), 'utf8');
+  await fs.writeFile(filePath, JSON.stringify(next, null, 2), 'utf8');
+}
+
+function readLastOpened(vaultPath: string): string | null {
+  return readVaultState(vaultPath).lastOpenedRelPath ?? null;
+}
+
+async function writeLastOpened(vaultPath: string, relPath: string | null): Promise<void> {
+  await writeVaultState(vaultPath, { lastOpenedRelPath: relPath });
+}
+
+// Dossiers repliés de l'explorateur (relPaths) — persistés pour retrouver
+// l'arborescence telle qu'elle était laissée au redémarrage/changement de
+// coffre. Les chemins obsolètes (dossier renommé/supprimé depuis) sont
+// simplement ignorés au chargement côté renderer, comme dans order.json.
+function readCollapsedRelPaths(vaultPath: string): string[] {
+  const collapsed = readVaultState(vaultPath).collapsedRelPaths;
+  return Array.isArray(collapsed) ? collapsed.filter((p): p is string => typeof p === 'string') : [];
+}
+
+async function writeCollapsedRelPaths(vaultPath: string, relPaths: string[]): Promise<void> {
+  await writeVaultState(vaultPath, { collapsedRelPaths: relPaths });
 }
 
 // //5. 🌳 ARBORESCENCE
@@ -719,5 +751,21 @@ export function registerVaultHandlers(getWindow: GetWindow): void {
     const vaultPath = getVaultPath();
     if (!vaultPath) return;
     await writeLastOpened(vaultPath, relPath);
+  });
+
+  // Dossiers repliés de l'explorateur (voir readCollapsedRelPaths) —
+  // écrits à chaque bascule de repli (toggleCollapse de NotesScreen.tsx),
+  // best-effort côté renderer : une écriture qui échoue ne doit pas casser
+  // le repli à l'écran.
+  ipcMain.handle('vault:get-collapsed-paths', () => {
+    const vaultPath = getVaultPath();
+    if (!vaultPath) return [];
+    return readCollapsedRelPaths(vaultPath);
+  });
+
+  ipcMain.handle('vault:set-collapsed-paths', async (_event, relPaths: string[]) => {
+    const vaultPath = getVaultPath();
+    if (!vaultPath) return;
+    await writeCollapsedRelPaths(vaultPath, Array.isArray(relPaths) ? relPaths : []);
   });
 }

@@ -69,6 +69,9 @@ export function TasksScreen({ pendingOpenTask, onOpenedPendingTask }: Props = {}
   // Tri "par échéance" (croissant, sans échéance en fin) en alternance avec
   // l'ordre d'ajout — même non-persistence volontaire que hideCompleted.
   const [sortByDueDate, setSortByDueDate] = useState(false);
+  // Filtre texte local (titre + description, insensible à la casse) — même
+  // non-persistence volontaire : un besoin de session, pas une préférence.
+  const [filterDraft, setFilterDraft] = useState('');
 
   const refreshTaskLists = useCallback(async () => {
     if (!taskListsBridge) return;
@@ -413,8 +416,19 @@ export function TasksScreen({ pendingOpenTask, onOpenedPendingTask }: Props = {}
   const activeList = taskLists.find((l) => l.id === activeListId) ?? null;
   const isRenamingActiveList = renamingListId === activeListId;
 
-  const pending = tasks.filter((task) => !task.done);
-  const done = tasks.filter((task) => task.done);
+  // Listes affichées : filtrées par le filtre texte quand il est actif —
+  // les listes NON filtrées restent nécessaires pour la visibilité des
+  // boutons (le masquage des terminées doit rester proposé même si le
+  // filtre les cache toutes, sinon la bascule disparaît pendant qu'on
+  // filtre et on ne peut plus la retirer).
+  const filter = filterDraft.trim().toLowerCase();
+  const filterActive = filter.length > 0;
+  const matchesFilter = (task: Task) =>
+    task.text.toLowerCase().includes(filter) || (task.description ?? '').toLowerCase().includes(filter);
+  const pendingAll = tasks.filter((task) => !task.done);
+  const doneAll = tasks.filter((task) => task.done);
+  const pending = filterActive ? pendingAll.filter(matchesFilter) : pendingAll;
+  const done = filterActive ? doneAll.filter(matchesFilter) : doneAll;
   const sortedPending = sortByDueDate
     ? [...pending].sort((a, b) => compareByDueDate(a.dueDate, b.dueDate))
     : pending;
@@ -691,26 +705,38 @@ export function TasksScreen({ pendingOpenTask, onOpenedPendingTask }: Props = {}
           </View>
           {addError && <Text style={styles.error}>⚠️ {addError}</Text>}
 
-          {/* Compteur + masquage/tri — "N à faire" se suffit quand tout est
-              en cours ; chaque bouton n'apparaît qu'une fois qu'il a quelque
-              chose à faire (au moins une terminée à masquer / une échéance à
-              trier). */}
+          {/* Filtre texte local — n'apparaît qu'une fois la liste peuplée :
+              au-dessus d'une liste vide, il n'aurait rien à filtrer. */}
+          {tasks.length > 0 && (
+            <TextInput
+              value={filterDraft}
+              onChangeText={setFilterDraft}
+              placeholder="Filtrer les tâches…"
+              placeholderTextColor={theme.textMuted}
+              style={[styles.filterInput, { color: theme.text, borderColor: theme.border }]}
+            />
+          )}
+
+          {/* Compteur + masquage/tri — "N à faire" reflète ce qui est
+              affiché (donc filtré). Le tri par échéance est TOUJOURS
+              proposé (le conditionner à la présence d'une échéance le
+              faisait apparaître/disparaître selon la liste courante) ;
+              le masquage des terminées reste conditionnel à l'existence
+              de terminées NON filtrées (doneAll). */}
           <View style={styles.listMetaRow}>
             <Text style={[styles.listMetaText, { color: theme.textMuted }]}>
               {pending.length} à faire{done.length > 0 ? ` · ${done.length} terminée${done.length > 1 ? 's' : ''}` : ''}
             </Text>
             <View style={styles.listMetaActions}>
-              {pending.some((task) => task.dueDate) && (
-                <Pressable
-                  onPress={() => setSortByDueDate((prev) => !prev)}
-                  accessibilityLabel={sortByDueDate ? 'Revenir à l’ordre d’ajout' : 'Trier par échéance'}
-                >
-                  <Text style={[styles.listMetaAction, { color: theme.accent }]}>
-                    {sortByDueDate ? 'Tri : échéance' : 'Trier par échéance'}
-                  </Text>
-                </Pressable>
-              )}
-              {done.length > 0 && (
+              <Pressable
+                onPress={() => setSortByDueDate((prev) => !prev)}
+                accessibilityLabel={sortByDueDate ? 'Revenir à l’ordre d’ajout' : 'Trier par échéance'}
+              >
+                <Text style={[styles.listMetaAction, { color: theme.accent }]}>
+                  {sortByDueDate ? 'Tri : échéance' : 'Trier par échéance'}
+                </Text>
+              </Pressable>
+              {doneAll.length > 0 && (
                 <Pressable
                   onPress={() => setHideCompleted((prev) => !prev)}
                   accessibilityLabel={hideCompleted ? 'Afficher les tâches terminées' : 'Masquer les tâches terminées'}
@@ -728,7 +754,12 @@ export function TasksScreen({ pendingOpenTask, onOpenedPendingTask }: Props = {}
             {tasks.length === 0 && (
               <Text style={[styles.muted, { color: theme.textMuted }]}>Aucune tâche pour l’instant.</Text>
             )}
-            {tasks.length > 0 && pending.length === 0 && hideCompleted && (
+            {filterActive && tasks.length > 0 && pending.length === 0 && done.length === 0 && (
+              <Text style={[styles.muted, { color: theme.textMuted }]}>
+                Aucune tâche ne correspond à « {filterDraft.trim()} ».
+              </Text>
+            )}
+            {!filterActive && tasks.length > 0 && pending.length === 0 && hideCompleted && (
               <Text style={[styles.muted, { color: theme.textMuted }]}>
                 Toutes les tâches sont terminées — affiche les terminées pour les revoir.
               </Text>
@@ -854,6 +885,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     borderRadius: 8,
     justifyContent: 'center',
+  },
+  // Filtre texte local — une ligne compacte, visuellement distincte du
+  // champ de création (plus étroite, pas de bouton associé).
+  filterInput: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    fontSize: 13,
   },
   list: {
     gap: 8,

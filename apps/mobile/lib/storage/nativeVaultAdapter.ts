@@ -394,6 +394,28 @@ export const nativeVaultAdapter: VaultBridge = {
     await FileSystem.writeAsStringAsync(path, relPath ?? '');
   },
 
+  // Dossiers repliés de l'explorateur — même persistance documentDirectory
+  // que last-opened ci-dessus (un fichier dédié, tableau JSON), même
+  // best-effort que côté Electron (vault.ts/state.json) : une lecture ou
+  // écriture qui échoue dégrade le repli, jamais les données.
+  getCollapsedPaths: async () => {
+    try {
+      const path = `${FileSystem.documentDirectory}123ecriture-collapsed.json`;
+      const info = await FileSystem.getInfoAsync(path);
+      if (!info.exists) return [];
+      const raw = await FileSystem.readAsStringAsync(path);
+      const parsed: unknown = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed.filter((p): p is string => typeof p === 'string') : [];
+    } catch {
+      return [];
+    }
+  },
+
+  setCollapsedPaths: async (relPaths) => {
+    const path = `${FileSystem.documentDirectory}123ecriture-collapsed.json`;
+    await FileSystem.writeAsStringAsync(path, JSON.stringify(relPaths));
+  },
+
   // "Note du jour" (Calendrier) — voir CalendarScreen.tsx. Réutilise
   // createNote ; idempotent (renvoie la note existante si déjà créée
   // aujourd'hui) comme la version Electron.

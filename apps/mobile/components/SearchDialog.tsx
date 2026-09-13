@@ -115,6 +115,16 @@ export function SearchDialog({ theme, onOpenResult, onCancel }: Props) {
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const handleKeyDown = (event: KeyboardEvent) => {
+      // Échap ferme — même convention que CommandPalette.tsx (qui l'avait
+      // dès l'origine) : deux boîtes de recherche qui réagissent
+      // différemment à la même touche, ça se remarque vite au clavier.
+      if (event.key === 'Escape') {
+        if (!event.defaultPrevented) {
+          event.preventDefault();
+          onCancel();
+        }
+        return;
+      }
       if (event.key === 'ArrowDown') {
         event.preventDefault();
         const next = Math.min(results.length - 1, selectedIndex + 1);

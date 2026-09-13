@@ -10,10 +10,10 @@ import { PersonalizationCard } from './PersonalizationCard';
 import { PrivacyDataSection } from './settings/PrivacyDataSection';
 import { PropertiesManagementSection } from './settings/PropertiesManagementSection';
 
-// Écran Paramètres — sous-navigation à 6 sections (voir .claude/CLAUDE.md :
+// Écran Paramètres — sous-navigation à 7 sections (voir .claude/CLAUDE.md :
 // "complexifier autant que possible" les réglages, et
 // apps/mobile/components/settings/). Une pile plate de cartes ne tenait
-// plus une fois passé de 3 à 6 sections ; on reprend le même principe que
+// plus une fois passé de 3 à 7 sections ; on reprend le même principe que
 // AppShell.tsx (rail latéral sur écran large / onglets scrollables sur
 // écran étroit) mais à l'échelle de cet écran, avec son propre seuil de
 // largeur : le contenu disponible ici est déjà amputé de la largeur du
