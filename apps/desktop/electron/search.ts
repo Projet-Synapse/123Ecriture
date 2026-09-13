@@ -111,6 +111,24 @@ function buildSnippet(text: string, matchIndex: number, matchLength: number): st
 // correspondante. `taskId`/`taskListId` (pas de `relPath`, une tâche n'a pas
 // de fichier) portent de quoi la rouvrir côté renderer (voir
 // lib/searchResults.ts, `openSearchResult`).
+//
+// L'échéance est cherchable aussi (depuis PR #25 chaque tâche peut en
+// porter une) : en ISO (2026-09-14 — un préfixe "2026-09" marche donc
+// aussi) ET en formatage français ("14 sept. 2026" / "14 sept."), pour ne
+// pas obliger à connaître le format de stockage. Même tableau de mois que
+// lib/taskDueDates.ts (formatDueDate côté renderer), dupliqué ici — même
+// convention que parseFrontmatter ci-dessus : deux paquets séparés, pas de
+// package partagé.
+const MONTHS_SHORT_FR = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
+
+function formatDueDateFr(dueDate: string): string | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dueDate)) return null;
+  const [year, month, day] = dueDate.split('-').map(Number);
+  const label = MONTHS_SHORT_FR[month - 1];
+  if (!label) return null;
+  return `${day} ${label} ${year}`;
+}
+
 function searchTasks(vaultPath: string, needle: string): SearchResult[] {
   // Assure la migration (listId attribué à toute tâche créée avant les
   // listes multiples) avant de lire — sans ça une tâche legacy remonterait
@@ -141,6 +159,24 @@ function searchTasks(vaultPath: string, needle: string): SearchResult[] {
         kind: 'task',
         matchType: 'content',
         snippet: buildSnippet(description, descriptionIndex, needle.length),
+        taskId: task.id,
+        taskListId: task.listId,
+      });
+      continue;
+    }
+
+    const dueDate = typeof task.dueDate === 'string' ? task.dueDate : null;
+    const dueLabel = dueDate ? formatDueDateFr(dueDate) : null;
+    const dueMatched =
+      (dueDate !== null && dueDate.includes(needle)) ||
+      (dueLabel !== null && dueLabel.toLowerCase().includes(needle));
+    if (dueMatched && dueDate && dueLabel) {
+      results.push({
+        relPath: '',
+        name: task.text,
+        kind: 'task',
+        matchType: 'content',
+        snippet: `Échéance : ${dueLabel}`,
         taskId: task.id,
         taskListId: task.listId,
       });

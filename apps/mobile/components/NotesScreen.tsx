@@ -23,6 +23,7 @@ import {
   getChildrenAt,
   getParentRelPath,
 } from '../lib/vaultTree';
+import { countCharacters, countWords } from '../lib/wordCount';
 import { useVaults } from '../lib/sync/VaultsContext';
 import { usePreferences } from '../preferences/PreferencesContext';
 import type { NotesActions } from './AppShell';
@@ -96,6 +97,11 @@ type ViewMode = 'source' | 'split' | 'reading';
 // (réglages).
 const AUTOSAVE_DELAY_MS = 600;
 
+// Formatage fr-FR des compteurs (1 234 mots) — une seule instance pour tout
+// le module, le format ne dépend pas du rendu.
+const countFormatter = new Intl.NumberFormat('fr-FR');
+const formatCount = (value: number) => countFormatter.format(value);
+
 type Status = 'idle' | 'saving' | 'saved' | 'error';
 
 // Un élément renommé/déplacé affecte la note actuellement ouverte si c'est
@@ -148,6 +154,11 @@ export function NotesScreen({
   const [viewMode, setViewMode] = useState<ViewMode>(preferences.editorDefaultMode);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [wikilinkNotice, setWikilinkNotice] = useState<string | null>(null);
+  // Repli des dossiers de l'explorateur — persisté PAR COFFRE dans
+  // .123ecriture/state.json (voir vault:get/set-collapsed-paths) pour
+  // retrouver l'arborescence telle qu'elle a été laissée au redémarrage ou
+  // au changement de coffre. Chargé après la première lecture de l'arbre ;
+  // les chemins obsolètes (dossier renommé/supprimé depuis) sont ignorés.
   const [collapsedPaths, setCollapsedPaths] = useState<Set<string>>(new Set());
   const [renamingRelPath, setRenamingRelPath] = useState<string | null>(null);
   const [renamingValue, setRenamingValue] = useState('');
@@ -198,7 +209,7 @@ export function NotesScreen({
   // Dictionnaire personnel des {{occurrences}} — chargé une fois ici (pas
   // dans OccurrencesPanel/NoteRenderer/MdxEditor séparément) puisque les
   // TROIS en ont besoin : NoteRenderer pour savoir quelles {{...}} styler
-  // en pastille, MdxEditor pour la future autocomplétion, OccurrencesPanel
+  // en pastille, MdxEditor pour l'autocomplétion `{{`, OccurrencesPanel
   // pour la gestion elle-même. `refreshOccurrences` est repassé à
   // OccurrencesPanel pour qu'il puisse déclencher un nouveau chargement
   // après une création/un renommage/une suppression (pas de `onChanged`
@@ -288,6 +299,29 @@ export function NotesScreen({
         await refreshTree();
       } catch (error) {
         console.error('[vault] échec du chargement de l’arborescence :', error);
+      }
+      // Repli persisté du coffre — APRES refreshTree pour ne pas s'afficher
+      // avant que l'arbre existe. Fusion "protectrice" : les dossiers
+      // ancêtres de la note déjà active restent dépliés, sans quoi un
+      // chargement qui résout après une ouverture de note (fichier ouvert
+      // par défaut, Calendrier...) refermerait le dossier qu'on vient
+      // d'ouvrir — l'effet de révélation ne se rejoue pas sur un simple
+      // changement de collapsedPaths.
+      try {
+        const persisted = vault.getCollapsedPaths ? await vault.getCollapsedPaths() : [];
+        // activeNoteRef lu AVANT l'updater (pas dedans) : un updater peut
+        // être rejoué pendant le rendu (StrictMode), et la règle
+        // react-hooks/refs refuse toute lecture de ref à ce moment-là.
+        const activeRelPath = activeNoteRef.current?.relPath ?? null;
+        setCollapsedPaths((prev) => {
+          const next = new Set(persisted);
+          if (activeRelPath) getAncestorRelPaths(activeRelPath).forEach((a) => next.delete(a));
+          // Garde aussi les replis faits à chaud pendant le chargement.
+          prev.forEach((p) => next.add(p));
+          return next;
+        });
+      } catch (error) {
+        console.error('[vault] échec du chargement des dossiers repliés :', error);
       }
     })();
     // refreshTree est stable (useCallback sur `vault`) : pas besoin de le
@@ -415,6 +449,15 @@ export function NotesScreen({
     },
     [vault, preferences.editorDefaultMode],
   );
+
+  // Notice wikilink (cible absente + création auto désactivée) — s'efface
+  // seule après quelques secondes : une info ponctuelle qui ne disparaît
+  // qu'au PROCHAIN clic de lien devient du bruit permanent sous l'éditeur.
+  useEffect(() => {
+    if (!wikilinkNotice) return;
+    const timer = setTimeout(() => setWikilinkNotice(null), 6000);
+    return () => clearTimeout(timer);
+  }, [wikilinkNotice]);
 
   // Ouvre une note demandée par un AUTRE écran (voir App.tsx,
   // `pendingOpenRelPath`) — ex. "Ouvrir la note du jour" du Calendrier, une
@@ -789,17 +832,26 @@ export function NotesScreen({
     [vault, editingPathNode, refreshTree],
   );
 
-  const toggleCollapse = useCallback((relPath: string) => {
-    setCollapsedPaths((prev) => {
-      const next = new Set(prev);
+  const toggleCollapse = useCallback(
+    (relPath: string) => {
+      const next = new Set(collapsedPaths);
       if (next.has(relPath)) {
         next.delete(relPath);
       } else {
         next.add(relPath);
       }
-      return next;
-    });
-  }, []);
+      setCollapsedPaths(next);
+      // Persistance immédiate, best-effort — chaque bascule réécrit la
+      // liste complète (quelques dizaines de chemins au plus) : plus
+      // simple et plus sûr qu'un debounce, et l'ordre d'arrivée des
+      // écritures n'importe pas (dernière = la plus récente de toute
+      // façon).
+      void vault?.setCollapsedPaths([...next]).catch((error) => {
+        console.error('[vault] échec de la persistance des dossiers repliés :', error);
+      });
+    },
+    [collapsedPaths, vault],
+  );
 
   // Bouton "ordre de tri" en haut de l'explorateur (voir
   // .claude/References/Sources.md §2) — même mécanisme de choix
@@ -894,6 +946,50 @@ export function NotesScreen({
       handleDeleteNode,
     ],
   );
+
+  // Menu « ⋯ » de l'en-tête de l'éditeur (bouton rendu plus bas) — mêmes
+  // actions que le clic droit sur la ligne de la note dans l'arbre
+  // (showContextMenuFor), mais accessibles sans aller la retrouver dans
+  // l'explorateur : la note OUVERTE se déplace/duplique/supprime d'ici,
+  // quel que soit l'état de l'arbre. Le nœud est reconstruit depuis
+  // activeNote (même forme que `{ type: 'note', ...activeNote }` du
+  // renommage par clic titre).
+  const showEditorActionsMenu = useCallback(() => {
+    if (!contextMenuBridge || !activeNote) return;
+    const node: VaultTreeNode = { type: 'note', ...activeNote };
+    void contextMenuBridge
+      .show([
+        { id: 'rename', label: 'Renommer' },
+        { id: 'move', label: 'Déplacer vers…' },
+        { id: 'edit-path', label: 'Modifier le chemin' },
+        { id: 'duplicate', label: 'Dupliquer' },
+        {
+          id: 'toggle-favorite',
+          label: preferences.favoriteRelPaths.includes(node.relPath)
+            ? 'Retirer des favoris'
+            : 'Ajouter aux favoris',
+        },
+        { id: 'delete', label: 'Supprimer' },
+      ])
+      .then((choice) => {
+        if (choice === 'rename') startRename(node);
+        if (choice === 'move') startMove(node);
+        if (choice === 'edit-path') startEditPath(node);
+        if (choice === 'duplicate') void handleDuplicateNode(node);
+        if (choice === 'toggle-favorite') void toggleFavorite(node.relPath);
+        if (choice === 'delete') void handleDeleteNode(node);
+      });
+  }, [
+    contextMenuBridge,
+    activeNote,
+    preferences.favoriteRelPaths,
+    startRename,
+    startMove,
+    startEditPath,
+    handleDuplicateNode,
+    toggleFavorite,
+    handleDeleteNode,
+  ]);
 
   // Un seul écouteur "contextmenu" délégué sur tout le conteneur de la
   // liste, plutôt qu'un handler par ligne : chaque ligne de VaultTreeView
@@ -1229,6 +1325,15 @@ export function NotesScreen({
   // serializeFrontmatter — les deux restent cohérents puisqu'ils partent du
   // même state `content`).
   const { data: frontmatterData, body: bodyOnly } = useMemo(() => parseFrontmatter(content), [content]);
+  // Compteur mots/caractères (barre d'en-tête, markdown uniquement) —
+  // compté sur le CORPS (frontmatter exclu) quel que soit le mode
+  // d'affichage : c'est le texte lu/écrit qui compte, pas la config YAML.
+  // Déjà dérivé d'un state mis à jour à chaque frappe, le recalcul est
+  // négligeable (un split) face au re-rendu existant.
+  const wordStats = useMemo(
+    () => ({ words: countWords(bodyOnly), characters: countCharacters(bodyOnly) }),
+    [bodyOnly],
+  );
   const handleChangeBody = (newBody: string) => handleChangeContent(serializeFrontmatter(frontmatterData, newBody));
 
   // Dispatché directement sur l'EditorView (pas de setContent/scheduleSave
@@ -1742,20 +1847,39 @@ export function NotesScreen({
                     <Text style={[styles.editorTitle, { color: theme.text }]}>{activeNote.name}</Text>
                   </Pressable>
                 ))}
-              <Text style={[styles.status, { color: theme.textMuted }]}>
-                {status === 'saving' && 'Enregistrement…'}
-                {status === 'saved' && 'Enregistré'}
-                {status === 'error' && '⚠️ Échec de la sauvegarde'}
-              </Text>
-              <Pressable
-                onPress={() => setSidebarOpen((open) => !open)}
-                style={styles.sidebarToggle}
-                accessibilityLabel={sidebarOpen ? 'Masquer le panneau latéral' : 'Afficher le panneau latéral'}
-              >
-                <Text style={{ color: sidebarOpen ? theme.accent : theme.textMuted }}>
-                  {sidebarOpen ? '▶' : '◀'}
+              {/* Groupe de droite de l'en-tête : compteur (markdown
+                  uniquement), statut de sauvegarde, menu ⋯ des actions de
+                  la note, panneau latéral — regroupés pour que
+                  space-between ne disperse pas quatre éléments sur toute
+                  la largeur (le titre reste seul à gauche). */}
+              <View style={styles.editorHeaderRight}>
+                {activeNote.kind === 'markdown' && (
+                  <Text style={[styles.status, { color: theme.textMuted }]}>
+                    {formatCount(wordStats.words)} mots · {formatCount(wordStats.characters)} caractères
+                  </Text>
+                )}
+                <Text style={[styles.status, { color: theme.textMuted }]}>
+                  {status === 'saving' && 'Enregistrement…'}
+                  {status === 'saved' && 'Enregistré'}
+                  {status === 'error' && '⚠️ Échec de la sauvegarde'}
                 </Text>
-              </Pressable>
+                <Pressable
+                  onPress={showEditorActionsMenu}
+                  style={styles.sidebarToggle}
+                  accessibilityLabel="Actions de la note (renommer, déplacer, dupliquer, supprimer)"
+                >
+                  <Text style={{ color: theme.textMuted }}>⋯</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => setSidebarOpen((open) => !open)}
+                  style={styles.sidebarToggle}
+                  accessibilityLabel={sidebarOpen ? 'Masquer le panneau latéral' : 'Afficher le panneau latéral'}
+                >
+                  <Text style={{ color: sidebarOpen ? theme.accent : theme.textMuted }}>
+                    {sidebarOpen ? '▶' : '◀'}
+                  </Text>
+                </Pressable>
+              </View>
             </View>
 
             <View style={styles.editorMainRow}>
@@ -2158,6 +2282,13 @@ const styles = StyleSheet.create({
   sidebarToggle: {
     paddingHorizontal: 8,
     paddingVertical: 4,
+  },
+  // Groupe de droite de l'en-tête éditeur (compteur + statut + ⋯ + ◀) —
+  // voir le commentaire du rendu.
+  editorHeaderRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   editorMainRow: {
     flex: 1,

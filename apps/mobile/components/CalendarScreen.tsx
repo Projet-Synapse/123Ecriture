@@ -12,6 +12,7 @@ import {
 } from '../lib/calendarDates';
 import { useVaults } from '../lib/sync/VaultsContext';
 import { usePreferences } from '../preferences/PreferencesContext';
+import { ConfirmDialog } from './ConfirmDialog';
 
 // Écran Calendrier — notes journalières (façon Obsidian, convention de
 // chemin `Journal/AAAA-MM-JJ.mdx`, voir vault:ensure-daily-note dans
@@ -73,6 +74,11 @@ export function CalendarScreen({ onRequestOpenNote, pendingOpenDate, onOpenedPen
   // par events.json à la main).
   const [editAllDay, setEditAllDay] = useState(false);
   const [editNotes, setEditNotes] = useState('');
+  // Suppression d'un évènement — désormais confirmée (ConfirmDialog) :
+  // un ✕ mal visé faisait disparaître l'évènement sans retour, et contrairement
+  // à une tâche (re-tapable en 5 secondes) un évènement planifié peut porter
+  // heure/notes qu'il faudra re-saisir de mémoire.
+  const [eventToDelete, setEventToDelete] = useState<CalendarEvent | null>(null);
 
   const refresh = useCallback(async () => {
     if (!vault || !calendarBridge) return;
@@ -500,7 +506,7 @@ export function CalendarScreen({ onRequestOpenNote, pendingOpenDate, onOpenedPen
                       <Text style={{ color: theme.textMuted }}>✎</Text>
                     </Pressable>
                     <Pressable
-                      onPress={() => void handleRemoveEvent(ev.id)}
+                      onPress={() => setEventToDelete(ev)}
                       style={styles.removeButton}
                       accessibilityLabel={`Supprimer ${ev.title}`}
                     >
@@ -564,6 +570,23 @@ export function CalendarScreen({ onRequestOpenNote, pendingOpenDate, onOpenedPen
           </Pressable>
         </Pressable>
       </Modal>
+
+      {/* Confirmation de suppression — rendue APRÈS le Modal du jour pour se
+          superposer à lui (dernier Modal monté = au-dessus) ; `onSettled`
+          referme dans tous les cas, l'échec éventuel restant visible via
+          dayActionError dans le panneau du jour derrière. */}
+      {eventToDelete && (
+        <ConfirmDialog
+          theme={theme}
+          title={`Supprimer « ${eventToDelete.title} » ?`}
+          message={`L'évènement du ${dayLabel(eventToDelete.date)}${
+            eventToDelete.time ? ` (${eventToDelete.time})` : ''
+          } sera supprimé définitivement.`}
+          onConfirm={() => handleRemoveEvent(eventToDelete.id)}
+          onCancel={() => setEventToDelete(null)}
+          onSettled={() => setEventToDelete(null)}
+        />
+      )}
     </View>
   );
 }

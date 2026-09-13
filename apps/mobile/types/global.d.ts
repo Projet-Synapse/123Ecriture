@@ -49,6 +49,10 @@ declare global {
     // vault.ts, .123ecriture/state.json), pas app-level.
     getLastOpened: () => Promise<string | null>;
     setLastOpened: (relPath: string | null) => Promise<void>;
+    // Dossiers repliés de l'explorateur, même fichier state.json (par
+    // coffre) — persistés pour retrouver l'arborescence au redémarrage.
+    getCollapsedPaths: () => Promise<string[]>;
+    setCollapsedPaths: (relPaths: string[]) => Promise<void>;
     ensureDailyNote: (dateIso: string) => Promise<VaultEntry>;
     reorder: (parentRelPath: string | undefined, orderedNames: string[]) => Promise<VaultTreeNode[]>;
     importAttachment: () => Promise<{ relPath: string; name: string } | null>;

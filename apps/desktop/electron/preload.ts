@@ -26,6 +26,8 @@ contextBridge.exposeInMainWorld('vault', {
   delete: (relPath: string) => ipcRenderer.invoke('vault:delete', relPath),
   getLastOpened: () => ipcRenderer.invoke('vault:get-last-opened'),
   setLastOpened: (relPath: string | null) => ipcRenderer.invoke('vault:set-last-opened', relPath),
+  getCollapsedPaths: () => ipcRenderer.invoke('vault:get-collapsed-paths'),
+  setCollapsedPaths: (relPaths: string[]) => ipcRenderer.invoke('vault:set-collapsed-paths', relPaths),
   ensureDailyNote: (dateIso: string) => ipcRenderer.invoke('vault:ensure-daily-note', dateIso),
   reorder: (parentRelPath: string | undefined, orderedNames: string[]) =>
     ipcRenderer.invoke('vault:reorder', parentRelPath, orderedNames),
