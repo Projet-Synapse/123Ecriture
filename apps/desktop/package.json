@@ -1,6 +1,6 @@
 {
   "name": "@123ecriture/desktop",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "123Ecriture — application d'écriture et de productivité (version desktop)",
   "author": "Catelina",
   "repository": "https://github.com/Projet-Synapse/123Ecriture.git",
@@ -53,20 +53,28 @@
     "icon": "../mobile/assets/icon.png",
     "protocols": {
       "name": "123Ecriture Auth Callback",
-      "schemes": ["app123ecriture"]
+      "schemes": [
+        "app123ecriture"
+      ]
     },
     "linux": {
-      "target": ["AppImage"],
+      "target": [
+        "AppImage"
+      ],
       "category": "Office"
     },
     "win": {
-      "target": ["nsis"]
+      "target": [
+        "nsis"
+      ]
     },
     "nsis": {
       "differentialPackage": false
     },
     "mac": {
-      "target": ["dmg"],
+      "target": [
+        "dmg"
+      ],
       "category": "public.app-category.productivity"
     }
   }
