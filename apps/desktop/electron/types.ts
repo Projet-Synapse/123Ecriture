@@ -212,6 +212,11 @@ export interface Preferences {
   newNoteLocation: NewNoteLocation;
   newNoteCustomFolder: string;
   fileSortMode: FileSortMode;
+  // Écran Tâches : tri par échéance et masquage des terminées — miroir de
+  // apps/mobile/types/global.d.ts (types non partagés, à maintenir des deux
+  // côtés).
+  tasksSortByDueDate: boolean;
+  tasksHideCompleted: boolean;
   defaultOpenMode: DefaultOpenMode;
   defaultOpenSpecificPath: string;
   // Paramètres → Éditeur.

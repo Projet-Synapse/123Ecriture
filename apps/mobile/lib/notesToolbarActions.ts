@@ -39,8 +39,7 @@ export type ToolbarAction = {
   run: (text: string, selection: Selection) => FormattingResult;
   // Raccourci clavier CodeMirror (syntaxe `@codemirror/view` — 'Mod' = Cmd
   // sur macOS / Ctrl ailleurs) câblé dans MdxEditor.tsx et affiché dans
-  // Paramètres → Éditeur (voir NOTES_TOOLBAR_SHORTCUT_LABELS). Absent pour
-  // 'table', qui n'a pas d'équivalent standard.
+  // Paramètres → Éditeur (voir NOTES_TOOLBAR_SHORTCUT_LABELS).
   shortcut?: string;
 };
 
@@ -69,7 +68,11 @@ export const NOTES_TOOLBAR_ACTIONS: ToolbarAction[] = [
   { id: 'bullet', label: '•', run: (text, sel) => toggleLinePrefix(text, sel, '- '), shortcut: 'Mod-Shift-8' },
   { id: 'numbered', label: '1.', run: (text, sel) => toggleNumberedList(text, sel), shortcut: 'Mod-Shift-7' },
   { id: 'link', label: '🔗', run: (text, sel) => insertLink(text, sel), shortcut: 'Mod-k' },
-  { id: 'table', label: '▦', run: (text, sel) => insertTable(text, sel) },
+  // Mod-Shift-T : T comme Tableau — dernier inséré, aucun conflit avec la
+  // suite Mod-Shift-7/8/9 ni avec les raccourcis navigateur utiles (web,
+  // Ctrl+T ouvre un onglet MAIS l'éditeur intercepte via Prec.highest /
+  // preventDefault avant ; en Electron, fenêtre de l'app, pas d'onglets).
+  { id: 'table', label: '▦', run: (text, sel) => insertTable(text, sel), shortcut: 'Mod-Shift-t' },
 ];
 
 // Libellés lisibles pour la liste de réorganisation dans Paramètres (plus

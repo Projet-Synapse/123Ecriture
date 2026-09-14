@@ -165,7 +165,7 @@ export function AccountSyncSection() {
               <Text style={s.buttonText}>Se connecter avec Google</Text>
             </Pressable>
           )}
-          {auth.error && <Text style={s.error}>⚠️ {auth.error}</Text>}
+          {auth.error && <Text style={{ color: theme.danger }}>⚠️ {auth.error}</Text>}
         </View>
       )}
 
@@ -262,7 +262,7 @@ export function AccountSyncSection() {
                       {result.summary.errors.length > 0 ? ` — ${result.summary.errors.length} erreur(s)` : ''}
                     </Text>
                   )}
-                  {result?.error && <Text style={s.error}>⚠️ {result.error}</Text>}
+                  {result?.error && <Text style={{ color: theme.danger }}>⚠️ {result.error}</Text>}
                 </View>
               );
             })}
@@ -287,7 +287,7 @@ export function AccountSyncSection() {
             </View>
           )}
 
-          {vaultActionError && <Text style={s.error}>⚠️ {vaultActionError}</Text>}
+          {vaultActionError && <Text style={{ color: theme.danger }}>⚠️ {vaultActionError}</Text>}
 
           <View style={styles.vaultButtonsRow}>
             <Pressable

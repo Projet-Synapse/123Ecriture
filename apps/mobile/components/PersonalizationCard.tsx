@@ -101,11 +101,13 @@ export function PersonalizationCard() {
           placeholderTextColor={theme.textMuted}
           style={[
             styles.hexInput,
-            { color: theme.text, borderColor: hexError ? '#dc2626' : theme.border },
+            { color: theme.text, borderColor: hexError ? theme.danger : theme.border },
           ]}
         />
       </View>
-      {hexError && <Text style={styles.hexError}>⚠️ Couleur invalide — format attendu : #rrggbb</Text>}
+      {hexError && (
+        <Text style={[styles.hexError, { color: theme.danger }]}>⚠️ Couleur invalide — format attendu : #rrggbb</Text>
+      )}
     </View>
   );
 }
@@ -161,7 +163,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   hexError: {
-    color: '#dc2626',
     fontSize: 12,
   },
 });

@@ -1,7 +1,7 @@
 import { StyleSheet } from 'react-native';
 
 // Styles partagés entre toutes les sections de l'écran Paramètres (voir
-// SettingsScreen.tsx) — évite de redéfinir "card"/"button"/"error"... dans
+// SettingsScreen.tsx) — évite de redéfinir "card"/"button"/"row"... dans
 // chacun des 6 fichiers de apps/mobile/components/settings/. Les couleurs
 // (theme.*) restent appliquées au niveau de chaque composant, pas ici : ce
 // fichier ne porte que la géométrie, commune quel que soit le thème.
@@ -52,9 +52,6 @@ export const settingsStyles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-  },
-  error: {
-    color: '#dc2626',
   },
   input: {
     flex: 1,

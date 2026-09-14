@@ -50,7 +50,7 @@ function EmbedNode({ target, theme }: { target: string; theme: Theme }) {
   }, [vault, target]);
 
   if (failed) {
-    return <Text style={{ color: '#dc2626' }}>⚠️ Pièce jointe introuvable : {target}</Text>;
+    return <Text style={{ color: theme.danger }}>⚠️ Pièce jointe introuvable : {target}</Text>;
   }
   if (!dataUrl) {
     return <Text style={{ color: theme.textMuted }}>Chargement de {target}…</Text>;

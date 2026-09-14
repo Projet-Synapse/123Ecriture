@@ -4,9 +4,9 @@ import { useCallback, useRef, useState } from 'react';
 import { AppShell, type NotesActions } from './components/AppShell';
 import { CalendarScreen } from './components/CalendarScreen';
 import { NotesScreen } from './components/NotesScreen';
-import { PlaceholderScreen } from './components/PlaceholderScreen';
 import { SettingsScreen } from './components/SettingsScreen';
 import { TasksScreen } from './components/TasksScreen';
+import { toIsoDate } from './lib/calendarDates';
 import { AuthProvider } from './lib/sync/AuthContext';
 import { SyncStatusProvider } from './lib/sync/SyncStatusContext';
 import { VaultsProvider } from './lib/sync/VaultsContext';
@@ -15,7 +15,6 @@ import { PreferencesProvider } from './preferences/PreferencesContext';
 
 function Root() {
   const [activeId, setActiveId] = useState(SECTIONS[0].id);
-  const activeSection = SECTIONS.find((section) => section.id === activeId) ?? SECTIONS[0];
 
   // Mécanisme partagé "ouvrir cet élément" depuis un autre écran (recherche
   // globale, palette de commandes, "Ouvrir la note du jour" du Calendrier —
@@ -51,6 +50,28 @@ function Root() {
   }, []);
   const clearPendingOpenCalendarDate = useCallback(() => setPendingOpenCalendarDate(null), []);
 
+  // « Nouvelle tâche » (palette de commandes) : bascule sur l'écran Tâches
+  // et lui signale de focusser son champ de création. Un COMPTEUR plutôt
+  // qu'un booléen : redemander la création alors qu'on est déjà sur
+  // Tâches doit re-déclencher l'effet de focus côté TasksScreen, ce
+  // qu'un booléen déjà à true ne permettrait pas.
+  const [pendingNewTaskToken, setPendingNewTaskToken] = useState(0);
+  const requestNewTask = useCallback(() => {
+    setPendingNewTaskToken((token) => token + 1);
+    setActiveId('tasks');
+  }, []);
+  const clearPendingNewTask = useCallback(() => setPendingNewTaskToken(0), []);
+
+  // « Nouvel évènement » (palette) : même mécanique côté Calendrier, la
+  // date fournie est aujourd'hui (le panneau du jour s'ouvre directement
+  // sur son formulaire d'ajout).
+  const [pendingNewEventDate, setPendingNewEventDate] = useState<string | null>(null);
+  const requestNewEvent = useCallback(() => {
+    setPendingNewEventDate(toIsoDate(new Date()));
+    setActiveId('calendar');
+  }, []);
+  const clearPendingNewEvent = useCallback(() => setPendingNewEventDate(null), []);
+
   // "Nouvelle note"/"Nouveau dossier" pour CommandPalette.tsx (montée dans
   // AppShell.tsx, HORS de NotesScreen) — voir NotesScreen.tsx,
   // `onRegisterActions`. Une ref (pas un state) : sa valeur ne doit pas
@@ -73,19 +94,26 @@ function Root() {
       />
     );
   } else if (activeId === 'tasks') {
-    content = <TasksScreen pendingOpenTask={pendingOpenTask} onOpenedPendingTask={clearPendingOpenTask} />;
+    content = (
+      <TasksScreen
+        pendingOpenTask={pendingOpenTask}
+        onOpenedPendingTask={clearPendingOpenTask}
+        pendingNewTaskToken={pendingNewTaskToken}
+        onConsumedPendingNewTask={clearPendingNewTask}
+      />
+    );
   } else if (activeId === 'calendar') {
     content = (
       <CalendarScreen
         onRequestOpenNote={requestOpenNote}
         pendingOpenDate={pendingOpenCalendarDate}
         onOpenedPendingDate={clearPendingOpenCalendarDate}
+        pendingNewEventDate={pendingNewEventDate}
+        onOpenedPendingNewEvent={clearPendingNewEvent}
       />
     );
   } else if (activeId === 'settings') {
     content = <SettingsScreen />;
-  } else {
-    content = <PlaceholderScreen section={activeSection} />;
   }
 
   return (
@@ -98,6 +126,8 @@ function Root() {
         onRequestOpenNote={requestOpenNote}
         onRequestOpenTask={requestOpenTask}
         onRequestOpenCalendarDate={requestOpenCalendarDate}
+        onRequestNewTask={requestNewTask}
+        onRequestNewEvent={requestNewEvent}
       >
         {content}
       </AppShell>

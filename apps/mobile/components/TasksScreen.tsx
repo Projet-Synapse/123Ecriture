@@ -1,8 +1,14 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { useVaults } from '../lib/sync/VaultsContext';
-import { compareByDueDate, dueDateStatus, formatDueDate, normalizeDueDateInput } from '../lib/taskDueDates';
+import {
+  compareByDueDate,
+  dueDateStatus,
+  formatDueDate,
+  isoDateFromOffset,
+  normalizeDueDateInput,
+} from '../lib/taskDueDates';
 import { usePreferences } from '../preferences/PreferencesContext';
 import { ConfirmDialog } from './ConfirmDialog';
 import { DraftTextField } from './DraftTextField';
@@ -29,10 +35,21 @@ type Props = {
   // remette ce champ à null.
   pendingOpenTask?: { taskListId: string; taskId: string } | null;
   onOpenedPendingTask?: () => void;
+  // « Nouvelle tâche » demandée depuis la palette de commandes (App.tsx) :
+  // un COMPTEUR (token), pas un booléen — redemander la création alors
+  // qu'on est déjà sur l'écran Tâches doit re-déclencher le focus, ce
+  // qu'un booléen déjà à `true` ne ferait pas. 0 = aucune demande.
+  pendingNewTaskToken?: number;
+  onConsumedPendingNewTask?: () => void;
 };
 
-export function TasksScreen({ pendingOpenTask, onOpenedPendingTask }: Props = {}) {
-  const { theme } = usePreferences();
+export function TasksScreen({
+  pendingOpenTask,
+  onOpenedPendingTask,
+  pendingNewTaskToken = 0,
+  onConsumedPendingNewTask,
+}: Props = {}) {
+  const { theme, preferences, setTasksSortByDueDate, setTasksHideCompleted } = usePreferences();
   const vault = typeof window !== 'undefined' ? window.vault : undefined;
   const tasksBridge = typeof window !== 'undefined' ? window.tasks : undefined;
   const taskListsBridge = typeof window !== 'undefined' ? window.taskLists : undefined;
@@ -61,17 +78,21 @@ export function TasksScreen({ pendingOpenTask, onOpenedPendingTask }: Props = {}
   // aux suppressions simples (tâche/sous-étape) qui restent directes :
   // re-taper une tâche perdue reste supportable, une liste entière non.
   const [confirmDeleteList, setConfirmDeleteList] = useState<TaskList | null>(null);
-  // Masquage des tâches terminées — pur confort de lecture sur une longue
-  // liste, état local volontairement NON persisté (contrairement au mode
-  // de tri des fichiers) : c'est un besoin de session ("voir ce qui
-  // reste"), pas une préférence d'app.
-  const [hideCompleted, setHideCompleted] = useState(false);
-  // Tri "par échéance" (croissant, sans échéance en fin) en alternance avec
-  // l'ordre d'ajout — même non-persistence volontaire que hideCompleted.
-  const [sortByDueDate, setSortByDueDate] = useState(false);
-  // Filtre texte local (titre + description, insensible à la casse) — même
-  // non-persistence volontaire : un besoin de session, pas une préférence.
+  // Masquage des tâches terminées + tri par échéance — PRÉFÉRENCES
+  // persistées (tasksHideCompleted/tasksSortByDueDate, voir
+  // PreferencesContext) : ce sont des préférences de lecture stables, au
+  // même titre que fileSortMode pour les fichiers — une utilisatrice qui
+  // trie toujours par échéance ou masque toujours les terminées ne devait
+  // pas re-configurer à chaque lancement (l'ancien état de session local
+  // datait d'avant l'infrastructure de préférences de cet écran).
+  const hideCompleted = preferences.tasksHideCompleted;
+  const sortByDueDate = preferences.tasksSortByDueDate;
+  // Filtre texte local (titre + description, insensible à la casse) —
+  // non persisté volontairement : un besoin de session, pas une préférence.
   const [filterDraft, setFilterDraft] = useState('');
+  // Champ de création rapide — ciblé par le focus demandé depuis la
+  // palette (« Nouvelle tâche », voir l'effet plus bas).
+  const quickAddInputRef = useRef<TextInput>(null);
 
   const refreshTaskLists = useCallback(async () => {
     if (!taskListsBridge) return;
@@ -138,6 +159,21 @@ export function TasksScreen({ pendingOpenTask, onOpenedPendingTask }: Props = {}
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingOpenTask, taskListsBridge]);
+
+  // « Nouvelle tâche » demandée depuis la palette (voir Props) : focus du
+  // champ de création. Consommé seulement une fois une liste active
+  // chargée (le champ n'existe pas avant — monté derrière le retour
+  // asynchrone du bridge `tasklists:list`) : l'effet rejoue quand
+  // `activeListId` passe à non-null et le focus part alors, sinon la
+  // demande resterait sans effet à chaque changement d'écran. S'il
+  // n'existe AUCUNE liste, la demande reste en attente sans rien casser
+  // (écran affiché, message "crées-en une" visible).
+  useEffect(() => {
+    if (!pendingNewTaskToken || !activeListId) return;
+    quickAddInputRef.current?.focus();
+    onConsumedPendingNewTask?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingNewTaskToken, activeListId]);
 
   const handleChooseFolder = async () => {
     if (!vault) return;
@@ -441,7 +477,7 @@ export function TasksScreen({ pendingOpenTask, onOpenedPendingTask }: Props = {}
     const formatted = formatDueDate(task.dueDate);
     if (task.done) return { label: `📅 ${formatted}`, color: theme.textMuted };
     if (status === 'today') return { label: "📅 Aujourd'hui", color: '#d97706' };
-    if (status === 'overdue') return { label: `⏰ ${formatted}`, color: '#dc2626' };
+    if (status === 'overdue') return { label: `⏰ ${formatted}`, color: theme.danger };
     return { label: `📅 ${formatted}`, color: theme.textMuted };
   };
 
@@ -515,6 +551,42 @@ export function TasksScreen({ pendingOpenTask, onOpenedPendingTask }: Props = {}
               theme={theme}
               style={[styles.dueDateInput, { color: theme.text, borderColor: theme.border }] as unknown as object}
             />
+            {/* Raccourcis de saisie (boutons) — la date part directement via
+                handleChangeDueDate (même chemin que le champ libre, ISO déjà
+                valide) : DraftTextField resynchronise son brouillon quand
+                `initialValue` change, le champ suit donc le clic. */}
+            <View style={styles.dueQuickRow}>
+              <Pressable
+                onPress={() => handleChangeDueDate(task.id, isoDateFromOffset(0))}
+                style={[styles.dueQuickChip, { borderColor: theme.border }]}
+                accessibilityLabel="Échéance : aujourd’hui"
+              >
+                <Text style={[styles.dueQuickChipText, { color: theme.textMuted }]}>Aujourd’hui</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => handleChangeDueDate(task.id, isoDateFromOffset(1))}
+                style={[styles.dueQuickChip, { borderColor: theme.border }]}
+                accessibilityLabel="Échéance : demain"
+              >
+                <Text style={[styles.dueQuickChipText, { color: theme.textMuted }]}>Demain</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => handleChangeDueDate(task.id, isoDateFromOffset(7))}
+                style={[styles.dueQuickChip, { borderColor: theme.border }]}
+                accessibilityLabel="Échéance : dans une semaine"
+              >
+                <Text style={[styles.dueQuickChipText, { color: theme.textMuted }]}>+7 j</Text>
+              </Pressable>
+              {task.dueDate && (
+                <Pressable
+                  onPress={() => handleChangeDueDate(task.id, '')}
+                  style={[styles.dueQuickChip, { borderColor: theme.border }]}
+                  accessibilityLabel="Retirer l’échéance"
+                >
+                  <Text style={[styles.dueQuickChipText, { color: theme.danger }]}>✕ Retirer</Text>
+                </Pressable>
+              )}
+            </View>
 
             {taskLists.length > 1 && (
               <Pressable
@@ -675,8 +747,8 @@ export function TasksScreen({ pendingOpenTask, onOpenedPendingTask }: Props = {}
           </Pressable>
         </View>
       )}
-      {listActionError && <Text style={styles.error}>⚠️ {listActionError}</Text>}
-      {taskActionError && <Text style={styles.error}>⚠️ {taskActionError}</Text>}
+      {listActionError && <Text style={[styles.error, { color: theme.danger }]}>⚠️ {listActionError}</Text>}
+      {taskActionError && <Text style={[styles.error, { color: theme.danger }]}>⚠️ {taskActionError}</Text>}
 
       {!activeList ? (
         <Text style={[styles.muted, { color: theme.textMuted }]}>
@@ -686,6 +758,7 @@ export function TasksScreen({ pendingOpenTask, onOpenedPendingTask }: Props = {}
         <>
           <View style={styles.addRow}>
             <TextInput
+              ref={quickAddInputRef}
               value={draft}
               onChangeText={(text) => {
                 setDraft(text);
@@ -703,7 +776,7 @@ export function TasksScreen({ pendingOpenTask, onOpenedPendingTask }: Props = {}
               <Text style={styles.buttonText}>Ajouter</Text>
             </Pressable>
           </View>
-          {addError && <Text style={styles.error}>⚠️ {addError}</Text>}
+          {addError && <Text style={[styles.error, { color: theme.danger }]}>⚠️ {addError}</Text>}
 
           {/* Filtre texte local — n'apparaît qu'une fois la liste peuplée :
               au-dessus d'une liste vide, il n'aurait rien à filtrer. */}
@@ -729,7 +802,7 @@ export function TasksScreen({ pendingOpenTask, onOpenedPendingTask }: Props = {}
             </Text>
             <View style={styles.listMetaActions}>
               <Pressable
-                onPress={() => setSortByDueDate((prev) => !prev)}
+                onPress={() => void setTasksSortByDueDate(!sortByDueDate)}
                 accessibilityLabel={sortByDueDate ? 'Revenir à l’ordre d’ajout' : 'Trier par échéance'}
               >
                 <Text style={[styles.listMetaAction, { color: theme.accent }]}>
@@ -738,7 +811,7 @@ export function TasksScreen({ pendingOpenTask, onOpenedPendingTask }: Props = {}
               </Pressable>
               {doneAll.length > 0 && (
                 <Pressable
-                  onPress={() => setHideCompleted((prev) => !prev)}
+                  onPress={() => void setTasksHideCompleted(!hideCompleted)}
                   accessibilityLabel={hideCompleted ? 'Afficher les tâches terminées' : 'Masquer les tâches terminées'}
                 >
                   <Text style={[styles.listMetaAction, { color: theme.accent }]}>
@@ -982,6 +1055,23 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     fontSize: 13,
   },
+  // Raccourcis d'échéance cliquables (Aujourd'hui/Demain/+7 j/Retirer) —
+  // chips fines sous le champ libre, sans bouton plein (l'action est
+  // secondaire par rapport à la saisie).
+  dueQuickRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  dueQuickChip: {
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingVertical: 3,
+    paddingHorizontal: 8,
+  },
+  dueQuickChipText: {
+    fontSize: 11,
+  },
   moveListRow: {
     paddingVertical: 4,
   },
@@ -1021,7 +1111,6 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
   },
   error: {
-    color: '#dc2626',
     fontSize: 13,
   },
 });

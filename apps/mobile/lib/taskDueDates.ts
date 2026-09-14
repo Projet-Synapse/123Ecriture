@@ -9,6 +9,8 @@
 //      du badge d'échéance dans TasksScreen.
 // //3. Format court français (formatDueDate).
 // //4. Tri (compareByDueDate) — "trier par échéance" de TasksScreen.
+// //5. Raccourcis de saisie (isoDateFromOffset) — boutons "Aujourd'hui/
+//      Demain/+7 j" de la fiche tâche, qui contournent la saisie libre.
 
 export type DueDateStatus = 'overdue' | 'today' | 'upcoming';
 
@@ -72,4 +74,16 @@ export function compareByDueDate(a: string | null | undefined, b: string | null 
   if (ca === null) return 1;
   if (cb === null) return -1;
   return ca < cb ? -1 : ca > cb ? 1 : 0;
+}
+
+// Date ISO (AAAA-MM-JJ) décalée de `days` jours par rapport à `today` —
+// pilote les boutons de raccourci d'échéance de TasksScreen ("Aujourd'hui",
+// "Demain", "+7 j") sans passer par la saisie libre. Passage par le
+// constructeur (y, m, day+n) plutôt que par un ajout de millisecondes :
+// immunise contre les heures d'été/hiver (un offset de 24 h saute une heure
+// de trop deux jours par an). `today` en paramètre, même convention
+// testable que dueDateStatus.
+export function isoDateFromOffset(days: number, today: Date = new Date()): string {
+  const date = new Date(today.getFullYear(), today.getMonth(), today.getDate() + days);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
