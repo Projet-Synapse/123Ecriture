@@ -194,8 +194,8 @@ export function MdxEditor({
   // (façon éditeur de texte classique) plutôt qu'en bas, où la barre de
   // formatage risque de le chevaucher. `searchKeymap` fournit Mod-f/F3/
   // Mod-g/Échap — aucun conflit avec les raccourcis maison (Mod-b/i/e/k,
-  // Mod-1-6, Mod-Shift-7/8/9, voir lib/notesToolbarActions.ts), et ces
-  // derniers gagnent de toute façon via Prec.highest ci-dessus.
+  // Mod-1-6, Mod-Shift-7/8/9, Mod-Shift-T, voir lib/notesToolbarActions.ts),
+  // et ces derniers gagnent de toute façon via Prec.highest ci-dessus.
   const searchExtensions = useMemo(() => [searchExtension({ top: true }), keymap.of(searchKeymap)], []);
 
   const extensions = useMemo(() => {

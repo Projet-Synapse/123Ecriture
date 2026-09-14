@@ -50,6 +50,10 @@ export const DEFAULT_PREFERENCES: Preferences = {
   newNoteLocation: 'vaultRoot',
   newNoteCustomFolder: '',
   fileSortMode: 'alphabetical',
+  // Écran Tâches (tri par échéance / masquage des terminées) — voir
+  // TasksScreen.tsx pour la consommation réelle.
+  tasksSortByDueDate: false,
+  tasksHideCompleted: false,
   defaultOpenMode: 'lastOpened',
   defaultOpenSpecificPath: '',
   editorFontSize: 15,

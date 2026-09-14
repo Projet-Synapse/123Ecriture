@@ -132,7 +132,7 @@ export function PropertiesManagementSection() {
           haut de note). Renommer une propriété migre automatiquement les notes qui l’utilisaient déjà ; changer
           son type ne modifie jamais les notes déjà écrites.
         </Text>
-        {error && <Text style={styles.error}>⚠️ {error}</Text>}
+        {error && <Text style={[styles.error, { color: theme.danger }]}>⚠️ {error}</Text>}
         {migrationMessage && (
           <Text style={[styles.migrationMessage, { color: theme.textMuted }]}>✅ {migrationMessage}</Text>
         )}
@@ -222,7 +222,6 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   error: {
-    color: '#dc2626',
     fontSize: 12,
   },
   migrationMessage: {

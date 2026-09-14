@@ -58,7 +58,7 @@ export function PrivacyDataSection() {
             défaut — n’affecte pas vos notes ni vos coffres.
           </Text>
           <View style={s.row}>
-            <Pressable onPress={handleReset} style={[s.button, { backgroundColor: '#dc2626' }]}>
+            <Pressable onPress={handleReset} style={[s.button, { backgroundColor: theme.danger }]}>
               <Text style={s.buttonText}>Confirmer la réinitialisation</Text>
             </Pressable>
             <Pressable

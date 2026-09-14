@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { compareByDueDate, dueDateStatus, formatDueDate, normalizeDueDateInput } from './taskDueDates';
+import { compareByDueDate, dueDateStatus, formatDueDate, isoDateFromOffset, normalizeDueDateInput } from './taskDueDates';
 
 // `today` explicite partout : les statuts dépendent du jour courant, les
 // tests doivent rester déterministes (même principe que buildMonthGrid).
@@ -72,5 +72,31 @@ describe('compareByDueDate', () => {
   it('est stable entre égaux et entre deux absentes', () => {
     expect(compareByDueDate('2026-09-13', '2026-09-13')).toBe(0);
     expect(compareByDueDate(null, undefined)).toBe(0);
+  });
+});
+
+describe('isoDateFromOffset', () => {
+  const today = new Date(2026, 8, 12); // 12 septembre 2026
+
+  it('retourne aujourd’hui pour un décalage nul', () => {
+    expect(isoDateFromOffset(0, today)).toBe('2026-09-12');
+  });
+
+  it('décale d’un et de sept jours', () => {
+    expect(isoDateFromOffset(1, today)).toBe('2026-09-13');
+    expect(isoDateFromOffset(7, today)).toBe('2026-09-19');
+  });
+
+  it('passe correctement les fins de mois et l’année', () => {
+    expect(isoDateFromOffset(-1, today)).toBe('2026-09-11');
+    expect(isoDateFromOffset(18, today)).toBe('2026-09-30');
+    expect(isoDateFromOffset(19, today)).toBe('2026-10-01');
+    expect(isoDateFromOffset(110, today)).toBe('2026-12-31');
+    expect(isoDateFromOffset(111, today)).toBe('2027-01-01');
+  });
+
+  it('enchaîne les mois de longueurs différentes (février inclus)', () => {
+    const endOfFeb = new Date(2027, 1, 28); // 2027 n'est pas bissextile
+    expect(isoDateFromOffset(1, endOfFeb)).toBe('2027-03-01');
   });
 });

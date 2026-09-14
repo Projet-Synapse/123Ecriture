@@ -192,7 +192,7 @@ export function AboutSection() {
 
         {status.state === 'error' && (
           <>
-            <Text style={s.error}>⚠️ {status.message}</Text>
+            <Text style={{ color: theme.danger }}>⚠️ {status.message}</Text>
             <Pressable onPress={() => void handleCheckForUpdates()} style={[s.button, { backgroundColor: theme.accent }]}>
               <Text style={s.buttonText}>Réessayer</Text>
             </Pressable>

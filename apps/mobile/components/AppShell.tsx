@@ -39,6 +39,10 @@ type Props = {
   onRequestOpenNote: (relPath: string) => void;
   onRequestOpenTask: (taskListId: string, taskId: string) => void;
   onRequestOpenCalendarDate: (date: string) => void;
+  // Créations "globales" de la palette (voir CommandPalette.tsx, Props) —
+  // implémentées dans App.tsx via le mécanisme `pending*`.
+  onRequestNewTask: () => void;
+  onRequestNewEvent: () => void;
 };
 
 export function AppShell({
@@ -50,6 +54,8 @@ export function AppShell({
   onRequestOpenNote,
   onRequestOpenTask,
   onRequestOpenCalendarDate,
+  onRequestNewTask,
+  onRequestNewEvent,
 }: Props) {
   const { theme } = usePreferences();
   const { width } = useWindowDimensions();
@@ -159,9 +165,7 @@ export function AppShell({
           un ScrollView imbriquant un autre ScrollView casse la chaîne
           flex:1 dont dépend un scroll indépendant sur le web : c'était le
           scroll EXTÉRIEUR ici qui captait la molette au lieu du scroll
-          propre à l'explorateur de fichiers. Vérifié : seul
-          PlaceholderScreen.tsx n'a aucun ScrollView à lui (texte centré,
-          n'en a jamais eu besoin) — rien ne dépendait de celui-ci. */}
+          propre à l'explorateur de fichiers. */}
       <View style={styles.content}>{children}</View>
       {!isWide && (
         <View style={[styles.narrowSyncRow, { backgroundColor: theme.surface, borderColor: theme.border }]}>
@@ -180,6 +184,8 @@ export function AppShell({
           onRequestOpenNote={onRequestOpenNote}
           onRequestOpenTask={onRequestOpenTask}
           onRequestOpenCalendarDate={onRequestOpenCalendarDate}
+          onRequestNewTask={onRequestNewTask}
+          onRequestNewEvent={onRequestNewEvent}
           onClose={() => setCommandPaletteOpen(false)}
         />
       )}
@@ -210,12 +216,12 @@ function SyncStatusChip({ compact }: { compact?: boolean }) {
   } else if (syncStatus.status === 'error') {
     icon = '⚠';
     label = 'Erreur de sync';
-    color = SYNC_WARNING_COLOR;
+    color = theme.danger;
   } else if (syncStatus.status === 'success' && syncStatus.lastSyncedAt) {
     if (syncStatus.lastConflicts > 0) {
       icon = '⚠';
       label = `${syncStatus.lastConflicts} conflit(s)`;
-      color = SYNC_WARNING_COLOR;
+      color = theme.danger;
     } else {
       const synced = new Date(syncStatus.lastSyncedAt);
       const hh = String(synced.getHours()).padStart(2, '0');
@@ -241,12 +247,6 @@ function SyncStatusChip({ compact }: { compact?: boolean }) {
     </Pressable>
   );
 }
-
-// Même rouge que settingsStyles.error (#dc2626) — pas de token dédié
-// "erreur"/"danger" dans theme.ts pour l'instant (voir theme.ts, encore
-// minimal), donc réutilisation littérale plutôt qu'invention d'une nouvelle
-// couleur ad hoc.
-const SYNC_WARNING_COLOR = '#dc2626';
 
 const styles = StyleSheet.create({
   root: {

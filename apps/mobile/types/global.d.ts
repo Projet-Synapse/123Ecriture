@@ -399,6 +399,11 @@ declare global {
     newNoteLocation: NewNoteLocation;
     newNoteCustomFolder: string;
     fileSortMode: FileSortMode;
+    // Écran Tâches : tri par échéance et masquage des terminées — mémorisés
+    // d'une session à l'autre (ce sont des préférences de lecture stables,
+    // comme fileSortMode pour les fichiers, pas des besoins d'une session).
+    tasksSortByDueDate: boolean;
+    tasksHideCompleted: boolean;
     defaultOpenMode: DefaultOpenMode;
     // relPath du fichier à ouvrir quand defaultOpenMode==='specific' — '' si
     // aucun choisi (repli silencieux sur l'écran "Sélectionne ou crée une

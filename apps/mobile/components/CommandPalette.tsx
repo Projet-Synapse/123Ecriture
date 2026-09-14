@@ -11,6 +11,7 @@ import {
 } from '../lib/searchResults';
 import { useScrollIntoView } from '../lib/useScrollIntoView';
 import type { Section } from '../navigation';
+import { usePreferences } from '../preferences/PreferencesContext';
 import type { Theme } from '../theme';
 import type { NotesActions } from './AppShell';
 
@@ -55,6 +56,13 @@ type Props = {
   onRequestOpenNote: (relPath: string) => void;
   onRequestOpenTask: (taskListId: string, taskId: string) => void;
   onRequestOpenCalendarDate: (date: string) => void;
+  // Créations demandables depuis N'IMPORTE quel écran — contrairement à
+  // "Nouvelle note"/"Nouveau dossier" (liées à l'état de NotesScreen,
+  // monté seulement quand il est l'écran actif), elles passent par
+  // App.tsx (changement de section + mécanisme `pending*`), donc pas de
+  // closure sur un écran démonté.
+  onRequestNewTask: () => void;
+  onRequestNewEvent: () => void;
   onClose: () => void;
 };
 
@@ -73,8 +81,11 @@ export function CommandPalette({
   onRequestOpenNote,
   onRequestOpenTask,
   onRequestOpenCalendarDate,
+  onRequestNewTask,
+  onRequestNewEvent,
   onClose,
 }: Props) {
+  const { colorScheme, setThemeMode } = usePreferences();
   const searchBridge = typeof window !== 'undefined' ? window.search : undefined;
 
   const [query, setQuery] = useState('');
@@ -106,8 +117,23 @@ export function CommandPalette({
         { id: 'new-folder', label: 'Nouveau dossier', icon: '📁' },
       );
     }
+    // Disponibles depuis tout écran (voir Props) : la création de
+    // tâche/évènement bascule de section via App.tsx, et la bascule de
+    // thème ne touche que les préférences. Libellé de thème recalculé à
+    // chaque ouverture de palette (le composant se remonte) : annonce la
+    // CIBLE, pas l'état courant.
+    actions.push(
+      { id: 'new-task', label: 'Nouvelle tâche', icon: '✅', run: onRequestNewTask },
+      { id: 'new-event', label: 'Nouvel évènement', icon: '📅', run: onRequestNewEvent },
+      {
+        id: 'toggle-theme',
+        label: `Thème ${colorScheme === 'dark' ? 'clair' : 'sombre'}`,
+        icon: '🌓',
+        run: () => void setThemeMode(colorScheme === 'dark' ? 'light' : 'dark'),
+      },
+    );
     return actions;
-  }, [sections, activeId, onSelect]);
+  }, [sections, activeId, onSelect, onRequestNewTask, onRequestNewEvent, colorScheme, setThemeMode]);
 
   const filteredActions = useMemo(() => {
     const needle = query.trim().toLowerCase();

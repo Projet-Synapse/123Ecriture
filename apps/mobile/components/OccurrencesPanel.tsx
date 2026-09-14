@@ -134,7 +134,7 @@ export function OccurrencesPanel({ theme, focusedWord, onFocusWord, onOpenNote, 
         <Pressable onPress={() => onFocusWord(null)} style={styles.backButton}>
           <Text style={{ color: theme.accent, fontSize: 12 }}>← Tous les mots</Text>
         </Pressable>
-        {error && <Text style={styles.error}>⚠️ {error}</Text>}
+        {error && <Text style={[styles.error, { color: theme.danger }]}>⚠️ {error}</Text>}
         <TextInput
           value={wordDraft}
           onChangeText={setWordDraft}
@@ -152,7 +152,7 @@ export function OccurrencesPanel({ theme, focusedWord, onFocusWord, onOpenNote, 
           style={[styles.descriptionInput, { color: theme.text, borderColor: theme.border }]}
         />
         <Pressable onPress={() => void handleRemove()} style={styles.deleteButton}>
-          <Text style={{ color: '#dc2626', fontSize: 12 }}>🗑️ Supprimer ce mot</Text>
+          <Text style={{ color: theme.danger, fontSize: 12 }}>🗑️ Supprimer ce mot</Text>
         </Pressable>
 
         <View style={[styles.divider, { backgroundColor: theme.border }]} />
@@ -174,7 +174,7 @@ export function OccurrencesPanel({ theme, focusedWord, onFocusWord, onOpenNote, 
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      {error && <Text style={styles.error}>⚠️ {error}</Text>}
+      {error && <Text style={[styles.error, { color: theme.danger }]}>⚠️ {error}</Text>}
       {entries.length === 0 && (
         <Text style={[styles.muted, { color: theme.textMuted }]}>Aucun mot pour l’instant.</Text>
       )}
@@ -221,7 +221,6 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   error: {
-    color: '#dc2626',
     fontSize: 12,
   },
   entryRow: {

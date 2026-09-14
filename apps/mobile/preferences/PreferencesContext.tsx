@@ -25,6 +25,12 @@ const DEFAULT_PREFERENCES: Preferences = {
   newNoteLocation: 'vaultRoot',
   newNoteCustomFolder: '',
   fileSortMode: 'alphabetical',
+  // Écran Tâches : tri par échéance + masquage des terminées, persistés
+  // (voir TasksScreen.tsx — c'étaient des états de session avant cette
+  // préférence, une utilisatrice qui trie toujours par échéance ne devait
+  // pas le refaire à chaque lancement).
+  tasksSortByDueDate: false,
+  tasksHideCompleted: false,
   defaultOpenMode: 'lastOpened',
   defaultOpenSpecificPath: '',
   editorFontSize: 15,
@@ -61,6 +67,8 @@ type PreferencesContextValue = {
   setNewNoteLocation: (location: NewNoteLocation) => Promise<void>;
   setNewNoteCustomFolder: (folder: string) => Promise<void>;
   setFileSortMode: (mode: FileSortMode) => Promise<void>;
+  setTasksSortByDueDate: (value: boolean) => Promise<void>;
+  setTasksHideCompleted: (value: boolean) => Promise<void>;
   setDefaultOpenMode: (mode: DefaultOpenMode) => Promise<void>;
   setDefaultOpenSpecificPath: (relPath: string) => Promise<void>;
   setEditorFontSize: (size: number) => Promise<void>;
@@ -182,6 +190,14 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     [persist],
   );
   const setFileSortMode = useCallback((mode: FileSortMode) => persist({ fileSortMode: mode }), [persist]);
+  const setTasksSortByDueDate = useCallback(
+    (value: boolean) => persist({ tasksSortByDueDate: value }),
+    [persist],
+  );
+  const setTasksHideCompleted = useCallback(
+    (value: boolean) => persist({ tasksHideCompleted: value }),
+    [persist],
+  );
   // Paramètres → Gestion des fichiers et des liens → "Fichier ouvert par
   // défaut" (voir NotesScreen.tsx, effet d'ouverture au démarrage) : quel
   // fichier ouvrir à chaque lancement de l'app / changement de coffre.
@@ -266,6 +282,8 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       setNewNoteLocation,
       setNewNoteCustomFolder,
       setFileSortMode,
+      setTasksSortByDueDate,
+      setTasksHideCompleted,
       setDefaultOpenMode,
       setDefaultOpenSpecificPath,
       setEditorFontSize,
@@ -295,6 +313,8 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       setNewNoteLocation,
       setNewNoteCustomFolder,
       setFileSortMode,
+      setTasksSortByDueDate,
+      setTasksHideCompleted,
       setDefaultOpenMode,
       setDefaultOpenSpecificPath,
       setEditorFontSize,

@@ -11,6 +11,12 @@ export type Theme = {
   textMuted: string;
   accent: string;
   border: string;
+  // Rouge "danger" partagé — suppressions, messages d'erreur, échéances en
+  // retard. Même valeur dans les deux thèmes (lisible sur fond clair comme
+  // sombre) : avant ce token, #dc2626 était dupliqué en dur dans une
+  // quinzaine de composants, chacun pouvant dériver de l'autre au fil des
+  // retouches.
+  danger: string;
 };
 
 export const lightTheme: Theme = {
@@ -20,6 +26,7 @@ export const lightTheme: Theme = {
   textMuted: '#6b7280',
   accent: '#4f46e5',
   border: '#e5e7eb',
+  danger: '#dc2626',
 };
 
 export const darkTheme: Theme = {
@@ -29,4 +36,5 @@ export const darkTheme: Theme = {
   textMuted: '#9ca3af',
   accent: '#818cf8',
   border: '#2a2a33',
+  danger: '#dc2626',
 };

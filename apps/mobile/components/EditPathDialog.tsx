@@ -49,7 +49,7 @@ export function EditPathDialog({ node, theme, error, onSubmit, onCancel }: Props
           <Text style={[styles.hint, { color: theme.textMuted }]}>
             Les dossiers manquants dans ce chemin seront créés automatiquement.
           </Text>
-          {error && <Text style={styles.error}>⚠️ {error}</Text>}
+          {error && <Text style={[styles.error, { color: theme.danger }]}>⚠️ {error}</Text>}
           <View style={styles.buttonsRow}>
             <Pressable onPress={onCancel} style={styles.cancelButton}>
               <Text style={{ color: theme.textMuted }}>Annuler</Text>
@@ -95,7 +95,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
   },
   error: {
-    color: '#dc2626',
     fontSize: 13,
   },
   buttonsRow: {

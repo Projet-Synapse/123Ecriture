@@ -57,7 +57,7 @@ export function ConfirmDialog({
                 </Pressable>
                 <Pressable
                   onPress={() => void handleConfirm()}
-                  style={[styles.confirmButton, { backgroundColor: DANGER_COLOR }]}
+                  style={[styles.confirmButton, { backgroundColor: theme.danger }]}
                   accessibilityLabel={confirmLabel}
                 >
                   <Text style={styles.confirmButtonText}>{confirmLabel}</Text>
@@ -70,11 +70,6 @@ export function ConfirmDialog({
     </Modal>
   );
 }
-
-// Même rouge que settingsStyles.error / la barre d'actions groupées
-// "Supprimer" de NotesScreen — pas de token "danger" dans theme.ts pour
-// l'instant (voir theme.ts), réutilisation littérale plutôt qu'invention.
-const DANGER_COLOR = '#dc2626';
 
 const styles = StyleSheet.create({
   backdrop: {

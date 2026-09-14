@@ -227,7 +227,7 @@ export function SearchDialog({ theme, onOpenResult, onCancel }: Props) {
                 <Text style={{ color: theme.textMuted }}>Recherche…</Text>
               </View>
             )}
-            {!loading && error && <Text style={styles.error}>⚠️ {error}</Text>}
+            {!loading && error && <Text style={[styles.error, { color: theme.danger }]}>⚠️ {error}</Text>}
             {!loading && !error && hasQuery && results.length === 0 && (
               <Text style={[styles.muted, { color: theme.textMuted }]}>Aucun résultat.</Text>
             )}
@@ -369,7 +369,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   error: {
-    color: '#dc2626',
     padding: 8,
   },
   result: {

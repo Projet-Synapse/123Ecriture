@@ -1707,7 +1707,7 @@ export function NotesScreen({
               <Text style={[styles.bulkBarAction, { color: theme.accent }]}>Déplacer…</Text>
             </Pressable>
             <Pressable onPress={() => void handleBulkDelete()}>
-              <Text style={[styles.bulkBarAction, styles.bulkBarDanger]}>Supprimer</Text>
+              <Text style={[styles.bulkBarAction, { color: theme.danger }]}>Supprimer</Text>
             </Pressable>
             <Pressable onPress={() => setSelectedRelPaths(new Set())}>
               <Text style={[styles.bulkBarAction, { color: theme.textMuted }]}>Annuler</Text>
@@ -1944,8 +1944,8 @@ export function NotesScreen({
                         <Text style={{ color: theme.textMuted }}>📎 Joindre un fichier</Text>
                       </Pressable>
                     </View>
-                    {attachmentError && <Text style={styles.error}>⚠️ {attachmentError}</Text>}
-                    {wikilinkNotice && <Text style={styles.error}>⚠️ {wikilinkNotice}</Text>}
+                    {attachmentError && <Text style={[styles.error, { color: theme.danger }]}>⚠️ {attachmentError}</Text>}
+                    {wikilinkNotice && <Text style={[styles.error, { color: theme.danger }]}>⚠️ {wikilinkNotice}</Text>}
 
                     {/* Mode Intermédiaire uniquement ici (avant la barre d'outils/CodeMirror) —
                         en mode Aperçu, la même carte est rendue PLUS BAS, à
@@ -2205,9 +2205,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
   },
-  bulkBarDanger: {
-    color: '#dc2626',
-  },
   // "⭐ Favoris" (//8) — section fixe en tête de l'explorateur.
   favoritesSection: {
     borderBottomWidth: 1,
@@ -2317,7 +2314,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
   },
   error: {
-    color: '#dc2626',
     fontSize: 12,
     paddingHorizontal: 12,
     paddingTop: 4,

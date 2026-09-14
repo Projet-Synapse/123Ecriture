@@ -33,9 +33,21 @@ type Props = {
   // Même mécanique que `pendingOpenRelPath` pour les notes.
   pendingOpenDate?: string | null;
   onOpenedPendingDate?: () => void;
+  // « Nouvel évènement » demandé depuis la palette (App.tsx) : même
+  // mécanique — navigue vers le mois de la date fournie (aujourd'hui)
+  // et ouvre son panneau, dont le formulaire d'ajout auto-focus le
+  // champ titre pour saisie immédiate.
+  pendingNewEventDate?: string | null;
+  onOpenedPendingNewEvent?: () => void;
 };
 
-export function CalendarScreen({ onRequestOpenNote, pendingOpenDate, onOpenedPendingDate }: Props) {
+export function CalendarScreen({
+  onRequestOpenNote,
+  pendingOpenDate,
+  onOpenedPendingDate,
+  pendingNewEventDate,
+  onOpenedPendingNewEvent,
+}: Props) {
   const { theme } = usePreferences();
   const vault = typeof window !== 'undefined' ? window.vault : undefined;
   const calendarBridge = typeof window !== 'undefined' ? window.calendar : undefined;
@@ -193,6 +205,23 @@ export function CalendarScreen({ onRequestOpenNote, pendingOpenDate, onOpenedPen
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingOpenDate]);
 
+  // « Nouvel évènement » depuis la palette — même mécanique que
+  // `pendingOpenDate` ci-dessus : le panneau du jour s'ouvre directement
+  // (son formulaire d'ajout en est le principal contenu), le champ titre
+  // y est auto-focus.
+  useEffect(() => {
+    if (!pendingNewEventDate) return;
+    const [year, month] = pendingNewEventDate.split('-').map(Number);
+    if (year && month) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setViewYear(year);
+      setViewMonth(month - 1);
+    }
+    openDay(pendingNewEventDate);
+    onOpenedPendingNewEvent?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingNewEventDate]);
+
   const handleOpenDailyNote = useCallback(async () => {
     if (!vault || !selectedDate) return;
     try {
@@ -253,6 +282,25 @@ export function CalendarScreen({ onRequestOpenNote, pendingOpenDate, onOpenedPen
   }, []);
 
   const cancelEditEvent = useCallback(() => setEditingEventId(null), []);
+
+  // Échap ferme le panneau du jour (web/desktop — cohérent avec
+  // SearchDialog/CommandPalette) : priorité à l'édition en cours
+  // (Échap = annuler l'édition, le panneau reste), et RIEN quand une
+  // confirmation de suppression est affichée au-dessus (sa propre
+  // fermeture n'est pas au clavier, on ne veut pas fermer les deux).
+  // Déclaré APRÈS `cancelEditEvent` (le linter react-hooks refuse
+  // d'utiliser une variable avant sa déclaration, même dans un effet).
+  useEffect(() => {
+    if (selectedDate === null || typeof window === 'undefined') return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      if (editingEventId) cancelEditEvent();
+      else if (!eventToDelete) setSelectedDate(null);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedDate, editingEventId, eventToDelete, cancelEditEvent]);
 
   // "Enregistrer" de l'édition (✎) — titre/heure/date/allDay/notes d'un
   // coup via calendar:update-event. Titre vide : garde l'ancien plutôt que
@@ -376,6 +424,11 @@ export function CalendarScreen({ onRequestOpenNote, pendingOpenDate, onOpenedPen
             <Pressable
               key={day.dateIso}
               onPress={() => openDay(day.dateIso)}
+              accessibilityLabel={`${dayLabel(day.dateIso)}${
+                dayEvents.length > 0
+                  ? `, ${dayEvents.length} évènement${dayEvents.length > 1 ? 's' : ''}`
+                  : ''
+              }${hasNote ? ', note journalière existante' : ''}`}
               style={[
                 styles.dayCell,
                 { borderColor: theme.border },
@@ -421,7 +474,7 @@ export function CalendarScreen({ onRequestOpenNote, pendingOpenDate, onOpenedPen
               <Text style={styles.buttonText}>📓 Ouvrir la note du jour</Text>
             </Pressable>
 
-            {dayActionError && <Text style={styles.error}>⚠️ {dayActionError}</Text>}
+            {dayActionError && <Text style={[styles.error, { color: theme.danger }]}>⚠️ {dayActionError}</Text>}
 
             <ScrollView style={styles.dayEventsList}>
               {selectedDayEvents.map((ev) =>
@@ -522,6 +575,7 @@ export function CalendarScreen({ onRequestOpenNote, pendingOpenDate, onOpenedPen
 
             <Text style={[styles.formLabel, { color: theme.textMuted }]}>Ajouter un évènement</Text>
             <TextInput
+              autoFocus
               value={newEventTitle}
               onChangeText={setNewEventTitle}
               placeholder="Titre…"
@@ -806,7 +860,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
   },
   error: {
-    color: '#dc2626',
     fontSize: 13,
   },
 });
