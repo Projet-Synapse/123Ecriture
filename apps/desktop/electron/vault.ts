@@ -223,14 +223,16 @@ function getStateFilePath(vaultPath: string): string {
 // n'a de sens que dans le coffre où elle l'a été, pas globalement. Même
 // forme minimale que order.json/tasklists.json : un petit fichier dédié
 // dans .123ecriture/ plutôt qu'alourdir un fichier existant.
-// state.json porte aujourd'hui DEUX choses : le dernier fichier ouvert ET
-// les dossiers repliés de l'explorateur (les deux sont de l'état d'UI PAR
-// coffre, qui voyage avec lui — même logique que lastOpened). Un seul objet
-// lu/écrit en read-modify-write : deux écrivains indépendants qui
-// réécriraient chacun LEUR champ écraseraient celui de l'autre.
+// state.json porte aujourd'hui TROIS choses : le dernier fichier ouvert, les
+// dossiers repliés de l'explorateur ET les onglets de notes ouverts (les
+// trois sont de l'état d'UI PAR coffre, qui voyage avec lui — même logique
+// que lastOpened). Un seul objet lu/écrit en read-modify-write : deux
+// écrivains indépendants qui réécriraient chacun LEUR champ écraseraient
+// celui de l'autre.
 type VaultState = {
   lastOpenedRelPath?: string | null;
   collapsedRelPaths?: string[];
+  openTabRelPaths?: string[];
 };
 
 function readVaultState(vaultPath: string): VaultState {
@@ -268,6 +270,20 @@ function readCollapsedRelPaths(vaultPath: string): string[] {
 
 async function writeCollapsedRelPaths(vaultPath: string, relPaths: string[]): Promise<void> {
   await writeVaultState(vaultPath, { collapsedRelPaths: relPaths });
+}
+
+// Onglets de notes ouverts (relPaths, l'ordre = l'ordre des onglets) —
+// persistés pour retrouver les onglets tels qu'ils étaient laissés au
+// redémarrage/changement de coffre. Les chemins obsolètes (note
+// renommée/supprimée depuis) sont filtrés côté renderer à la restauration,
+// comme collapsedRelPaths.
+function readOpenTabRelPaths(vaultPath: string): string[] {
+  const openTabs = readVaultState(vaultPath).openTabRelPaths;
+  return Array.isArray(openTabs) ? openTabs.filter((p): p is string => typeof p === 'string') : [];
+}
+
+async function writeOpenTabRelPaths(vaultPath: string, relPaths: string[]): Promise<void> {
+  await writeVaultState(vaultPath, { openTabRelPaths: relPaths });
 }
 
 // //5. 🌳 ARBORESCENCE
@@ -767,5 +783,20 @@ export function registerVaultHandlers(getWindow: GetWindow): void {
     const vaultPath = getVaultPath();
     if (!vaultPath) return;
     await writeCollapsedRelPaths(vaultPath, Array.isArray(relPaths) ? relPaths : []);
+  });
+
+  // Onglets de notes ouverts (voir readOpenTabRelPaths) — réécrits à chaque
+  // ouverture/fermeture/réordonnancement d'onglet côté renderer
+  // (NotesScreen.tsx), best-effort comme set-collapsed-paths.
+  ipcMain.handle('vault:get-open-tabs', () => {
+    const vaultPath = getVaultPath();
+    if (!vaultPath) return [];
+    return readOpenTabRelPaths(vaultPath);
+  });
+
+  ipcMain.handle('vault:set-open-tabs', async (_event, relPaths: string[]) => {
+    const vaultPath = getVaultPath();
+    if (!vaultPath) return;
+    await writeOpenTabRelPaths(vaultPath, Array.isArray(relPaths) ? relPaths : []);
   });
 }
