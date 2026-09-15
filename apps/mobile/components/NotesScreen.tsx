@@ -43,6 +43,7 @@ import { ResizeHandle } from './ResizeHandle';
 import { RightSidebar, type SidebarTab } from './RightSidebar';
 import { SearchDialog } from './SearchDialog';
 import { NOTE_ICON_BY_KIND, VaultTreeView } from './VaultTreeView';
+import { errorMessage } from '../lib/errorMessage';
 
 // Trois modes d'affichage d'une note — "Source" (CodeMirror nu, texte brut,
 // façon éditeur de code), "Intermédiaire" (même éditeur CodeMirror + le
@@ -978,7 +979,7 @@ export function NotesScreen({
         await refreshTree();
       } catch (error) {
         console.error('[vault] échec de la modification du chemin :', error);
-        setEditPathError(error instanceof Error ? error.message : String(error));
+        setEditPathError(errorMessage(error));
       }
     },
     [vault, editingPathNode, refreshTree, updateOpenTabsAfterPathChange],
@@ -1596,7 +1597,7 @@ export function NotesScreen({
       }
     } catch (error) {
       console.error('[vault] échec de l’import de la pièce jointe :', error);
-      setAttachmentError(error instanceof Error ? error.message : String(error));
+      setAttachmentError(errorMessage(error));
     }
   }, [vault, activeNote, content, scheduleSave]);
 

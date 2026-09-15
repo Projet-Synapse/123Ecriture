@@ -1,5 +1,6 @@
 import { APP_SCHEMA, supabase, VAULT_FILES_BUCKET, VAULT_FILES_TABLE, VAULTS_TABLE } from './supabaseClient';
 import { diffVault, type LocalHashedNote, type RemoteVaultFile } from './diff';
+import { errorMessage } from '../errorMessage';
 
 // Orchestrateur de synchro (v0, manuel, sans timer — voir
 // docs/ARCHITECTURE.md §6) : appelle le pont Electron (hash local, lecture/
@@ -135,7 +136,7 @@ export async function runSync(remoteVaultId: string, ownerId: string): Promise<S
   try {
     bridges = requireBridges();
   } catch (error) {
-    summary.errors.push(error instanceof Error ? error.message : String(error));
+    summary.errors.push(errorMessage(error));
     return summary;
   }
 
@@ -183,7 +184,7 @@ export async function runSync(remoteVaultId: string, ownerId: string): Promise<S
       }
     } catch (error) {
       console.error(`[sync] échec sur ${decision.relPath} (${decision.kind}) :`, error);
-      summary.errors.push(`${decision.relPath} : ${error instanceof Error ? error.message : String(error)}`);
+      summary.errors.push(`${decision.relPath} : ${errorMessage(error)}`);
     }
   }
 

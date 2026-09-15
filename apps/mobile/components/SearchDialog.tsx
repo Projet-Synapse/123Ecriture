@@ -10,6 +10,7 @@ import {
 } from '../lib/searchResults';
 import { useScrollIntoView } from '../lib/useScrollIntoView';
 import type { Theme } from '../theme';
+import { errorMessage } from '../lib/errorMessage';
 
 // Recherche globale — voir .claude/References/Sources.md §2 : "un petit
 // bouton en haut de la gestion de fichiers... chercher fichiers, pièces
@@ -84,7 +85,7 @@ export function SearchDialog({ theme, onOpenResult, onCancel }: Props) {
           setResults(found);
           setError(null);
         })
-        .catch((err) => setError(err instanceof Error ? err.message : String(err)))
+        .catch((err) => setError(errorMessage(err)))
         .finally(() => setLoading(false));
     }, SEARCH_DEBOUNCE_MS);
 

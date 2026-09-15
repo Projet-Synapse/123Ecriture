@@ -12,6 +12,7 @@ import {
 import { usePreferences } from '../preferences/PreferencesContext';
 import { ConfirmDialog } from './ConfirmDialog';
 import { DraftTextField } from './DraftTextField';
+import { errorMessage } from '../lib/errorMessage';
 
 // Écran Tâches — module de productivité (voir docs/ARCHITECTURE.md §8).
 // Stocké dans le vault (.123ecriture/tasks.json + tasklists.json, voir
@@ -190,7 +191,7 @@ export function TasksScreen({
       await action();
     } catch (error) {
       console.error('[tasklists] échec :', error);
-      setListActionError(error instanceof Error ? error.message : String(error));
+      setListActionError(errorMessage(error));
     }
   }, []);
 
@@ -203,7 +204,7 @@ export function TasksScreen({
       setTasks(await action());
     } catch (error) {
       console.error('[tasks] échec :', error);
-      setTaskActionError(error instanceof Error ? error.message : String(error));
+      setTaskActionError(errorMessage(error));
     }
   }, []);
 
@@ -280,7 +281,7 @@ export function TasksScreen({
       setDraft('');
     } catch (error) {
       console.error('[tasks] échec de l’ajout :', error);
-      setAddError(error instanceof Error ? error.message : String(error));
+      setAddError(errorMessage(error));
     }
   }, [tasksBridge, draft]);
 
@@ -406,7 +407,7 @@ export function TasksScreen({
         await runTaskAction(() => tasksBridge.addAttachment(taskId, result));
       } catch (error) {
         console.error('[tasks] échec de l’ajout de la pièce jointe :', error);
-        setTaskActionError(error instanceof Error ? error.message : String(error));
+        setTaskActionError(errorMessage(error));
       }
     },
     [vault, tasksBridge, runTaskAction],

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import type { Theme } from '../theme';
+import { errorMessage } from '../lib/errorMessage';
 
 // Onglet "Occurrences" de la barre latérale (voir RightSidebar.tsx,
 // NotesScreen.tsx) — dictionnaire personnel des {{mots}} (voir
@@ -85,7 +86,7 @@ export function OccurrencesPanel({ theme, focusedWord, onFocusWord, onOpenNote, 
         onChanged?.();
       } catch (err) {
         console.error('[occurrences] échec :', err);
-        setError(err instanceof Error ? err.message : String(err));
+        setError(errorMessage(err));
       }
     },
     [onChanged],

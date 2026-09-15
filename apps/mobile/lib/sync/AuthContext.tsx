@@ -2,6 +2,7 @@ import type { Session } from '@supabase/supabase-js';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 
 import { supabase } from './supabaseClient';
+import { errorMessage } from '../errorMessage';
 
 // Connexion par compte Google (voir docs/ARCHITECTURE.md §6 et
 // apps/desktop/electron/auth.js pour le pont "navigateur système +
@@ -92,7 +93,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setError(null);
         } catch (err) {
           console.error('[auth] échec de connexion :', err);
-          setError(err instanceof Error ? err.message : String(err));
+          setError(errorMessage(err));
         }
       })();
     });
@@ -115,7 +116,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       await bridge.openExternal(data.url);
     } catch (err) {
       console.error('[auth] échec du lancement de la connexion :', err);
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessage(err));
     }
   }, [bridge]);
 
@@ -127,7 +128,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (signOutError) throw signOutError;
     } catch (err) {
       console.error('[auth] échec de la déconnexion :', err);
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessage(err));
     }
   }, []);
 
