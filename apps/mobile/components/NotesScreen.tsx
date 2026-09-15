@@ -146,7 +146,7 @@ export function NotesScreen({
   const { preferences, preferencesLoaded, theme, setFileSortMode, toggleFavorite } = usePreferences();
   const vault = typeof window !== 'undefined' ? window.vault : undefined;
   const contextMenuBridge = typeof window !== 'undefined' ? window.contextMenu : undefined;
-  const { activeVaultPath: vaultPath } = useVaults();
+  const { vaults, switchVault, activeVaultPath: vaultPath } = useVaults();
 
   const [tree, setTree] = useState<VaultTreeNode[]>([]);
   const [activeNote, setActiveNote] = useState<VaultEntry | null>(null);
@@ -1812,12 +1812,37 @@ export function NotesScreen({
   }
 
   if (!vaultPath) {
+    // Cas web (File System Access API) : un coffre ENREGISTRÉ mais dont la
+    // permission a expiré (le navigateur ne la garde pas d'une session à
+    // l'autre) atterrit ici — le registre IndexedDB le connaît toujours. On
+    // propose de le RÉACTIVER en un clic (requestPermission dans le geste,
+    // voir webVaultRegistry.activate) plutôt que de le faire re-choisir le
+    // dossier : sans ça, chaque session semblait « réinstaller » l'app de
+    // zéro alors qu'un seul clic suffisait.
     return (
       <View style={styles.centered}>
         <Text style={[styles.title, { color: theme.text }]}>📝 Notes</Text>
-        <Text style={[styles.muted, { color: theme.textMuted }]}>
-          Choisis un dossier local pour en faire ton vault.
-        </Text>
+        {vaults.length > 0 && (
+          <>
+            <Text style={[styles.muted, { color: theme.textMuted }]}>
+              Réactive ton coffre pour cette session — le navigateur demande à nouveau la permission des dossiers locaux à chaque ouverture.
+            </Text>
+            {vaults.map((vaultEntry) => (
+              <Pressable
+                key={vaultEntry.id}
+                onPress={() => void switchVault(vaultEntry.id)}
+                style={[styles.button, { backgroundColor: theme.accent }]}
+              >
+                <Text style={styles.buttonText}>Réactiver « {vaultEntry.name} »</Text>
+              </Pressable>
+            ))}
+          </>
+        )}
+        {vaults.length === 0 && (
+          <Text style={[styles.muted, { color: theme.textMuted }]}>
+            Choisis un dossier local pour en faire ton vault.
+          </Text>
+        )}
         <Pressable
           onPress={() => void handleChooseFolder()}
           style={[styles.button, { backgroundColor: theme.accent }]}

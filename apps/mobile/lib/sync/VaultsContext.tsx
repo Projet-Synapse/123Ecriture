@@ -72,7 +72,12 @@ export function VaultsProvider({ children }: { children: ReactNode }) {
     async (id: string) => {
       if (!bridge) return;
       setVaultList(await bridge.switch(id));
-      setActiveVaultId(id);
+      // Id actif EFFECTIF, pas supposé : en web, switch peut échouer
+      // silencieusement (permission du dossier refusée dans la boîte de
+      // dialogue — webVaultRegistry.activate renvoie false sans activer).
+      // Mettre l'id demandé sans vérifier afficherait un coffre actif
+      // fantôme dont tous les accès fichiers échoueraient ensuite.
+      setActiveVaultId(await bridge.getActive());
     },
     [bridge],
   );
