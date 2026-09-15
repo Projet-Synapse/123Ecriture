@@ -30,7 +30,13 @@ export const supabase =
           // comportement par défaut du client, laissé explicite ici pour la
           // documentation.
           persistSession: true,
-          detectSessionInUrl: false,
+          // En NAVIGATEUR PUR (pas de pont Electron), le retour Google →
+          // Supabase recharge la page du site avec ?code=... : supabase-js
+          // doit détecter et échanger ce code au chargement (puis nettoyer
+          // l'URL). Dans le renderer Electron, le callback arrive via le
+          // protocole app123ecriture:// et AuthContext appelle explicitement
+          // exchangeCodeForSession — la détection d'URL doit rester off.
+          detectSessionInUrl: typeof window !== 'undefined' && !('electronBridge' in window),
         },
       })
     : null;

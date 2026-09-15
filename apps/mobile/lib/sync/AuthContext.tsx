@@ -11,7 +11,17 @@ import { supabase } from './supabaseClient';
 // Supabase configuré (variables d'env absentes, voir supabaseClient.ts),
 // `available` reste `false` et la carte "Compte" de SettingsScreen affiche
 // un message plutôt qu'un bouton cassé.
-const REDIRECT_TO = 'app123ecriture://auth-callback';
+//
+// En NAVIGATEUR PUR (pont web installé par installWebBridges, pas de pont
+// Electron), la connexion se déroule dans la même page : redirectTo est
+// l'URL du site elle-même (doit être autorisée dans les Redirect URLs
+// Supabase) et le retour ?code=... est échangé par supabase-js au
+// rechargement (detectSessionInUrl, voir supabaseClient.ts).
+const IS_ELECTRON = typeof window !== 'undefined' && 'electronBridge' in window;
+const REDIRECT_TO =
+  typeof window !== 'undefined' && !IS_ELECTRON
+    ? `${window.location.origin}${window.location.pathname}`
+    : 'app123ecriture://auth-callback';
 
 type AuthUser = { id: string; email: string | null };
 
