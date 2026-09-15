@@ -54,7 +54,7 @@ export function TasksScreen({
   const tasksBridge = typeof window !== 'undefined' ? window.tasks : undefined;
   const taskListsBridge = typeof window !== 'undefined' ? window.taskLists : undefined;
   const contextMenuBridge = typeof window !== 'undefined' ? window.contextMenu : undefined;
-  const { activeVaultPath: vaultPath } = useVaults();
+  const { vaults, switchVault, activeVaultPath: vaultPath } = useVaults();
 
   const [taskLists, setTaskLists] = useState<TaskList[]>([]);
   const [activeListId, setActiveListId] = useState<string | null>(null);
@@ -433,12 +433,32 @@ export function TasksScreen({
   }
 
   if (!vaultPath) {
+    // Même logique que NotesScreen : coffre enregistré dont la permission a
+    // expiré (web) → réactivation en un clic plutôt que re-choix du dossier.
     return (
       <View style={styles.centered}>
         <Text style={[styles.title, { color: theme.text }]}>✅ Tâches</Text>
-        <Text style={[styles.muted, { color: theme.textMuted }]}>
-          Choisis un dossier local pour en faire ton vault (le même que pour tes notes).
-        </Text>
+        {vaults.length > 0 && (
+          <>
+            <Text style={[styles.muted, { color: theme.textMuted }]}>
+              Réactive ton coffre pour cette session — le navigateur demande à nouveau la permission des dossiers locaux à chaque ouverture.
+            </Text>
+            {vaults.map((vaultEntry) => (
+              <Pressable
+                key={vaultEntry.id}
+                onPress={() => void switchVault(vaultEntry.id)}
+                style={[styles.button, { backgroundColor: theme.accent }]}
+              >
+                <Text style={styles.buttonText}>Réactiver « {vaultEntry.name} »</Text>
+              </Pressable>
+            ))}
+          </>
+        )}
+        {vaults.length === 0 && (
+          <Text style={[styles.muted, { color: theme.textMuted }]}>
+            Choisis un dossier local pour en faire ton vault (le même que pour tes notes).
+          </Text>
+        )}
         <Pressable
           onPress={() => void handleChooseFolder()}
           style={[styles.button, { backgroundColor: theme.accent }]}

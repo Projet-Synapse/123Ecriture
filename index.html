@@ -6,6 +6,17 @@
   <title>123Ecriture — Écriture et productivité, local-first</title>
   <meta name="description" content="123Ecriture : application d'écriture et de productivité local-first. Vos notes sont des fichiers MDX sur votre appareil, la synchronisation est optionnelle. Windows, macOS, Linux et Android." />
   <link rel="icon" type="image/x-icon" href="app/favicon.ico" />
+  <script>
+    // Retour OAuth (Supabase) tombé sur la page de présentation : quand la
+    // « Site URL » du dashboard Supabase pointe sur la racine du site, le
+    // ?code=... du flux PKCE atterrit ICI — or seule l'application sous
+    // /app/ sait l'échanger (detectSessionInUrl). Sans ce rebond, la
+    // connexion échouait silencieusement (code jamais consommé). Query
+    // préservée, destination = shell de l'application.
+    if (/[?&](code|error)=/.test(window.location.search)) {
+      window.location.replace('/123Ecriture/app/' + window.location.search + window.location.hash);
+    }
+  </script>
   <style>
     :root {
       color-scheme: light dark;
