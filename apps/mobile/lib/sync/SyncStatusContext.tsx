@@ -4,6 +4,7 @@ import { useAuth } from './AuthContext';
 import { runSync as runSyncEngine, type SyncSummary } from './syncEngine';
 import { useVaults } from './VaultsContext';
 import { usePreferences } from '../../preferences/PreferencesContext';
+import { errorMessage } from '../errorMessage';
 
 // Statut de synchro PARTAGÉ entre l'indicateur global (AppShell.tsx, en-tête
 // visible sur toutes les plateformes) et l'écran Paramètres → Compte et
@@ -115,7 +116,7 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
       }
     } catch (error) {
       console.error('[sync] échec de la synchronisation :', error);
-      const message = error instanceof Error ? error.message : String(error);
+      const message = errorMessage(error);
       setStatus('error');
       setLastSummary(null);
       setLastError(message);

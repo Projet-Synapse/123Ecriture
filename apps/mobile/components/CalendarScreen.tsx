@@ -13,6 +13,7 @@ import {
 import { useVaults } from '../lib/sync/VaultsContext';
 import { usePreferences } from '../preferences/PreferencesContext';
 import { ConfirmDialog } from './ConfirmDialog';
+import { errorMessage } from '../lib/errorMessage';
 
 // Écran Calendrier — notes journalières (façon Obsidian, convention de
 // chemin `Journal/AAAA-MM-JJ.mdx`, voir vault:ensure-daily-note dans
@@ -230,7 +231,7 @@ export function CalendarScreen({
       closeDay();
     } catch (error) {
       console.error('[calendar] échec d’ouverture de la note du jour :', error);
-      setDayActionError(error instanceof Error ? error.message : String(error));
+      setDayActionError(errorMessage(error));
     }
   }, [vault, selectedDate, onRequestOpenNote]);
 
@@ -267,7 +268,7 @@ export function CalendarScreen({
       setDayActionError(null);
     } catch (error) {
       console.error('[calendar] échec de l’ajout de l’évènement :', error);
-      setDayActionError(error instanceof Error ? error.message : String(error));
+      setDayActionError(errorMessage(error));
     }
   }, [calendarBridge, selectedDate, newEventTitle, newEventTime, newEventAllDay, newEventNotes]);
 
@@ -334,7 +335,7 @@ export function CalendarScreen({
         setDayActionError(null);
       } catch (error) {
         console.error('[calendar] échec de l’édition de l’évènement :', error);
-        setDayActionError(error instanceof Error ? error.message : String(error));
+        setDayActionError(errorMessage(error));
       }
     },
     [calendarBridge, editTitle, editTime, editDate, editAllDay, editNotes],
@@ -351,7 +352,7 @@ export function CalendarScreen({
         // n'était que loggué console — l'évènement semblait indestructible
         // sans explication.
         console.error('[calendar] échec de la suppression de l’évènement :', error);
-        setDayActionError(error instanceof Error ? error.message : String(error));
+        setDayActionError(errorMessage(error));
       }
     },
     [calendarBridge, editingEventId],

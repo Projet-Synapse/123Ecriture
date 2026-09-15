@@ -9,6 +9,7 @@ import { usePreferences } from '../../preferences/PreferencesContext';
 import { ConfirmDialog } from '../ConfirmDialog';
 import { SettingsToggle } from './SettingsToggle';
 import { settingsStyles as s } from './settingsStyles';
+import { errorMessage } from '../../lib/errorMessage';
 
 // Section "Compte et synchronisation" — Compte (Google/Supabase) et Coffres
 // multiples + sync cloud, déplacés tels quels depuis l'ancien SettingsScreen
@@ -56,7 +57,7 @@ export function AccountSyncSection() {
       await action();
     } catch (error) {
       console.error('[vaults] échec :', error);
-      setVaultActionError(error instanceof Error ? error.message : String(error));
+      setVaultActionError(errorMessage(error));
     }
   }, []);
 
@@ -92,7 +93,7 @@ export function AccountSyncSection() {
         console.error('[sync] échec de la liaison au cloud :', error);
         setSyncResults((prev) => ({
           ...prev,
-          [v.id]: { error: error instanceof Error ? error.message : String(error) },
+          [v.id]: { error: errorMessage(error) },
         }));
       }
     },
@@ -121,7 +122,7 @@ export function AccountSyncSection() {
         console.error('[sync] échec de la synchronisation :', error);
         setSyncResults((prev) => ({
           ...prev,
-          [v.id]: { error: error instanceof Error ? error.message : String(error) },
+          [v.id]: { error: errorMessage(error) },
         }));
       } finally {
         setSyncingVaultId(null);

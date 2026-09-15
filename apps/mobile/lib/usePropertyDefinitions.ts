@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { errorMessage } from './errorMessage';
 
 // Accès au schéma global de propriétés (`.123ecriture/properties.json`,
 // voir apps/desktop/electron/properties.ts) — partagé par
@@ -31,7 +32,7 @@ export function usePropertyDefinitions() {
       setDefinitions(await action());
     } catch (err) {
       console.error('[properties] échec :', err);
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessage(err));
     }
   }, []);
 
@@ -62,7 +63,7 @@ export function usePropertyDefinitions() {
         return result.migration;
       } catch (err) {
         console.error('[properties] échec :', err);
-        setError(err instanceof Error ? err.message : String(err));
+        setError(errorMessage(err));
         return undefined;
       }
     },
