@@ -416,6 +416,29 @@ export const nativeVaultAdapter: VaultBridge = {
     await FileSystem.writeAsStringAsync(path, JSON.stringify(relPaths));
   },
 
+  // Onglets de notes ouverts — même persistance documentDirectory dédiée
+  // que collapsed-paths ci-dessus, alignée sur vault:get/set-open-tabs
+  // (Electron, state.json) : NotesScreen.tsx dégrade gracieusement quand
+  // le bridge est absent, mais l'adaptateur natif POURVUT les méthodes
+  // pour rester conforme à VaultBridge.
+  getOpenTabs: async () => {
+    try {
+      const path = `${FileSystem.documentDirectory}123ecriture-open-tabs.json`;
+      const info = await FileSystem.getInfoAsync(path);
+      if (!info.exists) return [];
+      const raw = await FileSystem.readAsStringAsync(path);
+      const parsed: unknown = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed.filter((p): p is string => typeof p === 'string') : [];
+    } catch {
+      return [];
+    }
+  },
+
+  setOpenTabs: async (relPaths) => {
+    const path = `${FileSystem.documentDirectory}123ecriture-open-tabs.json`;
+    await FileSystem.writeAsStringAsync(path, JSON.stringify(relPaths));
+  },
+
   // "Note du jour" (Calendrier) — voir CalendarScreen.tsx. Réutilise
   // createNote ; idempotent (renvoie la note existante si déjà créée
   // aujourd'hui) comme la version Electron.

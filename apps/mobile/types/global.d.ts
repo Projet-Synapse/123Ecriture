@@ -53,6 +53,11 @@ declare global {
     // coffre) — persistés pour retrouver l'arborescence au redémarrage.
     getCollapsedPaths: () => Promise<string[]>;
     setCollapsedPaths: (relPaths: string[]) => Promise<void>;
+    // Onglets de notes ouverts (relPaths ordonnés), même fichier
+    // state.json (par coffre) — persistés pour retrouver les onglets au
+    // redémarrage (voir NotesScreen.tsx, barre d'onglets).
+    getOpenTabs: () => Promise<string[]>;
+    setOpenTabs: (relPaths: string[]) => Promise<void>;
     ensureDailyNote: (dateIso: string) => Promise<VaultEntry>;
     reorder: (parentRelPath: string | undefined, orderedNames: string[]) => Promise<VaultTreeNode[]>;
     importAttachment: () => Promise<{ relPath: string; name: string } | null>;

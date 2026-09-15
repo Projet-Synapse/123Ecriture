@@ -28,6 +28,8 @@ contextBridge.exposeInMainWorld('vault', {
   setLastOpened: (relPath: string | null) => ipcRenderer.invoke('vault:set-last-opened', relPath),
   getCollapsedPaths: () => ipcRenderer.invoke('vault:get-collapsed-paths'),
   setCollapsedPaths: (relPaths: string[]) => ipcRenderer.invoke('vault:set-collapsed-paths', relPaths),
+  getOpenTabs: () => ipcRenderer.invoke('vault:get-open-tabs'),
+  setOpenTabs: (relPaths: string[]) => ipcRenderer.invoke('vault:set-open-tabs', relPaths),
   ensureDailyNote: (dateIso: string) => ipcRenderer.invoke('vault:ensure-daily-note', dateIso),
   reorder: (parentRelPath: string | undefined, orderedNames: string[]) =>
     ipcRenderer.invoke('vault:reorder', parentRelPath, orderedNames),

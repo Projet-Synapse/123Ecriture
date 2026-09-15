@@ -90,7 +90,7 @@ Renderer code accesses a bridge as `typeof window !== 'undefined' ? window.<doma
 ### Vault & file model
 
 - A **vault** is a local folder. `apps/desktop/electron/vaults.ts` manages the list of known vaults and which one is active (`config.json`, app-level, not per-vault).
-- A hidden `.123ecriture/` folder inside the vault holds per-vault JSON registries: `properties.json` (property schema, not values), `tasks.json`, `occurrences.json`, `order.json` (manual sort), `state.json` (last-opened note), `vault.json` (stable vault identity, used as sync key instead of the path).
+- A hidden `.123ecriture/` folder inside the vault holds per-vault JSON registries: `properties.json` (property schema, not values), `tasks.json`, `occurrences.json`, `order.json` (manual sort), `state.json` (last-opened note, explorer collapsed folders, open note tabs), `vault.json` (stable vault identity, used as sync key instead of the path).
 - A **note** is a `.mdx`/`.md` file with an optional YAML frontmatter block, parsed/serialized by `apps/mobile/lib/frontmatter.ts` (`js-yaml`, tolerant — invalid YAML never throws, just yields `{}`). Frontmatter values are the *values* of properties; `properties.json` only holds the *schema* (name + type) — renaming/retyping/deleting a property never touches already-written note content.
 - `VaultEntryKind` (`markdown | canvas | chart | excalidraw`) is derived purely from file extension (see `walkTree` in `vault.ts`) and drives which editor `NotesScreen.tsx` mounts: `MdxEditor`/`NoteRenderer`, `CanvasEditor`, `ChartEditor`, `ExcalidrawEditor`. `.canvas` follows the open JSON Canvas spec; `.chart` is a small custom JSON format (`lib/sheets.ts`).
 
