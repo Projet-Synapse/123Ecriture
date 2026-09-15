@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>123Ecriture — Écriture et productivité, local-first</title>
   <meta name="description" content="123Ecriture : application d'écriture et de productivité local-first. Vos notes sont des fichiers MDX sur votre appareil, la synchronisation est optionnelle. Windows, macOS, Linux et Android." />
-  <link rel="icon" type="image/png" href="apps/mobile/assets/favicon.png" />
+  <link rel="icon" type="image/x-icon" href="app/favicon.ico" />
   <style>
     :root {
       color-scheme: light dark;
@@ -79,6 +79,13 @@
     .btn:hover { transform: translateY(-2px); }
     .btn-primary { background: var(--accent); color: #fff; box-shadow: var(--shadow); }
     .btn-secondary { border: 1px solid var(--border); color: var(--text); background: var(--surface); }
+    .web-note {
+      margin-top: 1.1rem;
+      color: var(--text-muted);
+      font-size: 0.9rem;
+      max-width: 38rem;
+      margin-inline: auto;
+    }
 
     section { padding: 2.5rem 0; }
     h2 { font-size: 1.5rem; letter-spacing: -0.01em; margin-bottom: 1.5rem; }
@@ -154,9 +161,15 @@
         sur votre appareil. Un compte est optionnel : il ne sert qu'à synchroniser.
       </p>
       <div class="cta">
-        <a class="btn btn-primary" href="https://github.com/Projet-Synapse/123Ecriture/releases/latest">Télécharger la dernière version</a>
+        <a class="btn btn-primary" href="app/">🌐 Ouvrir l'application</a>
+        <a class="btn btn-secondary" href="https://github.com/Projet-Synapse/123Ecriture/releases/latest">Télécharger la dernière version</a>
         <a class="btn btn-secondary" href="https://github.com/Projet-Synapse/123Ecriture">Voir le code source</a>
       </div>
+      <p class="web-note">
+        La version web s'ouvre directement dans le navigateur. Le coffre de
+        fichiers locaux y est encore limité (disponible sur Windows, macOS,
+        Linux et Android) — c'est le prochain chantier.
+      </p>
     </div>
   </header>
 
