@@ -204,6 +204,7 @@ async function requireActiveRoot(): Promise<FsaDirectoryHandleLike> {
 type VaultState = {
   lastOpenedRelPath?: string | null;
   collapsedRelPaths?: string[];
+  openTabRelPaths?: string[];
 };
 
 async function readVaultState(root: FsaDirectoryHandleLike): Promise<VaultState> {
@@ -617,6 +618,21 @@ export const webVaultAdapter = {
     const root = await webVaultRegistry.getActiveHandle();
     if (!root) return;
     await writeVaultState(root, { collapsedRelPaths: Array.isArray(relPaths) ? relPaths : [] });
+  },
+
+  // Onglets de notes ouverts (PR onglets multiples) — même fichier
+  // state.json, même read-modify-write que les deux champs ci-dessus.
+  getOpenTabs: async (): Promise<string[]> => {
+    const root = await webVaultRegistry.getActiveHandle();
+    if (!root) return [];
+    const openTabs = (await readVaultState(root)).openTabRelPaths;
+    return Array.isArray(openTabs) ? openTabs.filter((p): p is string => typeof p === 'string') : [];
+  },
+
+  setOpenTabs: async (relPaths: string[]): Promise<void> => {
+    const root = await webVaultRegistry.getActiveHandle();
+    if (!root) return;
+    await writeVaultState(root, { openTabRelPaths: Array.isArray(relPaths) ? relPaths : [] });
   },
 
   // Vue Tags — port direct de listTags (search.ts desktop), réutilisant le
