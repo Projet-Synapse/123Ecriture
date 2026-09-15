@@ -18,10 +18,20 @@ import { supabase } from './supabaseClient';
 // Supabase) et le retour ?code=... est échangé par supabase-js au
 // rechargement (detectSessionInUrl, voir supabaseClient.ts).
 const IS_ELECTRON = typeof window !== 'undefined' && 'electronBridge' in window;
+
+// URL de retour canonique en navigateur pur : l'URL courante sans
+// « index.html » final et avec slash final. Même ressource pour le serveur,
+// mais une seule forme possible à autoriser dans les Redirect URLs du
+// dashboard Supabase — sinon « /app/ » autorisé + retour effectif sur
+// « /app/index.html » (ou l'inverse) fait basculer Supabase sur sa Site URL
+// de repli, qui peut ne pas exister (404 GitHub Pages au retour de Google).
+function webRedirectTo(): string {
+  const canonical = window.location.pathname.replace(/index\.html$/, '');
+  return `${window.location.origin}${canonical.endsWith('/') ? canonical : `${canonical}/`}`;
+}
+
 const REDIRECT_TO =
-  typeof window !== 'undefined' && !IS_ELECTRON
-    ? `${window.location.origin}${window.location.pathname}`
-    : 'app123ecriture://auth-callback';
+  typeof window !== 'undefined' && !IS_ELECTRON ? webRedirectTo() : 'app123ecriture://auth-callback';
 
 type AuthUser = { id: string; email: string | null };
 

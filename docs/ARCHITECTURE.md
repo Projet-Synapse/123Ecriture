@@ -471,6 +471,21 @@ bas) sur le projet Supabase partagé "Projet Synapse".
   côté renderer (client Supabase, `localStorage`), le main process ne fait
   que relayer l'URL de callback (`app123ecriture://auth-callback`) reçue via le
   protocole personnalisé (nécessite le verrou mono-instance, voir `main.ts`).
+- **Redirect URLs Supabase (dashboard, rien dans le dépôt)** — la valeur
+  `redirect_to` envoyée par l'app doit figurer TELLE QUELLE dans
+  Authentication → URL Configuration, sinon Supabase ignore silencieusement
+  la demande et renvoie vers la Site URL de repli — qui peut ne pas exister
+  (vécu : 404 GitHub Pages au retour de Google, la connexion échouait sans
+  explication). Valeurs à maintenir :
+  - Site URL : `https://projet-synapse.github.io/123Ecriture/app/`
+  - Redirect URLs : l'URL ci-dessus, plus
+    `app123ecriture://auth-callback` (desktop),
+    `http://localhost:8081/` (dev web locale, sans `index.html`).
+  En parallèle, le site est rendu tolérant aux URL de repli périmées : le
+  `404.html` racine et la page de présentation (`index.html`) rebondissent
+  vers `/app/` en préservant la query (`?code=...` consommé par
+  `detectSessionInUrl`), et `AuthContext` canonicalise l'URL de retour
+  (slash final, sans `index.html`) pour qu'une seule forme soit à autoriser.
 - **Schéma dédié** : `app_123ecriture` (jamais `public`, réservé aux autres
   apps du projet partagé) — voir
   `supabase/migrations/20260816120000_app_123ecriture_schema.sql`. Deux

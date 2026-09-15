@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <title>123Ecriture — redirection…</title>
+    <script>
+      // GitHub Pages sert ce fichier (404.html à la RACINE du site, seul
+      // emplacement qu'il honore — un 404.html sous /app/ est ignoré) pour
+      // tout chemin inconnu du site, en conservant l'URL d'origine.
+      //
+      // Cas d'usage réel : le retour OAuth Supabase (Google → Supabase →
+      // navigateur) peut atterrir sur un chemin qui n'existe pas (URL de
+      // repli configurée dans le dashboard Supabase, ancienne URL, faute de
+      // frappe) — sans ce fichier, l'utilisatrice restait sur la page 404
+      // « Page not found · GitHub Pages » et la connexion échouait sans
+      // explication. On rebondit donc vers l'application sous /app/ en
+      // PRÉSERVANT la query string : le ?code=... du flux PKCE y est échangé
+      // par supabase-js au chargement (detectSessionInUrl), la connexion
+      // aboutit quand même.
+      //
+      // Pas de route URL côté app (navigation par état interne, pas
+      // d'expo-router) : tout chemin inconnu est soit un lien périmé, soit
+      // un retour OAuth — dans les deux cas l'accueil de l'application est
+      // la bonne destination.
+      (function () {
+        window.location.replace(
+          '/123Ecriture/app/' + window.location.search + window.location.hash
+        );
+      })();
+    </script>
+  </head>
+  <body>
+    <p>Redirection vers l’application… Si rien ne se passe,
+      <a href="/123Ecriture/app/">ouvrir 123Ecriture</a>.</p>
+  </body>
+</html>
