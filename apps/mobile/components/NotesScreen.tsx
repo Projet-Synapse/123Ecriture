@@ -11,6 +11,7 @@ import {
 import { EditorView, type ReactCodeMirrorRef } from '@uiw/react-codemirror';
 
 import { parseFrontmatter, serializeFrontmatter } from '../lib/frontmatter';
+import { applyPathChange, isPathAffected, mergeRestoredOpenTabs } from '../lib/openTabs';
 import type { FormattingResult, Selection } from '../lib/mdxFormatting';
 import { NOTES_TOOLBAR_ACTIONS, type ToolbarAction } from '../lib/notesToolbarActions';
 import { openSearchResult } from '../lib/searchResults';
@@ -92,6 +93,8 @@ type ViewMode = 'source' | 'split' | 'reading';
 // //9. Multi-sélection — Ctrl/Cmd+clic, Shift+clic, barre d'actions
 //      groupées (déplacer/supprimer plusieurs éléments à la fois).
 // //10. Vue Tags — bascule Fichiers/Tags de l'explorateur.
+// //11. Onglets — plusieurs notes ouvertes en même temps, persistées par
+//      coffre (state.json), barre au-dessus de l'éditeur + Ctrl+Tab/Ctrl+W.
 // Voir aussi apps/desktop/electron/vault.ts (backend fichiers),
 // VaultTreeView.tsx (rendu de l'explorateur), FilesLinksSection.tsx
 // (réglages).
@@ -104,12 +107,10 @@ const formatCount = (value: number) => countFormatter.format(value);
 
 type Status = 'idle' | 'saving' | 'saved' | 'error';
 
-// Un élément renommé/déplacé affecte la note actuellement ouverte si c'est
-// lui-même cette note, ou si c'est un dossier qui la contient (un dossier
-// renommé/déplacé change le relPath de tout ce qu'il contient, en cascade).
-function isPathAffected(activeRelPath: string, changedOldRelPath: string): boolean {
-  return activeRelPath === changedOldRelPath || activeRelPath.startsWith(`${changedOldRelPath}/`);
-}
+// Voir lib/openTabs.ts — déplacée là pour être partagée avec
+// applyPathChange (onglets) et testée ; mêmes règles qu'avant : un
+// renommage/déplacement de DOSSIER affecte en cascade tout ce qu'il
+// contient.
 
 type Props = {
   // Demande d'ouverture d'une note depuis un AUTRE écran (Calendrier,
@@ -160,6 +161,13 @@ export function NotesScreen({
   // au changement de coffre. Chargé après la première lecture de l'arbre ;
   // les chemins obsolètes (dossier renommé/supprimé depuis) sont ignorés.
   const [collapsedPaths, setCollapsedPaths] = useState<Set<string>>(new Set());
+  // Onglets de notes ouverts (//11) — liste de relPaths, l'ordre du tableau
+  // EST l'ordre des onglets, persisté PAR COFFRE dans .123ecriture/state.json
+  // (voir vault:get/set-open-tabs) pour retrouver les onglets au
+  // redémarrage/changement de coffre. Les métadonnées (nom/icône) sont
+  // re-résolues dans l'arbre au rendu (`openTabs`, plus bas) : ici on ne
+  // garde que les chemins, source de vérité de la persistance.
+  const [openTabRelPaths, setOpenTabRelPaths] = useState<string[]>([]);
   const [renamingRelPath, setRenamingRelPath] = useState<string | null>(null);
   const [renamingValue, setRenamingValue] = useState('');
   const [movingNode, setMovingNode] = useState<VaultTreeNode | null>(null);
@@ -251,6 +259,42 @@ export function NotesScreen({
   useEffect(() => {
     contentRef.current = content;
   }, [content]);
+  // Onglets — même rôle que contentRef : lire la liste COURANTE depuis
+  // openNote/closeTab/cycleOpenTabs (closures d'un rendu potentiellement
+  // antérieur) sans les ajouter à leurs deps (elles se recréeraient à
+  // chaque ouverture/fermeture d'onglet pour rien). Déclaré AVANT
+  // applyOpenTabs qui le mute : react-hooks/immutability exige que la
+  // mutation de la ref précède sa capture par un hook.
+  const openTabRelPathsRef = useRef<string[]>([]);
+  useEffect(() => {
+    openTabRelPathsRef.current = openTabRelPaths;
+  }, [openTabRelPaths]);
+  // Seule voie d'écriture des onglets : met la ref en accord IMMÉDIATEMENT
+  // (les callbacks qui lisent la ref ne doivent jamais voir une valeur
+  // périmée), puis le state, puis la persistance disque (best-effort,
+  // comme toggleCollapse plus bas).
+  const applyOpenTabs = useCallback(
+    (next: string[]) => {
+      openTabRelPathsRef.current = next;
+      setOpenTabRelPaths(next);
+      void vault?.setOpenTabs(next).catch((error) => {
+        console.error('[vault] échec de la persistance des onglets :', error);
+      });
+    },
+    [vault],
+  );
+  // Renommage/déplacement/suppression (le leur OU celui d'un dossier qui
+  // les contient) appliqué aux onglets — voir applyPathChange (lib/
+  // openTabs.ts) pour les règles exactes. Appelé par submitRename/
+  // performMove/submitEditPath/handleDeleteNode/submitBulkMove/
+  // handleBulkDelete, en parallèle de la même logique sur activeNote.
+  const updateOpenTabsAfterPathChange = useCallback(
+    (oldRelPath: string, newRelPath?: string | null) => {
+      const next = applyPathChange(openTabRelPathsRef.current, oldRelPath, newRelPath ?? null);
+      if (next !== openTabRelPathsRef.current) applyOpenTabs(next);
+    },
+    [applyOpenTabs],
+  );
   const listAreaRef = useRef<View>(null);
   // "Fichier ouvert par défaut" (voir l'effet dédié plus bas) : ne doit
   // s'exécuter qu'UNE fois par coffre activé, pas à chaque re-render — une
@@ -294,9 +338,31 @@ export function NotesScreen({
 
   useEffect(() => {
     if (!vault || !vaultPath) return;
+    // Changement de coffre : vide l'éditeur ET les onglets de session
+    // AVANT toute restauration. Sans ça, la note (le contenu) du coffre
+    // PRÉCÉDENT restait affichée sous le coffre actif — une frappe
+    // enregistrait alors l'ancien contenu dans le NOUVEAU coffre (même
+    // relPath, autre dossier). Écrasement LOCAL uniquement (pas
+    // applyOpenTabs, qui persisterait) : l'écriture asynchrone de « [] »
+    // pourrait arriver APRÈS le get-open-tabs de la restauration et
+    // renvoyer une liste vide à celle-ci. Reset en réaction à un changement
+    // d'état EXTERNE (coffre actif) — même exception documentée que le
+    // reset de la multi-sélection plus bas.
+     
+    openTabRelPathsRef.current = [];
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setOpenTabRelPaths([]);
+     
+    setActiveNote(null);
+     
+    setContent('');
+     
+    setStatus('idle');
     void (async () => {
+      let freshTree: VaultTreeNode[] = [];
       try {
-        await refreshTree();
+        freshTree = await vault.listTree();
+        setTree(freshTree);
       } catch (error) {
         console.error('[vault] échec du chargement de l’arborescence :', error);
       }
@@ -323,11 +389,28 @@ export function NotesScreen({
       } catch (error) {
         console.error('[vault] échec du chargement des dossiers repliés :', error);
       }
+      // Onglets persistés du coffre — APRES l'arbre (il faut le fraîchir
+      // pour écarter les chemins périmés) et APRES les dossiers repliés
+      // (l'effet de révélation de la note active, qui déplie ses
+      // ancêtres, attend une liste de replis cohérente). Fusion avec les
+      // onglets ouverts ENTRE-TEMPS : l'ouverture par défaut/le
+      // pendingOpen ont pu ajouter un onglet pendant ce chargement
+      // asynchrone — mergeRestoredOpenTabs le conserve au lieu de laisser
+      // la restauration l'écraser.
+      try {
+        const restored = vault.getOpenTabs ? await vault.getOpenTabs() : [];
+        const valid = restored.filter((relPath) => {
+          const found = findNodeByPath(freshTree, relPath);
+          return found !== null && found.type === 'note';
+        });
+        applyOpenTabs(mergeRestoredOpenTabs(valid, openTabRelPathsRef.current));
+      } catch (error) {
+        console.error('[vault] échec du chargement des onglets :', error);
+      }
     })();
-    // refreshTree est stable (useCallback sur `vault`) : pas besoin de le
-    // relancer à chaque render. Se redéclenche quand `vaultPath` change
-    // (changement de coffre actif, voir VaultsContext) pour rafraîchir
-    // l'arborescence affichée.
+    // Se redéclenche quand `vault` ou `vaultPath` changent (chargement
+    // initial, changement de coffre actif via VaultsContext) pour
+    // recharger l'arborescence ET restaurer l'état d'UI du coffre.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [vault, vaultPath]);
 
@@ -442,12 +525,74 @@ export function NotesScreen({
         void vault.setLastOpened(node.relPath).catch((error) => {
           console.error('[vault] échec de la mémorisation du dernier fichier ouvert :', error);
         });
+        // Onglets : la note ouverte devient un onglet si elle ne l'était
+        // déjà — position STABLE (rouvrir une note déjà ouverte ne la
+        // déplace pas en fin de barre, elle ne fait que l'activer).
+        const tabs = openTabRelPathsRef.current;
+        if (!tabs.includes(node.relPath)) {
+          applyOpenTabs([...tabs, node.relPath]);
+        }
       } catch (error) {
         console.error('[vault] échec de lecture de la note :', error);
         setStatus('error');
       }
     },
-    [vault, preferences.editorDefaultMode],
+    [vault, preferences.editorDefaultMode, applyOpenTabs],
+  );
+
+  // //11. 🗂️ ONGLETS — fermeture et navigation clavier
+  // //////////////////////////////////////////////////////////////////////
+
+  // Ferme un onglet (✕ de la barre ou Ctrl+W). S'il était actif : le
+  // voisin — MÊME index après retrait, sinon le dernier — devient actif ;
+  // la note quittée est flushée par openNote (même chemin que tout
+  // changement de note). Sans voisin : flush manuel avant de vider
+  // l'éditeur (aucun openNote ne le ferait).
+  const closeTab = useCallback(
+    (relPath: string) => {
+      const tabs = openTabRelPathsRef.current;
+      const index = tabs.indexOf(relPath);
+      if (index === -1) return;
+      const next = tabs.filter((p) => p !== relPath);
+      applyOpenTabs(next);
+      if (activeNoteRef.current?.relPath !== relPath) return;
+
+      const nextRelPath = next[Math.min(index, next.length - 1)] ?? null;
+      const nextNode = nextRelPath ? findNodeByPath(tree, nextRelPath) : null;
+      if (nextNode && nextNode.type === 'note') {
+        void openNote(nextNode);
+        return;
+      }
+      // Dernier onglet, ou voisin introuvable entre-temps : flush de la
+      // note quittée puis éditeur vide ("Sélectionne ou crée une note").
+      if (saveTimer.current && activeNoteRef.current) {
+        clearTimeout(saveTimer.current);
+        saveTimer.current = null;
+        void vault?.writeNote(relPath, contentRef.current).catch((error) => {
+          console.error('[vault] échec de la sauvegarde différée à la fermeture du dernier onglet :', error);
+        });
+      }
+      setActiveNote(null);
+      setContent('');
+      setStatus('idle');
+    },
+    [applyOpenTabs, openNote, tree, vault],
+  );
+
+  // Ctrl+Tab / Ctrl+Shift+Tab : onglet suivant/précédent, en boucle
+  // (modulo) comme dans les navigateurs. Une note active sans onglet
+  // (transitoire possible pendant un refreshTree) repart de l'extrémité
+  // correspondant à la direction plutôt que de ne rien faire.
+  const cycleOpenTabs = useCallback(
+    (direction: 1 | -1) => {
+      const tabs = openTabRelPathsRef.current;
+      if (tabs.length < 2) return;
+      const currentIndex = tabs.indexOf(activeNoteRef.current?.relPath ?? '');
+      const base = currentIndex === -1 ? (direction === 1 ? -1 : tabs.length) : currentIndex;
+      const found = findNodeByPath(tree, tabs[(base + direction + tabs.length) % tabs.length]);
+      if (found && found.type === 'note') void openNote(found);
+    },
+    [openNote, tree],
   );
 
   // Notice wikilink (cible absente + création auto désactivée) — s'efface
@@ -679,6 +824,9 @@ export function NotesScreen({
 
     try {
       const result = await vault.rename(relPath, value);
+      // Onglets : même accordé que activeNote ci-dessous (l'onglet exact
+      // est réécrit, ceux d'un dossier renommé sont retirés).
+      updateOpenTabsAfterPathChange(relPath, result.relPath);
       setActiveNote((current) => {
         if (!current) return current;
         if (current.relPath === relPath) {
@@ -696,11 +844,12 @@ export function NotesScreen({
         }
         return current;
       });
+      updateOpenTabsAfterPathChange(relPath, result.relPath);
       await refreshTree();
     } catch (error) {
       console.error('[vault] échec du renommage :', error);
     }
-  }, [vault, renamingRelPath, renamingValue, refreshTree]);
+  }, [vault, renamingRelPath, renamingValue, refreshTree, updateOpenTabsAfterPathChange]);
 
   const startMove = useCallback((node: VaultTreeNode) => {
     setMovingNode(node);
@@ -715,6 +864,7 @@ export function NotesScreen({
       if (!vault) return;
       try {
         const result = await vault.move(node.relPath, destinationRelPath);
+        updateOpenTabsAfterPathChange(node.relPath, result.relPath);
         setActiveNote((current) => {
           if (!current) return current;
           if (current.relPath === node.relPath) {
@@ -731,7 +881,7 @@ export function NotesScreen({
         console.error('[vault] échec du déplacement :', error);
       }
     },
-    [vault, refreshTree],
+    [vault, refreshTree, updateOpenTabsAfterPathChange],
   );
 
   const submitMove = useCallback(
@@ -755,6 +905,7 @@ export function NotesScreen({
       try {
         const { deleted } = await vault.delete(node.relPath);
         if (!deleted) return; // annulé dans la boîte de confirmation
+        updateOpenTabsAfterPathChange(node.relPath, null);
         setActiveNote((current) => {
           if (!current) return current;
           if (isPathAffected(current.relPath, node.relPath)) {
@@ -768,7 +919,7 @@ export function NotesScreen({
         console.error('[vault] échec de la suppression :', error);
       }
     },
-    [vault, refreshTree],
+    [vault, refreshTree, updateOpenTabsAfterPathChange],
   );
 
   // "Dupliquer" (menu contextuel) — copie DANS LE MÊME dossier (voir
@@ -812,6 +963,7 @@ export function NotesScreen({
         // que l'utilisatrice puisse corriger sans tout retaper.
         setEditingPathNode(null);
         setEditPathError(null);
+        updateOpenTabsAfterPathChange(node.relPath, result.relPath);
         setActiveNote((current) => {
           if (!current) return current;
           if (current.relPath === node.relPath) {
@@ -829,7 +981,7 @@ export function NotesScreen({
         setEditPathError(error instanceof Error ? error.message : String(error));
       }
     },
-    [vault, editingPathNode, refreshTree],
+    [vault, editingPathNode, refreshTree, updateOpenTabsAfterPathChange],
   );
 
   const toggleCollapse = useCallback(
@@ -1268,9 +1420,14 @@ export function NotesScreen({
   // Raccourcis clavier globaux (Ctrl sur Windows/Linux, Cmd sur macOS) —
   // Ctrl/Cmd+S force la sauvegarde immédiate, Ctrl/Cmd+N crée une nouvelle
   // note (même emplacement par défaut que le bouton "+ Nouvelle note").
-  // Ctrl/Cmd+K (palette/recherche globale) vit dans AppShell.tsx, pas ici
-  // — voir le commentaire du bloc retiré ci-dessus ("1.5"). La recherche
-  // DANS la note (Ctrl/Cmd+F) vit dans MdxEditor.tsx (keymap CodeMirror).
+  // Ctrl/Cmd+W ferme l'onglet actif, Ctrl/Cmd+Tab / Ctrl/Cmd+Shift+Tab
+  // naviguent entre les onglets (//11). Menu Electron désactivé
+  // (Menu.setApplicationMenu(null), voir main.ts) : aucun accélérateur ne
+  // court-circuite ces touches côté main process, et Ctrl+W n'a pas
+  // d'action par défaut dans un BrowserWindow. Ctrl/Cmd+K (palette/
+  // recherche globale) vit dans AppShell.tsx, pas ici — voir le
+  // commentaire du bloc retiré ci-dessus ("1.5"). La recherche DANS la
+  // note (Ctrl/Cmd+F) vit dans MdxEditor.tsx (keymap CodeMirror).
   // Web/Electron uniquement (`window` n'existe pas sur natif) —
   // `preventDefault` évite que le navigateur n'ouvre sa propre boîte de
   // dialogue "Enregistrer sous" sur Ctrl+S.
@@ -1287,13 +1444,21 @@ export function NotesScreen({
           event.preventDefault();
           void handleCreateNote();
           break;
+        case 'w':
+          event.preventDefault();
+          if (activeNoteRef.current) closeTab(activeNoteRef.current.relPath);
+          break;
+        case 'tab':
+          event.preventDefault();
+          cycleOpenTabs(event.shiftKey ? -1 : 1);
+          break;
         default:
           break;
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [flushSave, handleCreateNote]);
+  }, [flushSave, handleCreateNote, closeTab, cycleOpenTabs]);
 
   // Dernier filet pour la même fenêtre de debouncing : fermer la fenêtre
   // dans les 600 ms suivant une frappe perdait la frappe silencieusement.
@@ -1452,6 +1617,23 @@ export function NotesScreen({
     return notes;
   }, [preferences.favoriteRelPaths, tree]);
 
+  // //11. 🗂️ ONGLETS — résolution pour le rendu
+  // //////////////////////////////////////////////////////////////////////
+
+  // Les relPaths des onglets n'ont ni nom ni kind : chaque onglet est
+  // re-résolu dans l'arbre (même logique que favoriteNotes ci-dessus). Un
+  // chemin devenu obsolète disparaît de la BARRE mais reste dans la liste
+  // persistée jusqu'au prochain applyOpenTabs (la restauration au
+  // changement de coffre le purge aussi) — jamais de ligne fantôme.
+  const openTabs = useMemo(() => {
+    const nodes: VaultNoteNode[] = [];
+    for (const relPath of openTabRelPaths) {
+      const found = findNodeByPath(tree, relPath);
+      if (found && found.type === 'note') nodes.push(found);
+    }
+    return nodes;
+  }, [openTabRelPaths, tree]);
+
   // //9. 🖱️ MULTI-SÉLECTION
   // //////////////////////////////////////////////////////////////////////
 
@@ -1529,6 +1711,7 @@ export function NotesScreen({
       for (const relPath of relPaths) {
         try {
           const result = await vault.move(relPath, destinationRelPath);
+          updateOpenTabsAfterPathChange(relPath, result.relPath);
           setActiveNote((current) => {
             if (!current) return current;
             if (current.relPath === relPath) {
@@ -1547,7 +1730,7 @@ export function NotesScreen({
       setSelectedRelPaths(new Set());
       await refreshTree();
     },
-    [vault, selectedRelPaths, refreshTree],
+    [vault, selectedRelPaths, refreshTree, updateOpenTabsAfterPathChange],
   );
 
   // "Supprimer" de la barre d'actions groupées — boucle sur `vault.delete`
@@ -1565,6 +1748,7 @@ export function NotesScreen({
       try {
         const { deleted } = await vault.delete(relPath);
         if (!deleted) continue; // annulé pour CE fichier précis
+        updateOpenTabsAfterPathChange(relPath, null);
         setActiveNote((current) => {
           if (!current) return current;
           if (isPathAffected(current.relPath, relPath)) {
@@ -1579,7 +1763,7 @@ export function NotesScreen({
     }
     setSelectedRelPaths(new Set());
     await refreshTree();
-  }, [vault, selectedRelPaths, refreshTree]);
+  }, [vault, selectedRelPaths, refreshTree, updateOpenTabsAfterPathChange]);
 
   // //10. 🏷️ VUE TAGS
   // //////////////////////////////////////////////////////////////////////
@@ -1881,6 +2065,53 @@ export function NotesScreen({
                 </Pressable>
               </View>
             </View>
+
+            {/* Barre d'onglets (//11) — montrée à partir de DEUX onglets :
+                avec un seul, le titre de l'en-tête joue déjà ce rôle et la
+                barre ne serait qu'un doublon visuel. Défilement horizontal
+                si les onglets débordent (longues arborescences). */}
+            {openTabs.length >= 2 && (
+              <View style={[styles.tabBar, { borderBottomColor: theme.border }]}>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                  {openTabs.map((node) => {
+                    const isActive = node.relPath === activeNote.relPath;
+                    return (
+                      <View
+                        key={node.relPath}
+                        style={[
+                          styles.tab,
+                          { borderColor: theme.border },
+                          isActive && { backgroundColor: `${theme.accent}22`, borderColor: theme.accent },
+                        ]}
+                      >
+                        <Pressable
+                          onPress={() => void openNote(node)}
+                          style={styles.tabLabel}
+                          accessibilityLabel={
+                            isActive ? `Onglet actif : ${node.name}` : `Activer l'onglet ${node.name}`
+                          }
+                        >
+                          <Text style={styles.tabIcon}>{NOTE_ICON_BY_KIND[node.kind]}</Text>
+                          <Text
+                            style={[styles.tabName, { color: isActive ? theme.accent : theme.textMuted }]}
+                            numberOfLines={1}
+                          >
+                            {node.name}
+                          </Text>
+                        </Pressable>
+                        <Pressable
+                          onPress={() => closeTab(node.relPath)}
+                          style={styles.tabClose}
+                          accessibilityLabel={`Fermer l'onglet ${node.name}`}
+                        >
+                          <Text style={{ color: theme.textMuted, fontSize: 12 }}>✕</Text>
+                        </Pressable>
+                      </View>
+                    );
+                  })}
+                </ScrollView>
+              </View>
+            )}
 
             <View style={styles.editorMainRow}>
               <View style={styles.noteContent}>
@@ -2290,6 +2521,44 @@ const styles = StyleSheet.create({
   editorMainRow: {
     flex: 1,
     flexDirection: 'row',
+  },
+  // Barre d'onglets (//11) — rangée fine entre l'en-tête de l'éditeur et
+  // la zone de contenu, même esprit visuel que modeRow (bordures du
+  // thème). `flexShrink: 1` sur le nom pour que le texte tronque AVANT de
+  // pousser le ✕ hors de l'onglet.
+  tabBar: {
+    borderBottomWidth: 1,
+    paddingHorizontal: 6,
+    paddingTop: 4,
+  },
+  tab: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderBottomWidth: 0,
+    borderTopLeftRadius: 8,
+    borderTopRightRadius: 8,
+    maxWidth: 200,
+    marginRight: 4,
+  },
+  tabLabel: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    flexShrink: 1,
+  },
+  tabIcon: {
+    fontSize: 12,
+  },
+  tabName: {
+    fontSize: 12,
+    flexShrink: 1,
+  },
+  tabClose: {
+    paddingHorizontal: 6,
+    paddingVertical: 6,
   },
   noteContent: {
     flex: 1,
