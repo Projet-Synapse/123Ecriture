@@ -96,6 +96,10 @@ declare global {
   interface AuthBridge {
     openExternal: (url: string) => Promise<void>;
     onCallback: (callback: (url: string) => void) => () => void;
+    // Desktop uniquement : URL de callback reçue au démarrage à froid via
+    // argv (voir apps/desktop/electron/auth.ts) — absente en navigateur pur,
+    // où le retour OAuth passe par le rechargement de page.
+    takePendingUrl?: () => Promise<string | null>;
   }
 
   interface HashedNote {

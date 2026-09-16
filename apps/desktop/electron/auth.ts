@@ -1,4 +1,5 @@
 import { app, ipcMain, shell, type BrowserWindow } from 'electron';
+import { spawnSync } from 'child_process';
 import path from 'path';
 
 type GetWindow = () => BrowserWindow | null;
@@ -34,7 +35,33 @@ export function registerAuthProtocol(): void {
   if (process.defaultApp && process.argv.length >= 2) {
     app.setAsDefaultProtocolClient(PROTOCOL, process.execPath, [path.resolve(process.argv[1])]);
   } else {
-    app.setAsDefaultProtocolClient(PROTOCOL);
+    app.setAsDefaultProtocolClient(PROTOCOL, process.execPath, []);
+  }
+  // Vérifié et complété si besoin : la forme sans argument de
+  // setAsDefaultProtocolClient a été observée silencieusement inefficace
+  // en build empaqueté sur Windows (vécu v0.4.5 : aucune classe HKCU
+  // écrite au lancement, le callback OAuth partait alors vers n'importe
+  // quel gestionnaire obsolète restant — fenêtre blanche). Repli direct :
+  // écrire la classe exactement comme l'installeur NSIS l'aurait fait.
+  if (process.platform === 'win32' && !app.isDefaultProtocolClient(PROTOCOL, process.execPath, [])) {
+    try {
+      const root = `HKCU\\Software\\Classes\\${PROTOCOL}`;
+      const regAdd = (value: string, args: string[]) =>
+        spawnSync('reg', ['add', value, ...args, '/f'], {
+          shell: false,
+          stdio: 'ignore',
+          windowsHide: true,
+        });
+      regAdd(root, ['/ve', '/t', 'REG_SZ', '/d', 'URL:123Ecriture Auth Callback']);
+      regAdd(root, ['/v', 'URL Protocol', '/t', 'REG_SZ', '/d', '']);
+      regAdd(`${root}\\shell\\open\\command`, ['/ve', '/t', 'REG_SZ', '/d', `"${process.execPath}" "%1"`]);
+      app.setAsDefaultProtocolClient(PROTOCOL, process.execPath, []);
+      if (!app.isDefaultProtocolClient(PROTOCOL, process.execPath, [])) {
+        console.error('[auth] enregistrement du protocole app123ecriture:// toujours absent après repli reg.');
+      }
+    } catch (error) {
+      console.error('[auth] échec du repli d’enregistrement du protocole :', error);
+    }
   }
 }
 
@@ -50,6 +77,22 @@ export function registerAuthHandlers(getWindow: GetWindow): void {
       throw new Error('URL de connexion invalide.');
     }
     await shell.openExternal(url);
+  });
+
+  // Démarrage À FROID par le lien : si l'app était fermée au moment où le
+  // navigateur revient vers app123ecriture://auth-callback?code=..., Windows
+  // lance CETTE instance avec l'URL dans argv — les événements
+  // 'second-instance'/'open-url' ne couvrent que l'app DÉJÀ ouverte. Sans
+  // cette capture, le callback était perdu silencieusement (connexion
+  // impossible tant que l'app n'était pas déjà ouverte avant le clic). Le
+  // renderer la récupère au montage via 'auth:take-pending-url' (une seule
+  // fois — le pull évite la course d'un push envoyé avant que l'écouteur
+  // React ne soit posé).
+  let pendingStartupUrl: string | null = findProtocolUrlInArgv(process.argv);
+  ipcMain.handle('auth:take-pending-url', () => {
+    const url = pendingStartupUrl;
+    pendingStartupUrl = null;
+    return url;
   });
 
   const deliverCallback = (url: string) => {

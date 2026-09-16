@@ -90,6 +90,9 @@ contextBridge.exposeInMainWorld('auth', {
     ipcRenderer.on('auth:callback', handler);
     return () => ipcRenderer.removeListener('auth:callback', handler);
   },
+  // Callback reçu au démarrage à froid via argv (voir auth.ts) — consommé
+  // une seule fois par le renderer au montage.
+  takePendingUrl: (): Promise<string | null> => ipcRenderer.invoke('auth:take-pending-url'),
 });
 
 contextBridge.exposeInMainWorld('sync', {
