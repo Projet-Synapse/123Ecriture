@@ -1,6 +1,6 @@
 {
-  "name": "@123ecriture/desktop",
-  "version": "0.4.4",
+  "name": "123ecriture-desktop",
+  "version": "0.4.5",
   "description": "123Ecriture — application d'écriture et de productivité (version desktop)",
   "author": "Catelina",
   "repository": "https://github.com/Projet-Synapse/123Ecriture.git",
@@ -66,10 +66,17 @@
     "win": {
       "target": [
         "nsis"
-      ]
+      ],
+      "icon": "build/icon.ico"
     },
     "nsis": {
-      "differentialPackage": false
+      "differentialPackage": false,
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true
     },
     "mac": {
       "target": [
