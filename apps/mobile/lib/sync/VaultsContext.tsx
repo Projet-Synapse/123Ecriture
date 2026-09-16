@@ -1,4 +1,9 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+
+import { useAuth } from './AuthContext';
+import { errorMessage } from '../errorMessage';
+import { pickVaultsToAutoLink } from './autoLink';
+import { linkVaultToCloud } from './syncEngine';
 
 // Registre des coffres (vaults) multiples — voir
 // docs/ARCHITECTURE.md §5/§6 et apps/desktop/electron/vaults.js. Même schéma
@@ -26,6 +31,11 @@ type VaultsContextValue = {
   renameVault: (id: string, name: string) => Promise<void>;
   removeVault: (id: string) => Promise<void>;
   setCloudLink: (id: string, payload: { linked: boolean; remoteVaultId?: string | null }) => Promise<void>;
+  // Liaison automatique au compte (voir l'effet ci-dessous) : dernière
+  // erreur rencontrée, affichée en discret dans Paramètres, et relance
+  // manuelle — un échec ne bloque jamais l'usage local du coffre.
+  autoLinkError: string | null;
+  retryAutoLink: () => void;
 };
 
 const VaultsReactContext = createContext<VaultsContextValue | null>(null);
@@ -129,6 +139,51 @@ export function VaultsProvider({ children }: { children: ReactNode }) {
     [bridge],
   );
 
+  // Liaison automatique au compte : connecté·e, TOUT coffre du registre est
+  // une donnée du compte — présent avant la connexion OU ajouté ensuite,
+  // quel que soit le chemin d'entrée (« Ajouter un dossier existant »,
+  // « Nouveau coffre », « Choisir un dossier » des écrans vides : tous
+  // aboutissent au même registre, que l'ajout passe par ce contexte ou
+  // directement par le pont vault.chooseFolder). AuthProvider est
+  // au-dessus de VaultsProvider (App.tsx), useAuth est donc disponible ici.
+  const auth = useAuth();
+  const [autoLinkError, setAutoLinkError] = useState<string | null>(null);
+  // Force une reprise de l'effet après un échec (ses dépendances ne changent
+  // pas sinon : un échec n'écrit rien dans le registre).
+  const [autoLinkNonce, setAutoLinkNonce] = useState(0);
+  const autoLinkInFlight = useRef<Set<string>>(new Set());
+  const userId = auth.user?.id ?? null;
+
+  useEffect(() => {
+    if (!userId || !bridge) return;
+    const targets = pickVaultsToAutoLink(vaultList, autoLinkInFlight.current);
+    if (targets.length === 0) return;
+    targets.forEach((v) => autoLinkInFlight.current.add(v.id));
+    void (async () => {
+      let lastError: string | null = null;
+      for (const v of targets) {
+        try {
+          const remoteVaultId = await linkVaultToCloud(v.id, v.name, userId);
+          await setCloudLink(v.id, { linked: true, remoteVaultId });
+        } catch (error) {
+          console.error('[vaults] échec de la liaison automatique :', error);
+          lastError = errorMessage(error);
+        } finally {
+          autoLinkInFlight.current.delete(v.id);
+        }
+      }
+      setAutoLinkError(lastError);
+    })();
+    // autoLinkNonce : volontairement absent des deps de nettoyage — il ne
+    // sert qu'à relancer, jamais à interrompre un tour en cours.
+     
+  }, [userId, bridge, vaultList, setCloudLink, autoLinkNonce]);
+
+  const retryAutoLink = useCallback(() => {
+    setAutoLinkError(null);
+    setAutoLinkNonce((n) => n + 1);
+  }, []);
+
   const activeVault = vaultList.find((v) => v.id === activeVaultId) ?? null;
 
   const value = useMemo<VaultsContextValue>(
@@ -144,6 +199,8 @@ export function VaultsProvider({ children }: { children: ReactNode }) {
       renameVault,
       removeVault,
       setCloudLink,
+      autoLinkError,
+      retryAutoLink,
     }),
     [
       vaultList,
@@ -156,6 +213,8 @@ export function VaultsProvider({ children }: { children: ReactNode }) {
       renameVault,
       removeVault,
       setCloudLink,
+      autoLinkError,
+      retryAutoLink,
     ],
   );
 
