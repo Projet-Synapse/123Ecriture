@@ -18,7 +18,7 @@
         {
             "label": "vérifier : lint (desktop)",
             "type": "shell",
-            "command": "pnpm --filter @123ecriture/desktop lint",
+            "command": "pnpm --filter 123ecriture-desktop lint",
             "problemMatcher": ["$eslint-stylish"],
             "presentation": { "reveal": "silent", "panel": "dedicated", "group": "verify" }
         },
@@ -32,7 +32,7 @@
         {
             "label": "vérifier : typecheck (desktop)",
             "type": "shell",
-            "command": "pnpm --filter @123ecriture/desktop typecheck",
+            "command": "pnpm --filter 123ecriture-desktop typecheck",
             "problemMatcher": ["$tsc"],
             "presentation": { "reveal": "silent", "panel": "dedicated", "group": "verify" }
         },
@@ -79,7 +79,7 @@
         {
             "label": "desktop: bundler le process principal (dev, sourcemaps)",
             "type": "shell",
-            "command": "pnpm --filter @123ecriture/desktop build:electron:dev",
+            "command": "pnpm --filter 123ecriture-desktop build:electron:dev",
             "problemMatcher": ["$tsc"],
             "presentation": {
                 "reveal": "silent",

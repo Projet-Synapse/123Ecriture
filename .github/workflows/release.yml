@@ -102,7 +102,7 @@ jobs:
           EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_ANON_KEY }}
 
       - name: Bundle le process principal Electron (esbuild)
-        run: pnpm --filter @123ecriture/desktop run build:electron
+        run: pnpm --filter 123ecriture-desktop run build:electron
 
       - name: Build + publie l'installateur desktop
         # provider/owner/repo viennent de apps/desktop/package.json (champs
@@ -131,7 +131,7 @@ jobs:
         # comme mise à jour). Le .dmg.blockmap reste donc généré : seul
         # compromis qui ne casse pas l'auto-update macOS. Rien à faire côté
         # .AppImage : pas de blockmap pour ce format de toute façon.
-        run: pnpm --filter @123ecriture/desktop exec electron-builder ${{ matrix.flag }} --publish always
+        run: pnpm --filter 123ecriture-desktop exec electron-builder ${{ matrix.flag }} --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

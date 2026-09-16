@@ -44,7 +44,7 @@ jobs:
         # (voir apps/mobile/lib/sync/supabaseClient.ts, repli sur `null`).
         run: |
           pnpm --filter @123ecriture/mobile build:web
-          pnpm --filter @123ecriture/desktop build:electron
+          pnpm --filter 123ecriture-desktop build:electron
         env:
           EXPO_PUBLIC_SUPABASE_URL: ${{ secrets.EXPO_PUBLIC_SUPABASE_URL }}
           EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_ANON_KEY }}
