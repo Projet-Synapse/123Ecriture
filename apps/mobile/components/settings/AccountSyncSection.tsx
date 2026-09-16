@@ -35,6 +35,8 @@ export function AccountSyncSection() {
     renameVault,
     removeVault,
     setCloudLink,
+    autoLinkError,
+    retryAutoLink,
   } = useVaults();
   const vault = typeof window !== 'undefined' ? window.vault : undefined;
   // Statut partagé (voir SyncStatusContext.tsx) — source de vérité pour le
@@ -115,6 +117,11 @@ export function AccountSyncSection() {
       });
   }, []);
 
+  // Recharge aussi quand le nombre de coffres liés change : la liaison
+  // automatique (VaultsContext) crée des coffres distants en arrière-plan,
+  // la carte doit refléter ces apparitions sans attendre un rafraîchissement
+  // manuel.
+  const linkedVaultCount = vaultList.filter((v) => v.cloudLinked).length;
   useEffect(() => {
     if (!auth.user) {
       setRemoteVaults(null);
@@ -122,7 +129,7 @@ export function AccountSyncSection() {
       return;
     }
     loadRemoteVaults();
-  }, [auth.user, loadRemoteVaults]);
+  }, [auth.user, linkedVaultCount, loadRemoteVaults]);
 
   const handleLinkVault = useCallback(
     async (v: VaultRegistryEntry) => {
@@ -364,6 +371,20 @@ export function AccountSyncSection() {
       {vault && (
         <View style={[s.card, { backgroundColor: theme.surface, borderColor: theme.border }]}>
           <Text style={[s.cardTitle, { color: theme.text }]}>Coffres</Text>
+
+          {/* Liaison automatique en échec (hors ligne, cloud indisponible…) :
+              discret et jamais bloquant — le coffre reste pleinement
+              utilisable en local, la reprise est manuelle. */}
+          {autoLinkError && (
+            <View style={styles.autoLinkErrorRow}>
+              <Text style={{ color: theme.danger, flex: 1 }}>
+                ⚠️ Liaison automatique : {autoLinkError}
+              </Text>
+              <Pressable onPress={retryAutoLink} style={[styles.retryButton, { borderColor: theme.accent }]}>
+                <Text style={{ color: theme.accent }}>Réessayer</Text>
+              </Pressable>
+            </View>
+          )}
 
           {vaultList.length === 0 && (
             <Text style={[s.cardValue, { color: theme.textMuted }]}>Aucun coffre pour l’instant.</Text>
@@ -663,5 +684,17 @@ const styles = StyleSheet.create({
   },
   remotePickerRow: {
     paddingVertical: 6,
+  },
+  autoLinkErrorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 4,
+  },
+  retryButton: {
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    borderRadius: 6,
+    borderWidth: 1,
   },
 });

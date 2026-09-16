@@ -513,6 +513,18 @@ bas) sur le projet Supabase partagé "Projet Synapse".
   (informatif) : la référence distante vit dans le registre local de chaque
   machine, un même coffre distant peut donc être relié depuis plusieurs
   appareils sans doublon ni migration de schéma.
+- **Liaison automatique au compte** : connecté·e, TOUT coffre du registre
+  devient une donnée du compte — présent avant la connexion OU ajouté
+  ensuite, quel que soit le chemin d'entrée (« Ajouter un dossier
+  existant », « Nouveau coffre », « Choisir un dossier » des écrans
+  vides : tous aboutissent au même registre, même quand l'ajout passe par
+  le pont `vault.chooseFolder` sans transiter par VaultsContext). Un
+  guetteur dans VaultsContext (`pickVaultsToAutoLink`, pur et testé) lie
+  chaque coffre non lié via `linkVaultToCloud`, avec garde anti-boucle
+  (ids en vol) — un échec est discret (⚠️ + « Réessayer » dans
+  Paramètres) et ne bloque jamais l'usage local. L'upsert idempotent par
+  `(owner, local_vault_id)` fait qu'un dossier RECOPIÉ depuis une autre
+  machine se rattache à son coffre distant d'origine, sans doublon.
 - **Connexion email/mot de passe** : `signInWithPassword`/`signUp` directs
   dans l'app (supabase-js, aucun navigateur externe ni protocole custom) en
   complément du flux Google — même projet Supabase partagé, provider Email
