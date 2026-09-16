@@ -1,5 +1,5 @@
 import type { Session } from '@supabase/supabase-js';
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import { supabase } from './supabaseClient';
 import { errorMessage } from '../errorMessage';
@@ -73,31 +73,60 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const { data: authListener } = supabase.auth.onAuthStateChange((_event, newSession) => {
       setSession(newSession);
+      // Une session qui s'établit invalide toute erreur d'auth périmée.
+      // Cas vécu « invalid flow state » : le PREMIER échange avait réussi,
+      // mais une seconde livraison du même callback (Windows peut relancer
+      // le gestionnaire de protocole deux fois) échouait sur le code déjà
+      // consommé et laissait l'erreur affichée PAR-DESSUS l'état connecté.
+      if (newSession) setError(null);
     });
     return () => authListener.subscription.unsubscribe();
   }, []);
 
   // Callback OAuth reçu via le protocole personnalisé (voir auth.js) —
   // termine l'échange PKCE amorcé par signInWithGoogle ci-dessous.
-  useEffect(() => {
-    // Capturée dans une const locale : la narrowing de `!client` doit
-    // survivre à la fermeture imbriquée ci-dessous (TypeScript ne fait pas
-    // toujours confiance à une narrowing d'import à travers une closure).
-    const client = supabase;
-    if (!bridge || !client) return;
-    return bridge.onCallback((url) => {
-      void (async () => {
-        try {
-          const { error: exchangeError } = await client.auth.exchangeCodeForSession(url);
-          if (exchangeError) throw exchangeError;
+  // Idempotent et gardé par session (mêmes raisons que ci-dessus) :
+  // - la MÊME URL livrée deux fois : la seconde est ignorée ;
+  // - une URL d'un flux périmé (ancien onglet navigateur complété après un
+  //   nouveau clic sur « Se connecter ») alors qu'une session existe déjà :
+  //   ignorée aussi, sans afficher d'erreur.
+  const handledCallbackUrls = useRef<Set<string>>(new Set());
+  const exchangeCallbackUrl = useCallback((url: string) => {
+    if (!supabase) return;
+    if (handledCallbackUrls.current.has(url)) return;
+    handledCallbackUrls.current.add(url);
+    void (async () => {
+      try {
+        const { data } = await supabase.auth.getSession();
+        if (data.session) {
           setError(null);
-        } catch (err) {
-          console.error('[auth] échec de connexion :', err);
-          setError(errorMessage(err));
+          return;
         }
-      })();
-    });
-  }, [bridge]);
+        const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(url);
+        if (exchangeError) throw exchangeError;
+        setError(null);
+      } catch (err) {
+        console.error('[auth] échec de connexion :', err);
+        setError(errorMessage(err));
+      }
+    })();
+  }, []);
+
+  useEffect(() => {
+    if (!bridge) return;
+    const unsubscribe = bridge.onCallback(exchangeCallbackUrl);
+    // Démarrage à froid : l'app lancée PAR le lien de callback (elle était
+    // fermée au moment du retour OAuth) reçoit l'URL dans argv — le process
+    // principal la met de côté et le renderer la tire ici, une seule fois
+    // (voir auth.ts / preload.ts). Sans cette consommation, la connexion
+    // échouait silencieusement quand l'app n'était pas déjà ouverte.
+    if (bridge.takePendingUrl) {
+      void bridge.takePendingUrl().then((url) => {
+        if (url) exchangeCallbackUrl(url);
+      });
+    }
+    return unsubscribe;
+  }, [bridge, exchangeCallbackUrl]);
 
   const signInWithGoogle = useCallback(async () => {
     if (!bridge || !supabase) return;
