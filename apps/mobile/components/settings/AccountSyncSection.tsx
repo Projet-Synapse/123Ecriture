@@ -1,9 +1,15 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { useAuth } from '../../lib/sync/AuthContext';
 import { useSyncStatus } from '../../lib/sync/SyncStatusContext';
-import { linkVaultToCloud, runSync as runSyncEngine, type SyncSummary } from '../../lib/sync/syncEngine';
+import {
+  linkVaultToCloud,
+  listRemoteVaults,
+  runSync as runSyncEngine,
+  type RemoteVaultSummary,
+  type SyncSummary,
+} from '../../lib/sync/syncEngine';
 import { useVaults } from '../../lib/sync/VaultsContext';
 import { usePreferences } from '../../preferences/PreferencesContext';
 import { ConfirmDialog } from '../ConfirmDialog';
@@ -51,7 +57,24 @@ export function AccountSyncSection() {
   // (ConfirmDialog), plutôt qu'un retrait immédiat au simple clic.
   const [confirmRemoveVault, setConfirmRemoveVault] = useState<VaultRegistryEntry | null>(null);
 
-  const runVaultAction = useCallback(async (action: () => Promise<void>) => {
+  // Connexion email/mot de passe (voir AuthContext) — formulaire déplié à la
+  // demande sous le bouton Google, pour ne pas surcharger la carte Compte.
+  const [showEmailForm, setShowEmailForm] = useState(false);
+  const [emailDraft, setEmailDraft] = useState('');
+  const [passwordDraft, setPasswordDraft] = useState('');
+  const [authBusy, setAuthBusy] = useState(false);
+
+  // Coffres distants du compte (listRemoteVaults — lecture seule). null =
+  // pas encore chargé (distinct de [] = aucun). Rechargé après chaque
+  // liaison/création pour que la carte reste la source de vérité.
+  const [remoteVaults, setRemoteVaults] = useState<RemoteVaultSummary[] | null>(null);
+  const [remoteVaultsError, setRemoteVaultsError] = useState<string | null>(null);
+  const [retrievingRemoteId, setRetrievingRemoteId] = useState<string | null>(null);
+  // Coffre local pour lequel le sélecteur « se connecter à un existant » est
+  // déplié (les distants déjà reliés à un AUTRE coffre local en sont exclus).
+  const [pickingRemoteForVaultId, setPickingRemoteForVaultId] = useState<string | null>(null);
+
+  const runVaultAction = useCallback(async (action: () => Promise<unknown>) => {
     setVaultActionError(null);
     try {
       await action();
@@ -82,6 +105,25 @@ export function AccountSyncSection() {
     await runVaultAction(() => createVault(name));
   }, [createDraft, createVault, runVaultAction]);
 
+  const loadRemoteVaults = useCallback(() => {
+    setRemoteVaultsError(null);
+    listRemoteVaults()
+      .then(setRemoteVaults)
+      .catch((error) => {
+        console.error('[sync] échec du listage des coffres distants :', error);
+        setRemoteVaultsError(errorMessage(error));
+      });
+  }, []);
+
+  useEffect(() => {
+    if (!auth.user) {
+      setRemoteVaults(null);
+      setRemoteVaultsError(null);
+      return;
+    }
+    loadRemoteVaults();
+  }, [auth.user, loadRemoteVaults]);
+
   const handleLinkVault = useCallback(
     async (v: VaultRegistryEntry) => {
       if (!auth.user) return;
@@ -89,6 +131,7 @@ export function AccountSyncSection() {
       try {
         const remoteVaultId = await linkVaultToCloud(v.id, v.name, auth.user.id);
         await setCloudLink(v.id, { linked: true, remoteVaultId });
+        loadRemoteVaults();
       } catch (error) {
         console.error('[sync] échec de la liaison au cloud :', error);
         setSyncResults((prev) => ({
@@ -97,7 +140,55 @@ export function AccountSyncSection() {
         }));
       }
     },
-    [auth.user, setCloudLink],
+    [auth.user, setCloudLink, loadRemoteVaults],
+  );
+
+  // Raccordement d'un coffre local à un coffre distant DÉJÀ existant (cas
+  // « nouvel appareil » ou « dossier recréé ») : aucune écriture côté cloud,
+  // la référence vit dans le registre local — voir docs/ARCHITECTURE.md §6.
+  const handleConnectExisting = useCallback(
+    async (v: VaultRegistryEntry, remoteId: string) => {
+      setPickingRemoteForVaultId(null);
+      await runVaultAction(() => setCloudLink(v.id, { linked: true, remoteVaultId: remoteId }));
+    },
+    [runVaultAction, setCloudLink],
+  );
+
+  // Récupération d'un coffre distant SUR CET APPAREIL : choix d'un dossier
+  // local (la boîte de dialogue OS permet d'en créer un neuf), puis liaison
+  // directe au coffre distant — la première « Synchroniser maintenant »
+  // télécharge l'intégralité de son contenu dans le dossier choisi.
+  const handleRetrieveRemote = useCallback(
+    async (remote: RemoteVaultSummary) => {
+      setRetrievingRemoteId(remote.id);
+      setVaultActionError(null);
+      try {
+        const added = await addExistingVault();
+        if (!added) return;
+        await setCloudLink(added.id, { linked: true, remoteVaultId: remote.id });
+      } catch (error) {
+        console.error('[sync] échec de la récupération du coffre distant :', error);
+        setVaultActionError(errorMessage(error));
+      } finally {
+        setRetrievingRemoteId(null);
+      }
+    },
+    [addExistingVault, setCloudLink],
+  );
+
+  const submitEmailAuth = useCallback(
+    async (mode: 'signin' | 'signup') => {
+      const email = emailDraft.trim();
+      if (!email || !passwordDraft) return;
+      setAuthBusy(true);
+      try {
+        if (mode === 'signin') await auth.signInWithEmail(email, passwordDraft);
+        else await auth.signUpWithEmail(email, passwordDraft);
+      } finally {
+        setAuthBusy(false);
+      }
+    },
+    [auth, emailDraft, passwordDraft],
   );
 
   const handleSyncVault = useCallback(
@@ -159,14 +250,114 @@ export function AccountSyncSection() {
               </Pressable>
             </>
           ) : (
-            <Pressable
-              onPress={() => void auth.signInWithGoogle()}
-              style={[s.button, { backgroundColor: theme.accent }]}
-            >
-              <Text style={s.buttonText}>Se connecter avec Google</Text>
-            </Pressable>
+            <>
+              <Pressable
+                onPress={() => void auth.signInWithGoogle()}
+                style={[s.button, { backgroundColor: theme.accent }]}
+              >
+                <Text style={s.buttonText}>Se connecter avec Google</Text>
+              </Pressable>
+              <Pressable onPress={() => setShowEmailForm((prev) => !prev)} style={styles.emailToggle}>
+                <Text style={[styles.emailToggleText, { color: theme.accent }]}>
+                  {showEmailForm ? 'Masquer la connexion par email' : 'Se connecter avec un email'}
+                </Text>
+              </Pressable>
+              {showEmailForm && (
+                <View style={styles.emailForm}>
+                  <TextInput
+                    value={emailDraft}
+                    onChangeText={setEmailDraft}
+                    placeholder="adresse@email.fr"
+                    placeholderTextColor={theme.textMuted}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    keyboardType="email-address"
+                    style={[s.input, { color: theme.text, borderColor: theme.border }]}
+                  />
+                  <TextInput
+                    value={passwordDraft}
+                    onChangeText={setPasswordDraft}
+                    placeholder="Mot de passe"
+                    placeholderTextColor={theme.textMuted}
+                    secureTextEntry
+                    style={[s.input, { color: theme.text, borderColor: theme.border }]}
+                  />
+                  <View style={styles.vaultButtonsRow}>
+                    <Pressable
+                      onPress={() => void submitEmailAuth('signin')}
+                      disabled={authBusy}
+                      style={[s.button, { backgroundColor: theme.accent, opacity: authBusy ? 0.6 : 1 }]}
+                    >
+                      {authBusy ? (
+                        <ActivityIndicator size="small" color="#fff" />
+                      ) : (
+                        <Text style={s.buttonText}>Se connecter</Text>
+                      )}
+                    </Pressable>
+                    <Pressable
+                      onPress={() => void submitEmailAuth('signup')}
+                      disabled={authBusy}
+                      style={[styles.emailSignUpButton, { borderColor: theme.accent, opacity: authBusy ? 0.6 : 1 }]}
+                    >
+                      <Text style={{ color: theme.accent }}>Créer un compte</Text>
+                    </Pressable>
+                  </View>
+                </View>
+              )}
+            </>
           )}
+          {auth.notice && <Text style={[styles.noticeText, { color: theme.textMuted }]}>✉️ {auth.notice}</Text>}
           {auth.error && <Text style={{ color: theme.danger }}>⚠️ {auth.error}</Text>}
+        </View>
+      )}
+
+      {/* Coffres distants — ce que le COMPTE possède dans le cloud, quel que
+          soit l'appareil (modèle inspiré d'Obsidian Sync : le coffre distant
+          est l'objet central, on s'y connecte, il ne « disparaît » pas avec
+          la machine qui l'a créé). Permet de raccrocher un coffre local à un
+          distant existant et de récupérer un coffre sur un nouvel appareil. */}
+      {auth.user && vault && (
+        <View style={[s.card, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+          <Text style={[s.cardTitle, { color: theme.text }]}>Coffres distants</Text>
+          {remoteVaultsError && <Text style={{ color: theme.danger }}>⚠️ {remoteVaultsError}</Text>}
+          {!remoteVaultsError && remoteVaults === null && (
+            <View style={s.statusRow}>
+              <ActivityIndicator size="small" color={theme.accent} />
+              <Text style={{ color: theme.textMuted }}>Chargement…</Text>
+            </View>
+          )}
+          {remoteVaults?.length === 0 && (
+            <Text style={[s.cardValue, { color: theme.textMuted }]}>
+              Aucun coffre distant pour l’instant — « Créer un coffre distant » sur un coffre local ci-dessous en créera
+              un.
+            </Text>
+          )}
+          {remoteVaults?.map((r) => {
+            const linkedLocal = vaultList.find((lv) => lv.cloudLinked && lv.remoteVaultId === r.id) ?? null;
+            return (
+              <View key={r.id} style={[styles.remoteRow, { borderBottomColor: theme.border }]}>
+                <Text style={{ color: theme.text }}>☁️ {r.name}</Text>
+                <Text style={[styles.vaultPathText, { color: theme.textMuted }]}>
+                  {linkedLocal ? `connecté à « ${linkedLocal.name} » sur cet appareil` : 'non connecté sur cet appareil'}
+                </Text>
+                {!linkedLocal && (
+                  <Pressable
+                    onPress={() => retrievingRemoteId !== r.id && void handleRetrieveRemote(r)}
+                    style={[
+                      styles.syncButton,
+                      { backgroundColor: theme.accent, opacity: retrievingRemoteId === r.id ? 0.6 : 1 },
+                    ]}
+                  >
+                    {retrievingRemoteId === r.id ? (
+                      <ActivityIndicator size="small" color="#fff" />
+                    ) : (
+                      <Text style={s.buttonText}>Récupérer dans un dossier…</Text>
+                    )}
+                  </Pressable>
+                )}
+              </View>
+            );
+          })}
         </View>
       )}
 
@@ -238,12 +429,20 @@ export function AccountSyncSection() {
                     ☁️ {v.name}
                   </Text>
                   {!v.cloudLinked ? (
-                    <Pressable
-                      onPress={() => void handleLinkVault(v)}
-                      style={[styles.syncButton, { backgroundColor: theme.accent }]}
-                    >
-                      <Text style={s.buttonText}>Lier ce coffre au cloud</Text>
-                    </Pressable>
+                    <View style={styles.linkButtonsRow}>
+                      <Pressable
+                        onPress={() => void handleLinkVault(v)}
+                        style={[styles.syncButton, { backgroundColor: theme.accent }]}
+                      >
+                        <Text style={s.buttonText}>Créer un coffre distant</Text>
+                      </Pressable>
+                      <Pressable
+                        onPress={() => setPickingRemoteForVaultId((prev) => (prev === v.id ? null : v.id))}
+                        style={[styles.syncButton, styles.linkSecondaryButton, { borderColor: theme.accent }]}
+                      >
+                        <Text style={{ color: theme.accent }}>Se connecter à un existant…</Text>
+                      </Pressable>
+                    </View>
                   ) : (
                     <Pressable
                       onPress={() => !isSyncing && void handleSyncVault(v)}
@@ -264,6 +463,29 @@ export function AccountSyncSection() {
                     </Text>
                   )}
                   {result?.error && <Text style={{ color: theme.danger }}>⚠️ {result.error}</Text>}
+                  {pickingRemoteForVaultId === v.id && (
+                    <View style={styles.remotePicker}>
+                      {(remoteVaults ?? [])
+                        .filter(
+                          (r) =>
+                            !vaultList.some((lv) => lv.id !== v.id && lv.cloudLinked && lv.remoteVaultId === r.id),
+                        )
+                        .map((r) => (
+                          <Pressable
+                            key={r.id}
+                            onPress={() => void handleConnectExisting(v, r.id)}
+                            style={styles.remotePickerRow}
+                          >
+                            <Text style={{ color: theme.text }}>☁️ {r.name}</Text>
+                          </Pressable>
+                        ))}
+                      {(remoteVaults ?? []).length === 0 && (
+                        <Text style={[styles.vaultPathText, { color: theme.textMuted }]}>
+                          Aucun coffre distant existant — créez-en un avec le premier bouton.
+                        </Text>
+                      )}
+                    </View>
+                  )}
                 </View>
               );
             })}
@@ -401,5 +623,45 @@ const styles = StyleSheet.create({
   autoSyncHint: {
     fontSize: 11,
     marginLeft: 30,
+  },
+  emailToggle: {
+    paddingVertical: 4,
+    alignSelf: 'flex-start',
+  },
+  emailToggleText: {
+    fontSize: 13,
+  },
+  emailForm: {
+    gap: 8,
+  },
+  emailSignUpButton: {
+    paddingVertical: 6,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  noticeText: {
+    fontSize: 12,
+  },
+  remoteRow: {
+    gap: 4,
+    paddingVertical: 6,
+    borderBottomWidth: 1,
+  },
+  linkButtonsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  linkSecondaryButton: {
+    borderWidth: 1,
+    backgroundColor: 'transparent',
+  },
+  remotePicker: {
+    gap: 2,
+    paddingLeft: 12,
+  },
+  remotePickerRow: {
+    paddingVertical: 6,
   },
 });

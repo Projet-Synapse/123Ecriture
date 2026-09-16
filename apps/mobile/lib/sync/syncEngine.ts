@@ -48,6 +48,36 @@ export async function linkVaultToCloud(
   return (data as { id: string }).id;
 }
 
+// Coffres distants du compte connecté — lecture seule, pour lister ce qui
+// existe déjà côté cloud (Paramètres → « Coffres distants ») : s'y connecter
+// depuis un nouvel appareil, ou y raccrocher un coffre local dont le dossier
+// a été recréé, sans créer de doublon. RLS côté serveur : on ne reçoit que
+// ses propres lignes, pas de filtre owner_id à dupliquer ici. `local_vault_id`
+// reste l'identité du dossier CRÉATEUR (informatif) — la référence distante
+// utilisée par la sync vit dans le registre local de chaque machine.
+export type RemoteVaultSummary = {
+  id: string;
+  name: string;
+  localVaultId: string | null;
+  createdAt: string;
+};
+
+export async function listRemoteVaults(): Promise<RemoteVaultSummary[]> {
+  if (!supabase) throw new Error('Client Supabase non configuré (variables EXPO_PUBLIC_SUPABASE_* absentes).');
+  const { data, error } = await supabase
+    .schema(APP_SCHEMA)
+    .from(VAULTS_TABLE)
+    .select('id, name, local_vault_id, created_at')
+    .order('created_at', { ascending: true });
+  if (error) throw error;
+  return (data ?? []).map((row) => ({
+    id: row.id as string,
+    name: row.name as string,
+    localVaultId: (row.local_vault_id as string | null) ?? null,
+    createdAt: row.created_at as string,
+  }));
+}
+
 async function fetchRemoteFiles(remoteVaultId: string): Promise<RemoteVaultFile[]> {
   const { supabase: client } = requireBridges();
   const { data, error } = await client
