@@ -3,6 +3,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 
 import { supabase } from './supabaseClient';
 import { errorMessage } from '../errorMessage';
+import { parseAuthCallbackUrl } from '../authCallback';
 
 // Connexion par compte Google (voir docs/ARCHITECTURE.md §6 et
 // apps/desktop/electron/auth.js pour le pont "navigateur système +
@@ -102,7 +103,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setError(null);
           return;
         }
-        const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(url);
+        // supabase-js >= 2.1xx (multi-flux PKCE) : exchangeCodeForSession
+        // attend LE CODE (pas l'URL) et un options.flowId pour viser le bon
+        // flux. L'URL du protocole custom porte les deux — voir
+        // lib/authCallback.ts (pur, testé) pour le décodage, et le pourquoi
+        // du bug « invalid flow state » quand on lui passait l'URL entière
+        // (POST /token → 404 flow_state_not_found, constaté sur v0.4.6).
+        const { code, flowId, error: oauthError } = parseAuthCallbackUrl(url);
+        if (oauthError) throw new Error(oauthError);
+        if (!code) return; // rien à échanger (URL sans code : déjà traitée)
+        const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(
+          code,
+          flowId ? { flowId } : undefined,
+        );
         if (exchangeError) throw exchangeError;
         setError(null);
       } catch (err) {
