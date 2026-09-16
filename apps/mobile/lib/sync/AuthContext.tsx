@@ -43,7 +43,12 @@ type AuthContextValue = {
   loading: boolean;
   available: boolean;
   error: string | null;
+  // Message informatif distinct de `error` (ex. « confirme ton email ») —
+  // même neutralisé qu'une erreur dès qu'une session s'établit.
+  notice: string | null;
   signInWithGoogle: () => Promise<void>;
+  signInWithEmail: (email: string, password: string) => Promise<void>;
+  signUpWithEmail: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
 };
 
@@ -55,6 +60,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(() => available);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   // Session courante au montage + abonnement aux changements (connexion,
   // déconnexion, rafraîchissement de token...) — géré entièrement par
@@ -79,7 +85,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // mais une seconde livraison du même callback (Windows peut relancer
       // le gestionnaire de protocole deux fois) échouait sur le code déjà
       // consommé et laissait l'erreur affichée PAR-DESSUS l'état connecté.
-      if (newSession) setError(null);
+      if (newSession) {
+        setError(null);
+        setNotice(null);
+      }
     });
     return () => authListener.subscription.unsubscribe();
   }, []);
@@ -144,6 +153,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signInWithGoogle = useCallback(async () => {
     if (!bridge || !supabase) return;
     setError(null);
+    setNotice(null);
     try {
       // `skipBrowserRedirect` : on ne veut PAS que supabase-js navigue la
       // fenêtre de l'app elle-même vers Google (bloqué par Google dans un
@@ -162,9 +172,46 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [bridge]);
 
+  // Connexion email/mot de passe — complément volontairement SANS navigateur
+  // externe ni protocole custom (contrairement au flux Google) : formulaire
+  // dans l'app, supabase-js fait le reste. Même compte/web dashboard que
+  // Google pour un même email : les deux méthodes cohabitent sur le projet.
+  const signInWithEmail = useCallback(async (email: string, password: string) => {
+    if (!supabase) return;
+    setError(null);
+    setNotice(null);
+    try {
+      const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+      if (signInError) throw signInError;
+    } catch (err) {
+      console.error('[auth] échec de la connexion email :', err);
+      setError(errorMessage(err));
+    }
+  }, []);
+
+  const signUpWithEmail = useCallback(async (email: string, password: string) => {
+    if (!supabase) return;
+    setError(null);
+    setNotice(null);
+    try {
+      const { data, error: signUpError } = await supabase.auth.signUp({ email, password });
+      if (signUpError) throw signUpError;
+      // Projet avec confirmation email active (défaut Supabase) : aucune
+      // session n'est ouverte à l'inscription — on l'explique plutôt que
+      // d'afficher un état « connecté » mensonger.
+      if (!data.session) {
+        setNotice('Compte créé — vérifie ta boîte mail (et les indésirables) pour confirmer ton adresse, puis connecte-toi.');
+      }
+    } catch (err) {
+      console.error('[auth] échec de la création de compte :', err);
+      setError(errorMessage(err));
+    }
+  }, []);
+
   const signOut = useCallback(async () => {
     if (!supabase) return;
     setError(null);
+    setNotice(null);
     try {
       const { error: signOutError } = await supabase.auth.signOut();
       if (signOutError) throw signOutError;
@@ -178,8 +225,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const user: AuthUser | null = session?.user
       ? { id: session.user.id, email: session.user.email ?? null }
       : null;
-    return { session, user, loading, available, error, signInWithGoogle, signOut };
-  }, [session, loading, available, error, signInWithGoogle, signOut]);
+    return { session, user, loading, available, error, notice, signInWithGoogle, signInWithEmail, signUpWithEmail, signOut };
+  }, [session, loading, available, error, notice, signInWithGoogle, signInWithEmail, signUpWithEmail, signOut]);
 
   return <AuthReactContext.Provider value={value}>{children}</AuthReactContext.Provider>;
 }

@@ -21,7 +21,7 @@ type VaultsContextValue = {
   activeVaultPath: string | null;
   loading: boolean;
   switchVault: (id: string) => Promise<void>;
-  addExistingVault: () => Promise<void>;
+  addExistingVault: () => Promise<VaultRegistryEntry | null>;
   createVault: (name: string) => Promise<void>;
   renameVault: (id: string, name: string) => Promise<void>;
   removeVault: (id: string) => Promise<void>;
@@ -82,11 +82,18 @@ export function VaultsProvider({ children }: { children: ReactNode }) {
     [bridge],
   );
 
-  const addExistingVault = useCallback(async () => {
-    if (!bridge) return;
-    setVaultList(await bridge.addExisting());
+  const addExistingVault = useCallback(async (): Promise<VaultRegistryEntry | null> => {
+    if (!bridge) return null;
+    // Renvoie l'entrée AJOUTÉE (diff avant/après) : « Récupérer dans un
+    // dossier… » (Paramètres → Coffres distants) enchaîne choix du dossier →
+    // liaison cloud sans avoir à deviner laquelle des lignes vient
+    // d'apparaître. null = boîte de dialogue annulée (liste inchangée).
+    const before = new Set(vaultList.map((v) => v.id));
+    const list = await bridge.addExisting();
+    setVaultList(list);
     setActiveVaultId(await bridge.getActive());
-  }, [bridge]);
+    return list.find((v) => !before.has(v.id)) ?? null;
+  }, [bridge, vaultList]);
 
   const createVault = useCallback(
     async (name: string) => {

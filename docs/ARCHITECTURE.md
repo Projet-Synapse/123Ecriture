@@ -501,6 +501,24 @@ bas) sur le projet Supabase partagé "Projet Synapse".
   taille, horodatage) pour détecter ce qui a changé sans retélécharger tout
   le vault — hash local calculé en un seul passage par
   `apps/desktop/electron/sync.ts` (`sync:hash-vault`).
+- **Coffres distants listables** : `listRemoteVaults()` (lecture seule, RLS
+  owner-only) alimente la carte « Coffres distants » des Paramètres. La
+  liaison d'un coffre local ne se fait plus uniquement en « création »
+  (`linkVaultToCloud`, upsert sur `(owner_id, local_vault_id)`) : on peut
+  aussi **se connecter à un distant existant** — le registre local pointe
+  vers son id, sans écriture cloud (cas « nouvel appareil » ou « dossier
+  recréé », dans l'esprit des coffres distants d'Obsidian Sync). « Récupérer
+  dans un dossier… » enchaîne choix de dossier + liaison, la première sync
+  téléchargeant tout. `local_vault_id` reste l'identité du dossier créateur
+  (informatif) : la référence distante vit dans le registre local de chaque
+  machine, un même coffre distant peut donc être relié depuis plusieurs
+  appareils sans doublon ni migration de schéma.
+- **Connexion email/mot de passe** : `signInWithPassword`/`signUp` directs
+  dans l'app (supabase-js, aucun navigateur externe ni protocole custom) en
+  complément du flux Google — même projet Supabase partagé, provider Email
+  natif ; si la confirmation email est active (défaut Supabase),
+  l'inscription affiche un message (`notice`) plutôt qu'une session
+  illusoire.
 - **Stratégie de conflit v0** : "dernier écrit gagne" par horodatage +
   conservation d'une copie de sauvegarde du côté perdant, écrite comme une
   note `.mdx` normale et visible (`Nom (conflit <horodatage ISO>).mdx`),
