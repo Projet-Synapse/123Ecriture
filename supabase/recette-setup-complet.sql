@@ -86,39 +86,54 @@ drop policy if exists "123ecriture: owner delete objects" on storage.objects;
 create policy "123ecriture: owner select objects" on storage.objects
   for select to authenticated using (
     bucket_id = '123ecriture-vaults'
+    -- forme LIKE : robuste quelle que soit la sémantique de
+    -- storage.foldername (vécu v0.4.9 : l'expression foldername()[1]
+    -- faisait échouer TOUS les uploads par RLS)
     and exists (
       select 1 from app_123ecriture.vaults v
-      where v.id::text = (storage.foldername(name))[1] and v.owner_id = auth.uid()
+      where v.owner_id = auth.uid() and name like v.id::text || '/%'
     )
   );
 create policy "123ecriture: owner insert objects" on storage.objects
   for insert to authenticated with check (
     bucket_id = '123ecriture-vaults'
+    -- forme LIKE : robuste quelle que soit la sémantique de
+    -- storage.foldername (vécu v0.4.9 : l'expression foldername()[1]
+    -- faisait échouer TOUS les uploads par RLS)
     and exists (
       select 1 from app_123ecriture.vaults v
-      where v.id::text = (storage.foldername(name))[1] and v.owner_id = auth.uid()
+      where v.owner_id = auth.uid() and name like v.id::text || '/%'
     )
   );
 create policy "123ecriture: owner update objects" on storage.objects
   for update to authenticated using (
     bucket_id = '123ecriture-vaults'
+    -- forme LIKE : robuste quelle que soit la sémantique de
+    -- storage.foldername (vécu v0.4.9 : l'expression foldername()[1]
+    -- faisait échouer TOUS les uploads par RLS)
     and exists (
       select 1 from app_123ecriture.vaults v
-      where v.id::text = (storage.foldername(name))[1] and v.owner_id = auth.uid()
+      where v.owner_id = auth.uid() and name like v.id::text || '/%'
     )
   ) with check (
     bucket_id = '123ecriture-vaults'
+    -- forme LIKE : robuste quelle que soit la sémantique de
+    -- storage.foldername (vécu v0.4.9 : l'expression foldername()[1]
+    -- faisait échouer TOUS les uploads par RLS)
     and exists (
       select 1 from app_123ecriture.vaults v
-      where v.id::text = (storage.foldername(name))[1] and v.owner_id = auth.uid()
+      where v.owner_id = auth.uid() and name like v.id::text || '/%'
     )
   );
 create policy "123ecriture: owner delete objects" on storage.objects
   for delete to authenticated using (
     bucket_id = '123ecriture-vaults'
+    -- forme LIKE : robuste quelle que soit la sémantique de
+    -- storage.foldername (vécu v0.4.9 : l'expression foldername()[1]
+    -- faisait échouer TOUS les uploads par RLS)
     and exists (
       select 1 from app_123ecriture.vaults v
-      where v.id::text = (storage.foldername(name))[1] and v.owner_id = auth.uid()
+      where v.owner_id = auth.uid() and name like v.id::text || '/%'
     )
   );
 
