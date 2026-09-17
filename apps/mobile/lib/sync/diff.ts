@@ -18,6 +18,11 @@ export type RemoteVaultFile = {
   sizeBytes: number;
   updatedAt: string; // ISO 8601
   deleted: boolean;
+  // Clé d'objet Storage EFFECTIVEMENT enregistrée au moment du push (encodée
+  // base64url depuis v0.4.9 — les noms bruts avec émojis/accents sont
+  // rejetés par Storage, voir storageKeys.ts). Optionnel : les lignes
+  // anciennes peuvent l'omettre, le moteur recalcule alors.
+  storageObjectPath?: string;
 };
 
 export type SyncDecisionKind = 'push' | 'pull' | 'noop' | 'conflict-push-wins' | 'conflict-pull-wins';

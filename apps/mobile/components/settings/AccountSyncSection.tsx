@@ -163,8 +163,10 @@ export function AccountSyncSection() {
 
   // Récupération d'un coffre distant SUR CET APPAREIL : choix d'un dossier
   // local (la boîte de dialogue OS permet d'en créer un neuf), puis liaison
-  // directe au coffre distant — la première « Synchroniser maintenant »
-  // télécharge l'intégralité de son contenu dans le dossier choisi.
+  // directe au coffre distant — et PREMIÈRE SYNCHRO IMMÉDIATE : le dossier
+  // choisi devient le coffre actif, on télécharge donc tout son contenu sans
+  // attendre un clic sur « Synchroniser maintenant » (le cœur de la demande
+  // « récupérer les données correctement »).
   const handleRetrieveRemote = useCallback(
     async (remote: RemoteVaultSummary) => {
       setRetrievingRemoteId(remote.id);
@@ -173,6 +175,7 @@ export function AccountSyncSection() {
         const added = await addExistingVault();
         if (!added) return;
         await setCloudLink(added.id, { linked: true, remoteVaultId: remote.id });
+        await syncStatus.runSync();
       } catch (error) {
         console.error('[sync] échec de la récupération du coffre distant :', error);
         setVaultActionError(errorMessage(error));
@@ -180,7 +183,7 @@ export function AccountSyncSection() {
         setRetrievingRemoteId(null);
       }
     },
-    [addExistingVault, setCloudLink],
+    [addExistingVault, setCloudLink, syncStatus],
   );
 
   const submitEmailAuth = useCallback(

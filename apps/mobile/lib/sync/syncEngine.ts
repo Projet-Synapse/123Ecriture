@@ -1,6 +1,7 @@
 import { APP_SCHEMA, supabase, VAULT_FILES_BUCKET, VAULT_FILES_TABLE, VAULTS_TABLE } from './supabaseClient';
 import { diffVault, type LocalHashedNote, type RemoteVaultFile } from './diff';
 import { errorMessage } from '../errorMessage';
+import { vaultStorageObjectKey } from './storageKeys';
 
 // Orchestrateur de synchro (v0, manuel, sans timer — voir
 // docs/ARCHITECTURE.md §6) : appelle le pont Electron (hash local, lecture/
@@ -16,8 +17,13 @@ export type SyncSummary = {
   errors: string[];
 };
 
+// Clé d'objet Storage : <coffre>/<chemin encodé base64url>. L'encodage est
+// OBLIGATOIRE depuis v0.4.9 : Supabase Storage rejette les clés contenant
+// émojis/accents (« Invalid key » — vécu : 110 fichiers d'un coffre refusés
+// au push, donc jamais récupérables depuis un autre appareil). Voir
+// storageKeys.ts ; le chemin humain vit dans vault_files.rel_path.
 function storageObjectPath(remoteVaultId: string, relPath: string): string {
-  return `${remoteVaultId}/${relPath}`;
+  return `${remoteVaultId}/${vaultStorageObjectKey(relPath)}`;
 }
 
 function requireBridges() {
@@ -83,7 +89,7 @@ async function fetchRemoteFiles(remoteVaultId: string): Promise<RemoteVaultFile[
   const { data, error } = await client
     .schema(APP_SCHEMA)
     .from(VAULT_FILES_TABLE)
-    .select('rel_path, content_hash, size_bytes, updated_at, deleted')
+    .select('rel_path, content_hash, size_bytes, updated_at, deleted, storage_object_path')
     .eq('vault_id', remoteVaultId);
   if (error) throw error;
   return (data ?? []).map((row) => ({
@@ -92,14 +98,18 @@ async function fetchRemoteFiles(remoteVaultId: string): Promise<RemoteVaultFile[
     sizeBytes: row.size_bytes as number,
     updatedAt: row.updated_at as string,
     deleted: row.deleted as boolean,
+    storageObjectPath: (row.storage_object_path as string | null) ?? undefined,
   }));
 }
 
-async function downloadRemoteText(remoteVaultId: string, relPath: string): Promise<string> {
+// Télécharge le contenu d'une note. Priorité à la clé ENREGISTRÉE dans
+// vault_files (storage_object_path) : les fichiers poussés avant v0.4.9
+// sous leur nom brut restent ainsi téléchargeables ; la clé recalculée ne
+// sert qu'aux lignes qui n'en auraient pas.
+async function downloadRemoteText(remoteVaultId: string, relPath: string, objectPath?: string): Promise<string> {
   const { supabase: client } = requireBridges();
-  const { data, error } = await client.storage
-    .from(VAULT_FILES_BUCKET)
-    .download(storageObjectPath(remoteVaultId, relPath));
+  const key = objectPath ?? storageObjectPath(remoteVaultId, relPath);
+  const { data, error } = await client.storage.from(VAULT_FILES_BUCKET).download(key);
   if (error) throw error;
   return data.text();
 }
@@ -134,9 +144,9 @@ async function pushFile(remoteVaultId: string, ownerId: string, note: LocalHashe
   if (upsertError) throw upsertError;
 }
 
-async function pullFile(remoteVaultId: string, relPath: string): Promise<void> {
+async function pullFile(remoteVaultId: string, relPath: string, objectPath?: string): Promise<void> {
   const { vault } = requireBridges();
-  const content = await downloadRemoteText(remoteVaultId, relPath);
+  const content = await downloadRemoteText(remoteVaultId, relPath, objectPath);
   await vault.writeNote(relPath, content);
 }
 
@@ -175,6 +185,7 @@ export async function runSync(remoteVaultId: string, ownerId: string): Promise<S
     fetchRemoteFiles(remoteVaultId),
   ]);
   const localByPath = new Map(localFiles.map((note) => [note.relPath, note]));
+  const remoteByPath = new Map(remoteFiles.map((file) => [file.relPath, file]));
   const decisions = diffVault(localFiles, remoteFiles);
 
   for (const decision of decisions) {
@@ -190,13 +201,17 @@ export async function runSync(remoteVaultId: string, ownerId: string): Promise<S
           break;
         }
         case 'pull':
-          await pullFile(remoteVaultId, decision.relPath);
+          await pullFile(remoteVaultId, decision.relPath, remoteByPath.get(decision.relPath)?.storageObjectPath);
           summary.pulled += 1;
           break;
         case 'conflict-push-wins': {
           const note = localByPath.get(decision.relPath);
           if (!note) break;
-          const losingRemoteContent = await downloadRemoteText(remoteVaultId, decision.relPath);
+          const losingRemoteContent = await downloadRemoteText(
+            remoteVaultId,
+            decision.relPath,
+            remoteByPath.get(decision.relPath)?.storageObjectPath,
+          );
           await backupLosingSide(decision.relPath, losingRemoteContent);
           await pushFile(remoteVaultId, ownerId, note);
           summary.pushed += 1;
@@ -206,7 +221,7 @@ export async function runSync(remoteVaultId: string, ownerId: string): Promise<S
         case 'conflict-pull-wins': {
           const losingLocalContent = await bridges.vault.readNote(decision.relPath);
           await backupLosingSide(decision.relPath, losingLocalContent);
-          await pullFile(remoteVaultId, decision.relPath);
+          await pullFile(remoteVaultId, decision.relPath, remoteByPath.get(decision.relPath)?.storageObjectPath);
           summary.pulled += 1;
           summary.conflicts += 1;
           break;
