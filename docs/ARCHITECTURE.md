@@ -496,7 +496,15 @@ bas) sur le projet Supabase partagé "Projet Synapse".
   segment de chemin "de confiance").
 - **Stockage des fichiers** : Supabase Storage, **un objet par note**
   (tranché — voir §11), bucket privé dédié `123ecriture-vaults`, chemin
-  `<vaults.id>/<relPath>`.
+  `<vaults.id>/<clé encodée>`. Depuis v0.4.9 la clé encode le chemin relatif
+  en **base64url** (`storageKeys.ts`, pur + testé) : Supabase Storage
+  rejette les clés contenant émojis/accents (« Invalid key » — vécu : 110
+  fichiers d'un coffre refusés au push), et les noms de notes réels en
+  contiennent souvent. Le chemin humain reste dans `vault_files.rel_path` ;
+  les téléchargements privilégient la clé HISTORIQUE enregistrée dans
+  `storage_object_path` (rétro-compatible avec les fichiers poussés avant
+  v0.4.9 sous leur nom brut). « Récupérer dans un dossier… » enchaîne
+  désormais choix du dossier + liaison + **première synchro immédiate**.
 - **Métadonnées** : table `vault_files` (chemin, hash de contenu SHA-256,
   taille, horodatage) pour détecter ce qui a changé sans retélécharger tout
   le vault — hash local calculé en un seul passage par
