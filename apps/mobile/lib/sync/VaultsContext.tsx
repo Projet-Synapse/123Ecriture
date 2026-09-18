@@ -38,6 +38,12 @@ type VaultsContextValue = {
   // Déconnexion d'un coffre distant : supprime le contenu déposé du dossier
   // puis retire le coffre de la liste (destructif, confirmé côté UI).
   disconnectVault: (id: string) => Promise<void>;
+  // Emplacements suspects (desktop, v0.4.16) : id -> 'missing' (dossier
+  // disparu) | 'no-identity' (dossier témoin sans identité = coffre déplacé).
+  vaultFolderIssues: Record<string, 'missing' | 'no-identity'>;
+  // Retrouve un coffre déplacé (sélecteur natif + validation d'identité) ;
+  // false = annulé par l'utilisatrice.
+  relocateVault: (id: string) => Promise<boolean>;
 };
 
 const VaultsReactContext = createContext<VaultsContextValue | null>(null);
@@ -46,6 +52,23 @@ export function VaultsProvider({ children }: { children: ReactNode }) {
   const bridge = typeof window !== 'undefined' ? window.vaults : undefined;
   const [vaultList, setVaultList] = useState<VaultRegistryEntry[]>([]);
   const [activeVaultId, setActiveVaultId] = useState<string | null>(null);
+  // Emplacements suspects, recalculés à chaque changement de liste (les
+  // bridges sans checkVaultFolders — web/natif — restent vides : rien à
+  // surveiller de ce genre là-bas pour l'instant).
+  const [vaultFolderIssues, setVaultFolderIssues] = useState<Record<string, 'missing' | 'no-identity'>>({});
+  const refreshFolderIssues = useCallback(() => {
+    if (!bridge?.checkVaultFolders) return;
+    bridge
+      .checkVaultFolders()
+      .then((all) => {
+        const issues: Record<string, 'missing' | 'no-identity'> = {};
+        for (const [id, status] of Object.entries(all)) {
+          if (status !== 'ok') issues[id] = status;
+        }
+        setVaultFolderIssues(issues);
+      })
+      .catch((error) => console.error('[vaults] vérification des emplacements échouée :', error));
+  }, [bridge]);
   // Initialisé selon la présence du pont (pas dans l'effet ci-dessous) :
   // sans pont, il n'y a jamais de chargement à attendre, `loading` doit donc
   // démarrer à `false` directement plutôt que d'être corrigé après coup par
@@ -67,6 +90,7 @@ export function VaultsProvider({ children }: { children: ReactNode }) {
         if (!cancelled) setLoading(false);
       }
     })();
+    refreshFolderIssues();
     const unsubscribe = bridge.onChanged((list) => {
       setVaultList(list);
       // Le process principal ne renvoie pas l'id actif avec l'évènement
@@ -78,7 +102,7 @@ export function VaultsProvider({ children }: { children: ReactNode }) {
       cancelled = true;
       unsubscribe();
     };
-  }, [bridge]);
+  }, [bridge, refreshFolderIssues]);
 
   const switchVault = useCallback(
     async (id: string) => {
@@ -161,6 +185,24 @@ export function VaultsProvider({ children }: { children: ReactNode }) {
     [bridge, removeVault],
   );
 
+  // Retrouve un coffre déplacé : sélecteur natif, validation d'identité et
+  // mise à jour du chemin côté pont (vaults.ts relocateVault). Retourne
+  // false si l'utilisatrice annule le sélecteur.
+  const relocateVault = useCallback(
+    async (id: string): Promise<boolean> => {
+      if (!bridge?.relocateVault) {
+        throw new Error('Retrouver le dossier est disponible sur la version desktop.');
+      }
+      const list = await bridge.relocateVault(id);
+      if (!list) return false;
+      setVaultList(list);
+      setActiveVaultId(await bridge.getActive());
+      refreshFolderIssues();
+      return true;
+    },
+    [bridge, refreshFolderIssues],
+  );
+
   const setCloudLink = useCallback(
     async (id: string, payload: { linked: boolean; remoteVaultId?: string | null }) => {
       if (!bridge) return;
@@ -195,6 +237,10 @@ export function VaultsProvider({ children }: { children: ReactNode }) {
     [bridge, createVault, setCloudLink],
   );
 
+  useEffect(() => {
+    refreshFolderIssues();
+  }, [vaultList, refreshFolderIssues]);
+
   const activeVault = vaultList.find((v) => v.id === activeVaultId) ?? null;
 
   const value = useMemo<VaultsContextValue>(
@@ -212,6 +258,8 @@ export function VaultsProvider({ children }: { children: ReactNode }) {
       removeVault,
       disconnectVault,
       setCloudLink,
+      vaultFolderIssues,
+      relocateVault,
     }),
     [
       vaultList,
@@ -226,6 +274,8 @@ export function VaultsProvider({ children }: { children: ReactNode }) {
       removeVault,
       disconnectVault,
       setCloudLink,
+      vaultFolderIssues,
+      relocateVault,
     ],
   );
 

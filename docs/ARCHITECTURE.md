@@ -553,6 +553,17 @@ bas) sur le projet Supabase partagé "Projet Synapse".
   affiche « 🏠 provient de X » — demande de l'utilisatrice pour distinguer
   les coffres créés depuis son PC portable (LORDI) de ceux créés ailleurs ;
   les coffres antérieurs au suivi ont été backfillés à la main (SQL).
+- **Coffres déplacés** (v0.4.16) : déplacer un dossier de coffre dans
+  l'explorateur ne casse plus la synchro silencieusement. `vaults:check-
+  folders` signale 'missing' (dossier enregistré disparu) ou 'no-identity'
+  (dossier témoin vide d'identité — signature d'un déplacement) ; la carte
+  « Coffres locaux » affiche un ⚠️ avec « Retrouver le dossier… »
+  (`vaults:relocate` : sélecteur natif titré, VALIDATION d'identité —
+  jamais le dossier d'un autre coffre — écriture de l'identité si absente,
+  mise à jour du chemin). En garde-fou, `sync:hash-vault` REFUSE de hacher
+  un emplacement disparu/sans identité : auparavant une liste vide faisait
+  verser tout le coffre distant dans l'ancien emplacement (« résurrection »
+  vécue par l'utilisatrice à chaque synchro après un déplacement).
 - **Déconnexion d'un coffre distant** (v0.4.12) : bouton « Déconnecter… »
   sur un coffre local lié (carte « Coffres locaux » — renommée ainsi pour
   la distinguer des coffres distants du compte). Action DESTRUCTIVE et

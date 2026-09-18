@@ -64,6 +64,23 @@ export function registerSyncHandlers(): void {
   ipcMain.handle('sync:hash-vault', async () => {
     const vaultPath = vaults.getActiveVaultPath();
     if (!vaultPath) return [];
+    // Anti-« résurrection » (v0.4.16) : si le dossier enregistré a disparu
+    // (coffre déplacé/renommé) ou ne porte plus l'identité du coffre (déplacé
+    // en laissant un dossier témoin vide), on REFUSE de hacher plutôt que de
+    // renvoyer une liste vide — une liste vide ferait verser tout le coffre
+    // distant dans l'ancien emplacement à la synchro suivante. Le message
+    // oriente vers « Retrouver le dossier… » (Paramètres → Coffres locaux).
+    const fsSync = await import('fs');
+    if (!fsSync.existsSync(vaultPath)) {
+      throw new Error(
+        "Le dossier du coffre est introuvable à son emplacement enregistré (déplacé ou renommé ?) — retrouvez-le via Paramètres → Coffres locaux → « Retrouver le dossier… ».",
+      );
+    }
+    if (!fsSync.existsSync(path.join(vaultPath, '.123ecriture', 'vault.json'))) {
+      throw new Error(
+        "Le dossier à l'emplacement enregistré ne contient plus l'identité du coffre (déplacé ?) — retrouvez le nouvel emplacement via Paramètres → Coffres locaux → « Retrouver le dossier… ».",
+      );
+    }
     return walkAndHash(vaultPath, vaultPath, []);
   });
 }
