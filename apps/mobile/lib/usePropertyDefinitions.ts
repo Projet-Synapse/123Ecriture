@@ -78,5 +78,5 @@ export function usePropertyDefinitions() {
     [bridge, runAction],
   );
 
-  return { bridge, definitions, error, create, update, remove };
+  return { bridge, definitions, error, refresh, create, update, remove };
 }

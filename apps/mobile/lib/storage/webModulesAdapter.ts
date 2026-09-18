@@ -17,6 +17,8 @@
 //      dans tout le coffre au renommage)
 
 import { randomUUID } from './webUuid';
+import { parseFrontmatter } from '../frontmatter';
+import { inferPropertyType } from '../propertyTypes';
 import { type FsaDirectoryHandleLike, listNoteRelPaths, readFileText, writeFileText } from './webFs';
 
 import { getActiveConfigDir, webVaultRegistry } from './webVaultRegistry';
@@ -554,6 +556,55 @@ export const webPropertiesAdapter = {
     const properties = (await readProperties(configDir)).filter((property) => property.id !== id);
     await writeJson(configDir, 'properties.json', properties);
     return properties;
+  },
+
+  // Scan du coffre (demande utilisateur : auto-enregistrement des clés de
+  // frontmatter + compteur d'usage) — port direct du handler
+  // properties:scan-vault desktop, même fusion insensible à la casse,
+  // mêmes exclusions created/modified.
+  scanVault: async (): Promise<PropertyScanResult> => {
+    const configDir = await optionalConfigDir();
+    const root = await webVaultRegistry.getActiveHandle();
+    if (!configDir || !root) return { properties: [], usage: {}, createdCount: 0 };
+
+    const properties = await readProperties(configDir);
+    const usage: Record<string, number> = {};
+    const knownByLowerName = new Map(properties.map((property) => [property.name.toLowerCase(), property]));
+    const toCreate: PropertyDefinition[] = [];
+
+    for (const relPath of await listNoteRelPaths(root, ['.mdx', '.md'])) {
+      let content: string;
+      try {
+        content = await readFileText(root, relPath);
+      } catch {
+        continue; // Note illisible entre le listage et la lecture — ignorée.
+      }
+      for (const [key, value] of Object.entries(parseFrontmatter(content).data)) {
+        if (key === 'created' || key === 'modified') continue;
+        usage[key] = (usage[key] ?? 0) + 1;
+        const lower = key.toLowerCase();
+        if (!knownByLowerName.has(lower)) {
+          const definition = {
+            id: randomUUID(),
+            name: key,
+            type: inferPropertyType(value),
+            createdAt: new Date().toISOString(),
+          } as unknown as PropertyDefinition;
+          toCreate.push(definition);
+          knownByLowerName.set(lower, definition);
+        }
+      }
+    }
+
+    const updatedProperties =
+      toCreate.length > 0
+        ? (await writeJson(configDir, 'properties.json', [...properties, ...toCreate]), [
+            ...properties,
+            ...toCreate,
+          ])
+        : properties;
+
+    return { properties: updatedProperties, usage, createdCount: toCreate.length };
   },
 } satisfies PropertiesBridge;
 

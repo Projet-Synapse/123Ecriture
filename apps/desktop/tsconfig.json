@@ -10,5 +10,12 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["electron/**/*.ts"]
+  "include": [
+    "electron/**/*.ts",
+    // Les handlers importent des helpers d'apps/mobile/lib qui s'appuient
+    // sur les types de ponts globaux (PropertyType, PropertyDefinition…,
+    // voir global.d.ts) — le desktop doit connaître ces déclarations pour
+    // typechecker ces modules partagés (aucun effet au bundle esbuild).
+    "../mobile/types/global.d.ts"
+  ]
 }

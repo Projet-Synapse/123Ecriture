@@ -10,7 +10,11 @@ import {
 
 import { EditorView, type ReactCodeMirrorRef } from '@uiw/react-codemirror';
 
-import { parseFrontmatter, serializeFrontmatter } from '../lib/frontmatter';
+import {
+  ensureTimestamps,
+  parseFrontmatter,
+  serializeFrontmatter,
+} from '../lib/frontmatter';
 import { applyPathChange, isPathAffected, mergeRestoredOpenTabs } from '../lib/openTabs';
 import type { FormattingResult, Selection } from '../lib/mdxFormatting';
 import { NOTES_TOOLBAR_ACTIONS, type ToolbarAction } from '../lib/notesToolbarActions';
@@ -260,6 +264,34 @@ export function NotesScreen({
   useEffect(() => {
     contentRef.current = content;
   }, [content]);
+
+  // Matérialise les dates système `created`/`modified` DANS le frontmatter à
+  // chaque sauvegarde (demande utilisateur : les lignes « Créé/Modifié » des
+  // vues deviennent de vraies clés, pour une cohérence totale entre les
+  // modes source/intermédiaire/aperçu). `created` n'est écrit qu'une fois
+  // (date de création du fichier, jamais une valeur existante écrasée) ;
+  // `modified` est actualisé à chaque enregistrement. Le texte retourné est
+  // aussi réinjecté dans `content` par les appelants (les clés ajoutées
+  // doivent être visibles à l'écran, pas seulement sur disque). Sans pont
+  // getTimestamps (adaptateur natif Android) : pas de matérialisation.
+  // Déclaré ICI (avant openNote qui l'appelle au flush de changement de
+  // note) : react-hooks exige que le hook précède sa capture.
+  const materializeTimestamps = useCallback(
+    async (relPath: string, text: string): Promise<string> => {
+      if (!vault?.getTimestamps) return text;
+      try {
+        const { data, body } = parseFrontmatter(text);
+        const timestamps = await vault.getTimestamps(relPath).catch(() => null);
+        const next = ensureTimestamps(data, timestamps?.createdAt ?? Date.now(), Date.now());
+        const serialized = serializeFrontmatter(next, body);
+        return serialized === text ? text : serialized;
+      } catch (error) {
+        console.error('[properties] échec de la matérialisation des dates :', error);
+        return text;
+      }
+    },
+    [vault],
+  );
   // Onglets — même rôle que contentRef : lire la liste COURANTE depuis
   // openNote/closeTab/cycleOpenTabs (closures d'un rendu potentiellement
   // antérieur) sans les ajouter à leurs deps (elles se recréeraient à
@@ -508,9 +540,11 @@ export function NotesScreen({
           clearTimeout(saveTimer.current);
           saveTimer.current = null;
           const leftNote = activeNoteRef.current;
-          void vault.writeNote(leftNote.relPath, contentRef.current).catch((error) => {
-            console.error('[vault] échec de la sauvegarde différée au changement de note :', error);
-          });
+          void materializeTimestamps(leftNote.relPath, contentRef.current)
+            .then((finalText) => vault.writeNote(leftNote.relPath, finalText))
+            .catch((error) => {
+              console.error('[vault] échec de la sauvegarde différée au changement de note :', error);
+            });
         }
         const text = await vault.readNote(node.relPath);
         setActiveNote(node);
@@ -538,7 +572,7 @@ export function NotesScreen({
         setStatus('error');
       }
     },
-    [vault, preferences.editorDefaultMode, applyOpenTabs],
+    [vault, preferences.editorDefaultMode, applyOpenTabs, materializeTimestamps],
   );
 
   // //11. 🗂️ ONGLETS — fermeture et navigation clavier
@@ -1380,7 +1414,9 @@ export function NotesScreen({
       saveTimer.current = setTimeout(() => {
         void (async () => {
           try {
-            await vault.writeNote(activeNote.relPath, text);
+            const finalText = await materializeTimestamps(activeNote.relPath, text);
+            if (finalText !== text) setContent(finalText);
+            await vault.writeNote(activeNote.relPath, finalText);
             setStatus('saved');
             await refreshTree();
           } catch (error) {
@@ -1390,7 +1426,7 @@ export function NotesScreen({
         })();
       }, AUTOSAVE_DELAY_MS);
     },
-    [vault, activeNote, refreshTree],
+    [vault, activeNote, refreshTree, materializeTimestamps],
   );
 
   const handleChangeContent = (text: string) => {
@@ -1408,7 +1444,9 @@ export function NotesScreen({
     setStatus('saving');
     void (async () => {
       try {
-        await vault.writeNote(activeNote.relPath, contentRef.current);
+        const finalText = await materializeTimestamps(activeNote.relPath, contentRef.current);
+        if (finalText !== contentRef.current) setContent(finalText);
+        await vault.writeNote(activeNote.relPath, finalText);
         setStatus('saved');
         await refreshTree();
       } catch (error) {
@@ -1416,7 +1454,7 @@ export function NotesScreen({
         setStatus('error');
       }
     })();
-  }, [vault, activeNote, refreshTree]);
+  }, [vault, activeNote, refreshTree, materializeTimestamps]);
 
   // Raccourcis clavier globaux (Ctrl sur Windows/Linux, Cmd sur macOS) —
   // Ctrl/Cmd+S force la sauvegarde immédiate, Ctrl/Cmd+N crée une nouvelle
@@ -2222,6 +2260,7 @@ export function NotesScreen({
                         content={content}
                         onChangeContent={handleChangeContent}
                         tree={tree}
+                        interactive
                       />
                     )}
 

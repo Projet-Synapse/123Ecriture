@@ -668,6 +668,16 @@ export const webVaultAdapter = {
       .map(([tag, notes]) => ({ tag, notes }))
       .sort((a, b) => a.tag.localeCompare(b.tag, 'fr'));
   },
+
+  // Dates du fichier (matérialisation created/modified) — la FSA n'expose
+  // PAS de date de création (File.lastModified seulement) : createdAt
+  // retombe sur la même valeur, jamais une date impossible.
+  getTimestamps: async (relPath: string): Promise<NoteTimestamps> => {
+    const root = await webVaultRegistry.getActiveHandle();
+    if (!root) throw new Error('Aucun vault sélectionné');
+    const file = await (await getFileByRelPath(root, relPath)).getFile();
+    return { createdAt: file.lastModified, modifiedAt: file.lastModified };
+  },
 } satisfies VaultBridge;
 
 // //6. 🔧 UTILITAIRES LOCAUX (handles enfants, déplacement)
