@@ -427,7 +427,12 @@ export function registerVaultHandlers(getWindow: GetWindow): void {
   ipcMain.handle('vault:write-note', async (_event, relPath: string, content: string) => {
     const vaultPath = getVaultPath();
     if (!vaultPath) throw new Error('Aucun vault sélectionné');
-    await fs.writeFile(resolveInVault(vaultPath, relPath), content, 'utf8');
+    const fullPath = resolveInVault(vaultPath, relPath);
+    // Le pull cloud dépose des notes dans des sous-dossiers qui n'existent
+    // pas encore localement (récupération d'un coffre distant dans un
+    // dossier vide) — sans mkdir, writeFile échoue avec ENOENT.
+    await fs.mkdir(path.dirname(fullPath), { recursive: true });
+    await fs.writeFile(fullPath, content, 'utf8');
   });
 
   // `parentRelPath` optionnel : crée à la racine du vault si omis, sinon

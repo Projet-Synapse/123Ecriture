@@ -45,6 +45,14 @@ export interface VaultIdentity {
   createdAt: string;
 }
 
+// Identité de l'APPAREIL (pas du coffre) pour le suivi « appareils
+// connectés » d'un coffre distant : id stable générée une fois et persistée
+// dans config.json, nom lisible = nom de la machine (os.hostname()).
+export interface DeviceInfo {
+  id: string;
+  name: string;
+}
+
 // Config app-level (userData/config.json, voir config.ts) — `vaultPath`
 // est l'ancien format (avant les coffres multiples), migré à la volée par
 // vaults.ts ; gardé optionnel ici pour typer fidèlement ce qu'on peut
@@ -56,6 +64,9 @@ export interface AppConfig {
   preferences?: Partial<Preferences>;
   // Option « mise à jour automatique » pilotée par updater.ts (défaut : true).
   autoUpdate?: boolean;
+  // Identité stable de l'appareil (voir DeviceInfo) — absente au premier
+  // lancement, générée alors par getOrCreateDeviceInfo().
+  deviceId?: string;
 }
 
 export interface Subtask {

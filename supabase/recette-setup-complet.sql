@@ -74,71 +74,62 @@ grant usage on schema app_123ecriture to authenticated;
 grant select, insert, update, delete on app_123ecriture.vaults to authenticated;
 grant select, insert, update, delete on app_123ecriture.vault_files to authenticated;
 
--- 4) Bucket Storage privé dédié (chemin d'objet : <vaults.id>/<relPath>)
+-- 4) Bucket Storage privé dédié (chemin d'objet : <vaults.id>/<clé encodée>)
 insert into storage.buckets (id, name, public)
 values ('123ecriture-vaults', '123ecriture-vaults', false)
 on conflict (id) do nothing;
 
+-- Politique Storage : forme PROUVÉE en réel (v0.4.9), identique à celle
+-- appliquée via le dashboard → Storage → Policies. Les formes précédentes
+-- (storage.foldername(name)[1], puis sous-requête exists(... vaults ...))
+-- ont TOUTES échoué avec 403 « new row violates row-level security » :
+-- les sous-requêtes vers un autre schéma ne passent pas dans les policies
+-- storage. On s'appuie sur storage.objects.owner_id (TEXT, rempli par
+-- Supabase à l'upload avec l'uid de l'utilisateur connecté).
 drop policy if exists "123ecriture: owner select objects" on storage.objects;
 drop policy if exists "123ecriture: owner insert objects" on storage.objects;
 drop policy if exists "123ecriture: owner update objects" on storage.objects;
 drop policy if exists "123ecriture: owner delete objects" on storage.objects;
-create policy "123ecriture: owner select objects" on storage.objects
-  for select to authenticated using (
-    bucket_id = '123ecriture-vaults'
-    -- forme LIKE : robuste quelle que soit la sémantique de
-    -- storage.foldername (vécu v0.4.9 : l'expression foldername()[1]
-    -- faisait échouer TOUS les uploads par RLS)
-    and exists (
-      select 1 from app_123ecriture.vaults v
-      where v.owner_id = auth.uid() and name like v.id::text || '/%'
-    )
-  );
-create policy "123ecriture: owner insert objects" on storage.objects
-  for insert to authenticated with check (
-    bucket_id = '123ecriture-vaults'
-    -- forme LIKE : robuste quelle que soit la sémantique de
-    -- storage.foldername (vécu v0.4.9 : l'expression foldername()[1]
-    -- faisait échouer TOUS les uploads par RLS)
-    and exists (
-      select 1 from app_123ecriture.vaults v
-      where v.owner_id = auth.uid() and name like v.id::text || '/%'
-    )
-  );
-create policy "123ecriture: owner update objects" on storage.objects
-  for update to authenticated using (
-    bucket_id = '123ecriture-vaults'
-    -- forme LIKE : robuste quelle que soit la sémantique de
-    -- storage.foldername (vécu v0.4.9 : l'expression foldername()[1]
-    -- faisait échouer TOUS les uploads par RLS)
-    and exists (
-      select 1 from app_123ecriture.vaults v
-      where v.owner_id = auth.uid() and name like v.id::text || '/%'
-    )
-  ) with check (
-    bucket_id = '123ecriture-vaults'
-    -- forme LIKE : robuste quelle que soit la sémantique de
-    -- storage.foldername (vécu v0.4.9 : l'expression foldername()[1]
-    -- faisait échouer TOUS les uploads par RLS)
-    and exists (
-      select 1 from app_123ecriture.vaults v
-      where v.owner_id = auth.uid() and name like v.id::text || '/%'
-    )
-  );
-create policy "123ecriture: owner delete objects" on storage.objects
-  for delete to authenticated using (
-    bucket_id = '123ecriture-vaults'
-    -- forme LIKE : robuste quelle que soit la sémantique de
-    -- storage.foldername (vécu v0.4.9 : l'expression foldername()[1]
-    -- faisait échouer TOUS les uploads par RLS)
-    and exists (
-      select 1 from app_123ecriture.vaults v
-      where v.owner_id = auth.uid() and name like v.id::text || '/%'
-    )
-  );
+drop policy if exists "123ecriture_vaults_owner_all" on storage.objects;
+create policy "123ecriture_vaults_owner_all" on storage.objects
+  for all to authenticated
+  using (bucket_id = '123ecriture-vaults' and owner_id = auth.uid()::text)
+  with check (bucket_id = '123ecriture-vaults' and owner_id = auth.uid()::text);
 
--- 5) L'ÉTAPE QUI MANQUAIT : exposer le schéma à l'API PostgREST.
+-- 5) Exposer le schéma à l'API PostgREST.
 -- Sans elle, toute requête échoue avec PGRST106 « Invalid schema ».
 -- (La liste écrase la config : reprendre les schémas par défaut + le nôtre.)
+-- ⚠️ En hébergé, le rôle postgres n'a pas le droit de modifier ce paramètre
+-- (« permission denied to set parameter pgrst.db_schemas ») : dans ce cas,
+-- passer par le Dashboard → Project Settings → Data API → Exposed schemas
+-- et ajouter app_123ecriture à la liste, puis Save/Restart.
 alter database postgres set pgrst.db_schemas = 'public, graphql_public, app_123ecriture';
 notify pgrst, 'reload config';
+
+-- 6) Appareils connectés à chaque coffre (v0.4.10) : heartbeat par appareil
+-- à chaque synchro (Paramètres → Coffres distants affiche « qui » est
+-- connecté et quand il a été vu la dernière fois).
+create table if not exists app_123ecriture.vault_devices (
+  vault_id uuid not null references app_123ecriture.vaults(id) on delete cascade,
+  owner_id uuid not null references auth.users(id) on delete cascade,
+  device_id text not null,
+  device_name text not null,
+  last_seen_at timestamptz not null default now(),
+  primary key (vault_id, device_id)
+);
+
+alter table app_123ecriture.vault_devices enable row level security;
+drop policy if exists "vault_devices: owner select" on app_123ecriture.vault_devices;
+drop policy if exists "vault_devices: owner insert" on app_123ecriture.vault_devices;
+drop policy if exists "vault_devices: owner update" on app_123ecriture.vault_devices;
+drop policy if exists "vault_devices: owner delete" on app_123ecriture.vault_devices;
+create policy "vault_devices: owner select" on app_123ecriture.vault_devices
+  for select to authenticated using (owner_id = auth.uid());
+create policy "vault_devices: owner insert" on app_123ecriture.vault_devices
+  for insert to authenticated with check (owner_id = auth.uid());
+create policy "vault_devices: owner update" on app_123ecriture.vault_devices
+  for update to authenticated using (owner_id = auth.uid()) with check (owner_id = auth.uid());
+create policy "vault_devices: owner delete" on app_123ecriture.vault_devices
+  for delete to authenticated using (owner_id = auth.uid());
+
+grant select, insert, update, delete on app_123ecriture.vault_devices to authenticated;

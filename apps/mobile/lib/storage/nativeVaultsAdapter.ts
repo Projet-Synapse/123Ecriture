@@ -1,4 +1,4 @@
-import { StorageAccessFramework } from 'expo-file-system/legacy';
+import * as FileSystem from 'expo-file-system/legacy';
 
 import {
   addVault,
@@ -10,6 +10,14 @@ import {
   setVaultCloudLink,
   switchActiveVault,
 } from './nativeVaultRegistry';
+
+// Sélecteur de dossier système (voir requestAndRegisterVault ci-dessous).
+const { StorageAccessFramework } = FileSystem;
+
+// Fichier d'identité d'appareil (voir deviceInfo ci-dessous) — même stockage
+// privé que le registre des coffres (documentDirectory), mécanisme identique
+// à nativeVaultRegistry.ts.
+const DEVICE_INFO_PATH = `${FileSystem.documentDirectory}123ecriture-device.json`;
 
 // Implémentation native (Android) de VaultsBridge — voir
 // nativeVaultRegistry.ts pour le pourquoi du modèle de stockage. `path`
@@ -61,6 +69,28 @@ export const nativeVaultsAdapter: VaultsBridge = {
   addExisting: () => requestAndRegisterVault('Nouveau coffre'),
 
   createNew: async (name: string) => requestAndRegisterVault(name || 'Nouveau coffre'),
+
+  // Identité d'appareil pour « appareils connectés » : stable par
+  // installation (pas de hostname exposé par React Native), nom générique.
+  deviceInfo: async () => {
+    try {
+      const info = await FileSystem.getInfoAsync(DEVICE_INFO_PATH);
+      if (info.exists) {
+        const parsed = JSON.parse(await FileSystem.readAsStringAsync(DEVICE_INFO_PATH)) as { id?: string };
+        if (parsed.id) return { id: parsed.id, name: 'Appareil Android' };
+      }
+    } catch {
+      // Fichier absent/corrompu : on en génère un neuf ci-dessous.
+    }
+    const id = `android-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    try {
+      await FileSystem.writeAsStringAsync(DEVICE_INFO_PATH, JSON.stringify({ id }), { encoding: 'utf8' });
+    } catch {
+      // Écriture impossible : l'identité changera au prochain lancement —
+      // dégradé acceptable, jamais de crash pour du best-effort.
+    }
+    return { id, name: 'Appareil Android' };
+  },
 
   switch: (id: string) => switchActiveVault(id),
 

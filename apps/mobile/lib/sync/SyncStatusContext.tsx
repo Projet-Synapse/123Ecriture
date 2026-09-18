@@ -96,12 +96,25 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
   // capturé à la dernière fermeture de useCallback.
   const syncingRef = useRef(false);
 
+  // Même exigence de fraîcheur pour userId/remoteVaultId : un appelant peut
+  // détenir une version ANTÉRIEURE de `runSync` (closure créée avant que le
+  // coffre actif change) — cas réel v0.4.10 : « Connecter sur cet appareil »
+  // enchaîne addExistingVault → setCloudLink → runSync dans une même
+  // closure ; sans ref, runSync lirait l'ANCIEN coffre actif (celui d'avant
+  // la connexion) et ne synchroniserait pas le coffre récupéré. Mis à jour
+  // en effet (pas pendant le rendu) pour rester correct en rendu concurrent.
+  const latestRef = useRef({ userId, remoteVaultId });
+  useEffect(() => {
+    latestRef.current = { userId, remoteVaultId };
+  }, [userId, remoteVaultId]);
+
   const runSync = useCallback(async () => {
-    if (!userId || !remoteVaultId || syncingRef.current) return;
+    const { userId: currentUserId, remoteVaultId: currentRemoteVaultId } = latestRef.current;
+    if (!currentUserId || !currentRemoteVaultId || syncingRef.current) return;
     syncingRef.current = true;
     setStatus('syncing');
     try {
-      const summary = await runSyncEngine(remoteVaultId, userId);
+      const summary = await runSyncEngine(currentRemoteVaultId, currentUserId);
       setLastSummary(summary);
       if (summary.errors.length > 0) {
         setStatus('error');
@@ -124,7 +137,7 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
     } finally {
       syncingRef.current = false;
     }
-  }, [userId, remoteVaultId]);
+  }, []);
 
   // Synchro automatique (Paramètres → Compte et synchronisation → "Synchro-
   // niser automatiquement") : STRICTEMENT rien si la préférence est fausse

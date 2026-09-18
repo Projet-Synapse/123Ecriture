@@ -1,6 +1,14 @@
-import { APP_SCHEMA, supabase, VAULT_FILES_BUCKET, VAULT_FILES_TABLE, VAULTS_TABLE } from './supabaseClient';
+import {
+  APP_SCHEMA,
+  supabase,
+  VAULT_DEVICES_TABLE,
+  VAULT_FILES_BUCKET,
+  VAULT_FILES_TABLE,
+  VAULTS_TABLE,
+} from './supabaseClient';
 import { diffVault, type LocalHashedNote, type RemoteVaultFile } from './diff';
 import { errorMessage } from '../errorMessage';
+import { sortDevicesByLastSeen, type RemoteVaultDevice } from './devices';
 import { vaultStorageObjectKey } from './storageKeys';
 
 // Orchestrateur de synchro (v0, manuel, sans timer — voir
@@ -61,27 +69,95 @@ export async function linkVaultToCloud(
 // ses propres lignes, pas de filtre owner_id à dupliquer ici. `local_vault_id`
 // reste l'identité du dossier CRÉATEUR (informatif) — la référence distante
 // utilisée par la sync vit dans le registre local de chaque machine.
+// `devices` : appareils ayant synchronisé ce coffre (table vault_devices),
+// du plus récemment vu au plus ancien — la carte « Coffres distants »
+// affiche « qui » est connecté et quand (demande v0.4.10).
 export type RemoteVaultSummary = {
   id: string;
   name: string;
   localVaultId: string | null;
   createdAt: string;
+  devices: RemoteVaultDevice[];
 };
+
+// Lecture best-effort des appareils par coffre : si la table n'existe pas
+// encore côté Supabase (recette SQL non rejouée après mise à jour), on rend
+// une liste vide plutôt que de faire échouer toute la carte.
+async function fetchDevicesByVault(): Promise<Map<string, RemoteVaultDevice[]>> {
+  if (!supabase) return new Map();
+  const { data, error } = await supabase
+    .schema(APP_SCHEMA)
+    .from(VAULT_DEVICES_TABLE)
+    .select('vault_id, device_id, device_name, last_seen_at');
+  if (error) {
+    console.warn('[sync] appareils connectés indisponibles :', error.message);
+    return new Map();
+  }
+  const byVault = new Map<string, RemoteVaultDevice[]>();
+  for (const row of data ?? []) {
+    const vaultId = row.vault_id as string;
+    const device: RemoteVaultDevice = {
+      deviceId: row.device_id as string,
+      name: row.device_name as string,
+      lastSeenAt: row.last_seen_at as string,
+    };
+    const list = byVault.get(vaultId) ?? [];
+    list.push(device);
+    byVault.set(vaultId, list);
+  }
+  for (const list of byVault.values()) sortDevicesByLastSeen(list);
+  return byVault;
+}
 
 export async function listRemoteVaults(): Promise<RemoteVaultSummary[]> {
   if (!supabase) throw new Error('Client Supabase non configuré (variables EXPO_PUBLIC_SUPABASE_* absentes).');
-  const { data, error } = await supabase
-    .schema(APP_SCHEMA)
-    .from(VAULTS_TABLE)
-    .select('id, name, local_vault_id, created_at')
-    .order('created_at', { ascending: true });
+  const [vaultsResult, devicesByVault] = await Promise.all([
+    supabase
+      .schema(APP_SCHEMA)
+      .from(VAULTS_TABLE)
+      .select('id, name, local_vault_id, created_at')
+      .order('created_at', { ascending: true }),
+    fetchDevicesByVault(),
+  ]);
+  const { data, error } = vaultsResult;
   if (error) throw error;
   return (data ?? []).map((row) => ({
     id: row.id as string,
     name: row.name as string,
     localVaultId: (row.local_vault_id as string | null) ?? null,
     createdAt: row.created_at as string,
+    devices: devicesByVault.get(row.id as string) ?? [],
   }));
+}
+
+// Heartbeat « appareil connecté » : upsert d'une ligne vault_devices à chaque
+// synchro réussie du coffre par CET appareil (identité stable du pont —
+// hostname sur desktop, « Navigateur » sur web). Best-effort assumé : un
+// échec (table absente, offline) est loggé mais ne fait PAS échouer la
+// synchro ni apparaître d'erreur — le suivi d'appareils ne doit jamais
+// casser la synchronisation des fichiers elle-même.
+async function heartbeatDevice(remoteVaultId: string, ownerId: string): Promise<void> {
+  try {
+    if (!supabase) return;
+    const info = typeof window !== 'undefined' && window.vaults ? await window.vaults.deviceInfo() : null;
+    if (!info) return;
+    const { error } = await supabase
+      .schema(APP_SCHEMA)
+      .from(VAULT_DEVICES_TABLE)
+      .upsert(
+        {
+          vault_id: remoteVaultId,
+          owner_id: ownerId,
+          device_id: info.id,
+          device_name: info.name,
+          last_seen_at: new Date().toISOString(),
+        },
+        { onConflict: 'vault_id,device_id' },
+      );
+    if (error) throw error;
+  } catch (error) {
+    console.warn('[sync] heartbeat appareil ignoré :', errorMessage(error));
+  }
 }
 
 async function fetchRemoteFiles(remoteVaultId: string): Promise<RemoteVaultFile[]> {
@@ -232,6 +308,11 @@ export async function runSync(remoteVaultId: string, ownerId: string): Promise<S
       summary.errors.push(`${decision.relPath} : ${errorMessage(error)}`);
     }
   }
+
+  // « Appareils connectés » (Paramètres → Coffres distants) : heartbeat
+  // best-effort APRÈS le cycle de fichiers — jamais dans les erreurs du
+  // résumé (voir heartbeatDevice).
+  await heartbeatDevice(remoteVaultId, ownerId);
 
   return summary;
 }

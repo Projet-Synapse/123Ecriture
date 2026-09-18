@@ -3,6 +3,7 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 
 
 import { useAuth } from '../../lib/sync/AuthContext';
 import { useSyncStatus } from '../../lib/sync/SyncStatusContext';
+import { formatLastSeen } from '../../lib/sync/devices';
 import {
   linkVaultToCloud,
   listRemoteVaults,
@@ -161,23 +162,23 @@ export function AccountSyncSection() {
     [runVaultAction, setCloudLink],
   );
 
-  // Récupération d'un coffre distant SUR CET APPAREIL : choix d'un dossier
-  // local (la boîte de dialogue OS permet d'en créer un neuf), puis liaison
-  // directe au coffre distant — et PREMIÈRE SYNCHRO IMMÉDIATE : le dossier
-  // choisi devient le coffre actif, on télécharge donc tout son contenu sans
-  // attendre un clic sur « Synchroniser maintenant » (le cœur de la demande
-  // « récupérer les données correctement »).
+  // Connexion d'un coffre distant SUR CET APPAREIL, dans l'ordre demandé par
+  // l'utilisatrice (v0.4.10) : 1) « Connecter » ci-dessous, 2) l'app demande
+  // OÙ placer les fichiers (sélecteur natif — la boîte de dialogue permet
+  // d'en créer un neuf), 3) le coffre distant y dépose TOUT son contenu
+  // (première synchro immédiate, dossiers compris depuis le correctif mkdir
+  // de write-note) et devient le coffre actif.
   const handleRetrieveRemote = useCallback(
     async (remote: RemoteVaultSummary) => {
       setRetrievingRemoteId(remote.id);
       setVaultActionError(null);
       try {
-        const added = await addExistingVault();
+        const added = await addExistingVault(`Où placer les fichiers de « ${remote.name} » ?`);
         if (!added) return;
         await setCloudLink(added.id, { linked: true, remoteVaultId: remote.id });
         await syncStatus.runSync();
       } catch (error) {
-        console.error('[sync] échec de la récupération du coffre distant :', error);
+        console.error('[sync] échec de la connexion du coffre distant :', error);
         setVaultActionError(errorMessage(error));
       } finally {
         setRetrievingRemoteId(null);
@@ -344,24 +345,37 @@ export function AccountSyncSection() {
           )}
           {remoteVaults?.map((r) => {
             const linkedLocal = vaultList.find((lv) => lv.cloudLinked && lv.remoteVaultId === r.id) ?? null;
+            const isRetrieving = retrievingRemoteId === r.id;
             return (
               <View key={r.id} style={[styles.remoteRow, { borderBottomColor: theme.border }]}>
                 <Text style={{ color: theme.text }}>☁️ {r.name}</Text>
                 <Text style={[styles.vaultPathText, { color: theme.textMuted }]}>
                   {linkedLocal ? `connecté à « ${linkedLocal.name} » sur cet appareil` : 'non connecté sur cet appareil'}
                 </Text>
+                {/* Appareils ayant synchronisé ce coffre (table
+                    vault_devices, heartbeat à chaque synchro) — « qui est
+                    connecté et vu quand », du plus récent au plus ancien. */}
+                {r.devices.length > 0 && (
+                  <View style={styles.deviceList}>
+                    {r.devices.map((device) => (
+                      <Text key={device.deviceId} style={[styles.vaultPathText, { color: theme.textMuted }]}>
+                        💻 {device.name} · vu {formatLastSeen(device.lastSeenAt)}
+                      </Text>
+                    ))}
+                  </View>
+                )}
                 {!linkedLocal && (
                   <Pressable
-                    onPress={() => retrievingRemoteId !== r.id && void handleRetrieveRemote(r)}
-                    style={[
-                      styles.syncButton,
-                      { backgroundColor: theme.accent, opacity: retrievingRemoteId === r.id ? 0.6 : 1 },
-                    ]}
+                    onPress={() => !isRetrieving && void handleRetrieveRemote(r)}
+                    style={[styles.syncButton, { backgroundColor: theme.accent, opacity: isRetrieving ? 0.6 : 1 }]}
                   >
-                    {retrievingRemoteId === r.id ? (
-                      <ActivityIndicator size="small" color="#fff" />
+                    {isRetrieving ? (
+                      <View style={s.statusRow}>
+                        <ActivityIndicator size="small" color="#fff" />
+                        <Text style={s.buttonText}>Dépôt des fichiers…</Text>
+                      </View>
                     ) : (
-                      <Text style={s.buttonText}>Récupérer dans un dossier…</Text>
+                      <Text style={s.buttonText}>Connecter sur cet appareil…</Text>
                     )}
                   </Pressable>
                 )}
@@ -671,6 +685,10 @@ const styles = StyleSheet.create({
     gap: 4,
     paddingVertical: 6,
     borderBottomWidth: 1,
+  },
+  deviceList: {
+    gap: 2,
+    paddingLeft: 12,
   },
   linkButtonsRow: {
     flexDirection: 'row',

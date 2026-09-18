@@ -1,10 +1,11 @@
 import { dialog, ipcMain, type BrowserWindow } from 'electron';
 import crypto from 'crypto';
 import fsSync from 'fs';
+import os from 'os';
 import path from 'path';
 
 import { readConfig, writeConfig } from './config';
-import type { AppConfig, VaultIdentity, VaultRegistryEntry } from './types';
+import type { AppConfig, DeviceInfo, VaultIdentity, VaultRegistryEntry } from './types';
 
 type GetWindow = () => BrowserWindow | null;
 
@@ -225,12 +226,30 @@ export function setCloudLink(id: string, { linked, remoteVaultId }: CloudLinkPat
   return vault;
 }
 
+// Identité de CET appareil pour le suivi « appareils connectés » d'un coffre
+// distant : id générée une seule fois puis persistée dans config.json (elle
+// survit aux redémarrages et aux mises à jour de l'app), nom = nom de la
+// machine tel que rapporté par Windows. Chaque synchro « heartbeat » une
+// ligne vault_devices côté Supabase avec cette identité (syncEngine.ts).
+export function getOrCreateDeviceInfo(): DeviceInfo {
+  const config = readConfig();
+  if (config.deviceId) return { id: config.deviceId, name: os.hostname() };
+  const id = crypto.randomUUID();
+  writeConfig({ ...config, deviceId: id });
+  return { id, name: os.hostname() };
+}
+
 // Ouvre le sélecteur de dossier natif puis ajoute+active le dossier choisi.
 // Retourne null si l'utilisateur annule — partagé par `vaults:add-existing`
 // et par l'ancien `vault:choose-folder` (voir vault.js) pour ne pas dupliquer
-// la logique de dialog.
-export async function pickAndAddExistingVault(): Promise<VaultRegistryEntry | null> {
-  const result = await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] });
+// la logique de dialog. `title` optionnel : contexte de l'appel (ex. « Où
+// placer les fichiers de « X » ? » lors de la connexion d'un coffre distant)
+// — affiché par le sélecteur là où l'OS le permet.
+export async function pickAndAddExistingVault(title?: string): Promise<VaultRegistryEntry | null> {
+  const result = await dialog.showOpenDialog({
+    properties: ['openDirectory', 'createDirectory'],
+    ...(title ? { title, message: title } : {}),
+  });
   if (result.canceled || result.filePaths.length === 0) return null;
   const vault = addExistingVault(result.filePaths[0]);
   switchVault(vault.id);
@@ -255,9 +274,10 @@ export function broadcastVaultsChanged(getWindow: GetWindow): void {
 export function registerVaultsHandlers(getWindow: GetWindow): void {
   ipcMain.handle('vaults:list', () => getVaults());
   ipcMain.handle('vaults:get-active', () => getActiveVaultId());
+  ipcMain.handle('vaults:device-info', () => getOrCreateDeviceInfo());
 
-  ipcMain.handle('vaults:add-existing', async () => {
-    const vault = await pickAndAddExistingVault();
+  ipcMain.handle('vaults:add-existing', async (_event, title?: string) => {
+    const vault = await pickAndAddExistingVault(title);
     if (vault) broadcastVaultsChanged(getWindow);
     return getVaults();
   });
