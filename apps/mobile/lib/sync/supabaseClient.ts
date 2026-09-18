@@ -47,4 +47,5 @@ export const APP_SCHEMA = 'app_123ecriture';
 
 export const VAULTS_TABLE = 'vaults';
 export const VAULT_FILES_TABLE = 'vault_files';
+export const VAULT_DEVICES_TABLE = 'vault_devices';
 export const VAULT_FILES_BUCKET = '123ecriture-vaults';

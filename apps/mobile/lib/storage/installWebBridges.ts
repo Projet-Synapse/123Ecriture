@@ -48,10 +48,22 @@ export function installWebBridges(): void {
   window.vaults = {
     list: () => webVaultRegistry.whenReady().then(() => webVaultRegistry.toEntries()),
     getActive: () => webVaultRegistry.getActiveId(),
-    addExisting: async () => {
+    // `title` ignoré : showDirectoryPicker n'a pas de titre natif.
+    addExisting: async (_title?: string) => {
       const handle = await showDirectoryPicker({ mode: 'readwrite' });
       await webVaultRegistry.addExisting(handle);
       return webVaultRegistry.toEntries();
+    },
+    // Équivalent web de getOrCreateDeviceInfo : id stable en localStorage,
+    // nom générique (un onglet n'a pas de hostname).
+    deviceInfo: async () => {
+      const storageKey = '123ecriture.deviceId';
+      let id = window.localStorage.getItem(storageKey) ?? '';
+      if (!id) {
+        id = crypto.randomUUID();
+        window.localStorage.setItem(storageKey, id);
+      }
+      return { id, name: 'Navigateur' };
     },
     createNew: async (name: string) => {
       const parent = await showDirectoryPicker({ mode: 'readwrite' });

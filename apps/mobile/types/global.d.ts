@@ -78,10 +78,21 @@ declare global {
     remoteVaultId: string | null;
   }
 
+  // Identité de l'appareil pour « appareils connectés » (voir
+  // apps/desktop/electron/vaults.ts getOrCreateDeviceInfo / pont web).
+  interface DeviceInfo {
+    id: string;
+    name: string;
+  }
+
   interface VaultsBridge {
     list: () => Promise<VaultRegistryEntry[]>;
     getActive: () => Promise<string | null>;
-    addExisting: () => Promise<VaultRegistryEntry[]>;
+    // `title` optionnel : question affichée par le sélecteur de dossier
+    // (« Où placer les fichiers de « X » ? » lors de la connexion d'un
+    // coffre distant) — ignoré par le pont web (pas de titre natif).
+    addExisting: (title?: string) => Promise<VaultRegistryEntry[]>;
+    deviceInfo: () => Promise<DeviceInfo>;
     createNew: (name: string) => Promise<VaultRegistryEntry[]>;
     switch: (id: string) => Promise<VaultRegistryEntry[]>;
     rename: (id: string, name: string) => Promise<VaultRegistryEntry[]>;

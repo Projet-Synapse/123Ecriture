@@ -503,8 +503,13 @@ bas) sur le projet Supabase partagé "Projet Synapse".
   contiennent souvent. Le chemin humain reste dans `vault_files.rel_path` ;
   les téléchargements privilégient la clé HISTORIQUE enregistrée dans
   `storage_object_path` (rétro-compatible avec les fichiers poussés avant
-  v0.4.9 sous leur nom brut). « Récupérer dans un dossier… » enchaîne
+  v0.4.9 sous leur nom brut). « Connecter sur cet appareil… » enchaîne
   désormais choix du dossier + liaison + **première synchro immédiate**.
+- **Dépôt avec dossiers** : le pull écrit des notes dans des sous-dossiers
+  qui peuvent ne pas exister localement (récupération d'un coffre distant
+  dans un dossier vide) — `vault:write-note` crée les dossiers parents
+  (`mkdir recursive`) avant d'écrire. Vécu v0.4.9 : 41 fichiers sur 110 en
+  échec `ENOENT` lors d'une récupération sur un nouvel appareil.
 - **Métadonnées** : table `vault_files` (chemin, hash de contenu SHA-256,
   taille, horodatage) pour détecter ce qui a changé sans retélécharger tout
   le vault — hash local calculé en un seul passage par
@@ -515,12 +520,26 @@ bas) sur le projet Supabase partagé "Projet Synapse".
   (`linkVaultToCloud`, upsert sur `(owner_id, local_vault_id)`) : on peut
   aussi **se connecter à un distant existant** — le registre local pointe
   vers son id, sans écriture cloud (cas « nouvel appareil » ou « dossier
-  recréé », dans l'esprit des coffres distants d'Obsidian Sync). « Récupérer
-  dans un dossier… » enchaîne choix de dossier + liaison, la première sync
-  téléchargeant tout. `local_vault_id` reste l'identité du dossier créateur
-  (informatif) : la référence distante vit dans le registre local de chaque
-  machine, un même coffre distant peut donc être relié depuis plusieurs
-  appareils sans doublon ni migration de schéma.
+  recréé », dans l'esprit des coffres distants d'Obsidian Sync). Depuis
+  v0.4.10, « Connecter sur cet appareil… » suit l'ordre demandé par
+  l'utilisatrice : connexion d'abord, puis l'app demande OÙ placer les
+  fichiers (sélecteur natif titré « Où placer les fichiers de « X » ? »),
+  puis le coffre distant y dépose tout son contenu (première sync immédiate
+  via dossiers créés au vol) et devient le coffre actif. `local_vault_id`
+  reste l'identité du dossier créateur (informatif) : la référence distante
+  vit dans le registre local de chaque machine, un même coffre distant peut
+  donc être relié depuis plusieurs appareils sans doublon ni migration de
+  schéma.
+- **Appareils connectés** (v0.4.10) : table `vault_devices`
+  (`(vault_id, device_id)` + `device_name` + `last_seen_at`, RLS owner-only,
+  voir `supabase/recette-setup-complet.sql`). Chaque synchro « heartbeat »
+  une ligne : identité stable de l'appareil via le pont `vaults:device-info`
+  (id UUID persistée dans config.json + `os.hostname()` sur desktop ; id
+  localStorage + « Navigateur » sur web) — best-effort, un échec (table
+  absente, offline) est loggé sans jamais faire échouer la synchro des
+  fichiers. `listRemoteVaults()` regroupe les appareils par coffre et la
+  carte les affiche (« 💻 NOM · vu hier », `formatLastSeen` dans
+  `lib/sync/devices.ts`, pur + testé).
 - **Liaison automatique au compte** : connecté·e, TOUT coffre du registre
   devient une donnée du compte — présent avant la connexion OU ajouté
   ensuite, quel que soit le chemin d'entrée (« Ajouter un dossier
