@@ -565,18 +565,23 @@ bas) sur le projet Supabase partagé "Projet Synapse".
   après vidage évite aussi à la liaison automatique de re-lier
   immédiatement le dossier vidé (elle ne voit jamais d'état
   « délié mais présent »).
-- **Liaison automatique au compte** : connecté·e, TOUT coffre du registre
-  devient une donnée du compte — présent avant la connexion OU ajouté
-  ensuite, quel que soit le chemin d'entrée (« Ajouter un dossier
-  existant », « Nouveau coffre », « Choisir un dossier » des écrans
-  vides : tous aboutissent au même registre, même quand l'ajout passe par
-  le pont `vault.chooseFolder` sans transiter par VaultsContext). Un
-  guetteur dans VaultsContext (`pickVaultsToAutoLink`, pur et testé) lie
-  chaque coffre non lié via `linkVaultToCloud`, avec garde anti-boucle
-  (ids en vol) — un échec est discret (⚠️ + « Réessayer » dans
-  Paramètres) et ne bloque jamais l'usage local. L'upsert idempotent par
-  `(owner, local_vault_id)` fait qu'un dossier RECOPIÉ depuis une autre
-  machine se rattache à son coffre distant d'origine, sans doublon.
+- **Modèle « coffre distant = donnée du compte »** (v0.4.14 — remplace la
+  liaison automatique, retirée) : un coffre distant n'est JAMAIS créé par
+  simple présence d'un dossier local sur une machine connectée. Trois
+  chemins explicites seulement : « ➕ Nouveau coffre distant… » (créé DANS
+  le compte, sans machine — `createRemoteVault`, `local_vault_id` marqueur
+  `account:`) ; « Créer un coffre distant » sur un coffre local
+  (`linkVaultToCloud`, upsert idempotent `(owner, local_vault_id)` — un
+  dossier RECOPIÉ depuis une autre machine se rattache à son coffre distant
+  d'origine) ; « Connecter sur cet appareil… » (accès depuis un ordinateur
+  tiers, avec choix du chemin). La synchro d'un coffre connecté est
+  bidirectionnelle sur tous les appareils, comme Obsidian Sync. La carte
+  « Coffres distants » affiche le nombre de fichiers par coffre (« vide »
+  vs « N fichier(s) ») pour distinguer un coffre en attente de contenu
+  d'un coffre rempli. Raison du retrait de l'auto-liaison (v0.4.8) : tout
+  dossier ajouté sur n'importe quelle machine devenait un coffre distant —
+  la source des « fantômes » et des contenus mélangés vécus par
+  l'utilisatrice.
 - **Connexion email/mot de passe** : `signInWithPassword`/`signUp` directs
   dans l'app (supabase-js, aucun navigateur externe ni protocole custom) en
   complément du flux Google — même projet Supabase partagé, provider Email

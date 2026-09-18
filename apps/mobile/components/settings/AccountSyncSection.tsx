@@ -5,6 +5,7 @@ import { useAuth } from '../../lib/sync/AuthContext';
 import { useSyncStatus } from '../../lib/sync/SyncStatusContext';
 import { formatLastSeen } from '../../lib/sync/devices';
 import {
+  createRemoteVault,
   linkVaultToCloud,
   listRemoteVaults,
   runSync as runSyncEngine,
@@ -38,8 +39,6 @@ export function AccountSyncSection() {
     removeVault,
     disconnectVault,
     setCloudLink,
-    autoLinkError,
-    retryAutoLink,
   } = useVaults();
   const vault = typeof window !== 'undefined' ? window.vault : undefined;
   // Statut partagé (voir SyncStatusContext.tsx) — source de vérité pour le
@@ -207,6 +206,33 @@ export function AccountSyncSection() {
     [auth, emailDraft, passwordDraft],
   );
 
+  // Création d'un coffre distant DEPUIS LE COMPTE (v0.4.14, modèle « le
+  // coffre distant est une donnée du compte ») : aucune machine n'est
+  // impliquée — le coffre apparaît vide dans la liste, chaque appareil s'y
+  // connecte ensuite (« Connecter sur cet appareil… ») en choisissant son
+  // chemin, et la synchro est bidirectionnelle partout, comme Obsidian Sync.
+  const [showCreateRemoteForm, setShowCreateRemoteForm] = useState(false);
+  const [createRemoteDraft, setCreateRemoteDraft] = useState('');
+  const [creatingRemote, setCreatingRemote] = useState(false);
+  const submitCreateRemoteVault = useCallback(async () => {
+    if (!auth.user) return;
+    const name = createRemoteDraft.trim();
+    if (!name) return;
+    setShowCreateRemoteForm(false);
+    setCreateRemoteDraft('');
+    setCreatingRemote(true);
+    setRemoteVaultsError(null);
+    try {
+      await createRemoteVault(name, auth.user.id);
+      loadRemoteVaults();
+    } catch (error) {
+      console.error('[sync] échec de la création du coffre distant :', error);
+      setRemoteVaultsError(errorMessage(error));
+    } finally {
+      setCreatingRemote(false);
+    }
+  }, [auth.user, createRemoteDraft, loadRemoteVaults]);
+
   const handleSyncVault = useCallback(
     async (v: VaultRegistryEntry) => {
       if (!auth.user || !v.remoteVaultId) return;
@@ -344,8 +370,7 @@ export function AccountSyncSection() {
           )}
           {remoteVaults?.length === 0 && (
             <Text style={[s.cardValue, { color: theme.textMuted }]}>
-              Aucun coffre distant pour l’instant — « Créer un coffre distant » sur un coffre local ci-dessous en créera
-              un.
+              Aucun coffre distant pour l’instant — créez-en un ci-dessous, ou reliez un coffre local existant.
             </Text>
           )}
           {remoteVaults?.map((r) => {
@@ -353,7 +378,9 @@ export function AccountSyncSection() {
             const isRetrieving = retrievingRemoteId === r.id;
             return (
               <View key={r.id} style={[styles.remoteRow, { borderBottomColor: theme.border }]}>
-                <Text style={{ color: theme.text }}>☁️ {r.name}</Text>
+                <Text style={{ color: theme.text }}>
+                  ☁️ {r.name} — {r.fileCount > 0 ? `${r.fileCount} fichier(s)` : 'vide'}
+                </Text>
                 <Text style={[styles.vaultPathText, { color: theme.textMuted }]}>
                   {linkedLocal ? `connecté à « ${linkedLocal.name} » sur cet appareil` : 'non connecté sur cet appareil'}
                 </Text>
@@ -396,26 +423,45 @@ export function AccountSyncSection() {
               </View>
             );
           })}
+
+          {/* Création directe d'un coffre distant DANS LE COMPTE (v0.4.14) :
+              le coffre est une donnée du compte, créé sans machine — vide au
+              départ, il se remplit dès qu'un appareil connecté synchronise. */}
+          <Pressable onPress={() => setShowCreateRemoteForm((prev) => !prev)} style={styles.emailToggle}>
+            <Text style={[styles.emailToggleText, { color: theme.accent }]}>
+              {showCreateRemoteForm ? 'Masquer le formulaire' : '➕ Nouveau coffre distant…'}
+            </Text>
+          </Pressable>
+          {showCreateRemoteForm && (
+            <View style={styles.vaultButtonsRow}>
+              <TextInput
+                autoFocus
+                value={createRemoteDraft}
+                onChangeText={setCreateRemoteDraft}
+                onSubmitEditing={() => void submitCreateRemoteVault()}
+                placeholder="Nom du coffre dans le compte…"
+                placeholderTextColor={theme.textMuted}
+                style={[s.input, { color: theme.text, borderColor: theme.border, flex: 1 }]}
+              />
+              <Pressable
+                onPress={() => void submitCreateRemoteVault()}
+                disabled={creatingRemote}
+                style={[s.button, { backgroundColor: theme.accent, opacity: creatingRemote ? 0.6 : 1 }]}
+              >
+                {creatingRemote ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={s.buttonText}>Créer</Text>
+                )}
+              </Pressable>
+            </View>
+          )}
         </View>
       )}
 
       {vault && (
         <View style={[s.card, { backgroundColor: theme.surface, borderColor: theme.border }]}>
           <Text style={[s.cardTitle, { color: theme.text }]}>Coffres locaux</Text>
-
-          {/* Liaison automatique en échec (hors ligne, cloud indisponible…) :
-              discret et jamais bloquant — le coffre reste pleinement
-              utilisable en local, la reprise est manuelle. */}
-          {autoLinkError && (
-            <View style={styles.autoLinkErrorRow}>
-              <Text style={{ color: theme.danger, flex: 1 }}>
-                ⚠️ Liaison automatique : {autoLinkError}
-              </Text>
-              <Pressable onPress={retryAutoLink} style={[styles.retryButton, { borderColor: theme.accent }]}>
-                <Text style={{ color: theme.accent }}>Réessayer</Text>
-              </Pressable>
-            </View>
-          )}
 
           {vaultList.length === 0 && (
             <Text style={[s.cardValue, { color: theme.textMuted }]}>Aucun coffre local pour l’instant.</Text>
@@ -743,17 +789,5 @@ const styles = StyleSheet.create({
   },
   remotePickerRow: {
     paddingVertical: 6,
-  },
-  autoLinkErrorRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingVertical: 4,
-  },
-  retryButton: {
-    paddingVertical: 4,
-    paddingHorizontal: 10,
-    borderRadius: 6,
-    borderWidth: 1,
   },
 });

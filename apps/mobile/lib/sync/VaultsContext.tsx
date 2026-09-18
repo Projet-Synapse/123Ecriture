@@ -1,9 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-
-import { useAuth } from './AuthContext';
-import { errorMessage } from '../errorMessage';
-import { pickVaultsToAutoLink } from './autoLink';
-import { linkVaultToCloud } from './syncEngine';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 
 // Registre des coffres (vaults) multiples — voir
 // docs/ARCHITECTURE.md §5/§6 et apps/desktop/electron/vaults.js. Même schéma
@@ -43,11 +38,6 @@ type VaultsContextValue = {
   // Déconnexion d'un coffre distant : supprime le contenu déposé du dossier
   // puis retire le coffre de la liste (destructif, confirmé côté UI).
   disconnectVault: (id: string) => Promise<void>;
-  // Liaison automatique au compte (voir l'effet ci-dessous) : dernière
-  // erreur rencontrée, affichée en discret dans Paramètres, et relance
-  // manuelle — un échec ne bloque jamais l'usage local du coffre.
-  autoLinkError: string | null;
-  retryAutoLink: () => void;
 };
 
 const VaultsReactContext = createContext<VaultsContextValue | null>(null);
@@ -179,61 +169,6 @@ export function VaultsProvider({ children }: { children: ReactNode }) {
     [bridge],
   );
 
-  // Liaison automatique au compte : connecté·e, TOUT coffre du registre est
-  // une donnée du compte — présent avant la connexion OU ajouté ensuite,
-  // quel que soit le chemin d'entrée (« Ajouter un dossier existant »,
-  // « Nouveau coffre », « Choisir un dossier » des écrans vides : tous
-  // aboutissent au même registre, que l'ajout passe par ce contexte ou
-  // directement par le pont vault.chooseFolder). AuthProvider est
-  // au-dessus de VaultsProvider (App.tsx), useAuth est donc disponible ici.
-  const auth = useAuth();
-  const [autoLinkError, setAutoLinkError] = useState<string | null>(null);
-  // Force une reprise de l'effet après un échec (ses dépendances ne changent
-  // pas sinon : un échec n'écrit rien dans le registre) — ou après une
-  // connexion de coffre distant (voir retrieveRemoteVault).
-  const [autoLinkNonce, setAutoLinkNonce] = useState(0);
-  const autoLinkInFlight = useRef<Set<string>>(new Set());
-  const userId = auth.user?.id ?? null;
-
-  // Vrai pendant une « connexion de coffre distant » ENTIÈRE (création du
-  // dossier → liaison au distant choisi) : le guetteur doit se taire durant
-  // cette fenêtre — le coffre fraîchement créé sera relié au distant
-  // EXISTANT choisi, et sans ce drapeau le guetteur (déclenché par le
-  // setVaultList de la création) créerait une ligne `vaults` orpheline
-  // AVANT notre setCloudLink. Posé AVANT createVault : aucun rendu ne peut
-  // s'intercaler, contrairement à un Set d'ids rempli après coup.
-  const retrieveActive = useRef(false);
-
-  useEffect(() => {
-    if (!userId || !bridge || retrieveActive.current) return;
-    const targets = pickVaultsToAutoLink(vaultList, autoLinkInFlight.current);
-    if (targets.length === 0) return;
-    targets.forEach((v) => autoLinkInFlight.current.add(v.id));
-    void (async () => {
-      let lastError: string | null = null;
-      for (const v of targets) {
-        try {
-          const remoteVaultId = await linkVaultToCloud(v.id, v.name, userId);
-          await setCloudLink(v.id, { linked: true, remoteVaultId });
-        } catch (error) {
-          console.error('[vaults] échec de la liaison automatique :', error);
-          lastError = errorMessage(error);
-        } finally {
-          autoLinkInFlight.current.delete(v.id);
-        }
-      }
-      setAutoLinkError(lastError);
-    })();
-    // autoLinkNonce : volontairement absent des deps de nettoyage — il ne
-    // sert qu'à relancer, jamais à interrompre un tour en cours.
-
-  }, [userId, bridge, vaultList, setCloudLink, autoLinkNonce]);
-
-  const retryAutoLink = useCallback(() => {
-    setAutoLinkError(null);
-    setAutoLinkNonce((n) => n + 1);
-  }, []);
-
   // Connexion d'un coffre distant SUR CET APPAREIL, dans l'ordre demandé par
   // l'utilisatrice (v0.4.11) : 1) « Connecter » (Paramètres → Coffres
   // distants), 2) l'app demande OÙ placer les fichiers, 3) un SOUS-DOSSIER
@@ -242,26 +177,20 @@ export function VaultsProvider({ children }: { children: ReactNode }) {
   // coffre garde son nom original même si le dossier est dédoublonné « X 2 »)
   // puis lié au distant — le dépôt du contenu suit via syncStatus.runSync()
   // côté UI. Retourne l'entrée créée, ou null si la dialogue a été annulée.
+  // (v0.4.14 : plus de garde « guetteur » — la liaison automatique a été
+  // retirée, un coffre local ne devient JAMAIS un coffre distant sans action
+  // explicite : modèle « le coffre distant est une donnée du compte ».)
   const retrieveRemoteVault = useCallback(
     async (remote: { id: string; name: string }): Promise<VaultRegistryEntry | null> => {
       if (!bridge) return null;
-      retrieveActive.current = true;
-      try {
-        const added = await createVault(
-          remote.name,
-          `Où placer les fichiers de « ${remote.name} » ?`,
-          remote.name,
-        );
-        if (!added) return null;
-        await setCloudLink(added.id, { linked: true, remoteVaultId: remote.id });
-        return added;
-      } finally {
-        // Relance le guetteur : rattrape d'éventuels coffres restés non
-        // liés pendant la fenêtre silencieuse (et si la liaison au distant
-        // a échoué, le coffre créé retombe sur la liaison auto en secours).
-        retrieveActive.current = false;
-        setAutoLinkNonce((n) => n + 1);
-      }
+      const added = await createVault(
+        remote.name,
+        `Où placer les fichiers de « ${remote.name} » ?`,
+        remote.name,
+      );
+      if (!added) return null;
+      await setCloudLink(added.id, { linked: true, remoteVaultId: remote.id });
+      return added;
     },
     [bridge, createVault, setCloudLink],
   );
@@ -283,8 +212,6 @@ export function VaultsProvider({ children }: { children: ReactNode }) {
       removeVault,
       disconnectVault,
       setCloudLink,
-      autoLinkError,
-      retryAutoLink,
     }),
     [
       vaultList,
@@ -299,8 +226,6 @@ export function VaultsProvider({ children }: { children: ReactNode }) {
       removeVault,
       disconnectVault,
       setCloudLink,
-      autoLinkError,
-      retryAutoLink,
     ],
   );
 
