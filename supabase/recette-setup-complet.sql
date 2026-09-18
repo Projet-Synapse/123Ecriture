@@ -20,6 +20,9 @@ create table if not exists app_123ecriture.vaults (
   name text not null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
+  -- v0.4.13 : appareil CRÉATEUR du coffre (« provient de… », Paramètres →
+  -- Coffres distants) — écrit une fois à la liaison, jamais réécrit.
+  created_by_device text,
   unique (owner_id, local_vault_id)
 );
 
@@ -37,6 +40,10 @@ create table if not exists app_123ecriture.vault_files (
   unique (vault_id, rel_path)
 );
 create index if not exists vault_files_vault_id_idx on app_123ecriture.vault_files (vault_id);
+
+-- v0.4.13 : colonne d'origine des coffres (idempotent sur un projet déjà
+-- en place — le create table ci-dessus ne l'ajoute pas aux tables vivantes).
+alter table app_123ecriture.vaults add column if not exists created_by_device text;
 
 -- 3) RLS strictement propriétaire uniquement
 alter table app_123ecriture.vaults enable row level security;

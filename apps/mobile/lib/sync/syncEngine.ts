@@ -59,7 +59,34 @@ export async function linkVaultToCloud(
     .select('id')
     .single();
   if (error) throw error;
-  return (data as { id: string }).id;
+  const remoteVaultId = (data as { id: string }).id;
+  await stampCreatedByDevice(client, remoteVaultId);
+  return remoteVaultId;
+}
+
+// Marque l'ORIGINE d'un coffre distant (demande v0.4.13 : « voir les coffres
+// distants qui proviennent de mon ordinateur LORDI ») : le nom de l'appareil
+// CRÉATEUR, écrit une seule fois — la condition `is null` garantit qu'un
+// re-lien depuis une AUTRE machine (dossier recopié, réinstallation…) n'en
+// change pas la provenance. Best-effort : un échec ne bloque jamais la
+// liaison, l'origine restera simplement inconnue.
+async function stampCreatedByDevice(
+  client: NonNullable<typeof supabase>,
+  remoteVaultId: string,
+): Promise<void> {
+  try {
+    const info = typeof window !== 'undefined' && window.vaults ? await window.vaults.deviceInfo() : null;
+    if (!info) return;
+    const { error } = await client
+      .schema(APP_SCHEMA)
+      .from(VAULTS_TABLE)
+      .update({ created_by_device: info.name })
+      .eq('id', remoteVaultId)
+      .is('created_by_device', null);
+    if (error) throw error;
+  } catch (error) {
+    console.warn('[sync] origine du coffre non marquée :', errorMessage(error));
+  }
 }
 
 // Coffres distants du compte connecté — lecture seule, pour lister ce qui
@@ -72,12 +99,15 @@ export async function linkVaultToCloud(
 // `devices` : appareils ayant synchronisé ce coffre (table vault_devices),
 // du plus récemment vu au plus ancien — la carte « Coffres distants »
 // affiche « qui » est connecté et quand (demande v0.4.10).
+// `createdByDevice` : appareil CRÉATEUR du coffre (v0.4.13) — d'où il
+// « provient », distinct de qui l'a synchronisé depuis.
 export type RemoteVaultSummary = {
   id: string;
   name: string;
   localVaultId: string | null;
   createdAt: string;
   devices: RemoteVaultDevice[];
+  createdByDevice: string | null;
 };
 
 // Lecture best-effort des appareils par coffre : si la table n'existe pas
@@ -115,7 +145,7 @@ export async function listRemoteVaults(): Promise<RemoteVaultSummary[]> {
     supabase
       .schema(APP_SCHEMA)
       .from(VAULTS_TABLE)
-      .select('id, name, local_vault_id, created_at')
+      .select('id, name, local_vault_id, created_at, created_by_device')
       .order('created_at', { ascending: true }),
     fetchDevicesByVault(),
   ]);
@@ -127,6 +157,7 @@ export async function listRemoteVaults(): Promise<RemoteVaultSummary[]> {
     localVaultId: (row.local_vault_id as string | null) ?? null,
     createdAt: row.created_at as string,
     devices: devicesByVault.get(row.id as string) ?? [],
+    createdByDevice: (row.created_by_device as string | null) ?? null,
   }));
 }
 

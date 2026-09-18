@@ -543,8 +543,16 @@ bas) sur le projet Supabase partagé "Projet Synapse".
   localStorage + « Navigateur » sur web) — best-effort, un échec (table
   absente, offline) est loggé sans jamais faire échouer la synchro des
   fichiers. `listRemoteVaults()` regroupe les appareils par coffre et la
-  carte les affiche (« 💻 NOM · vu hier », `formatLastSeen` dans
-  `lib/sync/devices.ts`, pur + testé).
+  carte les affiche (« 💻 NOM (abcd) · vu hier » — le suffixe court de
+  l'id d'appareil distingue deux machines homonymes ; `formatLastSeen`
+  dans `lib/sync/devices.ts`, pur + testé).
+- **Origine des coffres distants** (v0.4.13) : colonne
+  `vaults.created_by_device`, écrite UNE FOIS à la liaison
+  (`stampCreatedByDevice` — condition `is null`, un re-lien depuis une autre
+  machine n'écrase pas la provenance). La carte « Coffres distants »
+  affiche « 🏠 provient de X » — demande de l'utilisatrice pour distinguer
+  les coffres créés depuis son PC portable (LORDI) de ceux créés ailleurs ;
+  les coffres antérieurs au suivi ont été backfillés à la main (SQL).
 - **Déconnexion d'un coffre distant** (v0.4.12) : bouton « Déconnecter… »
   sur un coffre local lié (carte « Coffres locaux » — renommée ainsi pour
   la distinguer des coffres distants du compte). Action DESTRUCTIVE et

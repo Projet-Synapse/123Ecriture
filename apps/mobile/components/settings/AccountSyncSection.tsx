@@ -357,14 +357,23 @@ export function AccountSyncSection() {
                 <Text style={[styles.vaultPathText, { color: theme.textMuted }]}>
                   {linkedLocal ? `connecté à « ${linkedLocal.name} » sur cet appareil` : 'non connecté sur cet appareil'}
                 </Text>
+                {/* Origine du coffre (demande v0.4.13 : distinguer les coffres
+                    « qui proviennent de mon ordinateur LORDI » de ceux créés
+                    ailleurs) — écrit une fois à la création, jamais
+                    réécrit au re-lien depuis une autre machine. */}
+                {r.createdByDevice && (
+                  <Text style={[styles.vaultPathText, { color: theme.textMuted }]}>🏠 provient de {r.createdByDevice}</Text>
+                )}
                 {/* Appareils ayant synchronisé ce coffre (table
                     vault_devices, heartbeat à chaque synchro) — « qui est
-                    connecté et vu quand », du plus récent au plus ancien. */}
+                    connecté et vu quand », du plus récent au plus ancien.
+                    Le suffixe court (4 hex) distingue deux machines qui
+                    porteraient le même nom. */}
                 {r.devices.length > 0 && (
                   <View style={styles.deviceList}>
                     {r.devices.map((device) => (
                       <Text key={device.deviceId} style={[styles.vaultPathText, { color: theme.textMuted }]}>
-                        💻 {device.name} · vu {formatLastSeen(device.lastSeenAt)}
+                        💻 {device.name} ({device.deviceId.slice(0, 4)}) · vu {formatLastSeen(device.lastSeenAt)}
                       </Text>
                     ))}
                   </View>
