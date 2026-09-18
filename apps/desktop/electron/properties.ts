@@ -16,6 +16,11 @@ import type { PropertyDefinition, PropertyPatch, PropertyRenameMigrationSummary,
 // problème (vérifié) même si apps/mobile et apps/desktop restent deux
 // paquets séparés.
 import { migrateFrontmatterKey } from '../../mobile/lib/frontmatterMigration';
+// Même logique de partage que migrateFrontmatterKey ci-dessus : le parseur
+// frontmatter de référence (tolérant, testé) + la déduction de type pour
+// l'auto-enregistrement, importés du paquet apps/mobile.
+import { parseFrontmatter } from '../../mobile/lib/frontmatter';
+import { inferPropertyType } from '../../mobile/lib/propertyTypes';
 
 // Module "Propriétés" (voir docs/ARCHITECTURE.md §4/§8, panneau
 // PropertiesPanel.tsx dans la barre latérale) : schéma global de
@@ -236,5 +241,56 @@ export function registerPropertiesHandlers(): void {
     if (!vaultPath) throw new Error('Aucun vault sélectionné');
     const properties = readProperties(vaultPath).filter((p) => p.id !== id);
     return writeProperties(vaultPath, properties);
+  });
+
+  // Scan du coffre (demande utilisateur : « toutes les propriétés
+  // mentionnées dans mes fichiers doivent être enregistrées convenablement,
+  // avec un petit chiffre ») : parcourt chaque note, compte les clés de
+  // frontmatter par propriété et CRÉE les définitions manquantes avec le
+  // type déduit de la valeur (inferPropertyType). Fusion insensible à la
+  // casse : une clé `Tags` dans une note et une définition `tags` existante
+  // se partagent la même entrée (le nom exact de la définition gagne).
+  // created/modified sont exclues : matérialisées par l'APP à chaque
+  // sauvegarde (voir NotesScreen.tsx) — les enregistrerait en doublon à
+  // chaque scan. Calculé à la demande (pas d'index) : cohérent avec le
+  // reste de l'app à cette échelle.
+  ipcMain.handle('properties:scan-vault', async () => {
+    const vaultPath = getVaultPath();
+    if (!vaultPath) return { properties: [], usage: {}, createdCount: 0 };
+
+    const properties = readProperties(vaultPath);
+    const usage: Record<string, number> = {};
+    const knownByLowerName = new Map(properties.map((p) => [p.name.toLowerCase(), p]));
+    const toCreate: PropertyDefinition[] = [];
+
+    for (const fullPath of await walkNoteFiles(vaultPath)) {
+      let content: string;
+      try {
+        content = await fs.readFile(fullPath, 'utf8');
+      } catch {
+        continue; // Note illisible entre le listage et la lecture — ignorée.
+      }
+      for (const [key, value] of Object.entries(parseFrontmatter(content).data)) {
+        if (key === 'created' || key === 'modified') continue;
+        usage[key] = (usage[key] ?? 0) + 1;
+        const lower = key.toLowerCase();
+        if (!knownByLowerName.has(lower)) {
+          const definition: PropertyDefinition = {
+            id: crypto.randomUUID(),
+            name: key,
+            type: inferPropertyType(value),
+            createdAt: new Date().toISOString(),
+          };
+          toCreate.push(definition);
+          knownByLowerName.set(lower, definition);
+        }
+      }
+    }
+
+    const updatedProperties = toCreate.length > 0
+      ? await writeProperties(vaultPath, [...properties, ...toCreate])
+      : properties;
+
+    return { properties: updatedProperties, usage, createdCount: toCreate.length };
   });
 }

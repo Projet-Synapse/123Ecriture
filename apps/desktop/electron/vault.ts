@@ -407,6 +407,20 @@ export function registerVaultHandlers(getWindow: GetWindow): void {
     return fs.readFile(resolveInVault(vaultPath, relPath), 'utf8');
   });
 
+  // Dates du fichier (matérialisation de created/modified dans le
+  // frontmatter à la sauvegarde, voir NotesScreen.tsx) — birthtime peut
+  // valoir 0 sur certains systèmes de fichiers/réseaux : repli sur mtime
+  // plutôt que d'écrire une date de création impossible.
+  ipcMain.handle('vault:get-timestamps', async (_event, relPath: string) => {
+    const vaultPath = getVaultPath();
+    if (!vaultPath) throw new Error('Aucun vault sélectionné');
+    const stat = await fs.stat(resolveInVault(vaultPath, relPath));
+    return {
+      createdAt: stat.birthtimeMs > 0 ? stat.birthtimeMs : stat.mtimeMs,
+      modifiedAt: stat.mtimeMs,
+    };
+  });
+
   // //7. 📡 HANDLERS IPC — CRÉATION / ÉCRITURE
   // //////////////////////////////////////////////////////////////////////
 

@@ -1,9 +1,8 @@
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import { parseFrontmatter } from '../lib/frontmatter';
 import { usePropertyDefinitions } from '../lib/usePropertyDefinitions';
-import { usePropertyValues } from '../lib/usePropertyValues';
-import { TYPE_ICONS } from '../lib/propertyTypes';
+import { usePropertyValues, type PropertyLine } from '../lib/usePropertyValues';
+import { TYPE_ICONS, makePropertyDefinition } from '../lib/propertyTypes';
 import type { Theme } from '../theme';
 import { AddPropertyButton } from './AddPropertyButton';
 import { DraftTextField } from './DraftTextField';
@@ -13,13 +12,16 @@ import { PropertyValueField } from './PropertyValueField';
 // NotesScreen.tsx) — édition des VALEURS de la note actuellement ouverte,
 // façon capture de référence (.claude/References/image-4.png) : une icône
 // par ligne, un widget dédié par type (voir PropertyValueField.tsx), et un
-// bouton "+" pour ajouter une propriété existante plutôt qu'un champ texte
-// libre. Le SCHÉMA global (créer/renommer/changer de type/supprimer une
-// propriété, options du type "Options"…) se configure maintenant dans
-// Paramètres → Gestion des propriétés (voir
-// settings/PropertiesManagementSection.tsx) — ce panneau ne fait plus que
-// consommer ce schéma. Même données/logique que PropertiesBlock.tsx (bloc
-// en haut de note) via lib/usePropertyValues.ts.
+// bouton "+" pour ajouter une propriété existante ou en créer une nouvelle.
+// Le SCHÉMA global (créer/renommer/changer de type/supprimer une propriété,
+// options du type "Options"…) se configure dans Paramètres → Gestion des
+// propriétés (settings/PropertiesManagementSection.tsx). Mêmes données que
+// PropertiesBlock.tsx via lib/usePropertyValues.ts.
+//
+// SOURCE DE VÉRITÉ = le frontmatter du fichier (même principe que
+// PropertiesBlock) : TOUTES les clés du YAML s'affichent, dans leur ordre
+// réel, enregistrées au schéma ou non. created/modified sont matérialisées
+// à la sauvegarde (NotesScreen.tsx) et s'affichent en lecture seule.
 function formatTimestamp(value: number): string {
   return new Date(value).toLocaleString('fr-FR', {
     day: '2-digit',
@@ -28,6 +30,16 @@ function formatTimestamp(value: number): string {
     hour: '2-digit',
     minute: '2-digit',
   });
+}
+
+// Même règle que PropertiesBlock.formatSystemDate : ISO parsé → français,
+// valeur libre → affichée telle quelle.
+function formatSystemDate(value: unknown): string {
+  if (typeof value === 'string' && !Number.isNaN(Date.parse(value))) {
+    return formatTimestamp(Date.parse(value));
+  }
+  if (value === undefined || value === null || value === '') return '—';
+  return String(value);
 }
 
 type Props = {
@@ -40,8 +52,8 @@ type Props = {
 
 export function PropertiesPanel({ theme, activeNote, content, onChangeContent, tree }: Props) {
   const propertiesBridge = typeof window !== 'undefined' ? window.properties : undefined;
-  const { definitions, update } = usePropertyDefinitions();
-  const { data, definitionsUsedOnNote, availableToAdd, setValue, addValue, removeValue } = usePropertyValues(
+  const { definitions, update, create } = usePropertyDefinitions();
+  const { lines, availableToAdd, setValue, addValue, removeValue } = usePropertyValues(
     content,
     onChangeContent,
     definitions,
@@ -58,11 +70,11 @@ export function PropertiesPanel({ theme, activeNote, content, onChangeContent, t
   }
 
   const isMarkdownNote = activeNote?.kind === 'markdown';
-  const createdRaw = parseFrontmatter(content).data.created;
-  const createdLabel =
-    typeof createdRaw === 'string' && !Number.isNaN(Date.parse(createdRaw))
-      ? formatTimestamp(Date.parse(createdRaw))
-      : '—';
+
+  // Définition de repli pour une clé non enregistrée (même choix que
+  // PropertiesBlock) : champ texte générique.
+  const fallbackDefinition = (line: PropertyLine): PropertyDefinition =>
+    line.definition ?? makePropertyDefinition(`raw-${line.name}`, line.name, 'text');
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
@@ -73,48 +85,62 @@ export function PropertiesPanel({ theme, activeNote, content, onChangeContent, t
         </Text>
       ) : (
         <>
-          <View style={styles.valueRow}>
-            <Text style={{ fontSize: 12 }}>➕</Text>
-            <Text style={[styles.valueLabel, { color: theme.textMuted }]}>Créé</Text>
-            <Text style={[styles.readonlyValue, { color: theme.text }]}>{createdLabel}</Text>
-          </View>
-          <View style={styles.valueRow}>
-            <Text style={{ fontSize: 12 }}>✏️</Text>
-            <Text style={[styles.valueLabel, { color: theme.textMuted }]}>Modifié</Text>
-            <Text style={[styles.readonlyValue, { color: theme.text }]}>
-              {activeNote ? formatTimestamp(activeNote.modifiedAt) : '—'}
-            </Text>
-          </View>
-
-          {definitionsUsedOnNote.map((def) => (
-            <View key={def.id} style={styles.valueRow}>
-              <Text style={{ fontSize: 12 }}>{TYPE_ICONS[def.type]}</Text>
-              {/* Renomme la propriété dans le SCHÉMA global (voir Paramètres →
-                  Gestion des propriétés) — se répercute partout où elle est
-                  utilisée, pas seulement sur cette note. */}
-              <DraftTextField
-                initialValue={def.name}
-                onCommit={(value) => {
-                  const trimmed = value.trim();
-                  if (trimmed && trimmed !== def.name) void update(def.id, { name: trimmed });
-                }}
-                theme={theme}
-                style={[styles.valueLabelInput, { color: theme.textMuted }]}
-              />
-              <PropertyValueField
-                def={def}
-                value={data[def.name]}
-                onChange={(value) => setValue(def.name, value)}
-                theme={theme}
-                tree={tree}
-              />
-              <Text onPress={() => removeValue(def.name)} style={[styles.rowRemove, { color: theme.textMuted }]}>
-                ✕
+          {lines.map((line) => (
+            <View key={line.name} style={styles.valueRow}>
+              <Text style={{ fontSize: 12 }}>
+                {line.isSystemDate ? (line.name === 'created' ? '➕' : '✏️') : TYPE_ICONS[line.definition?.type ?? 'text']}
               </Text>
+              {line.isSystemDate ? (
+                <Text style={[styles.valueLabel, { color: theme.textMuted }]}>
+                  {line.name === 'created' ? 'Créé' : 'Modifié'}
+                </Text>
+              ) : line.definition ? (
+                <DraftTextField
+                  initialValue={line.definition.name}
+                  onCommit={(value) => {
+                    const trimmed = value.trim();
+                    const def = line.definition;
+                    if (def && trimmed && trimmed !== def.name) void update(def.id, { name: trimmed });
+                  }}
+                  theme={theme}
+                  style={[styles.valueLabelInput, { color: theme.textMuted }]}
+                />
+              ) : (
+                <Text style={[styles.valueLabel, { color: theme.textMuted }]} numberOfLines={1}>
+                  {line.name}
+                </Text>
+              )}
+              {line.isSystemDate ? (
+                <Text style={[styles.readonlyValue, { color: theme.text }]}>{formatSystemDate(line.value)}</Text>
+              ) : (
+                <PropertyValueField
+                  def={fallbackDefinition(line)}
+                  value={line.value}
+                  onChange={(value) => setValue(line.name, value)}
+                  theme={theme}
+                  tree={tree}
+                />
+              )}
+              {!line.isSystemDate && (
+                <Text
+                  onPress={() => removeValue(line.name)}
+                  style={[styles.rowRemove, { color: theme.textMuted }]}
+                >
+                  ✕
+                </Text>
+              )}
             </View>
           ))}
 
-          <AddPropertyButton available={availableToAdd} onAdd={addValue} theme={theme} />
+          <AddPropertyButton
+            available={availableToAdd}
+            onAdd={addValue}
+            onCreateNew={async (name, type) => {
+              await create(name, type, type === 'options' ? [] : undefined);
+              addValue(makePropertyDefinition(`new-${name}`, name, type));
+            }}
+            theme={theme}
+          />
         </>
       )}
     </ScrollView>

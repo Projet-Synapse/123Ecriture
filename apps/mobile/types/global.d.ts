@@ -68,6 +68,19 @@ declare global {
     // Voir la bascule Fichiers/Tags de NotesScreen.tsx — chargé à la
     // demande (pas de flux poussé), voir apps/desktop/electron/search.ts.
     listTags: () => Promise<TagGroup[]>;
+    // Dates du fichier (matérialisation de created/modified dans le
+    // frontmatter à la sauvegarde, voir NotesScreen.tsx). OPTIONNEL :
+    // l'adaptateur natif Android ne l'implémente pas encore — le renderer
+    // retombe alors sur Date.now() (pas de matérialisation fiable, jamais
+    // de crash).
+    getTimestamps?: (relPath: string) => Promise<NoteTimestamps>;
+  }
+
+  interface NoteTimestamps {
+    // Millisecondes epoch (birthtime côté desktop ; le web n'expose pas de
+    // date de création → fallback sur la date de modification).
+    createdAt: number;
+    modifiedAt: number;
   }
 
   interface VaultRegistryEntry {
@@ -184,11 +197,26 @@ declare global {
     migration?: PropertyRenameMigrationSummary;
   }
 
+  // Résultat du scan du coffre (PropertiesBridge.scanVault) : enregistre
+  // automatiquement les clés de frontmatter trouvées dans les notes qui
+  // n'ont pas encore de définition (types déduits, voir
+  // lib/propertyTypes.ts inferPropertyType) et compte, pour CHAQUE
+  // propriété, le nombre de notes qui la portent (demande utilisateur :
+  // « un petit chiffre » dans la Gestion des propriétés).
+  interface PropertyScanResult {
+    properties: PropertyDefinition[];
+    // Clé = nom EXACT de la propriété ; les clés système created/modified
+    // (matérialisées par l'app) ne sont ni enregistrées ni comptées.
+    usage: Record<string, number>;
+    createdCount: number;
+  }
+
   interface PropertiesBridge {
     list: () => Promise<PropertyDefinition[]>;
     create: (name: string, type: PropertyType, options?: string[]) => Promise<PropertyDefinition[]>;
     update: (id: string, patch: PropertyPatch) => Promise<PropertyUpdateResult>;
     remove: (id: string) => Promise<PropertyDefinition[]>;
+    scanVault: () => Promise<PropertyScanResult>;
   }
 
   // Dictionnaire personnel des {{occurrences}} (voir OccurrencesPanel.tsx,

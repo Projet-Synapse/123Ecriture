@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { usePropertyDefinitions } from '../../lib/usePropertyDefinitions';
@@ -87,7 +87,7 @@ function formatMigrationMessage(migration: PropertyRenameMigrationSummary): stri
 
 export function PropertiesManagementSection() {
   const { theme } = usePreferences();
-  const { bridge, definitions, error, create, update, remove } = usePropertyDefinitions();
+  const { bridge, definitions, error, refresh, create, update, remove } = usePropertyDefinitions();
   const [newName, setNewName] = useState('');
   const [newType, setNewType] = useState<PropertyType>('text');
   // Un seul sélecteur de type ouvert à la fois — voir le commentaire de
@@ -98,6 +98,43 @@ export function PropertiesManagementSection() {
   // partagé entre toutes les lignes (comme `error` ci-dessus) plutôt qu'un
   // état par propriété : un seul renommage à la fois a du sens ici.
   const [migrationMessage, setMigrationMessage] = useState<string | null>(null);
+
+  // Scan du coffre (demande utilisateur : « toutes les propriétés
+  // mentionnées dans mes fichiers doivent être enregistrées convenablement,
+  // avec un petit chiffre ») — lancé à l'ouverture de la section, relançable
+  // via « Revérifier ». `usage[name]` = nombre de notes portant la clé.
+  const [usage, setUsage] = useState<Record<string, number>>({});
+  const [scanMessage, setScanMessage] = useState<string | null>(null);
+  const [scanning, setScanning] = useState(false);
+
+  const runScan = useCallback(async () => {
+    if (!bridge?.scanVault) return;
+    setScanning(true);
+    try {
+      const result = await bridge.scanVault();
+      setUsage(result.usage);
+      setScanMessage(
+        result.createdCount > 0
+          ? `✅ ${result.createdCount} nouvelle(s) propriété(s) détectée(s) dans tes fichiers et enregistrée(s).`
+          : null,
+      );
+      await refresh();
+    } catch (err) {
+      console.error('[properties] échec du scan du coffre :', err);
+    } finally {
+      setScanning(false);
+    }
+  }, [bridge, refresh]);
+
+  useEffect(() => {
+    // Passage par un timer : react-hooks/set-state-in-effect interdit un
+    // setState synchronement dans l'effet (setScanning de runScan) — un
+    // déclenchement après le montage est exactement le but recherché.
+    const timer = setTimeout(() => {
+      void runScan();
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [runScan]);
 
   const renameProperty = (id: string, trimmedName: string) => {
     setMigrationMessage(null);
@@ -136,6 +173,20 @@ export function PropertiesManagementSection() {
         {migrationMessage && (
           <Text style={[styles.migrationMessage, { color: theme.textMuted }]}>✅ {migrationMessage}</Text>
         )}
+        {scanMessage && (
+          <Text style={[styles.migrationMessage, { color: theme.textMuted }]}>{scanMessage}</Text>
+        )}
+
+        <View style={styles.scanRow}>
+          <Pressable onPress={() => void runScan()} style={[styles.scanButton, { borderColor: theme.border }]}>
+            <Text style={{ color: theme.text, fontSize: 12 }}>
+              {scanning ? '⏳ Scan du coffre…' : '🔄 Revérifier le coffre'}
+            </Text>
+          </Pressable>
+          <Text style={[styles.scanHint, { color: theme.textMuted }]}>
+            Enregistre automatiquement les propriétés trouvées dans tes notes (type déduit) et compte leur usage.
+          </Text>
+        </View>
 
         {definitions.length === 0 && (
           <Text style={[styles.muted, { color: theme.textMuted }]}>Aucune propriété définie pour l’instant.</Text>
@@ -153,6 +204,12 @@ export function PropertiesManagementSection() {
                 theme={theme}
                 style={[styles.defNameInput, { color: theme.text, borderColor: theme.border }]}
               />
+              {/* Compteur d'usage (demande utilisateur : « un petit chiffre ») —
+                  nombre de notes du coffre portant cette propriété. */}
+              <View style={[styles.usageBadge, { borderColor: theme.border }]}>
+                <Text style={{ color: theme.text, fontSize: 11 }}>{usage[def.name] ?? 0}</Text>
+                <Text style={{ color: theme.textMuted, fontSize: 10 }}>notes</Text>
+              </View>
               <TypePicker
                 value={def.type}
                 onSelect={(type) => void update(def.id, { type })}
@@ -244,6 +301,34 @@ const styles = StyleSheet.create({
     // Filet de sécurité : sur un panneau étroit, empile plutôt que de
     // laisser le nom/le chip de type/la poubelle se chevaucher.
     flexWrap: 'wrap',
+  },
+  usageBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingVertical: 3,
+    paddingHorizontal: 7,
+  },
+  scanRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 4,
+    flexWrap: 'wrap',
+  },
+  scanButton: {
+    borderWidth: 1,
+    borderRadius: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+  },
+  scanHint: {
+    fontSize: 11,
+    flex: 1,
+    minWidth: 140,
+    lineHeight: 15,
   },
   defNameInput: {
     flex: 1,

@@ -56,3 +56,37 @@ export function serializeFrontmatter(data: FrontmatterData, body: string): strin
   const yamlBlock = dump(data).trimEnd();
   return `---\n${yamlBlock}\n---\n\n${trimmedBody}`;
 }
+
+// Réordonne les clés du frontmatter selon `orderedNames` (glisser-déposer du
+// bloc Propriétés en mode Intermédiaire — l'ordre écrit dans le fichier est
+// ensuite celui du mode Source). Les clés absentes de `orderedNames`
+// (liste périmée face au fichier) sont conservées à la fin dans leur ordre
+// d'origine plutôt que perdues : jamais de perte de donnée sur un reorder.
+export function reorderFrontmatterData(data: FrontmatterData, orderedNames: string[]): FrontmatterData {
+  const next: FrontmatterData = {};
+  for (const name of orderedNames) {
+    if (name in data) next[name] = data[name];
+  }
+  for (const key of Object.keys(data)) {
+    if (!(key in next)) next[key] = data[key];
+  }
+  return next;
+}
+
+// Matérialise les dates système `created`/`modified` DANS le frontmatter
+// (choix utilisateur : les lignes « Créé/Modifié » des vues deviennent de
+// vraies clés, cf. la demande de cohérence entre les modes). `created` n'est
+// écrit QUE s'il manque (jamais d'écrasement d'une date de création déjà
+// là, quelle que soit sa valeur) ; `modified` est actualisé à chaque
+// sauvegarde. Retourne le même objet si rien à changer (idempotence : un
+// double appel ne réécrit pas le fichier).
+export function ensureTimestamps(
+  data: FrontmatterData,
+  fallbackCreatedAtMs: number,
+  nowMs: number,
+): FrontmatterData {
+  const next = { ...data };
+  if (next.created === undefined) next.created = new Date(fallbackCreatedAtMs).toISOString();
+  next.modified = new Date(nowMs).toISOString();
+  return next;
+}

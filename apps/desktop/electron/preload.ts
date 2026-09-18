@@ -37,6 +37,7 @@ contextBridge.exposeInMainWorld('vault', {
   readAttachmentDataUrl: (relPath: string) => ipcRenderer.invoke('vault:read-attachment-data-url', relPath),
   duplicate: (relPath: string) => ipcRenderer.invoke('vault:duplicate', relPath),
   listTags: () => ipcRenderer.invoke('vault:list-tags'),
+  getTimestamps: (relPath: string) => ipcRenderer.invoke('vault:get-timestamps', relPath),
 });
 
 contextBridge.exposeInMainWorld('vaults', {
@@ -128,6 +129,7 @@ contextBridge.exposeInMainWorld('calendar', {
 
 contextBridge.exposeInMainWorld('properties', {
   list: () => ipcRenderer.invoke('properties:list'),
+  scanVault: () => ipcRenderer.invoke('properties:scan-vault'),
   create: (name: string, type: string, options?: string[]) =>
     ipcRenderer.invoke('properties:create', name, type, options),
   update: (id: string, patch: unknown) => ipcRenderer.invoke('properties:update', id, patch),
