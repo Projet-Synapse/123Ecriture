@@ -1,5 +1,6 @@
 import { dialog, ipcMain, type BrowserWindow } from 'electron';
 import crypto from 'crypto';
+import fs from 'fs/promises';
 import fsSync from 'fs';
 import os from 'os';
 import path from 'path';
@@ -283,6 +284,24 @@ export async function pickAndCreateVault(
   return vault;
 }
 
+// Vide le CONTENU visible d'un coffre (déconnexion d'un coffre distant :
+// « son contenu doit disparaître du dossier où on l'avait placé » — action
+// destructive, toujours précédée d'une confirmation côté UI). Ne touche PAS
+// aux entrées commençant par un point : .123ecriture (identité du coffre +
+// ordre/état) et .obsidian (réglages Obsidian du dossier) survivent — le
+// dossier redevient un conteneur vide propre, réutilisable tel quel.
+// N'efface RIEN côté cloud : le coffre distant et ses fichiers restent
+// intacts (c'est le sens d'une « déconnexion »).
+export async function clearVaultContent(id: string): Promise<void> {
+  const config = migrateLegacyConfig();
+  const vault = findVaultOrThrow(config.vaults ?? [], id);
+  const entries = await fs.readdir(vault.path, { withFileTypes: true });
+  for (const entry of entries) {
+    if (entry.name.startsWith('.')) continue;
+    await fs.rm(path.join(vault.path, entry.name), { recursive: true, force: true });
+  }
+}
+
 export function broadcastVaultsChanged(getWindow: GetWindow): void {
   const win = getWindow?.();
   if (win) win.webContents.send('vaults:changed', getVaults());
@@ -330,4 +349,6 @@ export function registerVaultsHandlers(getWindow: GetWindow): void {
     broadcastVaultsChanged(getWindow);
     return vaultList;
   });
+
+  ipcMain.handle('vaults:clear-content', (_event, id: string) => clearVaultContent(id));
 }

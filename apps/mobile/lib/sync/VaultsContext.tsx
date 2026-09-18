@@ -40,6 +40,9 @@ type VaultsContextValue = {
   renameVault: (id: string, name: string) => Promise<void>;
   removeVault: (id: string) => Promise<void>;
   setCloudLink: (id: string, payload: { linked: boolean; remoteVaultId?: string | null }) => Promise<void>;
+  // Déconnexion d'un coffre distant : supprime le contenu déposé du dossier
+  // puis retire le coffre de la liste (destructif, confirmé côté UI).
+  disconnectVault: (id: string) => Promise<void>;
   // Liaison automatique au compte (voir l'effet ci-dessous) : dernière
   // erreur rencontrée, affichée en discret dans Paramètres, et relance
   // manuelle — un échec ne bloque jamais l'usage local du coffre.
@@ -145,6 +148,27 @@ export function VaultsProvider({ children }: { children: ReactNode }) {
       setActiveVaultId(await bridge.getActive());
     },
     [bridge],
+  );
+
+  // Déconnexion d'un coffre distant (action DESTRUCTIVE, toujours confirmée
+  // côté UI avant l'appel) : le contenu déposé dans le dossier disparaît,
+  // le coffre est retiré de la liste locale — le coffre distant et ses
+  // fichiers restent intacts dans le cloud (c'est le sens d'une
+  // « déconnexion »). On vide AVANT de retirer l'entrée : si la suppression
+  // échoue, le coffre reste listé et l'erreur est visible, plutôt qu'un
+  // dossier fantôme plein mais orphelin. Le retrait d'entrée est aussi ce
+  // qui évite à la liaison automatique de re-lier immédiatement le coffre
+  // (elle ne voit jamais d'état intermédiaire « délié mais présent »).
+  const disconnectVault = useCallback(
+    async (id: string) => {
+      if (!bridge) return;
+      if (!bridge.clearVaultContent) {
+        throw new Error('Déconnexion indisponible sur cette plateforme.');
+      }
+      await bridge.clearVaultContent(id);
+      await removeVault(id);
+    },
+    [bridge, removeVault],
   );
 
   const setCloudLink = useCallback(
@@ -257,6 +281,7 @@ export function VaultsProvider({ children }: { children: ReactNode }) {
       retrieveRemoteVault,
       renameVault,
       removeVault,
+      disconnectVault,
       setCloudLink,
       autoLinkError,
       retryAutoLink,
@@ -272,6 +297,7 @@ export function VaultsProvider({ children }: { children: ReactNode }) {
       retrieveRemoteVault,
       renameVault,
       removeVault,
+      disconnectVault,
       setCloudLink,
       autoLinkError,
       retryAutoLink,

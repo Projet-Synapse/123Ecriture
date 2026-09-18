@@ -36,6 +36,7 @@ export function AccountSyncSection() {
     createVault,
     renameVault,
     removeVault,
+    disconnectVault,
     setCloudLink,
     autoLinkError,
     retryAutoLink,
@@ -60,6 +61,10 @@ export function AccountSyncSection() {
   // la même confirmation que la suppression de liste de tâches
   // (ConfirmDialog), plutôt qu'un retrait immédiat au simple clic.
   const [confirmRemoveVault, setConfirmRemoveVault] = useState<VaultRegistryEntry | null>(null);
+  // Déconnexion d'un coffre distant (destructive : supprime le contenu
+  // déposé) — même patron de confirmation que le retrait, mais avec un
+  // avertissement explicite car la corbeille OS n'est pas utilisée.
+  const [confirmDisconnectVault, setConfirmDisconnectVault] = useState<VaultRegistryEntry | null>(null);
 
   // Connexion email/mot de passe (voir AuthContext) — formulaire déplié à la
   // demande sous le bouton Google, pour ne pas surcharger la carte Compte.
@@ -387,7 +392,7 @@ export function AccountSyncSection() {
 
       {vault && (
         <View style={[s.card, { backgroundColor: theme.surface, borderColor: theme.border }]}>
-          <Text style={[s.cardTitle, { color: theme.text }]}>Coffres</Text>
+          <Text style={[s.cardTitle, { color: theme.text }]}>Coffres locaux</Text>
 
           {/* Liaison automatique en échec (hors ligne, cloud indisponible…) :
               discret et jamais bloquant — le coffre reste pleinement
@@ -404,7 +409,7 @@ export function AccountSyncSection() {
           )}
 
           {vaultList.length === 0 && (
-            <Text style={[s.cardValue, { color: theme.textMuted }]}>Aucun coffre pour l’instant.</Text>
+            <Text style={[s.cardValue, { color: theme.textMuted }]}>Aucun coffre local pour l’instant.</Text>
           )}
 
           {vaultList.map((v) => {
@@ -482,16 +487,24 @@ export function AccountSyncSection() {
                       </Pressable>
                     </View>
                   ) : (
-                    <Pressable
-                      onPress={() => !isSyncing && void handleSyncVault(v)}
-                      style={[styles.syncButton, { backgroundColor: theme.accent, opacity: isSyncing ? 0.6 : 1 }]}
-                    >
-                      {isSyncing ? (
-                        <ActivityIndicator size="small" color="#fff" />
-                      ) : (
-                        <Text style={s.buttonText}>Synchroniser maintenant</Text>
-                      )}
-                    </Pressable>
+                    <View style={styles.linkButtonsRow}>
+                      <Pressable
+                        onPress={() => !isSyncing && void handleSyncVault(v)}
+                        style={[styles.syncButton, { backgroundColor: theme.accent, opacity: isSyncing ? 0.6 : 1 }]}
+                      >
+                        {isSyncing ? (
+                          <ActivityIndicator size="small" color="#fff" />
+                        ) : (
+                          <Text style={s.buttonText}>Synchroniser maintenant</Text>
+                        )}
+                      </Pressable>
+                      <Pressable
+                        onPress={() => setConfirmDisconnectVault(v)}
+                        style={[styles.syncButton, styles.linkSecondaryButton, { borderColor: theme.danger }]}
+                      >
+                        <Text style={{ color: theme.danger }}>Déconnecter…</Text>
+                      </Pressable>
+                    </View>
                   )}
                   {result?.summary && (
                     <Text style={[styles.vaultPathText, { color: theme.textMuted }]}>
@@ -596,6 +609,22 @@ export function AccountSyncSection() {
           onConfirm={() => removeVault(confirmRemoveVault.id)}
           onCancel={() => setConfirmRemoveVault(null)}
           onSettled={() => setConfirmRemoveVault(null)}
+        />
+      )}
+
+      {/* Déconnexion d'un coffre distant — DESTRUCTIVE (suppression du
+          contenu déposé), d'où l'avertissement explicite demandé par
+          l'utilisatrice avant toute confirmation. Le cloud reste intact :
+          la donnée de référence vit dans le coffre distant. */}
+      {confirmDisconnectVault && (
+        <ConfirmDialog
+          theme={theme}
+          title={`Déconnecter « ${confirmDisconnectVault.name} » ?`}
+          message="⚠️ Action destructive : tout le contenu du dossier de ce coffre sera supprimé de cet appareil (fichiers et sous-dossiers, hors réglages .123ecriture/.obsidian), et le coffre sera retiré de la liste locale. Le coffre distant et ses fichiers restent intacts dans le cloud : vous pourrez vous y reconnecter plus tard pour tout récupérer."
+          confirmLabel="Déconnecter et supprimer"
+          onConfirm={() => void runVaultAction(() => disconnectVault(confirmDisconnectVault.id))}
+          onCancel={() => setConfirmDisconnectVault(null)}
+          onSettled={() => setConfirmDisconnectVault(null)}
         />
       )}
     </View>
