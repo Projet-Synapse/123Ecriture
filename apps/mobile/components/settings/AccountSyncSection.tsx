@@ -8,7 +8,6 @@ import {
   createRemoteVault,
   linkVaultToCloud,
   listRemoteVaults,
-  runSync as runSyncEngine,
   type RemoteVaultSummary,
   type SyncSummary,
 } from '../../lib/sync/syncEngine';
@@ -53,8 +52,6 @@ export function AccountSyncSection() {
   const [renameDraft, setRenameDraft] = useState('');
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [createDraft, setCreateDraft] = useState('');
-  const [syncingVaultId, setSyncingVaultId] = useState<string | null>(null);
-  const [syncResults, setSyncResults] = useState<Record<string, { summary?: SyncSummary; error?: string }>>({});
   // Retirer un coffre n'efface rien sur le disque (vaults.ts ne filtre que
   // le registre), mais un ✕ frôlé délierait aussi sa liaison cloud — d'où
   // la même confirmation que la suppression de liste de tâches
@@ -114,9 +111,11 @@ export function AccountSyncSection() {
   }, [createDraft, createVault, runVaultAction]);
 
   const loadRemoteVaults = useCallback(() => {
-    setRemoteVaultsError(null);
     listRemoteVaults()
-      .then(setRemoteVaults)
+      .then((list) => {
+        setRemoteVaults(list);
+        setRemoteVaultsError(null);
+      })
       .catch((error) => {
         console.error('[sync] échec du listage des coffres distants :', error);
         setRemoteVaultsError(errorMessage(error));
@@ -128,29 +127,24 @@ export function AccountSyncSection() {
   // la carte doit refléter ces apparitions sans attendre un rafraîchissement
   // manuel.
   const linkedVaultCount = vaultList.filter((v) => v.cloudLinked).length;
+  // Pas de réinitialisation synchrone au logout (règle lint setState-in-
+  // effect) : la carte « Coffres distants » n'est rendue QUE connecté·e
+  // (auth.user && vault), une liste périmée hors session ne s'affiche jamais.
   useEffect(() => {
-    if (!auth.user) {
-      setRemoteVaults(null);
-      setRemoteVaultsError(null);
-      return;
-    }
+    if (!auth.user) return;
     loadRemoteVaults();
   }, [auth.user, linkedVaultCount, loadRemoteVaults]);
 
   const handleLinkVault = useCallback(
     async (v: VaultRegistryEntry) => {
       if (!auth.user) return;
-      setSyncResults((prev) => ({ ...prev, [v.id]: {} }));
       try {
         const remoteVaultId = await linkVaultToCloud(v.id, v.name, auth.user.id);
         await setCloudLink(v.id, { linked: true, remoteVaultId });
         loadRemoteVaults();
       } catch (error) {
         console.error('[sync] échec de la liaison au cloud :', error);
-        setSyncResults((prev) => ({
-          ...prev,
-          [v.id]: { error: errorMessage(error) },
-        }));
+        setVaultActionError(errorMessage(error));
       }
     },
     [auth.user, setCloudLink, loadRemoteVaults],
@@ -236,32 +230,19 @@ export function AccountSyncSection() {
   const handleSyncVault = useCallback(
     async (v: VaultRegistryEntry) => {
       if (!auth.user || !v.remoteVaultId) return;
-      // Le coffre ACTIF partage son état avec l'indicateur global (voir
-      // SyncStatusContext.tsx / AppShell.tsx) — on délègue à son runSync()
-      // plutôt que de dupliquer l'appel à syncEngine ici, pour que les deux
-      // affichages restent cohérents. Les coffres non actifs (rares :
-      // syncable depuis Paramètres sans y être "dans"), eux, gardent
-      // l'appel direct au moteur avec leur propre state local, comme avant.
-      if (v.id === activeVaultId) {
-        await syncStatus.runSync();
-        return;
+      // Le moteur de sync (ponts vault/sync) opère TOUJOURS sur le coffre
+      // ACTIF : synchroniser un coffre non actif sans basculer d'abord
+      // échangerait avec le bon coffre distant mais lirait/écrirait dans le
+      // dossier du coffre actif — contamination croisée (bug vécu v0.4.14 :
+      // deux coffres échangés contre le même dossier). Désormais : bascule
+      // d'abord, sync ensuite — même chemin que l'utilisatrice suivrait à la
+      // main, zéro contournement du pont.
+      if (v.id !== activeVaultId) {
+        await runVaultAction(() => switchVault(v.id));
       }
-      setSyncingVaultId(v.id);
-      setSyncResults((prev) => ({ ...prev, [v.id]: {} }));
-      try {
-        const summary = await runSyncEngine(v.remoteVaultId, auth.user.id);
-        setSyncResults((prev) => ({ ...prev, [v.id]: { summary } }));
-      } catch (error) {
-        console.error('[sync] échec de la synchronisation :', error);
-        setSyncResults((prev) => ({
-          ...prev,
-          [v.id]: { error: errorMessage(error) },
-        }));
-      } finally {
-        setSyncingVaultId(null);
-      }
+      await syncStatus.runSync();
     },
-    [auth.user, activeVaultId, syncStatus],
+    [auth.user, activeVaultId, syncStatus, switchVault, runVaultAction],
   );
 
   if (!auth.available && !vault) {
@@ -513,14 +494,14 @@ export function AccountSyncSection() {
 
           {auth.user &&
             vaultList.map((v) => {
-              const isActiveVault = v.id === activeVaultId;
-              const isSyncing = isActiveVault ? syncStatus.status === 'syncing' : syncingVaultId === v.id;
-              // Coffre actif : lit le résultat depuis le contexte partagé
-              // (même source que l'indicateur global) plutôt que du state
-              // local `syncResults`, qui ne sert plus qu'aux autres coffres.
-              const result: { summary?: SyncSummary; error?: string } = isActiveVault
-                ? { summary: syncStatus.lastSummary ?? undefined, error: syncStatus.lastError ?? undefined }
-                : (syncResults[v.id] ?? {});
+              // Toute synchro passe désormais par le contexte partagé (le
+              // coffre visé devient actif d'abord — voir handleSyncVault) :
+              // un seul état, celui de l'indicateur global.
+              const isSyncing = syncStatus.status === 'syncing';
+              const result: { summary?: SyncSummary; error?: string } = {
+                summary: syncStatus.lastSummary ?? undefined,
+                error: syncStatus.lastError ?? undefined,
+              };
               return (
                 <View key={`sync-${v.id}`} style={styles.syncRow}>
                   <Text style={[styles.vaultPathText, { color: theme.textMuted }]} numberOfLines={1}>
