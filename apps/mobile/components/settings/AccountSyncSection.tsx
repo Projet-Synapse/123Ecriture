@@ -32,6 +32,7 @@ export function AccountSyncSection() {
     activeVaultId,
     switchVault,
     addExistingVault,
+    retrieveRemoteVault,
     createVault,
     renameVault,
     removeVault,
@@ -163,19 +164,18 @@ export function AccountSyncSection() {
   );
 
   // Connexion d'un coffre distant SUR CET APPAREIL, dans l'ordre demandé par
-  // l'utilisatrice (v0.4.10) : 1) « Connecter » ci-dessous, 2) l'app demande
-  // OÙ placer les fichiers (sélecteur natif — la boîte de dialogue permet
-  // d'en créer un neuf), 3) le coffre distant y dépose TOUT son contenu
-  // (première synchro immédiate, dossiers compris depuis le correctif mkdir
-  // de write-note) et devient le coffre actif.
+  // l'utilisatrice (v0.4.10/0.4.11) : 1) « Connecter » ci-dessous, 2) l'app
+  // demande OÙ placer les fichiers, 3) un SOUS-DOSSIER au nom du coffre
+  // distant est créé à cet endroit (le coffre garde son nom original, aucun
+  // mélange possible entre coffres placés au même endroit) et le distant y
+  // dépose TOUT son contenu (première synchro immédiate).
   const handleRetrieveRemote = useCallback(
     async (remote: RemoteVaultSummary) => {
       setRetrievingRemoteId(remote.id);
       setVaultActionError(null);
       try {
-        const added = await addExistingVault(`Où placer les fichiers de « ${remote.name} » ?`);
+        const added = await retrieveRemoteVault(remote);
         if (!added) return;
-        await setCloudLink(added.id, { linked: true, remoteVaultId: remote.id });
         await syncStatus.runSync();
       } catch (error) {
         console.error('[sync] échec de la connexion du coffre distant :', error);
@@ -184,7 +184,7 @@ export function AccountSyncSection() {
         setRetrievingRemoteId(null);
       }
     },
-    [addExistingVault, setCloudLink, syncStatus],
+    [retrieveRemoteVault, syncStatus],
   );
 
   const submitEmailAuth = useCallback(

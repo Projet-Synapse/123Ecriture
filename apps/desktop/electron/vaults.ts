@@ -142,8 +142,11 @@ export function addExistingVault(chosenPath: string): VaultRegistryEntry {
 }
 
 // Crée un nouveau dossier `name` dans `parentDir`, l'initialise comme vault
-// (identité + dossier .123ecriture/) et le rend actif.
-export function createVault(parentDir: string, name: string): VaultRegistryEntry {
+// (identité + dossier .123ecriture/) et le rend actif. `vaultName` optionnel :
+// nom affiché du coffre quand il doit DIFFÉRER du dossier — cas « Connecter
+// sur cet appareil » : le dossier est dédoublonné (« X 2 » si « X » existe
+// déjà) mais le coffre doit garder le nom ORIGINAL du coffre distant.
+export function createVault(parentDir: string, name: string, vaultName?: string): VaultRegistryEntry {
   const safeName = name && name.trim().length > 0 ? name.trim() : 'Nouveau coffre';
 
   // Même logique de dédoublonnage que findAvailableName() dans vault.js
@@ -158,14 +161,18 @@ export function createVault(parentDir: string, name: string): VaultRegistryEntry
   const fullPath = path.join(parentDir, folderName);
   fsSync.mkdirSync(fullPath, { recursive: true });
 
-  const identity: VaultIdentity = { id: crypto.randomUUID(), name: folderName, createdAt: new Date().toISOString() };
+  const identity: VaultIdentity = {
+    id: crypto.randomUUID(),
+    name: vaultName && vaultName.trim().length > 0 ? vaultName.trim() : folderName,
+    createdAt: new Date().toISOString(),
+  };
   writeVaultIdentity(fullPath, identity);
 
   const config = migrateLegacyConfig();
   const vaultList = config.vaults ?? [];
   const vault: VaultRegistryEntry = {
     id: identity.id,
-    name: folderName,
+    name: identity.name ?? folderName,
     path: fullPath,
     cloudLinked: false,
     remoteVaultId: null,
@@ -257,11 +264,21 @@ export async function pickAndAddExistingVault(title?: string): Promise<VaultRegi
 }
 
 // Ouvre le sélecteur natif pour choisir OÙ créer le nouveau coffre, puis
-// crée+active un sous-dossier `name` à cet endroit.
-export async function pickAndCreateVault(name: string): Promise<VaultRegistryEntry | null> {
-  const result = await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] });
+// crée+active un sous-dossier `name` à cet endroit. `title` optionnel :
+// contexte de l'appel (ex. « Où placer les fichiers de « X » ? » lors de la
+// connexion d'un coffre distant). `vaultName` : nom affiché ≠ dossier (voir
+// createVault).
+export async function pickAndCreateVault(
+  name: string,
+  title?: string,
+  vaultName?: string,
+): Promise<VaultRegistryEntry | null> {
+  const result = await dialog.showOpenDialog({
+    properties: ['openDirectory', 'createDirectory'],
+    ...(title ? { title, message: title } : {}),
+  });
   if (result.canceled || result.filePaths.length === 0) return null;
-  const vault = createVault(result.filePaths[0], name);
+  const vault = createVault(result.filePaths[0], name, vaultName);
   switchVault(vault.id);
   return vault;
 }
@@ -282,8 +299,8 @@ export function registerVaultsHandlers(getWindow: GetWindow): void {
     return getVaults();
   });
 
-  ipcMain.handle('vaults:create-new', async (_event, name: string) => {
-    const vault = await pickAndCreateVault(name);
+  ipcMain.handle('vaults:create-new', async (_event, name: string, title?: string, vaultName?: string) => {
+    const vault = await pickAndCreateVault(name, title, vaultName);
     if (vault) broadcastVaultsChanged(getWindow);
     return getVaults();
   });

@@ -65,7 +65,7 @@ export function installWebBridges(): void {
       }
       return { id, name: 'Navigateur' };
     },
-    createNew: async (name: string) => {
+    createNew: async (name: string, _title?: string, _vaultName?: string) => {
       const parent = await showDirectoryPicker({ mode: 'readwrite' });
       await webVaultRegistry.createNew(parent, name);
       return webVaultRegistry.toEntries();

@@ -68,7 +68,11 @@ export const nativeVaultsAdapter: VaultsBridge = {
 
   addExisting: () => requestAndRegisterVault('Nouveau coffre'),
 
-  createNew: async (name: string) => requestAndRegisterVault(name || 'Nouveau coffre'),
+  // SAF ne permet pas de créer un sous-dossier à l'endroit choisi : le
+  // dossier est choisi/créé depuis le sélecteur système lui-même, puis
+  // enregistré sous le nom donné (voir requestAndRegisterVault).
+  createNew: async (name: string, _title?: string, _vaultName?: string) =>
+    requestAndRegisterVault(name || 'Nouveau coffre'),
 
   // Identité d'appareil pour « appareils connectés » : stable par
   // installation (pas de hostname exposé par React Native), nom générique.
