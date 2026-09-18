@@ -120,6 +120,10 @@ declare global {
       id: string,
       payload: { linked: boolean; remoteVaultId?: string | null },
     ) => Promise<VaultRegistryEntry[]>;
+    // Déconnexion d'un coffre distant : SUPPRIME le contenu visible du
+    // dossier (voir vaults.ts clearVaultContent) — desktop uniquement pour
+    // l'instant, optionnel car les ponts web/natifs ne l'implémentent pas.
+    clearVaultContent?: (id: string) => Promise<void>;
     onChanged: (callback: (vaults: VaultRegistryEntry[]) => void) => () => void;
   }
 

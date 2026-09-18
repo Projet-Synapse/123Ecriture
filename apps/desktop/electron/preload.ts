@@ -52,6 +52,7 @@ contextBridge.exposeInMainWorld('vaults', {
   remove: (id: string) => ipcRenderer.invoke('vaults:remove', id),
   setCloudLink: (id: string, payload: { linked: boolean; remoteVaultId?: string | null }) =>
     ipcRenderer.invoke('vaults:set-cloud-link', id, payload),
+  clearVaultContent: (id: string) => ipcRenderer.invoke('vaults:clear-content', id),
   onChanged: (callback: (vaultList: unknown) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, vaultList: unknown) => callback(vaultList);
     ipcRenderer.on('vaults:changed', handler);

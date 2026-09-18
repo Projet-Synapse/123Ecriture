@@ -545,6 +545,18 @@ bas) sur le projet Supabase partagé "Projet Synapse".
   fichiers. `listRemoteVaults()` regroupe les appareils par coffre et la
   carte les affiche (« 💻 NOM · vu hier », `formatLastSeen` dans
   `lib/sync/devices.ts`, pur + testé).
+- **Déconnexion d'un coffre distant** (v0.4.12) : bouton « Déconnecter… »
+  sur un coffre local lié (carte « Coffres locaux » — renommée ainsi pour
+  la distinguer des coffres distants du compte). Action DESTRUCTIVE et
+  confirmée (ConfirmDialog avec avertissement explicite) : le CONTENU
+  DÉPOSÉ du dossier est supprimé de l'appareil (`vaults:clear-content` —
+  tout sauf les entrées pointées `.123ecriture`/`.obsidian`), puis le
+  coffre est retiré du registre local. Le coffre distant et ses fichiers
+  cloud restent INTACTS (c'est le sens d'une déconnexion : la référence
+  est le cloud, on ne fait que quitter l'appareil). Retirer l'entrée
+  après vidage évite aussi à la liaison automatique de re-lier
+  immédiatement le dossier vidé (elle ne voit jamais d'état
+  « délié mais présent »).
 - **Liaison automatique au compte** : connecté·e, TOUT coffre du registre
   devient une donnée du compte — présent avant la connexion OU ajouté
   ensuite, quel que soit le chemin d'entrée (« Ajouter un dossier
