@@ -101,6 +101,8 @@ async function stampCreatedByDevice(
 // affiche « qui » est connecté et quand (demande v0.4.10).
 // `createdByDevice` : appareil CRÉATEUR du coffre (v0.4.13) — d'où il
 // « provient », distinct de qui l'a synchronisé depuis.
+// `fileCount` : nombre de fichiers dans le coffre distant (v0.4.14) —
+// distinguer « vide, en attente de contenu » d'un coffre rempli.
 export type RemoteVaultSummary = {
   id: string;
   name: string;
@@ -108,7 +110,44 @@ export type RemoteVaultSummary = {
   createdAt: string;
   devices: RemoteVaultDevice[];
   createdByDevice: string | null;
+  fileCount: number;
 };
+
+// Crée un coffre distant DIRECTEMENT depuis le compte (v0.4.14 — modèle
+// « le coffre distant est une donnée du compte », pas d'un ordinateur) :
+// aucune liaison à un dossier local, l'origine est l'appareil courant et
+// `local_vault_id` porte un marqueur `account:` (il ne référence AUCUN
+// dossier — champ informatif, jamais utilisé pour le rattachement, qui vit
+// dans le registre local de chaque machine).
+export async function createRemoteVault(name: string, ownerId: string): Promise<RemoteVaultSummary> {
+  const { supabase: client } = requireBridges();
+  const safeName = name.trim() || 'Nouveau coffre distant';
+  const { data, error } = await client
+    .schema(APP_SCHEMA)
+    .from(VAULTS_TABLE)
+    .insert({ owner_id: ownerId, local_vault_id: `account:${crypto.randomUUID()}`, name: safeName })
+    .select('id, name, local_vault_id, created_at, created_by_device')
+    .single();
+  if (error) throw error;
+  const row = data as {
+    id: string;
+    name: string;
+    local_vault_id: string | null;
+    created_at: string;
+    created_by_device: string | null;
+  };
+  await stampCreatedByDevice(client, row.id);
+  const device = typeof window !== 'undefined' && window.vaults ? await window.vaults.deviceInfo().catch(() => null) : null;
+  return {
+    id: row.id,
+    name: row.name,
+    localVaultId: row.local_vault_id,
+    createdAt: row.created_at,
+    devices: [],
+    createdByDevice: row.created_by_device ?? device?.name ?? null,
+    fileCount: 0,
+  };
+}
 
 // Lecture best-effort des appareils par coffre : si la table n'existe pas
 // encore côté Supabase (recette SQL non rejouée après mise à jour), on rend
@@ -141,13 +180,14 @@ async function fetchDevicesByVault(): Promise<Map<string, RemoteVaultDevice[]>> 
 
 export async function listRemoteVaults(): Promise<RemoteVaultSummary[]> {
   if (!supabase) throw new Error('Client Supabase non configuré (variables EXPO_PUBLIC_SUPABASE_* absentes).');
-  const [vaultsResult, devicesByVault] = await Promise.all([
+  const [vaultsResult, devicesByVault, filesByVault] = await Promise.all([
     supabase
       .schema(APP_SCHEMA)
       .from(VAULTS_TABLE)
       .select('id, name, local_vault_id, created_at, created_by_device')
       .order('created_at', { ascending: true }),
     fetchDevicesByVault(),
+    fetchFileCountsByVault(),
   ]);
   const { data, error } = vaultsResult;
   if (error) throw error;
@@ -158,7 +198,28 @@ export async function listRemoteVaults(): Promise<RemoteVaultSummary[]> {
     createdAt: row.created_at as string,
     devices: devicesByVault.get(row.id as string) ?? [],
     createdByDevice: (row.created_by_device as string | null) ?? null,
+    fileCount: filesByVault.get(row.id as string) ?? 0,
   }));
+}
+
+// Comptage par coffre (même lecture groupée côté client que les appareils —
+// échec best-effort : une table absente ne casse pas la carte, compte à 0).
+async function fetchFileCountsByVault(): Promise<Map<string, number>> {
+  if (!supabase) return new Map();
+  const { data, error } = await supabase
+    .schema(APP_SCHEMA)
+    .from(VAULT_FILES_TABLE)
+    .select('vault_id');
+  if (error) {
+    console.warn('[sync] comptage des coffres distants indisponible :', error.message);
+    return new Map();
+  }
+  const counts = new Map<string, number>();
+  for (const row of data ?? []) {
+    const vaultId = row.vault_id as string;
+    counts.set(vaultId, (counts.get(vaultId) ?? 0) + 1);
+  }
+  return counts;
 }
 
 // Heartbeat « appareil connecté » : upsert d'une ligne vault_devices à chaque
