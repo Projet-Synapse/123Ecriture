@@ -38,6 +38,8 @@ export function AccountSyncSection() {
     removeVault,
     disconnectVault,
     setCloudLink,
+    vaultFolderIssues,
+    relocateVault,
   } = useVaults();
   const vault = typeof window !== 'undefined' ? window.vault : undefined;
   // Statut partagé (voir SyncStatusContext.tsx) — source de vérité pour le
@@ -507,6 +509,26 @@ export function AccountSyncSection() {
                   <Text style={[styles.vaultPathText, { color: theme.textMuted }]} numberOfLines={1}>
                     ☁️ {v.name}
                   </Text>
+                  {/* Coffre déplacé (v0.4.16) : l'emplacement enregistré est
+                      mort ou vide d'identité — la synchro est bloquée tant
+                      que le nouvel emplacement n'est pas désigné, sinon tout
+                      le distant serait « ressuscité » à l'ancien chemin. */}
+                  {vaultFolderIssues[v.id] && (
+                    <View style={styles.relocateBlock}>
+                      <Text style={{ color: theme.danger }}>
+                        ⚠️{' '}
+                        {vaultFolderIssues[v.id] === 'missing'
+                          ? 'Dossier introuvable à son emplacement enregistré (déplacé ou renommé ?)'
+                          : "Le dossier enregistré ne contient plus ce coffre (déplacé ?) — la synchro est suspendue."}
+                      </Text>
+                      <Pressable
+                        onPress={() => void runVaultAction(() => relocateVault(v.id))}
+                        style={[styles.relocateButton, { borderColor: theme.accent }]}
+                      >
+                        <Text style={{ color: theme.accent }}>Retrouver le dossier…</Text>
+                      </Pressable>
+                    </View>
+                  )}
                   {!v.cloudLinked ? (
                     <View style={styles.linkButtonsRow}>
                       <Pressable
@@ -770,5 +792,16 @@ const styles = StyleSheet.create({
   },
   remotePickerRow: {
     paddingVertical: 6,
+  },
+  relocateBlock: {
+    gap: 6,
+    paddingVertical: 4,
+  },
+  relocateButton: {
+    alignSelf: 'flex-start',
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    borderRadius: 6,
+    borderWidth: 1,
   },
 });

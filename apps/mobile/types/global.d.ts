@@ -124,6 +124,13 @@ declare global {
     // dossier (voir vaults.ts clearVaultContent) — desktop uniquement pour
     // l'instant, optionnel car les ponts web/natifs ne l'implémentent pas.
     clearVaultContent?: (id: string) => Promise<void>;
+    // Santé des emplacements (desktop) : 'missing' = dossier enregistré
+    // disparu, 'no-identity' = dossier témoin vide d'identité (coffre
+    // déplacé). Voir vaults.ts checkVaultFolders.
+    checkVaultFolders?: () => Promise<Record<string, 'ok' | 'missing' | 'no-identity'>>;
+    // Retrouve un coffre déplacé (sélecteur natif + validation d'identité).
+    // Retourne la liste mise à jour, ou null si annulé.
+    relocateVault?: (id: string) => Promise<VaultRegistryEntry[] | null>;
     onChanged: (callback: (vaults: VaultRegistryEntry[]) => void) => () => void;
   }
 

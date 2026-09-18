@@ -302,6 +302,59 @@ export async function clearVaultContent(id: string): Promise<void> {
   }
 }
 
+// Santé de l'emplacement de chaque coffre (déplacement détecté — demande
+// v0.4.16) : « missing » = le dossier enregistré n'existe plus (déplacé,
+// renommé, lecteur débranché) ; « no-identity » = le dossier existe mais ne
+// contient plus .123ecriture/vault.json — signature d'un coffre DÉPLACÉ en
+// laissant un dossier derrière lui (sans ce contrôle, la synchro verserait
+// tout le coffre distant dans ce dossier témoin : la « résurrection » de
+// l'ancien emplacement vécue par l'utilisatrice).
+export function checkVaultFolders(): Record<string, 'ok' | 'missing' | 'no-identity'> {
+  const result: Record<string, 'ok' | 'missing' | 'no-identity'> = {};
+  for (const vault of getVaults()) {
+    if (!fsSync.existsSync(vault.path)) {
+      result[vault.id] = 'missing';
+      continue;
+    }
+    result[vault.id] = readVaultIdentity(vault.path) ? 'ok' : 'no-identity';
+  }
+  return result;
+}
+
+// Retrouve un coffre déplacé : sélecteur natif, VALIDATION d'identité (le
+// dossier choisi doit être vide d'identité ou porter CELLE du coffre —
+// jamais celle d'un autre), écrit l'identité si absente (l'utilisatrice
+// vient de désigner ce dossier comme étant le coffre), met à jour le chemin
+// du registre. Retourne null si le sélecteur est annulé.
+export async function relocateVault(id: string): Promise<VaultRegistryEntry[] | null> {
+  const config = migrateLegacyConfig();
+  const vaultList = config.vaults ?? [];
+  const vault = findVaultOrThrow(vaultList, id);
+  const result = await dialog.showOpenDialog({
+    properties: ['openDirectory', 'createDirectory'],
+    title: `Où se trouve désormais le coffre « ${vault.name} » ?`,
+    message: `Où se trouve désormais le coffre « ${vault.name} » ?`,
+  });
+  if (result.canceled || result.filePaths.length === 0) return null;
+  const chosen = result.filePaths[0];
+
+  const existingIdentity = readVaultIdentity(chosen);
+  if (existingIdentity && existingIdentity.id !== vault.id) {
+    throw new Error('Ce dossier appartient déjà à un autre coffre — choisissez le dossier déplacé de « ' + vault.name + ' ».');
+  }
+  if (!existingIdentity) {
+    const identity = readVaultIdentity(vault.path) ?? {
+      id: vault.id,
+      name: vault.name,
+      createdAt: new Date().toISOString(),
+    };
+    writeVaultIdentity(chosen, identity);
+  }
+  vault.path = chosen;
+  saveVaults(vaultList, config.activeVaultId ?? null);
+  return getVaults();
+}
+
 export function broadcastVaultsChanged(getWindow: GetWindow): void {
   const win = getWindow?.();
   if (win) win.webContents.send('vaults:changed', getVaults());
@@ -351,4 +404,12 @@ export function registerVaultsHandlers(getWindow: GetWindow): void {
   });
 
   ipcMain.handle('vaults:clear-content', (_event, id: string) => clearVaultContent(id));
+
+  ipcMain.handle('vaults:check-folders', () => checkVaultFolders());
+
+  ipcMain.handle('vaults:relocate', async (_event, id: string) => {
+    const vaultList = await relocateVault(id);
+    if (vaultList) broadcastVaultsChanged(getWindow);
+    return vaultList;
+  });
 }
