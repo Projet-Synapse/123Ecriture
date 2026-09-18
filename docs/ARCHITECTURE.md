@@ -523,13 +523,18 @@ bas) sur le projet Supabase partagé "Projet Synapse".
   recréé », dans l'esprit des coffres distants d'Obsidian Sync). Depuis
   v0.4.10, « Connecter sur cet appareil… » suit l'ordre demandé par
   l'utilisatrice : connexion d'abord, puis l'app demande OÙ placer les
-  fichiers (sélecteur natif titré « Où placer les fichiers de « X » ? »),
-  puis le coffre distant y dépose tout son contenu (première sync immédiate
-  via dossiers créés au vol) et devient le coffre actif. `local_vault_id`
-  reste l'identité du dossier créateur (informatif) : la référence distante
-  vit dans le registre local de chaque machine, un même coffre distant peut
-  donc être relié depuis plusieurs appareils sans doublon ni migration de
-  schéma.
+  fichiers (sélecteur natif titré « Où placer les fichiers de « X » ? »).
+  Depuis v0.4.11, le coffre récupéré **garde le nom du distant** et vit
+  dans son PROPRE sous-dossier créé au nom du distant à l'endroit choisi
+  (`retrieveRemoteVault` dans VaultsContext → `createVault` avec
+  `vaultName` ≠ dossier, dossier dédoublonné « X 2 » si besoin) : deux
+  coffres placés au même endroit ne peuvent plus mélanger leurs contenus,
+  et le guetteur de liaison auto est muet pendant toute la connexion
+  (`retrieveActive`) pour ne pas créer de ligne `vaults` orpheline avant la
+  liaison au distant choisi. `local_vault_id` reste l'identité du dossier
+  créateur (informatif) : la référence distante vit dans le registre local
+  de chaque machine, un même coffre distant peut donc être relié depuis
+  plusieurs appareils sans doublon ni migration de schéma.
 - **Appareils connectés** (v0.4.10) : table `vault_devices`
   (`(vault_id, device_id)` + `device_name` + `last_seen_at`, RLS owner-only,
   voir `supabase/recette-setup-complet.sql`). Chaque synchro « heartbeat »

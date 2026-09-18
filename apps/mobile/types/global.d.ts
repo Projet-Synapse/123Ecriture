@@ -106,7 +106,13 @@ declare global {
     // coffre distant) — ignoré par le pont web (pas de titre natif).
     addExisting: (title?: string) => Promise<VaultRegistryEntry[]>;
     deviceInfo: () => Promise<DeviceInfo>;
-    createNew: (name: string) => Promise<VaultRegistryEntry[]>;
+    // Crée un coffre : sélecteur d'emplacement natif, puis sous-dossier
+    // `name` créé à cet endroit. `title` = question affichée par le
+    // sélecteur ; `vaultName` = nom AFFICHÉ du coffre quand il doit différer
+    // du dossier (connexion d'un coffre distant : garde le nom original même
+    // si le dossier est dédoublonné « X 2 »). Titre/nom ignorés par les ponts
+    // sans sélecteur titré (web/natif).
+    createNew: (name: string, title?: string, vaultName?: string) => Promise<VaultRegistryEntry[]>;
     switch: (id: string) => Promise<VaultRegistryEntry[]>;
     rename: (id: string, name: string) => Promise<VaultRegistryEntry[]>;
     remove: (id: string) => Promise<VaultRegistryEntry[]>;

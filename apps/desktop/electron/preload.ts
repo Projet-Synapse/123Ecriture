@@ -45,7 +45,8 @@ contextBridge.exposeInMainWorld('vaults', {
   getActive: () => ipcRenderer.invoke('vaults:get-active'),
   addExisting: (title?: string) => ipcRenderer.invoke('vaults:add-existing', title),
   deviceInfo: () => ipcRenderer.invoke('vaults:device-info'),
-  createNew: (name: string) => ipcRenderer.invoke('vaults:create-new', name),
+  createNew: (name: string, title?: string, vaultName?: string) =>
+    ipcRenderer.invoke('vaults:create-new', name, title, vaultName),
   switch: (id: string) => ipcRenderer.invoke('vaults:switch', id),
   rename: (id: string, name: string) => ipcRenderer.invoke('vaults:rename', id, name),
   remove: (id: string) => ipcRenderer.invoke('vaults:remove', id),
