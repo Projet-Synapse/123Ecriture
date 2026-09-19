@@ -1,6 +1,7 @@
-import { ipcMain } from 'electron';
+import { ipcMain, type BrowserWindow } from 'electron';
 import crypto from 'crypto';
 import fs from 'fs/promises';
+import fsSync from 'fs';
 import path from 'path';
 
 import * as vaults from './vaults';
@@ -65,7 +66,27 @@ async function walkAndHash(dir: string, vaultRoot: string, out: HashedNote[]): P
   return out;
 }
 
-export function registerSyncHandlers(): void {
+// //2. 👁 SURVEILLANCE DU COFFRE ACTIF — synchro continue (v0.4.20)
+// ////////////////////////////////////////////////////////////////////////
+// « Une seule vérité : le coffre distant dans le compte » : chaque
+// modification locale (fichier/dossier, n'importe quel appareil) pousse au
+// compte en quelques secondes, et chaque appareil récupère les changements
+// du compte automatiquement (cycle court côté renderer). Le watcher est
+// PAUSABLE : le renderer le suspend pendant un cycle de synchro, sinon les
+// écritures du pull redéclencheraient la synchro en boucle.
+let activeWatcher: fsSync.FSWatcher | null = null;
+let watcherPaused = false;
+let watcherWindow: BrowserWindow | null = null;
+
+function stopActiveWatcher(): void {
+  if (activeWatcher) {
+    activeWatcher.close();
+    activeWatcher = null;
+  }
+}
+
+export function registerSyncHandlers(getWindow?: () => BrowserWindow | null): void {
+  watcherWindow = getWindow ? getWindow() : null;
   ipcMain.handle('sync:hash-vault', async () => {
     const vaultPath = vaults.getActiveVaultPath();
     if (!vaultPath) return [];
@@ -75,7 +96,6 @@ export function registerSyncHandlers(): void {
     // renvoyer une liste vide — une liste vide ferait verser tout le coffre
     // distant dans l'ancien emplacement à la synchro suivante. Le message
     // oriente vers « Retrouver le dossier… » (Paramètres → Coffres locaux).
-    const fsSync = await import('fs');
     if (!fsSync.existsSync(vaultPath)) {
       throw new Error(
         "Le dossier du coffre est introuvable à son emplacement enregistré (déplacé ou renommé ?) — retrouvez-le via Paramètres → Coffres locaux → « Retrouver le dossier… ».",
@@ -87,5 +107,35 @@ export function registerSyncHandlers(): void {
       );
     }
     return walkAndHash(vaultPath, vaultPath, []);
+  });
+
+  // Démarre/redémarre la surveillance sur le coffre ACTIF (à appeler au
+  // montage et à chaque changement de coffre actif). Idempotent.
+  ipcMain.handle('sync:watch-restart', () => {
+    stopActiveWatcher();
+    const vaultPath = vaults.getActiveVaultPath();
+    if (!vaultPath || !fsSync.existsSync(vaultPath)) return false;
+    activeWatcher = fsSync.watch(vaultPath, { recursive: true }, (_event, filename) => {
+      if (watcherPaused || !filename) return;
+      // Les métadonnées de l'app (.123ecriture, état/ordre/identité) et les
+      // corbeilles ne comptent pas comme du contenu à propager.
+      const parts = String(filename).split(path.sep);
+      if (parts.some((p) => p.startsWith('.'))) return;
+      watcherWindow?.webContents.send('sync:local-changed', String(filename));
+    });
+    return true;
+  });
+
+  ipcMain.handle('sync:watch-pause', () => {
+    watcherPaused = true;
+    return true;
+  });
+
+  ipcMain.handle('sync:watch-resume', () => {
+    // Petite grâce après reprise : les événements encore en file issus de
+    // NOS écritures arrivent dans la fenêtre de debounce naturelle du
+    // renderer — sans elle, un pull massif redéclencherait un cycle.
+    watcherPaused = false;
+    return true;
   });
 }

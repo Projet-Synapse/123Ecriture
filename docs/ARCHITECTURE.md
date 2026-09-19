@@ -565,6 +565,15 @@ bas) sur le projet Supabase partagé "Projet Synapse".
   fichier jamais apporté par la synchro n'est jamais effacé, et un fichier
   modifié localement laisse une copie « (conflit …) » avant de partir
   (jamais de perte silencieuse). Le résumé affiche « N supprimée(s) ».
+- **Synchro continue** (v0.4.20) : « une seule vérité, le coffre distant
+  dans le compte ». Surveilledu dossier du coffre actif côté processus
+  principal (`fs.watch` récursif, filtré des points/dot-métadonnées,
+  PAUSABLE pendant un cycle pour ne pas boucler sur nos propres pulls) :
+  chaque modification locale déclenche une synchro ~2 s après la dernière
+  écriture ; le cycle automatique passe à 60 s (les changements poussés par
+  les autres appareils arrivent en moins d'une minute). Actif avec la
+  préférence « Synchroniser automatiquement » ; les autres plateformes
+  dégradent vers le cycle minute seul.
 - **Coffres déplacés** (v0.4.16) : déplacer un dossier de coffre dans
   l'explorateur ne casse plus la synchro silencieusement. `vaults:check-
   folders` signale 'missing' (dossier enregistré disparu) ou 'no-identity'

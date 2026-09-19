@@ -62,7 +62,10 @@ const SyncStatusReactContext = createContext<SyncStatusContextValue | null>(null
 // table `vault_files` à chaque frappe. Ajustable plus tard si besoin, mais
 // aucune raison objective de descendre plus bas pour une sync qui reste
 // manuelle par défaut.
-const AUTO_SYNC_INTERVAL_MS = 15 * 60 * 1000;
+// v0.4.20 : synchro continue — les changements distants arrivent en moins
+// d'une minute ; les changements locaux partent en quelques secondes via la
+// surveillance du dossier (voir l'effet watch ci-dessous).
+const AUTO_SYNC_INTERVAL_MS = 60 * 1000;
 
 // Délai avant le PREMIER cycle auto au lancement de l'app — laisse le temps
 // au reste de l'app (vault actif, session Supabase) de finir de se charger
@@ -112,6 +115,9 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
     const { userId: currentUserId, remoteVaultId: currentRemoteVaultId } = latestRef.current;
     if (!currentUserId || !currentRemoteVaultId || syncingRef.current) return;
     syncingRef.current = true;
+    // La surveillance du dossier se tait pendant le cycle : les écritures
+    // du pull ne doivent pas redéclencher une synchro (boucle).
+    await window.sync?.watchPause?.().catch(() => undefined);
     setStatus('syncing');
     try {
       const summary = await runSyncEngine(currentRemoteVaultId, currentUserId);
@@ -135,6 +141,7 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
       setLastError(message);
       setLastResultSummary(message);
     } finally {
+      await window.sync?.watchResume?.().catch(() => undefined);
       syncingRef.current = false;
     }
   }, []);
@@ -155,6 +162,31 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
       clearInterval(interval);
     };
   }, [preferences.autoSyncEnabled, cloudSyncConfigured, runSync]);
+
+  // Synchro continue (v0.4.20) : le dossier du coffre actif est surveillé —
+  // chaque modification de contenu déclenche une synchro ~2 s après la
+  // dernière écriture (un cycle déjà en cours verra la modification).
+  useEffect(() => {
+    const sync = typeof window !== 'undefined' ? window.sync : undefined;
+    if (!preferences.autoSyncEnabled || !cloudSyncConfigured || !sync?.onLocalChanged) return;
+    void sync.watchRestart?.().catch(() => undefined);
+    let debounce: ReturnType<typeof setTimeout> | null = null;
+    const unsubscribe = sync.onLocalChanged(() => {
+      if (debounce) clearTimeout(debounce);
+      debounce = setTimeout(() => void runSync(), 2000);
+    });
+    return () => {
+      if (debounce) clearTimeout(debounce);
+      unsubscribe();
+    };
+  }, [preferences.autoSyncEnabled, cloudSyncConfigured, runSync]);
+
+  // Relance la surveillance quand le coffre actif change (le watcher est
+  // lié au chemin du dossier côté processus principal).
+  useEffect(() => {
+    if (!preferences.autoSyncEnabled || !cloudSyncConfigured) return;
+    void window.sync?.watchRestart?.().catch(() => undefined);
+  }, [preferences.autoSyncEnabled, cloudSyncConfigured, remoteVaultId]);
 
   const value = useMemo<SyncStatusContextValue>(
     () => ({
