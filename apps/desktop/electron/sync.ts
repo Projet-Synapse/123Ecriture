@@ -54,13 +54,22 @@ async function walkAndHash(dir: string, vaultRoot: string, out: HashedNote[]): P
     if (parentAbs !== rootAbs && !parentAbs.startsWith(rootAbsSep)) continue;
     const fullPath = parentAbs + path.sep + entry.name;
     if (entry.isFile() && EXTENSION_TO_KIND[path.extname(entry.name)]) {
-      const stat = await fs.stat(fullPath);
-      out.push({
-        relPath: path.relative(vaultRoot, fullPath),
-        contentHash: await hashFileContent(fullPath),
-        sizeBytes: stat.size,
-        modifiedAt: stat.mtimeMs,
-      });
+      try {
+        const stat = await fs.stat(fullPath);
+        out.push({
+          relPath: path.relative(vaultRoot, fullPath),
+          contentHash: await hashFileContent(fullPath),
+          sizeBytes: stat.size,
+          modifiedAt: stat.mtimeMs,
+        });
+      } catch (error) {
+        // Fichier évaporé entre le listage et la lecture (suppression en
+        // cours, vagues de nettoyage) : on l'ignore — le cycle suivant le
+        // verra absent et posera sa tombestone. Rendre tout le hachage
+        // invalide pour un fichier partiant rendait la synchro échouer en
+        // rafale pendant les gros nettoyages (vécu).
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      }
     }
   }
   return out;
