@@ -350,10 +350,25 @@ export const nativeVaultAdapter: VaultBridge = {
   // fiable que rename()/move() ci-dessus. Confirmation JS AVANT de
   // supprimer (Alert.alert, natif RN) : jamais de suppression silencieuse,
   // même règle que le dialog natif côté Electron (voir vault.ts,
-  // vault:delete).
-  delete: (relPath) =>
+  // vault:delete). `options.silent` (v0.4.25) : réservé au moteur de
+  // synchro (tombestones distantes appliquées en masse) — pas de
+  // confirmation par fichier. Pas d'élagage des dossiers vides ici :
+  // expo-file-system n'expose pas de rmdir sûr, et la synchro ne tourne pas
+  // encore en natif Android.
+  delete: (relPath: string, options?: { silent?: boolean }) =>
     new Promise((resolve) => {
-      const { uri, isDirectory } = resolveIndexed(relPath);
+      const { uri } = resolveIndexed(relPath);
+      const run = () => {
+        void FileSystem.deleteAsync(uri, { idempotent: true }).then(() => {
+          pathIndex.delete(relPath);
+          resolve({ deleted: true });
+        });
+      };
+      if (options?.silent) {
+        run();
+        return;
+      }
+      const { isDirectory } = resolveIndexed(relPath);
       const name = relPath.includes('/') ? relPath.slice(relPath.lastIndexOf('/') + 1) : relPath;
       Alert.alert(
         isDirectory ? 'Supprimer ce dossier ?' : 'Supprimer cette note ?',
@@ -365,12 +380,7 @@ export const nativeVaultAdapter: VaultBridge = {
           {
             text: 'Supprimer',
             style: 'destructive',
-            onPress: () => {
-              void FileSystem.deleteAsync(uri, { idempotent: true }).then(() => {
-                pathIndex.delete(relPath);
-                resolve({ deleted: true });
-              });
-            },
+            onPress: run,
           },
         ],
         { cancelable: true, onDismiss: () => resolve({ deleted: false }) },

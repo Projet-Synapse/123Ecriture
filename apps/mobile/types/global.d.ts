@@ -44,7 +44,10 @@ declare global {
     // Confirmation NATIVE (dialog.showMessageBox) déjà gérée côté main
     // process (voir vault.ts, `vault:delete`) — `deleted: false` si
     // l'utilisatrice a annulé, jamais de suppression silencieuse.
-    delete: (relPath: string) => Promise<{ deleted: boolean }>;
+    // `options.silent` (v0.4.25) : réservé au moteur de synchro (tombestones
+    // distantes appliquées en masse) — pas de confirmation par fichier, et
+    // élagage des dossiers parents devenus vides.
+    delete: (relPath: string, options?: { silent?: boolean }) => Promise<{ deleted: boolean }>;
     // Voir Preferences.defaultOpenMode==='lastOpened' — par coffre (voir
     // vault.ts, .123ecriture/state.json), pas app-level.
     getLastOpened: () => Promise<string | null>;

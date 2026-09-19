@@ -235,6 +235,29 @@ describe('webVaultAdapter — organisation', () => {
     expect(deleted).toEqual({ deleted: true });
     expect(fs.has('Archives')).toBe(false);
   });
+
+  it('delete silent (synchro) : aucune confirmation et élagage des dossiers vides', async () => {
+    fs.addDir('BMO');
+    fs.addDir('BMO/Profiles');
+    fs.addFile('BMO/Profiles/BMO.mdx', 'x');
+
+    const deleted = await webVaultAdapter.delete('BMO/Profiles/BMO.mdx', { silent: true });
+    expect(deleted).toEqual({ deleted: true });
+    expect(confirmMock).not.toHaveBeenCalled();
+    expect(fs.has('BMO')).toBe(false);
+  });
+
+  it('delete silent conserve le dossier tant qu’un frère y vit', async () => {
+    fs.addDir('BMO');
+    fs.addDir('BMO/Profiles');
+    fs.addFile('BMO/Profiles/BMO.mdx', 'x');
+    fs.addFile('BMO/autre.mdx', 'y');
+
+    await webVaultAdapter.delete('BMO/Profiles/BMO.mdx', { silent: true });
+    expect(fs.has('BMO/Profiles')).toBe(false);
+    expect(fs.has('BMO/autre.mdx')).toBe(true);
+    expect(fs.has('BMO')).toBe(true);
+  });
 });
 
 describe('webVaultAdapter — état par coffre (state.json)', () => {

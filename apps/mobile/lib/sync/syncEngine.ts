@@ -439,7 +439,12 @@ export async function runSync(remoteVaultId: string, ownerId: string): Promise<S
         const losingLocalContent = await bridges.vault.readNote(relPath);
         await backupLosingSide(relPath, losingLocalContent);
       }
-      await bridges.vault.delete(relPath);
+      // silent (v0.4.25) : la suppression a déjà été décidée par
+      // l'appareil émetteur — une confirmation PAR FICHIER rendait une
+      // synchro à 100 suppressions inutilisable ; le mode silencieux
+      // élague aussi les dossiers parents devenus vides (le dossier
+      // conteneur disparaît avec ses fichiers, pas seulement ces derniers).
+      await bridges.vault.delete(relPath, { silent: true });
       appliedDeletions.add(relPath);
       summary.deleted += 1;
     } catch (error) {

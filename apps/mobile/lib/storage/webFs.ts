@@ -154,6 +154,38 @@ export async function removeEntryRecursive(dir: FsaDirectoryHandleLike, name: st
   }
 }
 
+// Retire, en remontant depuis `parentRelPath` vers la racine, chaque dossier
+// devenu VIDE — pendant web de pruneEmptyAncestors (vault.ts), utilisé après
+// une suppression de synchro pour que le dossier conteneur disparaisse avec
+// ses fichiers. S'arrête au premier dossier non vide ; ne touche jamais la
+// racine ni un dossier caché (.123ecriture…) ; best-effort (une erreur
+// arrête la remontée sans la propager).
+export async function pruneEmptyAncestors(
+  root: FsaDirectoryHandleLike,
+  parentRelPath: string,
+): Promise<void> {
+  let segments = splitRelPath(parentRelPath);
+  while (segments.length > 0) {
+    const name = segments[segments.length - 1];
+    if (name.startsWith('.')) return;
+    const parent = await getDirByRelPath(root, segments.slice(0, -1).join('/'));
+    const dir = await getDirByRelPath(root, segments.join('/'));
+    let first;
+    try {
+      first = await dir.values().next();
+    } catch {
+      return;
+    }
+    if (!first.done) return;
+    try {
+      await parent.removeEntry(name);
+    } catch {
+      return;
+    }
+    segments = segments.slice(0, -1);
+  }
+}
+
 // //2. 🔀 TRI ET PARCOURS D'ARBRE
 // ////////////////////////////////////////////////////////////////////////
 
