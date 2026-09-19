@@ -93,7 +93,20 @@ export function CanvasEditor({ relPath, onOpenNote }: Props) {
     if (!vault) return;
     try {
       const content = await vault.readNote(relPath);
-      setData(content.trim() ? JSON.parse(content) : EMPTY_DATA);
+      // Un .canvas vide ou au JSON sans nodes/edges (fichier tronqué, gabarit
+      // minimal, contenu hérité d'Obsidian) ne doit JAMAIS faire crasher
+      // l'éditeur au montage — écran blanc complet de l'app vécu v0.4.23
+      // quand ce fichier était rouvert automatiquement au démarrage.
+      if (content.trim()) {
+        try {
+          const parsed = JSON.parse(content) as Partial<CanvasData> | null;
+          setData({ nodes: parsed?.nodes ?? [], edges: parsed?.edges ?? [] });
+        } catch {
+          setData(EMPTY_DATA);
+        }
+      } else {
+        setData(EMPTY_DATA);
+      }
     } catch (error) {
       console.error('[canvas] échec du chargement :', error);
       setData(EMPTY_DATA);
