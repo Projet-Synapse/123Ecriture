@@ -37,7 +37,12 @@ async function walkAndHash(dir: string, vaultRoot: string, out: HashedNote[]): P
   // construits par Node à partir de la racine résolue ; on borne en plus
   // explicitement chaque répertoire et chaque chemin au coffre : rien ne
   // peut en sortir, et aucun chemin n'est jamais reconstruit dynamiquement.
-  const rootAbs = path.resolve(vaultRoot) + path.sep;
+  // La racine elle-même n'a pas de séparateur final : comparer aux DEUX
+  // formes, sinon TOUT fichier à la racine du coffre était exclu du hachage
+  // — donc jamais poussé ni tiré (bug vécu : seuls les fichiers imbriqués
+  // se synchronisaient depuis le début).
+  const rootAbs = path.resolve(vaultRoot);
+  const rootAbsSep = rootAbs + path.sep;
   const entries = await fs.readdir(path.resolve(dir), {
     recursive: true,
     withFileTypes: true,
@@ -45,7 +50,7 @@ async function walkAndHash(dir: string, vaultRoot: string, out: HashedNote[]): P
   for (const entry of entries) {
     if (entry.name.startsWith('.')) continue;
     const parentAbs = path.resolve(entry.parentPath);
-    if (!parentAbs.startsWith(rootAbs)) continue;
+    if (parentAbs !== rootAbs && !parentAbs.startsWith(rootAbsSep)) continue;
     const fullPath = parentAbs + path.sep + entry.name;
     if (entry.isFile() && EXTENSION_TO_KIND[path.extname(entry.name)]) {
       const stat = await fs.stat(fullPath);
