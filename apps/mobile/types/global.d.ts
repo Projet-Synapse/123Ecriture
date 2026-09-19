@@ -47,7 +47,18 @@ declare global {
     // `options.silent` (v0.4.25) : réservé au moteur de synchro (tombestones
     // distantes appliquées en masse) — pas de confirmation par fichier, et
     // élagage des dossiers parents devenus vides.
-    delete: (relPath: string, options?: { silent?: boolean }) => Promise<{ deleted: boolean }>;
+    // v0.4.26 : supprimer = DÉPLACER vers `.trash/` (corbeille du coffre,
+    // synchronisée) ; `options.permanent` détruit réellement (réservé à la
+    // corbeille). Toute cible déjà sous `.trash/` est détruite.
+    delete: (
+      relPath: string,
+      options?: { silent?: boolean; permanent?: boolean },
+    ) => Promise<{ deleted: boolean }>;
+    // Corbeille du coffre actif (v0.4.26) — fichiers sous `.trash/`
+    // (relPath préfixés `.trash/`, séparateurs `/`), triés du plus récent au
+    // plus ancien. [] si pas de corbeille. Optionnel : pont desktop seul
+    // (web/mobile n'ont pas de corbeille synchronisée).
+    listTrash?: () => Promise<{ relPath: string; sizeBytes: number; modifiedAt: string }[]>;
     // Voir Preferences.defaultOpenMode==='lastOpened' — par coffre (voir
     // vault.ts, .123ecriture/state.json), pas app-level.
     getLastOpened: () => Promise<string | null>;

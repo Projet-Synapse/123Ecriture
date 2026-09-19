@@ -574,12 +574,15 @@ export const webVaultAdapter = {
   },
 
   // Confirmation window.confirm avant toute suppression MANUELLE (équivalent
-  // de la boîte native desktop — jamais de suppression silencieuse), puis
-  // removeEntry récursif. `options.silent` (v0.4.25) : réservé au moteur de
-  // synchro qui applique des tombestones distantes — pas de confirmation par
-  // fichier (une synchro à 100 suppressions = 100 boîtes, inutilisable), et
-  // élagage des dossiers parents devenus vides.
-  delete: async (relPath: string, options?: { silent?: boolean }) => {
+  // de la boîte native desktop — jamais de suppression silencieuse).
+  // `options.silent` (v0.4.25) : réservé au moteur de synchro — pas de
+  // confirmation par fichier (une synchro à 100 suppressions = 100 boîtes,
+  // inutilisable), et élagage des dossiers parents devenus vides.
+  // v0.4.26 : supprimer = DÉPLACER vers `.trash/` (miroir du chemin, comme
+  // sur desktop — ici la corbeille est LOCALE, le web n'a pas de moteur de
+  // synchro) ; `options.permanent` (ou cible déjà dans .trash) détruit
+  // réellement.
+  delete: async (relPath: string, options?: { silent?: boolean; permanent?: boolean }) => {
     const root = await requireActiveRoot();
     const segments = splitRelPath(relPath);
     const name = segments.pop();
@@ -592,13 +595,28 @@ export const webVaultAdapter = {
       const isFolder = entry.kind === 'directory';
       const confirmed = window.confirm(
         isFolder
-          ? `Supprimer le dossier « ${name} » ?\n\nCe dossier et TOUT son contenu (notes, sous-dossiers, pièces jointes qu’il contient) seront supprimés définitivement.`
-          : `Supprimer « ${name} » ?\n\nCette note sera supprimée définitivement.`,
+          ? `Supprimer le dossier « ${name} » ?\n\nCe dossier et tout son contenu seront déplacés vers la corbeille du coffre (.trash).`
+          : `Supprimer « ${name} » ?\n\nCette note sera déplacée vers la corbeille du coffre (.trash).`,
       );
       if (!confirmed) return { deleted: false };
     }
 
-    await removeEntryRecursive(parent, name);
+    if (options?.permanent || segments[0] === '.trash') {
+      await removeEntryRecursive(parent, name);
+    } else if (entry.kind === 'directory') {
+      const trashDir = await getDirByRelPath(root, '.trash', true);
+      await copyDirectoryInto(entry as FsaDirectoryHandleLike, trashDir, name);
+      await removeEntryRecursive(parent, name);
+    } else {
+      // Copie octet à octet (File est un Blob) — jamais via text(), les
+      // pièces jointes binaires y perdraient leur contenu.
+      const file = await (entry as FsaFileHandleLike).getFile();
+      const trashHandle = await getFileByRelPath(root, `.trash/${relPath}`, true);
+      const writable = await trashHandle.createWritable();
+      await writable.write(file);
+      await writable.close();
+      await removeEntryRecursive(parent, name);
+    }
     if (options?.silent) {
       await pruneEmptyAncestors(root, parentRelPath);
     }

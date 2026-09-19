@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 
 import { useAuth } from './AuthContext';
 import { runSync as runSyncEngine, type SyncSummary } from './syncEngine';
+import { supabase } from './supabaseClient';
 import { useVaults } from './VaultsContext';
 import { usePreferences } from '../../preferences/PreferencesContext';
 import { errorMessage } from '../errorMessage';
@@ -187,6 +188,39 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
     if (!preferences.autoSyncEnabled || !cloudSyncConfigured) return;
     void window.sync?.watchRestart?.().catch(() => undefined);
   }, [preferences.autoSyncEnabled, cloudSyncConfigured, remoteVaultId]);
+
+  // Réception TEMPS RÉEL (v0.4.26) : abonnement Supabase Realtime aux
+  // changements de `vault_files` du coffre distant actif — un push d'un
+  // autre appareil déclenche un cycle ~4 s plus tard (debounce : un cycle
+  // distant écrit souvent des dizaines de lignes d'un coup, inutile de
+  // tirer 50 fois). Avant, les changements distants n'arrivaient qu'au
+  // cycle de 60 s — « la synchronisation ne détectait pas tout de suite »
+  // (vécu). Le cycle minute reste en secours (Realtime peut se déconnecter
+  // silencieusement) ; le focus de la fenêtre déclenche aussi un cycle
+  // (réveil de mise en veille, retour d'un autre appareil).
+  useEffect(() => {
+    if (!preferences.autoSyncEnabled || !remoteVaultId || !supabase) return;
+    let debounce: ReturnType<typeof setTimeout> | null = null;
+    const scheduleSync = () => {
+      if (debounce) clearTimeout(debounce);
+      debounce = setTimeout(() => void runSync(), 4000);
+    };
+    const channel = supabase
+      .channel(`vault-files-${remoteVaultId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'app_123ecriture', table: 'vault_files', filter: `vault_id=eq.${remoteVaultId}` },
+        scheduleSync,
+      )
+      .subscribe();
+    const onFocus = () => scheduleSync();
+    window.addEventListener('focus', onFocus);
+    return () => {
+      if (debounce) clearTimeout(debounce);
+      window.removeEventListener('focus', onFocus);
+      if (supabase) void supabase.removeChannel(channel);
+    };
+  }, [preferences.autoSyncEnabled, remoteVaultId, runSync]);
 
   const value = useMemo<SyncStatusContextValue>(
     () => ({
