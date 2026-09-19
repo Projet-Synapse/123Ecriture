@@ -53,6 +53,14 @@ async function walkAndHash(dir: string, vaultRoot: string, out: HashedNote[]): P
     const parentAbs = path.resolve(entry.parentPath);
     if (parentAbs !== rootAbs && !parentAbs.startsWith(rootAbsSep)) continue;
     const fullPath = parentAbs + path.sep + entry.name;
+    const relSegments = path.relative(vaultRoot, fullPath).split(path.sep);
+    // Contenu caché exclu de la synchro (métadonnées .123ecriture, .obsidian,
+    // corbeille de conflits…) — SAUF `.trash`, la corbeille du coffre,
+    // volontairement SYNCHRONISÉE (v0.4.26 : elle est partagée entre tous
+    // les appareils du compte, chaque suppression y atterrit partout).
+    if (relSegments[0] !== '.trash' && relSegments.some((segment) => segment.startsWith('.'))) {
+      continue;
+    }
     if (entry.isFile() && EXTENSION_TO_KIND[path.extname(entry.name)]) {
       try {
         const stat = await fs.stat(fullPath);
@@ -130,10 +138,11 @@ export function registerSyncHandlers(getWindow?: () => BrowserWindow | null): vo
     if (!vaultPath || !fsSync.existsSync(vaultPath)) return false;
     activeWatcher = fsSync.watch(vaultPath, { recursive: true }, (_event, filename) => {
       if (watcherPaused || !filename) return;
-      // Les métadonnées de l'app (.123ecriture, état/ordre/identité) et les
-      // corbeilles ne comptent pas comme du contenu à propager.
+      // Les métadonnées de l'app (.123ecriture, état/ordre/identité) ne
+      // comptent pas comme du contenu à propager — mais `.trash` oui : la
+      // corbeille est synchronisée (v0.4.26).
       const parts = String(filename).split(path.sep);
-      if (parts.some((p) => p.startsWith('.'))) return;
+      if (parts[0] !== '.trash' && parts.some((p) => p.startsWith('.'))) return;
       watcherGetWindow?.()?.webContents?.send('sync:local-changed', String(filename));
     });
     return true;

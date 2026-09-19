@@ -567,19 +567,48 @@ bas) sur le projet Supabase partagé "Projet Synapse".
   (jamais de perte silencieuse). Le résumé affiche « N supprimée(s) ».
 - **Suppressions synchronisées SANS dialogue + dossiers élagués**
   (v0.4.25) : `vault.delete` accepte `options.silent`, réservé au moteur de
-  synchro — l'application locale d'une rafale de tombestones n'affiche PLUS
-  une confirmation PAR FICHIER (une synchro à 100 suppressions = 100 boîtes,
-  inutilisable ; la suppression a déjà été décidée par l'appareil
-  émetteur). En mode silencieux, après la suppression du fichier, les
-  dossiers parents devenus vides sont retirés en remontant jusqu'à la
-  racine (`pruneEmptyAncestors`, desktop vault.ts + web webFs.ts — jamais
-  la racine ni un dossier caché, arrêt au premier non vide) : le dossier
-  conteneur disparaît AVEC ses fichiers, il ne reste pas de coquille vide.
-  Les suppressions MANUELLES (explorateur de l'app) gardent leur
-  confirmation individuelle et ne déclenche pas l'élagage. Une garde SQL
-  (`vault_files_no_stale_resurrect`, trigger BEFORE UPDATE) empêche par
-  ailleurs un client en vieil version de réactiver une tombestone à hash
+  synchro — pas de confirmation PAR FICHIER (une synchro à 100 suppressions
+  = 100 boîtes, inutilisable ; l'appareil émetteur a déjà décidé), et
+  élagage des dossiers parents devenus vides (`pruneEmptyAncestors` —
+  jamais la racine ni un dossier caché, arrêt au premier non vide). Une
+  garde SQL (`vault_files_no_stale_resurrect`, trigger BEFORE UPDATE)
+  empêche un client en vieille version de réactiver une tombestone à hash
   identique côté base.
+- **Corbeille synchronisée `.trash/`** (v0.4.26) : supprimer ne détruit plus
+  rien — fichier OU dossier, manuel ou synchronisé, tout est DÉPLACÉ vers
+  `.trash/<chemin d'origine>` (structure miroir, collisions dédoublonnées
+  « 2 », « 3 »). `.trash` est un dossier caché (invisible dans
+  l'explorateur) mais VOLONTAIREMENT SYNCHRONISÉ : la corbeille est partagée
+  entre tous les appareils du compte, chaque suppression y atterrit partout
+  (le watcher et le hachage l'incluent explicitement, tous les autres
+  dossiers pointés restent exclus). « Supprimer définitivement » /
+  « Vider » (Paramètres → Gestion des fichiers → Corbeille) sont les seuls
+  chemins destructeurs (`options.permanent` — toute cible déjà sous
+  `.trash/` l'est aussi), et ils se propagent comme des suppressions
+  ordinaires. « Restaurer » (`restoreFromTrash`, syncEngine.ts) remet le
+  fichier à son chemin d'origine (dédoublonné si réoccupé), DÉTRUIT la
+  tombestone distale (hard DELETE — un update `deleted=false` serait bloqué
+  par le trigger anti-résurrection et par le filtre du moteur ; les clients
+  ne font jamais de DELETE, la garde reste intacte pour eux) puis repousse
+  immédiatement le contenu (sinon le cycle d'un autre appareil
+  re-tombestonerait le chemin entre-temps).
+- **Copies de conflit hors de l'arbre synchronisé** (v0.4.26) : le côté
+  perdant d'un conflit part sous `.123ecriture/conflits/<horodatage>/…`
+  (dossier caché, jamais haché ni poussé). Avant, la copie « (conflit …) »
+  était un fichier normal : elle se synchronisait, et un appareil en
+  retard la REPOUSSAIT comme contenu actif après une suppression —
+  ressuscitant en boucle des fichiers supprimés (vécu : copies « (conflit
+  2026-09-18…) » revenues sur LORDI puis re-téléchargées partout ; 16 lignes
+  nettoyées à la main en base).
+- **Réception temps réel** (v0.4.26) : abonnement Supabase Realtime
+  (`postgres_changes` sur `vault_files`, filtre par coffre actif) — un push
+  d'un autre appareil déclenche un cycle ~4 s plus tard au lieu d'attendre
+  le cycle de 60 s (« la synchro ne détectait pas tout de suite », vécu).
+  Le cycle minute reste en secours (Realtime peut se déconnecter
+  silencieusement), et le focus de la fenêtre déclenche aussi un cycle.
+  Requiert `alter publication supabase_realtime add table
+  app_123ecriture.vault_files;` côté base (RLS owner-only s'applique aux
+  abonnements).
 - **Synchro continue** (v0.4.20) : « une seule vérité, le coffre distant
   dans le compte ». Surveilledu dossier du coffre actif côté processus
   principal (`fs.watch` récursif, filtré des points/dot-métadonnées,

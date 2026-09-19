@@ -234,9 +234,11 @@ describe('webVaultAdapter — organisation', () => {
     const deleted = await webVaultAdapter.delete('Archives');
     expect(deleted).toEqual({ deleted: true });
     expect(fs.has('Archives')).toBe(false);
+    // v0.4.26 : le dossier part dans la corbeille locale, rien n'est détruit.
+    expect(fs.has('.trash/Archives/ancienne.mdx')).toBe(true);
   });
 
-  it('delete silent (synchro) : aucune confirmation et élagage des dossiers vides', async () => {
+  it('delete silent (synchro) : aucune confirmation, corbeille et élagage des dossiers vides', async () => {
     fs.addDir('BMO');
     fs.addDir('BMO/Profiles');
     fs.addFile('BMO/Profiles/BMO.mdx', 'x');
@@ -245,6 +247,7 @@ describe('webVaultAdapter — organisation', () => {
     expect(deleted).toEqual({ deleted: true });
     expect(confirmMock).not.toHaveBeenCalled();
     expect(fs.has('BMO')).toBe(false);
+    expect(fs.has('.trash/BMO/Profiles/BMO.mdx')).toBe(true);
   });
 
   it('delete silent conserve le dossier tant qu’un frère y vit', async () => {
@@ -257,6 +260,15 @@ describe('webVaultAdapter — organisation', () => {
     expect(fs.has('BMO/Profiles')).toBe(false);
     expect(fs.has('BMO/autre.mdx')).toBe(true);
     expect(fs.has('BMO')).toBe(true);
+    expect(fs.has('.trash/BMO/Profiles/BMO.mdx')).toBe(true);
+  });
+
+  it('delete permanent détruit réellement (pas de corbeille)', async () => {
+    fs.addFile('Pour de bon.mdx', 'x');
+    const deleted = await webVaultAdapter.delete('Pour de bon.mdx', { silent: true, permanent: true });
+    expect(deleted).toEqual({ deleted: true });
+    expect(fs.has('Pour de bon.mdx')).toBe(false);
+    expect(fs.has('.trash/Pour de bon.mdx')).toBe(false);
   });
 });
 

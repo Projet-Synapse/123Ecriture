@@ -42,6 +42,13 @@ type GetWindow = () => BrowserWindow | null;
 // absent).
 const DEFAULT_ATTACHMENTS_FOLDER = 'attachments';
 
+// Corbeille DU coffre (v0.4.26), à sa racine. Dossier pointé : exclu de
+// l'explorateur comme tous les dossiers cachés, mais INCLUS dans la
+// synchronisation (voir sync.ts walkAndHash) — la corbeille est partagée
+// entre tous les appareils du compte. Restaurer = déplacer hors de .trash
+// (le chemin d'origine est préservé par la structure miroir).
+const TRASH_FOLDER = '.trash';
+
 function getAttachmentsFolder(): string {
   return readConfig().preferences?.attachmentsFolder || DEFAULT_ATTACHMENTS_FOLDER;
 }
@@ -163,6 +170,30 @@ function resolveInVault(vaultPath: string, relPath: string): string {
     throw new Error(`Chemin hors du vault refusé : ${relPath}`);
   }
   return resolved;
+}
+
+// Déplace un fichier/dossier vers `<coffre>/.trash/<relPath>` (structure
+// miroir : le chemin d'origine reste lisible dans le chemin de corbeille,
+// c'est ce qui permet la restauration). Même volume que la source (la
+// corbeille vit DANS le coffre) donc un simple rename atomique ; collision
+// (deux suppressions du même chemin à des dates différentes) dédoublonnée
+// en « nom 2 » comme partout ailleurs. Ne détruit jamais rien.
+async function moveToVaultTrash(
+  vaultPath: string,
+  fullPath: string,
+  relPath: string,
+): Promise<void> {
+  const normalizedRel = relPath.replace(/\\/g, '/');
+  const trashTarget = path.join(vaultPath, TRASH_FOLDER, ...normalizedRel.split('/'));
+  const trashParent = path.dirname(trashTarget);
+  await fs.mkdir(trashParent, { recursive: true });
+  let finalTarget = trashTarget;
+  if (fsSync.existsSync(trashTarget)) {
+    const extension = path.extname(trashTarget);
+    const deduped = findAvailableName(trashParent, path.basename(trashTarget, extension), extension);
+    finalTarget = path.join(trashParent, deduped);
+  }
+  await fs.rename(fullPath, finalTarget);
 }
 
 // Retire, en remontant depuis `startDir` jusqu'à la racine du coffre, chaque
@@ -777,18 +808,29 @@ export function registerVaultHandlers(getWindow: GetWindow): void {
   // `fs.rm(..., {recursive:true})` : fonctionne aussi bien pour un fichier
   // qu’un dossier, pas besoin de deux chemins de code séparés.
   //
-  // `options.silent` (v0.4.25) : suppression SANS confirmation ni élagage,
-  // réservée au moteur de synchro qui applique des tombestones distantes —
-  // une confirmation PAR FICHIER rendait une synchro à 100 suppressions
+  // `options.silent` (v0.4.25) : suppression SANS confirmation, réservée au
+  // moteur de synchro qui applique des tombestones distantes — une
+  // confirmation PAR FICHIER rendait une synchro à 100 suppressions
   // inutilisable, et la suppression a déjà été validée par l’appareil
   // émetteur. En mode silencieux on élague aussi les dossiers devenus vides
   // (sinon « BMO/ » resterait comme coquille vide après la suppression de
   // ses fichiers) : on remonte les parents du chemin supprimé en retirant
   // chaque dossier vide — jamais la racine du coffre, jamais un dossier
   // caché (.123ecriture…), et on s’arrête au premier dossier non vide.
+  //
+  // v0.4.26 : supprimer ne détruit PLUS rien — l’élément est DÉPLACÉ vers
+  // `.trash/` (corbeille DU coffre, elle-même synchronisée : la corbeille
+  // est partagée entre tous les appareils du compte, chaque suppression y
+  // atterrit partout). `options.permanent` (et toute suppression ciblant
+  // déjà `.trash/`) détruit réellement — c’est le seul chemin destructif,
+  // réservé à « Supprimer définitivement » depuis la corbeille.
   ipcMain.handle(
     'vault:delete',
-    async (_event, relPath: string, options?: { silent?: boolean }) => {
+    async (
+      _event,
+      relPath: string,
+      options?: { silent?: boolean; permanent?: boolean },
+    ) => {
       const vaultPath = getVaultPath();
       if (!vaultPath) throw new Error('Aucun vault sélectionné');
 
@@ -796,6 +838,7 @@ export function registerVaultHandlers(getWindow: GetWindow): void {
       if (!fsSync.existsSync(fullPath)) throw new Error('Élément introuvable.');
       const isFolder = fsSync.statSync(fullPath).isDirectory();
       const name = path.basename(fullPath);
+      const alreadyInTrash = relPath.split(/[\\/]/)[0] === TRASH_FOLDER;
 
       if (!options?.silent) {
         const win = getWindow();
@@ -806,8 +849,8 @@ export function registerVaultHandlers(getWindow: GetWindow): void {
           cancelId: 0,
           message: isFolder ? `Supprimer le dossier « ${name} » ?` : `Supprimer « ${name} » ?`,
           detail: isFolder
-            ? 'Ce dossier et TOUT son contenu (notes, sous-dossiers, pièces jointes qu’il contient) seront supprimés définitivement.'
-            : 'Cette note sera supprimée définitivement.',
+            ? 'Ce dossier et tout son contenu seront déplacés vers la corbeille du coffre (.trash, synchronisée avec vos autres appareils).'
+            : 'Cette note sera déplacée vers la corbeille du coffre (.trash, synchronisée avec vos autres appareils).',
         };
         const { response } = win
           ? await dialog.showMessageBox(win, messageBoxOptions)
@@ -815,7 +858,11 @@ export function registerVaultHandlers(getWindow: GetWindow): void {
         if (response !== 1) return { deleted: false };
       }
 
-      await fs.rm(fullPath, { recursive: true, force: true });
+      if (options?.permanent || alreadyInTrash) {
+        await fs.rm(fullPath, { recursive: true, force: true });
+      } else {
+        await moveToVaultTrash(vaultPath, fullPath, relPath);
+      }
 
       if (options?.silent) {
         await pruneEmptyAncestors(vaultPath, path.dirname(fullPath));
@@ -823,6 +870,37 @@ export function registerVaultHandlers(getWindow: GetWindow): void {
       return { deleted: true };
     },
   );
+
+  // Corbeille du coffre actif (v0.4.26) — liste plate des fichiers sous
+  // `.trash/` pour l'écran Paramètres → Corbeille (l'explorateur masque les
+  // dossiers cachés). relPath complets, préfixe `.trash/` compris, pour que
+  // « Restaurer » puisse déplacer via vault:set-path sans ambiguïté.
+  ipcMain.handle('vault:list-trash', async () => {
+    const vaultPath = getVaultPath();
+    if (!vaultPath) return [];
+    const trashPath = path.join(vaultPath, TRASH_FOLDER);
+    if (!fsSync.existsSync(trashPath)) return [];
+    const results: { relPath: string; sizeBytes: number; modifiedAt: string }[] = [];
+    const walk = async (dir: string, prefix: string): Promise<void> => {
+      for (const entry of await fs.readdir(dir, { withFileTypes: true })) {
+        const childPath = path.join(dir, entry.name);
+        const childRel = prefix ? `${prefix}/${entry.name}` : entry.name;
+        if (entry.isDirectory()) {
+          await walk(childPath, childRel);
+        } else if (entry.isFile()) {
+          const stat = await fs.stat(childPath);
+          results.push({
+            relPath: `${TRASH_FOLDER}/${childRel}`,
+            sizeBytes: stat.size,
+            modifiedAt: stat.mtime.toISOString(),
+          });
+        }
+      }
+    };
+    await walk(trashPath, '');
+    results.sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt));
+    return results;
+  });
 
   // Voir "Fichier ouvert par défaut" ci-dessus (readLastOpened/
   // writeLastOpened) — le renderer appelle `setLastOpened` à chaque

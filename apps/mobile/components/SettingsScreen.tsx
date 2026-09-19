@@ -9,6 +9,7 @@ import { FilesLinksSection } from './settings/FilesLinksSection';
 import { PersonalizationCard } from './PersonalizationCard';
 import { PrivacyDataSection } from './settings/PrivacyDataSection';
 import { PropertiesManagementSection } from './settings/PropertiesManagementSection';
+import { TrashSection } from './settings/TrashSection';
 
 // Écran Paramètres — sous-navigation à 7 sections (voir .claude/CLAUDE.md :
 // "complexifier autant que possible" les réglages, et
@@ -46,7 +47,12 @@ function renderSection(id: SettingsSectionId) {
     case 'account':
       return <AccountSyncSection />;
     case 'files':
-      return <FilesLinksSection />;
+      return (
+        <>
+          <FilesLinksSection />
+          <TrashSection />
+        </>
+      );
     case 'editor':
       return <EditorSection />;
     case 'properties':

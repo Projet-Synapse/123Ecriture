@@ -23,8 +23,11 @@ contextBridge.exposeInMainWorld('vault', {
   move: (relPath: string, destinationParentRelPath?: string) =>
     ipcRenderer.invoke('vault:move', relPath, destinationParentRelPath),
   setPath: (relPath: string, newRelPath: string) => ipcRenderer.invoke('vault:set-path', relPath, newRelPath),
-  delete: (relPath: string, options?: { silent?: boolean }) =>
+  delete: (relPath: string, options?: { silent?: boolean; permanent?: boolean }) =>
     ipcRenderer.invoke('vault:delete', relPath, options),
+  // Corbeille du coffre actif (v0.4.26) — liste plate pour Paramètres →
+  // Corbeille (l'explorateur masque les dossiers cachés).
+  listTrash: () => ipcRenderer.invoke('vault:list-trash'),
   getLastOpened: () => ipcRenderer.invoke('vault:get-last-opened'),
   setLastOpened: (relPath: string | null) => ipcRenderer.invoke('vault:set-last-opened', relPath),
   getCollapsedPaths: () => ipcRenderer.invoke('vault:get-collapsed-paths'),

@@ -349,21 +349,93 @@ async function pullFile(remoteVaultId: string, relPath: string, objectPath?: str
   await vault.writeNote(relPath, content);
 }
 
-// Écrit le côté PERDANT d'un conflit dans un fichier normal et visible avant
-// de l'écraser — jamais de perte silencieuse (règle CLAUDE.md). Un fichier
-// ordinaire (même extension que l'original — `.mdx`, `.md`...) que
-// l'utilisatrice peut ouvrir/comparer/supprimer, pas un mécanisme caché.
+// Écrit le côté PERDANT d'un conflit AVANT de l'écraser — jamais de perte
+// silencieuse. v0.4.26 : sous `.123ecriture/conflits/<horodatage>/…` — un
+// dossier caché, donc HORS de l'arbre synchronisé. Avant, la copie était un
+// fichier normal dans le coffre : elle se synchronisait comme n'importe
+// quelle note, et un appareil en retard la REPOUSSAIT comme contenu actif
+// après une suppression — ressuscitant en boucle des fichiers supprimés
+// (« copies (conflit …) » revenues sans cesse, vécu). Le contenu reste
+// récupérable sur l'appareil qui a tranché le conflit, sans polluer le
+// coffre ni la synchro.
 async function backupLosingSide(relPath: string, content: string): Promise<void> {
   const { vault } = requireBridges();
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const dot = relPath.lastIndexOf('.');
-  const withoutExt = dot >= 0 ? relPath.slice(0, dot) : relPath;
-  const extension = dot >= 0 ? relPath.slice(dot) : '';
-  const parentSlash = withoutExt.lastIndexOf('/');
-  const parent = parentSlash >= 0 ? withoutExt.slice(0, parentSlash + 1) : '';
-  const baseName = parentSlash >= 0 ? withoutExt.slice(parentSlash + 1) : withoutExt;
-  const backupRelPath = `${parent}${baseName} (conflit ${timestamp})${extension}`;
+  const backupRelPath = `.123ecriture/conflits/${timestamp}/${relPath}`;
   await vault.writeNote(backupRelPath, content);
+}
+
+// Restaure un fichier depuis la corbeille synchronisée `.trash/` vers son
+// chemin d'origine (v0.4.26). Le chemin d'origine est lu dans la structure
+// miroir de la corbeille (`.trash/A/B.md` → `A/B.md`). Étapes :
+// 1) déplacement local (vault.set-path, avec dédoublonnage « 2 », « 3 » si
+//    un fichier plus récent occupe déjà la place) ;
+// 2) SUPPRESSION de la ligne tombestone distale (hard DELETE, pas un
+//    update deleted=false — le trigger anti-résurrection bloque toute
+//    réactivation à hash identique, et le filtre du moteur interdit le
+//    push des chemins tombestonés : détruire la ligne est le seul chemin
+//    propre ; les clients ne font jamais de DELETE, donc la garde garde
+//    tout son sens pour eux) ;
+// 3) repousse IMMÉDIATE du fichier restauré — sans ça, un autre appareil
+//    dont le cycle passe entre le DELETE et notre prochain cycle
+//    re-tombestonerait le chemin (il l'a dans son état, plus sur son
+//    disque) et la restauration serait mangée.
+export async function restoreFromTrash(
+  trashRelPath: string,
+  remoteVaultId: string,
+  ownerId: string,
+): Promise<string> {
+  const { vault, sync, supabase: client } = requireBridges();
+  if (!trashRelPath.startsWith('.trash/')) {
+    throw new Error('Ce chemin n’est pas dans la corbeille.');
+  }
+  const normalize = (p: string) => p.replace(/\\/g, '/');
+  const originalBase = trashRelPath.slice('.trash/'.length);
+
+  // Destination : le chemin d'origine, dédoublonné si réoccupé entre-temps
+  // (set-path REFUSE une destination existante — on calcule un suffixe
+  // libre depuis l'arborescence plutôt que d'échouer).
+  const tree = await vault.listTree();
+  const existing = new Set<string>();
+  const collect = (nodes: { relPath: string; children?: unknown }[]): void => {
+    for (const node of nodes) {
+      existing.add(normalize(node.relPath));
+      if (Array.isArray(node.children)) collect(node.children as { relPath: string; children?: unknown }[]);
+    }
+  };
+  collect(tree);
+  const dot = originalBase.lastIndexOf('.');
+  const stem = dot >= 0 ? originalBase.slice(0, dot) : originalBase;
+  const ext = dot >= 0 ? originalBase.slice(dot) : '';
+  let target = originalBase;
+  for (let counter = 2; existing.has(normalize(target)); counter += 1) {
+    target = `${stem} ${counter}${ext}`;
+  }
+
+  const wasDeduped = normalize(target) !== normalize(originalBase);
+  const moved = await vault.setPath(trashRelPath, target);
+  // Destination réoccupée (dédoublonnée) : le chemin d'origine est VIVANT
+  // — aucune tombestone à détruire (et surtout pas la ligne de l'occupant).
+  // Sinon, on détruit la tombestone du chemin d'origine (la ligne .trash,
+  // elle, disparaîtra d'elle-même au cycle suivant : absente du disque,
+  // présente dans l'état → tombestone automatique).
+  if (!wasDeduped) {
+    const { error: deleteError } = await client
+      .schema(APP_SCHEMA)
+      .from(VAULT_FILES_TABLE)
+      .delete()
+      .eq('vault_id', remoteVaultId)
+      .eq('rel_path', moved.relPath);
+    if (deleteError) throw deleteError;
+  }
+
+  // Repousse immédiate du contenu restauré.
+  const localFiles = await sync.hashVaultTree();
+  const restored = localFiles.find((note) => note.relPath === moved.relPath);
+  if (restored) {
+    await pushFile(remoteVaultId, ownerId, restored);
+  }
+  return moved.relPath;
 }
 
 // Lance une synchro complète (push + pull + résolution de conflit) pour le

@@ -352,10 +352,11 @@ export const nativeVaultAdapter: VaultBridge = {
   // même règle que le dialog natif côté Electron (voir vault.ts,
   // vault:delete). `options.silent` (v0.4.25) : réservé au moteur de
   // synchro (tombestones distantes appliquées en masse) — pas de
-  // confirmation par fichier. Pas d'élagage des dossiers vides ici :
-  // expo-file-system n'expose pas de rmdir sûr, et la synchro ne tourne pas
-  // encore en natif Android.
-  delete: (relPath: string, options?: { silent?: boolean }) =>
+  // confirmation par fichier. v0.4.26 : sans `options.permanent`, le
+  // fichier est copié dans `.trash/` (corbeille LOCALE — la synchro ne
+  // tourne pas en natif Android) avant destruction ; pas d'élagage des
+  // dossiers vides, expo-file-system n'expose pas de rmdir sûr.
+  delete: (relPath: string, options?: { silent?: boolean; permanent?: boolean }) =>
     new Promise((resolve) => {
       const { uri } = resolveIndexed(relPath);
       const run = () => {
@@ -364,8 +365,26 @@ export const nativeVaultAdapter: VaultBridge = {
           resolve({ deleted: true });
         });
       };
+      const toTrash = async () => {
+        if (options?.permanent) return;
+        try {
+          const dot = relPath.lastIndexOf('.');
+          const withoutExt = dot >= 0 ? relPath.slice(0, dot) : relPath;
+          const ext = dot >= 0 ? relPath.slice(dot) : '';
+          const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+          const trashUri = `${FileSystem.documentDirectory}.trash/${timestamp}-${withoutExt.replace(/\//g, '__')}${ext}`;
+          await FileSystem.makeDirectoryAsync(`${FileSystem.documentDirectory}.trash`, { intermediates: true });
+          await FileSystem.copyAsync({ from: uri, to: trashUri });
+        } catch {
+          // Best-effort : la corbeille échouée ne doit jamais bloquer la
+          // suppression demandée.
+        }
+      };
+      const runWithTrash = () => {
+        void toTrash().then(run);
+      };
       if (options?.silent) {
-        run();
+        runWithTrash();
         return;
       }
       const { isDirectory } = resolveIndexed(relPath);
@@ -373,14 +392,14 @@ export const nativeVaultAdapter: VaultBridge = {
       Alert.alert(
         isDirectory ? 'Supprimer ce dossier ?' : 'Supprimer cette note ?',
         isDirectory
-          ? `« ${name} » et tout son contenu seront supprimés définitivement.`
-          : `« ${name} » sera supprimée définitivement.`,
+          ? `« ${name} » et tout son contenu seront déplacés vers la corbeille (.trash).`
+          : `« ${name} » sera déplacée vers la corbeille (.trash).`,
         [
           { text: 'Annuler', style: 'cancel', onPress: () => resolve({ deleted: false }) },
           {
             text: 'Supprimer',
             style: 'destructive',
-            onPress: run,
+            onPress: runWithTrash,
           },
         ],
         { cancelable: true, onDismiss: () => resolve({ deleted: false }) },
