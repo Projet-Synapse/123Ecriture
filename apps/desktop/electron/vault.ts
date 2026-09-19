@@ -91,6 +91,11 @@ export const EXTENSION_TO_KIND: Record<string, VaultEntryKind> = {
   '.canvas': 'canvas',
   '.chart': 'chart',
   '.excalidraw': 'excalidraw',
+  // Obsidian Bases (vues de bases de données, YAML/texte) : sans cette
+  // entrée, les fichiers `.base` restaient INVISIBLES pour la synchro
+  // (vécu : 14 fichiers jamais poussés) — traités comme du texte markdown,
+  // ils s'éditent dans l'éditeur de notes et se synchronisent.
+  '.base': 'markdown',
 };
 
 const KIND_TO_EXTENSION: Record<VaultEntryKind, string> = {
