@@ -102,6 +102,16 @@ contextBridge.exposeInMainWorld('auth', {
 });
 
 contextBridge.exposeInMainWorld('sync', {
+  // Surveille le coffre actif et notifie le renderer à chaque modification
+  // de contenu (synchro continue, v0.4.20) — voir sync.ts.
+  watchRestart: () => ipcRenderer.invoke('sync:watch-restart'),
+  watchPause: () => ipcRenderer.invoke('sync:watch-pause'),
+  watchResume: () => ipcRenderer.invoke('sync:watch-resume'),
+  onLocalChanged: (callback: (filename: string) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, filename: string) => callback(filename);
+    ipcRenderer.on('sync:local-changed', handler);
+    return () => ipcRenderer.removeListener('sync:local-changed', handler);
+  },
   hashVaultTree: () => ipcRenderer.invoke('sync:hash-vault'),
 });
 

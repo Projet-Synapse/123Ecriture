@@ -118,7 +118,7 @@ if (!gotSingleInstanceLock) {
     registerPreferencesHandlers();
     registerContextMenuHandlers();
     registerTasksHandlers(() => mainWindow);
-    registerSyncHandlers();
+    registerSyncHandlers(() => mainWindow);
     registerCalendarHandlers();
     registerPropertiesHandlers();
     registerOccurrencesHandlers();

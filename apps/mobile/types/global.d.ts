@@ -152,6 +152,13 @@ declare global {
 
   interface SyncBridge {
     hashVaultTree: () => Promise<HashedNote[]>;
+    // Synchro continue (v0.4.20, desktop) : surveillance du coffre actif et
+    // notification de chaque modification de contenu — optionnels, les
+    // autres plateformes dégradent vers le cycle minute.
+    watchRestart?: () => Promise<boolean>;
+    watchPause?: () => Promise<boolean>;
+    watchResume?: () => Promise<boolean>;
+    onLocalChanged?: (callback: (filename: string) => void) => () => void;
   }
 
   interface CalendarEvent {

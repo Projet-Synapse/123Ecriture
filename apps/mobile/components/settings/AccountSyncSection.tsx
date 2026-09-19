@@ -613,8 +613,9 @@ export function AccountSyncSection() {
                 theme={theme}
               />
               <Text style={[styles.autoSyncHint, { color: theme.textMuted }]}>
-                Synchronise le coffre actif automatiquement au lancement de l’app et toutes les 15 minutes, en plus
-                de « Synchroniser maintenant ».
+                Synchro continue : chaque modification locale part vers le compte en quelques secondes, et les
+                changements des autres appareils arrivent en moins d’une minute. Une seule vérité : le coffre
+                distant du compte.
               </Text>
             </View>
           )}
