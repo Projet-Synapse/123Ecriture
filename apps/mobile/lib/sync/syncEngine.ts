@@ -9,6 +9,7 @@ import {
 import { diffVault, type LocalHashedNote, type RemoteVaultFile } from './diff';
 import { errorMessage } from '../errorMessage';
 import { sortDevicesByLastSeen, type RemoteVaultDevice } from './devices';
+import { computeLocalDeletions, remoteDeletionAction } from './deletions';
 import { vaultStorageObjectKey } from './storageKeys';
 
 // Orchestrateur de synchro (v0, manuel, sans timer — voir
@@ -21,9 +22,39 @@ import { vaultStorageObjectKey } from './storageKeys';
 export type SyncSummary = {
   pushed: number;
   pulled: number;
+  // Fichiers supprimés comptés ce cycle : suppressions LOCALES propagées au
+  // cloud (pierres tombales) + suppressions DISTantes appliquées ici
+  // (v0.4.17).
+  deleted: number;
   conflicts: number;
   errors: string[];
 };
+
+// État de synchro par coffre (v0.4.17) : ensemble des fichiers présents à
+// la fin du dernier cycle réussi (rel_path -> hash de contenu), persisté
+// DANS le dossier du coffre — il suit les déplacements. C'est la référence
+// qui distingue « jamais existé ici » (pull autorisé) de « existait et a
+// été supprimé ici » (tombestone, jamais de résurrection).
+const SYNC_STATE_REL_PATH = '.123ecriture/sync-state.json';
+
+type SyncState = { files: Record<string, string> };
+
+async function loadSyncState(): Promise<SyncState> {
+  const { vault } = requireBridges();
+  try {
+    const raw = await vault.readNote(SYNC_STATE_REL_PATH);
+    const parsed = JSON.parse(raw) as Partial<SyncState>;
+    return { files: parsed.files ?? {} };
+  } catch {
+    // Absent à la première synchro du coffre — repart à vide.
+    return { files: {} };
+  }
+}
+
+async function saveSyncState(state: SyncState): Promise<void> {
+  const { vault } = requireBridges();
+  await vault.writeNote(SYNC_STATE_REL_PATH, JSON.stringify(state));
+}
 
 // Clé d'objet Storage : <coffre>/<chemin encodé base64url>. L'encodage est
 // OBLIGATOIRE depuis v0.4.9 : Supabase Storage rejette les clés contenant
@@ -339,7 +370,7 @@ async function backupLosingSide(relPath: string, content: string): Promise<void>
 // vault lié `remoteVaultId`. v0 : ne propage pas les suppressions locales
 // (voir docs/ARCHITECTURE.md §6) — assumé et documenté, pas un oubli.
 export async function runSync(remoteVaultId: string, ownerId: string): Promise<SyncSummary> {
-  const summary: SyncSummary = { pushed: 0, pulled: 0, conflicts: 0, errors: [] };
+  const summary: SyncSummary = { pushed: 0, pulled: 0, deleted: 0, conflicts: 0, errors: [] };
   let bridges;
   try {
     bridges = requireBridges();
@@ -348,13 +379,47 @@ export async function runSync(remoteVaultId: string, ownerId: string): Promise<S
     return summary;
   }
 
-  const [localFiles, remoteFiles] = await Promise.all([
+  const [localFiles, remoteFiles, syncState] = await Promise.all([
     bridges.sync.hashVaultTree(),
     fetchRemoteFiles(remoteVaultId),
+    loadSyncState(),
   ]);
   const localByPath = new Map(localFiles.map((note) => [note.relPath, note]));
-  const remoteByPath = new Map(remoteFiles.map((file) => [file.relPath, file]));
-  const decisions = diffVault(localFiles, remoteFiles);
+  const localPaths = new Set(localFiles.map((note) => note.relPath));
+
+  // ---- SUPPRESSIONS (v0.4.17) ------------------------------------------
+  // Distinction tombestone / fichier actif : une ligne deleted=true est une
+  // suppression faite sur un autre appareil, pas un fichier à télécharger.
+  const activeRemoteFiles = remoteFiles.filter((file) => !file.deleted);
+  const remoteByPath = new Map(activeRemoteFiles.map((file) => [file.relPath, file]));
+  const tombstonesByPath = new Map(
+    remoteFiles.filter((file) => file.deleted).map((file) => [file.relPath, file]),
+  );
+
+  // 1) Supprimés LOCALEMENT depuis le dernier cycle -> pierres tombales
+  //    distantes (sinon ils reviendraient au pull : la résurrection).
+  const locallyDeleted = computeLocalDeletions(syncState.files, localPaths);
+  const suppressedPaths = new Set<string>();
+  for (const relPath of locallyDeleted) {
+    try {
+      if (remoteByPath.has(relPath)) {
+        const { error } = await bridges.supabase
+          .schema(APP_SCHEMA)
+          .from(VAULT_FILES_TABLE)
+          .update({ deleted: true, updated_at: new Date().toISOString() })
+          .eq('vault_id', remoteVaultId)
+          .eq('rel_path', relPath);
+        if (error) throw error;
+      }
+      suppressedPaths.add(relPath);
+      summary.deleted += 1;
+    } catch (error) {
+      console.error(`[sync] échec de la tombestone ${relPath} :`, error);
+      summary.errors.push(`${relPath} (suppression) : ${errorMessage(error)}`);
+    }
+  }
+
+  const decisions = diffVault(localFiles, activeRemoteFiles);
 
   for (const decision of decisions) {
     try {
@@ -399,6 +464,56 @@ export async function runSync(remoteVaultId: string, ownerId: string): Promise<S
       console.error(`[sync] échec sur ${decision.relPath} (${decision.kind}) :`, error);
       summary.errors.push(`${decision.relPath} : ${errorMessage(error)}`);
     }
+  }
+
+  // 2) Supprimés sur un AUTRE appareil -> appliqués ici. Conservateur par
+  //    construction (voir remoteDeletionAction) : un fichier jamais apporté
+  //    par la synchro n'est jamais effacé, un fichier modifié laisse une
+  //    copie « (conflit …) » avant de partir.
+  const appliedDeletions = new Set<string>();
+  for (const [relPath] of tombstonesByPath) {
+    try {
+      const local = localByPath.get(relPath);
+      if (!local) continue;
+      const action = remoteDeletionAction({
+        localExists: true,
+        lastSyncedHash: syncState.files[relPath],
+        localHash: local.contentHash,
+      });
+      if (action === 'skip') continue;
+      if (action === 'keep-copy') {
+        const losingLocalContent = await bridges.vault.readNote(relPath);
+        await backupLosingSide(relPath, losingLocalContent);
+      }
+      await bridges.vault.delete(relPath);
+      appliedDeletions.add(relPath);
+      summary.deleted += 1;
+    } catch (error) {
+      console.error(`[sync] échec de la suppression distante ${relPath} :`, error);
+      summary.errors.push(`${relPath} (suppression distante) : ${errorMessage(error)}`);
+    }
+  }
+
+  // Nouvel état de référence = ensemble local APRES le cycle : fichiers
+  // locaux tels quels (push/noop), fichiers tirés avec le hash distant,
+  // suppressions appliquées retirées. Une erreur avant ici laisse l'ancien
+  // état : le prochain cycle re-détecte tout idempotemment.
+  const nextFiles: Record<string, string> = {};
+  for (const note of localFiles) {
+    if (appliedDeletions.has(note.relPath)) continue;
+    nextFiles[note.relPath] = note.contentHash;
+  }
+  for (const decision of decisions) {
+    if (decision.kind !== 'pull' && decision.kind !== 'conflict-pull-wins') continue;
+    if (appliedDeletions.has(decision.relPath)) continue;
+    const remote = remoteByPath.get(decision.relPath);
+    if (remote) nextFiles[decision.relPath] = remote.contentHash;
+  }
+  for (const relPath of suppressedPaths) delete nextFiles[relPath];
+  try {
+    await saveSyncState({ files: nextFiles });
+  } catch (error) {
+    console.error('[sync] échec de la sauvegarde de l’état de synchro :', error);
   }
 
   // « Appareils connectés » (Paramètres → Coffres distants) : heartbeat

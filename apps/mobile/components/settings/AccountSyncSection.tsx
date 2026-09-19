@@ -567,7 +567,7 @@ export function AccountSyncSection() {
                   {result?.summary && (
                     <Text style={[styles.vaultPathText, { color: theme.textMuted }]}>
                       {result.summary.pushed} envoyée(s), {result.summary.pulled} reçue(s),{' '}
-                      {result.summary.conflicts} conflit(s)
+                      {result.summary.deleted} supprimée(s), {result.summary.conflicts} conflit(s)
                       {result.summary.errors.length > 0 ? ` — ${result.summary.errors.length} erreur(s)` : ''}
                     </Text>
                   )}

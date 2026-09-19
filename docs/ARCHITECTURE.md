@@ -553,6 +553,18 @@ bas) sur le projet Supabase partagé "Projet Synapse".
   affiche « 🏠 provient de X » — demande de l'utilisatrice pour distinguer
   les coffres créés depuis son PC portable (LORDI) de ceux créés ailleurs ;
   les coffres antérieurs au suivi ont été backfillés à la main (SQL).
+- **Synchronisation des suppressions** (v0.4.17) : l'état de référence
+  `.123ecriture/sync-state.json` (dans le dossier du coffre, suit les
+  déplacements) enregistre les fichiers présents à la fin de chaque cycle
+  réussi (rel_path → hash). Un fichier présent dans l'état et absent du
+  disque = supprimé LOCALEMENT → pierre tombale distante
+  (`vault_files.deleted = true`) : les autres appareils le retirent aussi,
+  et il ne revient jamais au pull (fin des « résurrections »). Une ligne
+  distante `deleted = true` est appliquée localement via
+  `vault.delete` — CONSERVATEUR (`remoteDeletionAction`, pur + testé) : un
+  fichier jamais apporté par la synchro n'est jamais effacé, et un fichier
+  modifié localement laisse une copie « (conflit …) » avant de partir
+  (jamais de perte silencieuse). Le résumé affiche « N supprimée(s) ».
 - **Coffres déplacés** (v0.4.16) : déplacer un dossier de coffre dans
   l'explorateur ne casse plus la synchro silencieusement. `vaults:check-
   folders` signale 'missing' (dossier enregistré disparu) ou 'no-identity'

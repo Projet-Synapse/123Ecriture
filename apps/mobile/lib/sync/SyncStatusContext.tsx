@@ -70,7 +70,7 @@ const AUTO_SYNC_INTERVAL_MS = 15 * 60 * 1000;
 const AUTO_SYNC_STARTUP_DELAY_MS = 5000;
 
 function summarizeSuccess(summary: SyncSummary): string {
-  const base = `${summary.pushed} envoyée(s), ${summary.pulled} reçue(s), ${summary.conflicts} conflit(s)`;
+  const base = `${summary.pushed} envoyée(s), ${summary.pulled} reçue(s), ${summary.deleted} supprimée(s), ${summary.conflicts} conflit(s)`;
   return summary.errors.length > 0 ? `${base} — ${summary.errors.length} erreur(s)` : base;
 }
 
