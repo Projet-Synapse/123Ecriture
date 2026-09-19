@@ -1,7 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import { useAuth } from './AuthContext';
-import { runSync as runSyncEngine, type SyncSummary } from './syncEngine';
+import { makeJournalEntry } from './journal';
+import { appendJournalEntries, runSync as runSyncEngine, type SyncSummary } from './syncEngine';
 import { supabase } from './supabaseClient';
 import { useVaults } from './VaultsContext';
 import { usePreferences } from '../../preferences/PreferencesContext';
@@ -52,7 +53,7 @@ type SyncStatusContextValue = {
   // rien si aucun coffre actif n'est lié au cloud, ou si une synchro est
   // déjà en cours (protège aussi bien un double-clic que le chevauchement
   // manuel/auto).
-  runSync: () => Promise<void>;
+  runSync: (trigger?: string) => Promise<void>;
 };
 
 const SyncStatusReactContext = createContext<SyncStatusContextValue | null>(null);
@@ -112,16 +113,22 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
     latestRef.current = { userId, remoteVaultId };
   }, [userId, remoteVaultId]);
 
-  const runSync = useCallback(async () => {
+  // Déclencheur du cycle pour le journal (« manuel », « automatique (60 s) »,
+  // « surveillance du dossier », « retour à l'app »…) — passé au moteur via
+  // un ref pour que chaque appelant garde sa propre version de runSync.
+  const triggerRef = useRef<string>('automatique');
+  const runSync = useCallback(async (trigger?: string) => {
+    if (trigger) triggerRef.current = trigger;
     const { userId: currentUserId, remoteVaultId: currentRemoteVaultId } = latestRef.current;
     if (!currentUserId || !currentRemoteVaultId || syncingRef.current) return;
     syncingRef.current = true;
     // La surveillance du dossier se tait pendant le cycle : les écritures
     // du pull ne doivent pas redéclencher une synchro (boucle).
     await window.sync?.watchPause?.().catch(() => undefined);
+    await appendJournalEntries([makeJournalEntry('pause')]);
     setStatus('syncing');
     try {
-      const summary = await runSyncEngine(currentRemoteVaultId, currentUserId);
+      const summary = await runSyncEngine(currentRemoteVaultId, currentUserId, triggerRef.current);
       setLastSummary(summary);
       if (summary.errors.length > 0) {
         setStatus('error');
@@ -143,6 +150,7 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
       setLastResultSummary(message);
     } finally {
       await window.sync?.watchResume?.().catch(() => undefined);
+      await appendJournalEntries([makeJournalEntry('resume')]);
       syncingRef.current = false;
     }
   }, []);
@@ -156,8 +164,8 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
   // délai de démarrage était encore en attente).
   useEffect(() => {
     if (!preferences.autoSyncEnabled || !cloudSyncConfigured) return;
-    const startupTimeout = setTimeout(() => void runSync(), AUTO_SYNC_STARTUP_DELAY_MS);
-    const interval = setInterval(() => void runSync(), AUTO_SYNC_INTERVAL_MS);
+    const startupTimeout = setTimeout(() => void runSync('démarrage'), AUTO_SYNC_STARTUP_DELAY_MS);
+    const interval = setInterval(() => void runSync('automatique (60 s)'), AUTO_SYNC_INTERVAL_MS);
     return () => {
       clearTimeout(startupTimeout);
       clearInterval(interval);
@@ -174,7 +182,7 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
     let debounce: ReturnType<typeof setTimeout> | null = null;
     const unsubscribe = sync.onLocalChanged(() => {
       if (debounce) clearTimeout(debounce);
-      debounce = setTimeout(() => void runSync(), 2000);
+      debounce = setTimeout(() => void runSync('surveillance du dossier'), 2000);
     });
     return () => {
       if (debounce) clearTimeout(debounce);
@@ -203,7 +211,7 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
     let debounce: ReturnType<typeof setTimeout> | null = null;
     const scheduleSync = () => {
       if (debounce) clearTimeout(debounce);
-      debounce = setTimeout(() => void runSync(), 4000);
+      debounce = setTimeout(() => void runSync('retour à l’app'), 4000);
     };
     const channel = supabase
       .channel(`vault-files-${remoteVaultId}`)

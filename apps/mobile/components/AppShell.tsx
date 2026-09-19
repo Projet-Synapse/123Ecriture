@@ -234,7 +234,7 @@ function SyncStatusChip({ compact }: { compact?: boolean }) {
 
   return (
     <Pressable
-      onPress={() => void syncStatus.runSync()}
+      onPress={() => void syncStatus.runSync('manuel')}
       style={[styles.syncChip, compact && styles.syncChipCompact]}
       accessibilityLabel={label}
     >

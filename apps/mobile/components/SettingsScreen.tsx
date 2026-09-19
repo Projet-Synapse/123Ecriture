@@ -9,6 +9,7 @@ import { FilesLinksSection } from './settings/FilesLinksSection';
 import { PersonalizationCard } from './PersonalizationCard';
 import { PrivacyDataSection } from './settings/PrivacyDataSection';
 import { PropertiesManagementSection } from './settings/PropertiesManagementSection';
+import { SyncJournalSection } from './settings/SyncJournalSection';
 import { TrashSection } from './settings/TrashSection';
 
 // Écran Paramètres — sous-navigation à 7 sections (voir .claude/CLAUDE.md :
@@ -22,7 +23,7 @@ import { TrashSection } from './settings/TrashSection';
 // que celui de AppShell.
 const SETTINGS_WIDE_BREAKPOINT = 900;
 
-type SettingsSectionId = 'personalization' | 'account' | 'files' | 'editor' | 'properties' | 'privacy' | 'about';
+type SettingsSectionId = 'personalization' | 'account' | 'journal' | 'files' | 'editor' | 'properties' | 'privacy' | 'about';
 
 type SettingsSectionDef = {
   id: SettingsSectionId;
@@ -33,6 +34,7 @@ type SettingsSectionDef = {
 const SETTINGS_SECTIONS: SettingsSectionDef[] = [
   { id: 'personalization', label: 'Personnalisation de l’UI', icon: '🎨' },
   { id: 'account', label: 'Compte et synchronisation', icon: '👤' },
+  { id: 'journal', label: 'Journal de synchronisation', icon: '🔄' },
   { id: 'files', label: 'Gestion des fichiers et des liens', icon: '🗂️' },
   { id: 'editor', label: 'Éditeur', icon: '✍️' },
   { id: 'properties', label: 'Gestion des propriétés', icon: '🏷️' },
@@ -46,6 +48,8 @@ function renderSection(id: SettingsSectionId) {
       return <PersonalizationCard />;
     case 'account':
       return <AccountSyncSection />;
+    case 'journal':
+      return <SyncJournalSection />;
     case 'files':
       return (
         <>

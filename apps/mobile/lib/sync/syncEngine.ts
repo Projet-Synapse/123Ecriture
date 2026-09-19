@@ -10,6 +10,12 @@ import { diffVault, type LocalHashedNote, type RemoteVaultFile } from './diff';
 import { errorMessage } from '../errorMessage';
 import { sortDevicesByLastSeen, type RemoteVaultDevice } from './devices';
 import { computeLocalDeletions, remoteDeletionAction } from './deletions';
+import {
+  capJournalEntries,
+  makeJournalEntry,
+  type SyncJournal,
+  type SyncJournalEntry,
+} from './journal';
 import { vaultStorageObjectKey } from './storageKeys';
 
 // Orchestrateur de synchro (v0, manuel, sans timer — voir
@@ -55,6 +61,34 @@ async function saveSyncState(state: SyncState): Promise<void> {
   const { vault } = requireBridges();
   await vault.writeNote(SYNC_STATE_REL_PATH, JSON.stringify(state));
 }
+
+// Journal de synchronisation (v0.4.27) — voir journal.ts. Même pattern
+// read-modify-write que l'état de synchro ; best-effort (une écriture
+// ratée ne doit jamais faire échouer un cycle) ; borné par capJournalEntries.
+const SYNC_JOURNAL_REL_PATH = '.123ecriture/sync-journal.json';
+
+export async function appendJournalEntries(entries: SyncJournalEntry[]): Promise<void> {
+  if (!entries.length) return;
+  try {
+    const { vault } = requireBridges();
+    let existing: SyncJournalEntry[] = [];
+    try {
+      const raw = await vault.readNote(SYNC_JOURNAL_REL_PATH);
+      const parsed = JSON.parse(raw) as Partial<SyncJournal>;
+      existing = Array.isArray(parsed.entries) ? parsed.entries : [];
+    } catch {
+      // Journal absent au tout premier cycle.
+    }
+    const next = capJournalEntries([...existing, ...entries]);
+    await vault.writeNote(SYNC_JOURNAL_REL_PATH, JSON.stringify({ entries: next }));
+  } catch (error) {
+    // Best-effort TOTAL : un journal en échec ne doit jamais faire échouer
+    // un cycle de synchro (plateforme sans pont, disque saturé…).
+    console.error('[sync] échec d’écriture du journal :', error);
+  }
+}
+
+export const SYNC_JOURNAL_READ_PATH = SYNC_JOURNAL_REL_PATH;
 
 // Clé d'objet Storage : <coffre>/<chemin encodé base64url>. L'encodage est
 // OBLIGATOIRE depuis v0.4.9 : Supabase Storage rejette les clés contenant
@@ -435,19 +469,31 @@ export async function restoreFromTrash(
   if (restored) {
     await pushFile(remoteVaultId, ownerId, restored);
   }
+  await appendJournalEntries([makeJournalEntry('restore', { path: moved.relPath })]);
   return moved.relPath;
 }
 
 // Lance une synchro complète (push + pull + résolution de conflit) pour le
-// vault lié `remoteVaultId`. v0 : ne propage pas les suppressions locales
-// (voir docs/ARCHITECTURE.md §6) — assumé et documenté, pas un oubli.
-export async function runSync(remoteVaultId: string, ownerId: string): Promise<SyncSummary> {
+// vault lié `remoteVaultId`. `trigger` (v0.4.27) alimente le journal :
+// d'où vient ce cycle (« manuel », « automatique (60 s) », « surveillance
+// du dossier », « retour à l'app », « démarrage »).
+export async function runSync(
+  remoteVaultId: string,
+  ownerId: string,
+  trigger = 'automatique',
+): Promise<SyncSummary> {
   const summary: SyncSummary = { pushed: 0, pulled: 0, deleted: 0, conflicts: 0, errors: [] };
+  const journal: SyncJournalEntry[] = [makeJournalEntry('cycle-start', { detail: trigger })];
+  // Le début s'écrit immédiatement : l'écran Journal affiche le cycle « en
+  // cours » pendant que le reste s'exécute, le reste du journal est écoulé
+  // en UNE écriture à la fin.
+  await appendJournalEntries(journal);
   let bridges;
   try {
     bridges = requireBridges();
   } catch (error) {
     summary.errors.push(errorMessage(error));
+    await appendJournalEntries([makeJournalEntry('error', { detail: errorMessage(error) })]);
     return summary;
   }
 
@@ -486,9 +532,11 @@ export async function runSync(remoteVaultId: string, ownerId: string): Promise<S
       }
       tombstonedPaths.add(relPath);
       summary.deleted += 1;
+      journal.push(makeJournalEntry('delete', { path: relPath, detail: 'suppression locale propagée' }));
     } catch (error) {
       console.error(`[sync] échec de la tombestone ${relPath} :`, error);
       summary.errors.push(`${relPath} (suppression) : ${errorMessage(error)}`);
+      journal.push(makeJournalEntry('error', { path: relPath, detail: `suppression locale : ${errorMessage(error)}` }));
     }
   }
 
@@ -510,6 +558,7 @@ export async function runSync(remoteVaultId: string, ownerId: string): Promise<S
       if (action === 'keep-copy') {
         const losingLocalContent = await bridges.vault.readNote(relPath);
         await backupLosingSide(relPath, losingLocalContent);
+        journal.push(makeJournalEntry('conflict', { path: relPath, detail: 'supprimé ailleurs mais modifié ici — copie de secours conservée' }));
       }
       // silent (v0.4.25) : la suppression a déjà été décidée par
       // l'appareil émetteur — une confirmation PAR FICHIER rendait une
@@ -519,9 +568,11 @@ export async function runSync(remoteVaultId: string, ownerId: string): Promise<S
       await bridges.vault.delete(relPath, { silent: true });
       appliedDeletions.add(relPath);
       summary.deleted += 1;
+      journal.push(makeJournalEntry('delete', { path: relPath, detail: 'suppression distante appliquée (corbeille)' }));
     } catch (error) {
       console.error(`[sync] échec de la suppression distante ${relPath} :`, error);
       summary.errors.push(`${relPath} (suppression distante) : ${errorMessage(error)}`);
+      journal.push(makeJournalEntry('error', { path: relPath, detail: `suppression distante : ${errorMessage(error)}` }));
     }
   }
 
@@ -542,11 +593,13 @@ export async function runSync(remoteVaultId: string, ownerId: string): Promise<S
           if (!note) break;
           await pushFile(remoteVaultId, ownerId, note);
           summary.pushed += 1;
+          journal.push(makeJournalEntry('push', { path: decision.relPath }));
           break;
         }
         case 'pull':
           await pullFile(remoteVaultId, decision.relPath, remoteByPath.get(decision.relPath)?.storageObjectPath);
           summary.pulled += 1;
+          journal.push(makeJournalEntry('pull', { path: decision.relPath }));
           break;
         case 'conflict-push-wins': {
           const note = localByPath.get(decision.relPath);
@@ -560,6 +613,7 @@ export async function runSync(remoteVaultId: string, ownerId: string): Promise<S
           await pushFile(remoteVaultId, ownerId, note);
           summary.pushed += 1;
           summary.conflicts += 1;
+          journal.push(makeJournalEntry('conflict', { path: decision.relPath, detail: 'version locale conservée, distante archivée' }));
           break;
         }
         case 'conflict-pull-wins': {
@@ -568,12 +622,14 @@ export async function runSync(remoteVaultId: string, ownerId: string): Promise<S
           await pullFile(remoteVaultId, decision.relPath, remoteByPath.get(decision.relPath)?.storageObjectPath);
           summary.pulled += 1;
           summary.conflicts += 1;
+          journal.push(makeJournalEntry('conflict', { path: decision.relPath, detail: 'version distante conservée, locale archivée' }));
           break;
         }
       }
     } catch (error) {
       console.error(`[sync] échec sur ${decision.relPath} (${decision.kind}) :`, error);
       summary.errors.push(`${decision.relPath} : ${errorMessage(error)}`);
+      journal.push(makeJournalEntry('error', { path: decision.relPath, detail: `${decision.kind} : ${errorMessage(error)}` }));
     }
   }
 
@@ -596,12 +652,20 @@ export async function runSync(remoteVaultId: string, ownerId: string): Promise<S
     await saveSyncState({ files: nextFiles });
   } catch (error) {
     console.error('[sync] échec de la sauvegarde de l’état de synchro :', error);
+    journal.push(makeJournalEntry('error', { detail: `sauvegarde de l'état : ${errorMessage(error)}` }));
   }
 
   // « Appareils connectés » (Paramètres → Coffres distants) : heartbeat
   // best-effort APRÈS le cycle de fichiers — jamais dans les erreurs du
   // résumé (voir heartbeatDevice).
   await heartbeatDevice(remoteVaultId, ownerId);
+
+  journal.push(
+    makeJournalEntry('cycle-end', {
+      detail: `${summary.pushed} envoyé(s), ${summary.pulled} reçu(s), ${summary.deleted} supprimé(s), ${summary.conflicts} conflit(s)${summary.errors.length > 0 ? `, ${summary.errors.length} erreur(s)` : ''}`,
+    }),
+  );
+  await appendJournalEntries(journal.slice(1));
 
   return summary;
 }
