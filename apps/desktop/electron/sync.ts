@@ -76,7 +76,11 @@ async function walkAndHash(dir: string, vaultRoot: string, out: HashedNote[]): P
 // écritures du pull redéclencheraient la synchro en boucle.
 let activeWatcher: fsSync.FSWatcher | null = null;
 let watcherPaused = false;
-let watcherWindow: BrowserWindow | null = null;
+// Résolue À CHAQUE événement, pas à l'enregistrement : à l'appel de
+// registerSyncHandlers la fenêtre peut ne pas exister encore — capturer
+// l'instance trop tôt envoyait les événements vers null (vécu v0.4.20 :
+// surveillance muette, seul le cycle 60 s fonctionnait).
+let watcherGetWindow: (() => BrowserWindow | null) | null = null;
 
 function stopActiveWatcher(): void {
   if (activeWatcher) {
@@ -86,7 +90,7 @@ function stopActiveWatcher(): void {
 }
 
 export function registerSyncHandlers(getWindow?: () => BrowserWindow | null): void {
-  watcherWindow = getWindow ? getWindow() : null;
+  watcherGetWindow = getWindow ?? null;
   ipcMain.handle('sync:hash-vault', async () => {
     const vaultPath = vaults.getActiveVaultPath();
     if (!vaultPath) return [];
@@ -121,7 +125,7 @@ export function registerSyncHandlers(getWindow?: () => BrowserWindow | null): vo
       // corbeilles ne comptent pas comme du contenu à propager.
       const parts = String(filename).split(path.sep);
       if (parts.some((p) => p.startsWith('.'))) return;
-      watcherWindow?.webContents.send('sync:local-changed', String(filename));
+      watcherGetWindow?.()?.webContents?.send('sync:local-changed', String(filename));
     });
     return true;
   });
