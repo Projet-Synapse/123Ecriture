@@ -600,6 +600,19 @@ bas) sur le projet Supabase partagé "Projet Synapse".
   ressuscitant en boucle des fichiers supprimés (vécu : copies « (conflit
   2026-09-18…) » revenues sur LORDI puis re-téléchargées partout ; 16 lignes
   nettoyées à la main en base).
+- **Journal de synchronisation** (v0.4.27) : l'équivalent du « journal
+  des synchronisations » d'Obsidian Sync — chaque cycle (avec son
+  déclencheur : manuel, automatique, surveillance du dossier, retour à
+  l'app, démarrage), envoi, réception, suppression (locale propagée ou
+  distante appliquée), conflit, restauration, erreur et pause/reprise y
+  laisse une entrée lisible. Stocké dans `.123ecriture/sync-journal.json`
+  du coffre actif (jamais synchronisé : chaque appareil voit SON journal,
+  comme Obsidian), historique borné (800 entrées). Écran Paramètres →
+  Journal de synchronisation : liste du plus récent au plus ancien,
+  rafraîchie toutes les 2,5 s (rendu « en direct »), filtres par type,
+  recherche, copie du journal (libellés dans journal.ts, pur + testé ;
+  persistance best-effort dans syncEngine.ts — un journal en échec ne
+  fait jamais échouer un cycle).
 - **Réception temps réel** (v0.4.26) : abonnement Supabase Realtime
   (`postgres_changes` sur `vault_files`, filtre par coffre actif) — un push
   d'un autre appareil déclenche un cycle ~4 s plus tard au lieu d'attendre

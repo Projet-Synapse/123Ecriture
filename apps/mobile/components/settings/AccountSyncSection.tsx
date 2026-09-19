@@ -176,7 +176,7 @@ export function AccountSyncSection() {
       try {
         const added = await retrieveRemoteVault(remote);
         if (!added) return;
-        await syncStatus.runSync();
+        await syncStatus.runSync('manuel');
       } catch (error) {
         console.error('[sync] échec de la connexion du coffre distant :', error);
         setVaultActionError(errorMessage(error));
@@ -242,7 +242,7 @@ export function AccountSyncSection() {
       if (v.id !== activeVaultId) {
         await runVaultAction(() => switchVault(v.id));
       }
-      await syncStatus.runSync();
+      await syncStatus.runSync('manuel');
     },
     [auth.user, activeVaultId, syncStatus, switchVault, runVaultAction],
   );
