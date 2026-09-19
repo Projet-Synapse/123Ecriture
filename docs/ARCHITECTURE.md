@@ -565,6 +565,21 @@ bas) sur le projet Supabase partagé "Projet Synapse".
   fichier jamais apporté par la synchro n'est jamais effacé, et un fichier
   modifié localement laisse une copie « (conflit …) » avant de partir
   (jamais de perte silencieuse). Le résumé affiche « N supprimée(s) ».
+- **Suppressions synchronisées SANS dialogue + dossiers élagués**
+  (v0.4.25) : `vault.delete` accepte `options.silent`, réservé au moteur de
+  synchro — l'application locale d'une rafale de tombestones n'affiche PLUS
+  une confirmation PAR FICHIER (une synchro à 100 suppressions = 100 boîtes,
+  inutilisable ; la suppression a déjà été décidée par l'appareil
+  émetteur). En mode silencieux, après la suppression du fichier, les
+  dossiers parents devenus vides sont retirés en remontant jusqu'à la
+  racine (`pruneEmptyAncestors`, desktop vault.ts + web webFs.ts — jamais
+  la racine ni un dossier caché, arrêt au premier non vide) : le dossier
+  conteneur disparaît AVEC ses fichiers, il ne reste pas de coquille vide.
+  Les suppressions MANUELLES (explorateur de l'app) gardent leur
+  confirmation individuelle et ne déclenche pas l'élagage. Une garde SQL
+  (`vault_files_no_stale_resurrect`, trigger BEFORE UPDATE) empêche par
+  ailleurs un client en vieil version de réactiver une tombestone à hash
+  identique côté base.
 - **Synchro continue** (v0.4.20) : « une seule vérité, le coffre distant
   dans le compte ». Surveilledu dossier du coffre actif côté processus
   principal (`fs.watch` récursif, filtré des points/dot-métadonnées,

@@ -33,6 +33,7 @@ import {
   getDirByRelPath,
   getFileByRelPath,
   listNoteRelPaths,
+  pruneEmptyAncestors,
   readFileText,
   removeEntryRecursive,
   sortNodes,
@@ -572,26 +573,35 @@ export const webVaultAdapter = {
     };
   },
 
-  // Confirmation window.confirm avant toute suppression (équivalent de la
-  // boîte native desktop — jamais de suppression silencieuse), puis
-  // removeEntry récursif.
-  delete: async (relPath: string) => {
+  // Confirmation window.confirm avant toute suppression MANUELLE (équivalent
+  // de la boîte native desktop — jamais de suppression silencieuse), puis
+  // removeEntry récursif. `options.silent` (v0.4.25) : réservé au moteur de
+  // synchro qui applique des tombestones distantes — pas de confirmation par
+  // fichier (une synchro à 100 suppressions = 100 boîtes, inutilisable), et
+  // élagage des dossiers parents devenus vides.
+  delete: async (relPath: string, options?: { silent?: boolean }) => {
     const root = await requireActiveRoot();
     const segments = splitRelPath(relPath);
     const name = segments.pop();
     if (!name) throw new Error('Élément introuvable.');
-    const parent = await getDirByRelPath(root, segments.join('/'));
+    const parentRelPath = segments.join('/');
+    const parent = await getDirByRelPath(root, parentRelPath);
 
     const entry = await getChildHandle(parent, name);
-    const isFolder = entry.kind === 'directory';
-    const confirmed = window.confirm(
-      isFolder
-        ? `Supprimer le dossier « ${name} » ?\n\nCe dossier et TOUT son contenu (notes, sous-dossiers, pièces jointes qu’il contient) seront supprimés définitivement.`
-        : `Supprimer « ${name} » ?\n\nCette note sera supprimée définitivement.`,
-    );
-    if (!confirmed) return { deleted: false };
+    if (!options?.silent) {
+      const isFolder = entry.kind === 'directory';
+      const confirmed = window.confirm(
+        isFolder
+          ? `Supprimer le dossier « ${name} » ?\n\nCe dossier et TOUT son contenu (notes, sous-dossiers, pièces jointes qu’il contient) seront supprimés définitivement.`
+          : `Supprimer « ${name} » ?\n\nCette note sera supprimée définitivement.`,
+      );
+      if (!confirmed) return { deleted: false };
+    }
 
     await removeEntryRecursive(parent, name);
+    if (options?.silent) {
+      await pruneEmptyAncestors(root, parentRelPath);
+    }
     return { deleted: true };
   },
 

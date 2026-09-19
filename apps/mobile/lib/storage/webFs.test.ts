@@ -7,7 +7,9 @@ import {
   findAvailableName,
   getDirByRelPath,
   listNoteRelPaths,
+  pruneEmptyAncestors,
   readFileText,
+  removeEntryRecursive,
   sortNodes,
   splitRelPath,
 } from './webFs';
@@ -113,6 +115,52 @@ describe('listNoteRelPaths', () => {
     fs.addFile('image.png', '');
     const paths = await listNoteRelPaths(fs.root(), ['.mdx', '.md']);
     expect(paths).toEqual(['Journal/2026-09-15.md', 'racine.mdx']);
+  });
+});
+
+describe('pruneEmptyAncestors', () => {
+  it('remonte la chaîne de dossiers vides jusqu’à la racine sans la supprimer', async () => {
+    const fs = new FakeFs();
+    fs.addDir('BMO');
+    fs.addDir('BMO/Profiles');
+    fs.addFile('BMO/Profiles/x.md', 'x');
+    const root = fs.root();
+    const profiles = await getDirByRelPath(root, 'BMO/Profiles');
+    await removeEntryRecursive(profiles, 'x.md');
+
+    await pruneEmptyAncestors(root, 'BMO/Profiles');
+    expect(fs.has('BMO/Profiles')).toBe(false);
+    expect(fs.has('BMO')).toBe(false);
+  });
+
+  it('s’arrête au premier dossier non vide (frère conservé)', async () => {
+    const fs = new FakeFs();
+    fs.addDir('BMO');
+    fs.addDir('BMO/Profiles');
+    fs.addFile('BMO/Profiles/x.md', 'x');
+    fs.addFile('BMO/autre.md', 'y');
+    const root = fs.root();
+    const profiles = await getDirByRelPath(root, 'BMO/Profiles');
+    await removeEntryRecursive(profiles, 'x.md');
+
+    await pruneEmptyAncestors(root, 'BMO/Profiles');
+    expect(fs.has('BMO/Profiles')).toBe(false);
+    expect(fs.has('BMO/autre.md')).toBe(true);
+    expect(fs.has('BMO')).toBe(true);
+  });
+
+  it('ne touche jamais un dossier caché', async () => {
+    const fs = new FakeFs();
+    fs.addDir('.123ecriture');
+    fs.addDir('.123ecriture/sous');
+    fs.addFile('.123ecriture/sous/x.json', '{}');
+    const root = fs.root();
+    const sous = await getDirByRelPath(root, '.123ecriture/sous');
+    await removeEntryRecursive(sous, 'x.json');
+
+    await pruneEmptyAncestors(root, '.123ecriture/sous');
+    expect(fs.has('.123ecriture/sous')).toBe(false);
+    expect(fs.has('.123ecriture')).toBe(true);
   });
 });
 

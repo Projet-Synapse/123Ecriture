@@ -23,7 +23,8 @@ contextBridge.exposeInMainWorld('vault', {
   move: (relPath: string, destinationParentRelPath?: string) =>
     ipcRenderer.invoke('vault:move', relPath, destinationParentRelPath),
   setPath: (relPath: string, newRelPath: string) => ipcRenderer.invoke('vault:set-path', relPath, newRelPath),
-  delete: (relPath: string) => ipcRenderer.invoke('vault:delete', relPath),
+  delete: (relPath: string, options?: { silent?: boolean }) =>
+    ipcRenderer.invoke('vault:delete', relPath, options),
   getLastOpened: () => ipcRenderer.invoke('vault:get-last-opened'),
   setLastOpened: (relPath: string | null) => ipcRenderer.invoke('vault:set-last-opened', relPath),
   getCollapsedPaths: () => ipcRenderer.invoke('vault:get-collapsed-paths'),

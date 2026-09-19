@@ -165,6 +165,35 @@ function resolveInVault(vaultPath: string, relPath: string): string {
   return resolved;
 }
 
+// Retire, en remontant depuis `startDir` jusqu'à la racine du coffre, chaque
+// dossier devenu VIDE — utilisé après une suppression de synchro pour que le
+// dossier conteneur disparaisse avec ses fichiers (demande v0.4.25 : « le
+// dossier BMO supprimé doit être supprimé, pas seulement ses fichiers »).
+// S'arrête au premier dossier non vide ; ne touche jamais la racine ni un
+// dossier caché (.123ecriture…) ; best-effort (une erreur se contente
+// d'arrêter la remontée).
+async function pruneEmptyAncestors(vaultPath: string, startDir: string): Promise<void> {
+  const root = path.resolve(vaultPath);
+  let current = path.resolve(startDir);
+  while (current.startsWith(root + path.sep)) {
+    const name = path.basename(current);
+    if (name.startsWith('.')) return;
+    let entries: fsSync.Dirent[];
+    try {
+      entries = await fs.readdir(current, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    if (entries.length > 0) return;
+    try {
+      await fs.rmdir(current);
+    } catch {
+      return;
+    }
+    current = path.dirname(current);
+  }
+}
+
 // Échappe les caractères spéciaux regex — utilisé pour retirer une
 // extension de fichier (`.mdx`, `.md`...) d'un nom sans que le `.` soit
 // interprété comme "n'importe quel caractère". Même utilitaire que
@@ -744,37 +773,56 @@ export function registerVaultHandlers(getWindow: GetWindow): void {
   // (`dialog.showMessageBox`, même mécanisme que `vault:choose-folder`)
   // avant toute suppression réelle — jamais silencieuse, et le message
   // distingue explicitement "note" de "dossier ET tout son contenu" pour
-  // qu'une suppression de dossier ne surprenne personne. Recours à
+  // qu’une suppression de dossier ne surprenne personne. Recours à
   // `fs.rm(..., {recursive:true})` : fonctionne aussi bien pour un fichier
-  // que pour un dossier, pas besoin de deux chemins de code séparés.
-  ipcMain.handle('vault:delete', async (_event, relPath: string) => {
-    const vaultPath = getVaultPath();
-    if (!vaultPath) throw new Error('Aucun vault sélectionné');
+  // qu’un dossier, pas besoin de deux chemins de code séparés.
+  //
+  // `options.silent` (v0.4.25) : suppression SANS confirmation ni élagage,
+  // réservée au moteur de synchro qui applique des tombestones distantes —
+  // une confirmation PAR FICHIER rendait une synchro à 100 suppressions
+  // inutilisable, et la suppression a déjà été validée par l’appareil
+  // émetteur. En mode silencieux on élague aussi les dossiers devenus vides
+  // (sinon « BMO/ » resterait comme coquille vide après la suppression de
+  // ses fichiers) : on remonte les parents du chemin supprimé en retirant
+  // chaque dossier vide — jamais la racine du coffre, jamais un dossier
+  // caché (.123ecriture…), et on s’arrête au premier dossier non vide.
+  ipcMain.handle(
+    'vault:delete',
+    async (_event, relPath: string, options?: { silent?: boolean }) => {
+      const vaultPath = getVaultPath();
+      if (!vaultPath) throw new Error('Aucun vault sélectionné');
 
-    const fullPath = resolveInVault(vaultPath, relPath);
-    if (!fsSync.existsSync(fullPath)) throw new Error('Élément introuvable.');
-    const isFolder = fsSync.statSync(fullPath).isDirectory();
-    const name = path.basename(fullPath);
+      const fullPath = resolveInVault(vaultPath, relPath);
+      if (!fsSync.existsSync(fullPath)) throw new Error('Élément introuvable.');
+      const isFolder = fsSync.statSync(fullPath).isDirectory();
+      const name = path.basename(fullPath);
 
-    const win = getWindow();
-    const messageBoxOptions = {
-      type: 'warning' as const,
-      buttons: ['Annuler', 'Supprimer'],
-      defaultId: 0,
-      cancelId: 0,
-      message: isFolder ? `Supprimer le dossier « ${name} » ?` : `Supprimer « ${name} » ?`,
-      detail: isFolder
-        ? 'Ce dossier et TOUT son contenu (notes, sous-dossiers, pièces jointes qu’il contient) seront supprimés définitivement.'
-        : 'Cette note sera supprimée définitivement.',
-    };
-    const { response } = win
-      ? await dialog.showMessageBox(win, messageBoxOptions)
-      : await dialog.showMessageBox(messageBoxOptions);
-    if (response !== 1) return { deleted: false };
+      if (!options?.silent) {
+        const win = getWindow();
+        const messageBoxOptions = {
+          type: 'warning' as const,
+          buttons: ['Annuler', 'Supprimer'],
+          defaultId: 0,
+          cancelId: 0,
+          message: isFolder ? `Supprimer le dossier « ${name} » ?` : `Supprimer « ${name} » ?`,
+          detail: isFolder
+            ? 'Ce dossier et TOUT son contenu (notes, sous-dossiers, pièces jointes qu’il contient) seront supprimés définitivement.'
+            : 'Cette note sera supprimée définitivement.',
+        };
+        const { response } = win
+          ? await dialog.showMessageBox(win, messageBoxOptions)
+          : await dialog.showMessageBox(messageBoxOptions);
+        if (response !== 1) return { deleted: false };
+      }
 
-    await fs.rm(fullPath, { recursive: true, force: true });
-    return { deleted: true };
-  });
+      await fs.rm(fullPath, { recursive: true, force: true });
+
+      if (options?.silent) {
+        await pruneEmptyAncestors(vaultPath, path.dirname(fullPath));
+      }
+      return { deleted: true };
+    },
+  );
 
   // Voir "Fichier ouvert par défaut" ci-dessus (readLastOpened/
   // writeLastOpened) — le renderer appelle `setLastOpened` à chaque
