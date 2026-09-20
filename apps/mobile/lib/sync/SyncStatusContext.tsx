@@ -2,8 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type { RealtimeChannel } from '@supabase/supabase-js';
 
 import { useAuth } from './AuthContext';
-import { makeJournalEntry } from './journal';
-import { appendJournalEntries, runSync as runSyncEngine, type SyncSummary } from './syncEngine';
+import { runSync as runSyncEngine, type SyncSummary } from './syncEngine';
 import { supabase } from './supabaseClient';
 import { useVaults } from './VaultsContext';
 import { usePreferences } from '../../preferences/PreferencesContext';
@@ -137,7 +136,6 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
     // La surveillance du dossier se tait pendant le cycle : les écritures
     // du pull ne doivent pas redéclencher une synchro (boucle).
     await window.sync?.watchPause?.().catch(() => undefined);
-    await appendJournalEntries([makeJournalEntry('pause')]);
     setStatus('syncing');
     try {
       const summary = await runSyncEngine(currentUserId, triggerRef.current);
@@ -178,7 +176,6 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
       setLastResultSummary(message);
     } finally {
       await window.sync?.watchResume?.().catch(() => undefined);
-      await appendJournalEntries([makeJournalEntry('resume')]);
       syncingRef.current = false;
     }
   }, []);

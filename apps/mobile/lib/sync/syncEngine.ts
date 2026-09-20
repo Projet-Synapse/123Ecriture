@@ -90,6 +90,34 @@ export async function appendJournalEntries(entries: SyncJournalEntry[]): Promise
   }
 }
 
+// Longueur actuelle du journal — mémorisée AVANT d'écrire le début d'un
+// cycle, pour pouvoir le retirer intégralement s'il se termine sans la
+// moindre action (les cycles à vide ne laissent rien, demande utilisateur).
+export async function journalLength(): Promise<number> {
+  try {
+    const { vault } = requireBridges();
+    const raw = await vault.readNote(SYNC_JOURNAL_REL_PATH);
+    const parsed = JSON.parse(raw) as Partial<SyncJournal>;
+    return Array.isArray(parsed.entries) ? parsed.entries.length : 0;
+  } catch {
+    return 0;
+  }
+}
+
+// Retire les entrées au-delà de `keepLength` — utilisé pour retirer un
+// début de cycle resté orphelin. Best-effort comme appendJournalEntries.
+export async function truncateJournalEntries(keepLength: number): Promise<void> {
+  try {
+    const { vault } = requireBridges();
+    const raw = await vault.readNote(SYNC_JOURNAL_REL_PATH);
+    const parsed = JSON.parse(raw) as Partial<SyncJournal>;
+    const entries = Array.isArray(parsed.entries) ? parsed.entries : [];
+    await vault.writeNote(SYNC_JOURNAL_REL_PATH, JSON.stringify({ entries: entries.slice(0, keepLength) }));
+  } catch (error) {
+    console.error('[sync] échec de troncature du journal :', error);
+  }
+}
+
 export const SYNC_JOURNAL_READ_PATH = SYNC_JOURNAL_REL_PATH;
 
 // Clé d'objet Storage : <coffre>/<chemin encodé base64url>. L'encodage est
@@ -267,6 +295,19 @@ export async function listRemoteVaults(): Promise<RemoteVaultSummary[]> {
     createdByDevice: (row.created_by_device as string | null) ?? null,
     fileCount: filesByVault.get(row.id as string) ?? 0,
   }));
+}
+
+// Renomme un vault distant (demande utilisateur : nommer les coffres
+// distants d'après leur contenu réel pour lever les ambiguïtés). Le nom est
+// cosmétique : l'id reste la clé de liaison et de Storage.
+export async function renameRemoteVault(remoteVaultId: string, name: string): Promise<void> {
+  if (!supabase) throw new Error('Client Supabase non configuré (variables EXPO_PUBLIC_SUPABASE_* absentes).');
+  const { error } = await supabase
+    .schema(APP_SCHEMA)
+    .from(VAULTS_TABLE)
+    .update({ name })
+    .eq('id', remoteVaultId);
+  if (error) throw error;
 }
 
 // Comptage par coffre (même lecture groupée côté client que les appareils —
@@ -593,10 +634,14 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   }
   const remoteVaultId = activeEntry.remoteVaultId;
 
-  const journal: SyncJournalEntry[] = [makeJournalEntry('cycle-start', { detail: trigger })];
-  // Le début s'écrit immédiatement : l'écran Journal affiche le cycle « en
-  // cours » pendant que le reste s'exécute, le reste du journal est écoulé
-  // en UNE écriture à la fin.
+  // Le journal PROGRESSIF (demande utilisateur : raconter comme Obsidian
+  // Sync — « connexion au serveur », « upload en cours », « upload terminé »)
+  // : la connexion s'écrit immédiatement, les étapes au fil de l'eau. SI le
+  // cycle ne produit AUCUNE action (aucun changement), il est RETIRÉ du
+  // journal à la fin : un cycle à vide ne laisse rien (pas de spam de
+  // « 0 envoyée(s) » à chaque minute — demande utilisateur explicite).
+  const journal: SyncJournalEntry[] = [makeJournalEntry('connexion')];
+  const journalStartLength = await journalLength();
   await appendJournalEntries(journal);
 
   const [localFiles, remoteFiles, syncState] = await Promise.all([
@@ -685,6 +730,13 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   const diffRemoteFiles = activeRemoteFiles.filter((file) => !tombstonedPaths.has(file.relPath));
   const decisions = diffVault(diffLocalFiles, diffRemoteFiles);
 
+  // Les étapes réseau (demande utilisateur : le journal raconte comme
+  // Obsidian Sync — « upload en cours », « upload terminé »).
+  const pushCount = decisions.filter((d) => d.kind === 'push' || d.kind === 'conflict-push-wins').length;
+  const pullCount = decisions.filter((d) => d.kind === 'pull' || d.kind === 'conflict-pull-wins').length;
+  if (pushCount > 0) journal.push(makeJournalEntry('upload-start', { detail: `${pushCount} fichier(s)` }));
+  if (pullCount > 0) journal.push(makeJournalEntry('download-start', { detail: `${pullCount} fichier(s)` }));
+
   for (const decision of decisions) {
     try {
       switch (decision.kind) {
@@ -762,6 +814,9 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
     }
   }
 
+  if (pushCount > 0) journal.push(makeJournalEntry('upload-end', { detail: `${pushCount} fichier(s)` }));
+  if (pullCount > 0) journal.push(makeJournalEntry('download-end', { detail: `${pullCount} fichier(s)` }));
+
   // Nouvel état de référence = ensemble local APRES le cycle : fichiers
   // locaux présents (push/noop/'skip' conservés), fichiers tirés avec le
   // hash distant, suppressions retirées. Une erreur avant ici laisse
@@ -794,7 +849,15 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
       detail: `${summary.pushed} envoyé(s), ${summary.pulled} reçu(s), ${summary.deleted} supprimé(s), ${summary.conflicts} conflit(s)${summary.errors.length > 0 ? `, ${summary.errors.length} erreur(s)` : ''}`,
     }),
   );
-  await appendJournalEntries(journal.slice(1));
+
+  // Cycle SANS aucune action : la « Connexion au serveur » est retirée — le
+  // journal ne garde que les cycles qui ont réellement fait quelque chose
+  // (demande utilisateur : pas de spam de cycles à vide).
+  if (journal.length > 1) {
+    await appendJournalEntries(journal.slice(1));
+  } else {
+    await truncateJournalEntries(journalStartLength);
+  }
 
   return summary;
 }
