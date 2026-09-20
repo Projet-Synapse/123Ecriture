@@ -17,6 +17,7 @@ import {
   type SyncJournal,
   type SyncJournalEntry,
 } from './journal';
+import { tryThreeWayMerge } from './merge';
 import { vaultStorageObjectKey } from './storageKeys';
 
 // Orchestrateur de synchro (v0, manuel, sans timer — voir
@@ -376,12 +377,48 @@ async function pushFile(remoteVaultId: string, ownerId: string, note: LocalHashe
       { onConflict: 'vault_id,rel_path' },
     );
   if (upsertError) throw upsertError;
+
+  // Base de fusion (v0.4.29) : la version qui vient d'être acceptée des deux
+  // côtés servira de référentiel au prochain conflit (fusion à trois voix
+  // diff-match-patch). Best-effort : une base manquante fait retomber le
+  // conflit sur le comportement gagnant/perdant archivé.
+  await saveSyncBase(note.relPath, content);
 }
 
 async function pullFile(remoteVaultId: string, relPath: string, objectPath?: string): Promise<void> {
   const { vault } = requireBridges();
   const content = await downloadRemoteText(remoteVaultId, relPath, objectPath);
   await vault.writeNote(relPath, content);
+  await saveSyncBase(relPath, content);
+}
+
+// Bases de fusion (v0.4.29) : dernière version SYNCHRONISÉE de chaque
+// fichier, stockée hors arbre synchronisé (`.123ecriture/bases/<clé>` —
+// même encodage base64url que les clés Storage, un fichier par note).
+// C'est le « base » de la fusion à trois voix : sans elle, impossible de
+// distinguer ce que chaque côté a modifié.
+const SYNC_BASES_DIR = '.123ecriture/bases';
+
+function syncBaseRelPath(relPath: string): string {
+  return `${SYNC_BASES_DIR}/${vaultStorageObjectKey(relPath)}`;
+}
+
+async function saveSyncBase(relPath: string, content: string): Promise<void> {
+  try {
+    const { vault } = requireBridges();
+    await vault.writeNote(syncBaseRelPath(relPath), content);
+  } catch {
+    // Best-effort total : jamais faire échouer un push/pull pour ça.
+  }
+}
+
+async function loadSyncBase(relPath: string): Promise<string | null> {
+  try {
+    const { vault } = requireBridges();
+    return await vault.readNote(syncBaseRelPath(relPath));
+  } catch {
+    return null;
+  }
 }
 
 // Écrit le côté PERDANT d'un conflit AVANT de l'écraser — jamais de perte
@@ -472,6 +509,49 @@ export async function restoreFromTrash(
   }
   await appendJournalEntries([makeJournalEntry('restore', { path: moved.relPath })]);
   return moved.relPath;
+}
+
+// Tentative de fusion à trois voix d'un conflit (v0.4.29, diff-match-patch
+// comme Obsidian Sync). Retourne true si le conflit est RÉSOLU par fusion :
+// les deux versions sont réunies (modifications de parties différentes),
+// écrites localement ET poussées — les deux appareils convergent. Retourne
+// false quand il n'y a pas de base de fusion ou que les modifications se
+// chevauchent réellement : l'appelant retombe sur le comportement
+// gagnant/perdant archivé d'avant.
+async function attemptConflictMerge(
+  remoteVaultId: string,
+  ownerId: string,
+  relPath: string,
+  remoteObjectPath: string | undefined,
+  journal: SyncJournalEntry[],
+): Promise<boolean> {
+  const base = await loadSyncBase(relPath);
+  if (base === null) return false;
+  let local: string;
+  let remote: string;
+  try {
+    const { vault } = requireBridges();
+    local = await vault.readNote(relPath);
+    remote = await downloadRemoteText(remoteVaultId, relPath, remoteObjectPath);
+  } catch {
+    return false;
+  }
+  const merged = tryThreeWayMerge(base, local, remote);
+  if (merged.kind !== 'merged') return false;
+
+  const { vault, sync } = requireBridges();
+  await vault.writeNote(relPath, merged.text);
+  const tree = await sync.hashVaultTree();
+  const note = tree.find((n) => n.relPath === relPath);
+  if (!note) return false;
+  await pushFile(remoteVaultId, ownerId, note);
+  journal.push(
+    makeJournalEntry('conflict', {
+      path: relPath,
+      detail: 'fusion automatique des deux versions (diff-match-patch)',
+    }),
+  );
+  return true;
 }
 
 // Lance une synchro complète (push + pull + résolution de conflit) pour le
@@ -624,6 +704,21 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
           journal.push(makeJournalEntry('pull', { path: decision.relPath }));
           break;
         case 'conflict-push-wins': {
+          // v0.4.29 : fusion à trois voix d'abord (diff-match-patch) — deux
+          // modifications de parties différentes sont réunies, aucune des
+          // deux n'est archivée. Repli : gagnant local + perdant archivé.
+          if (
+            await attemptConflictMerge(
+              remoteVaultId,
+              ownerId,
+              decision.relPath,
+              remoteByPath.get(decision.relPath)?.storageObjectPath,
+              journal,
+            )
+          ) {
+            summary.conflicts += 1;
+            break;
+          }
           const note = localByPath.get(decision.relPath);
           if (!note) break;
           const losingRemoteContent = await downloadRemoteText(
@@ -639,6 +734,18 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
           break;
         }
         case 'conflict-pull-wins': {
+          if (
+            await attemptConflictMerge(
+              remoteVaultId,
+              ownerId,
+              decision.relPath,
+              remoteByPath.get(decision.relPath)?.storageObjectPath,
+              journal,
+            )
+          ) {
+            summary.conflicts += 1;
+            break;
+          }
           const losingLocalContent = await bridges.vault.readNote(decision.relPath);
           await backupLosingSide(decision.relPath, losingLocalContent);
           await pullFile(remoteVaultId, decision.relPath, remoteByPath.get(decision.relPath)?.storageObjectPath);
