@@ -10,6 +10,7 @@ import { diffVault, type LocalHashedNote, type RemoteVaultFile } from './diff';
 import { errorMessage } from '../errorMessage';
 import { sortDevicesByLastSeen, type RemoteVaultDevice } from './devices';
 import { computeLocalDeletions, remoteDeletionAction } from './deletions';
+import { pickActiveRemoteVault } from './activeVault';
 import {
   capJournalEntries,
   makeJournalEntry,
@@ -101,10 +102,10 @@ function storageObjectPath(remoteVaultId: string, relPath: string): string {
 
 function requireBridges() {
   if (!supabase) throw new Error('Client Supabase non configuré (variables EXPO_PUBLIC_SUPABASE_* absentes).');
-  if (typeof window === 'undefined' || !window.vault || !window.sync) {
+  if (typeof window === 'undefined' || !window.vault || !window.sync || !window.vaults) {
     throw new Error('Synchronisation indisponible sur cette plateforme.');
   }
-  return { supabase, vault: window.vault, sync: window.sync };
+  return { supabase, vault: window.vault, sync: window.sync, vaults: window.vaults };
 }
 
 // Associe le vault local ACTIF (identité stable, voir
@@ -474,28 +475,49 @@ export async function restoreFromTrash(
 }
 
 // Lance une synchro complète (push + pull + résolution de conflit) pour le
-// vault lié `remoteVaultId`. `trigger` (v0.4.27) alimente le journal :
-// d'où vient ce cycle (« manuel », « automatique (60 s) », « surveillance
-// du dossier », « retour à l'app », « démarrage »).
-export async function runSync(
-  remoteVaultId: string,
-  ownerId: string,
-  trigger = 'automatique',
-): Promise<SyncSummary> {
+// coffre ACTIF (v0.4.28). `trigger` (v0.4.27) alimente le journal : d'où
+// vient ce cycle (« manuel », « automatique (60 s) », « surveillance du
+// dossier », « retour à l'app », « démarrage »).
+//
+// v0.4.28 — COHÉRENCE STRUCTURELLE : l'identifiant du coffre distant n'est
+// plus un paramètre venu du renderer (latestRef mis à jour dans un effet
+// React) mais est DÉDUIT ICI du coffre actif via le pont (getActive +
+// registre), exactement comme le dossier haché et toutes les opérations
+// fichiers (elles opèrent par construction sur le coffre actif). La fenêtre
+// de course qui croisait « distant du coffre A » avec « dossier du coffre
+// B » lors d'une bascule immédiatement suivie d'une synchro — la
+// contamination croisée vécue les 19-20/09 — devient impossible : le
+// moteur peut au pire synchroniser l'ANCIEN coffre actif un cycle de trop,
+// jamais deux coffres entremêlés.
+export async function runSync(ownerId: string, trigger = 'automatique'): Promise<SyncSummary> {
   const summary: SyncSummary = { pushed: 0, pulled: 0, deleted: 0, conflicts: 0, errors: [] };
-  const journal: SyncJournalEntry[] = [makeJournalEntry('cycle-start', { detail: trigger })];
-  // Le début s'écrit immédiatement : l'écran Journal affiche le cycle « en
-  // cours » pendant que le reste s'exécute, le reste du journal est écoulé
-  // en UNE écriture à la fin.
-  await appendJournalEntries(journal);
   let bridges;
   try {
     bridges = requireBridges();
   } catch (error) {
     summary.errors.push(errorMessage(error));
-    await appendJournalEntries([makeJournalEntry('error', { detail: errorMessage(error) })]);
     return summary;
   }
+
+  // Résolution cohérente du coffre ACTIF (dossier ET distant ensemble).
+  const [activeId, vaultEntries] = await Promise.all([
+    bridges.vaults.getActive(),
+    bridges.vaults.list(),
+  ]);
+  const activeEntry = pickActiveRemoteVault(vaultEntries, activeId);
+  if (!activeEntry || !activeEntry.remoteVaultId) {
+    await appendJournalEntries([
+      makeJournalEntry('info', { detail: 'cycle ignoré : le coffre actif n’est pas lié au cloud' }),
+    ]);
+    return summary;
+  }
+  const remoteVaultId = activeEntry.remoteVaultId;
+
+  const journal: SyncJournalEntry[] = [makeJournalEntry('cycle-start', { detail: trigger })];
+  // Le début s'écrit immédiatement : l'écran Journal affiche le cycle « en
+  // cours » pendant que le reste s'exécute, le reste du journal est écoulé
+  // en UNE écriture à la fin.
+  await appendJournalEntries(journal);
 
   const [localFiles, remoteFiles, syncState] = await Promise.all([
     bridges.sync.hashVaultTree(),
