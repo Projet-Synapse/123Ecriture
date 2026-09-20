@@ -51,7 +51,7 @@ jobs:
           cp -r apps/mobile/dist-pages/. site/app/
           cp site/app/index.html site/app/404.html
       - name: Configure Pages
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@v6
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
