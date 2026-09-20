@@ -116,6 +116,9 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
   // Déclencheur du cycle pour le journal (« manuel », « automatique (60 s) »,
   // « surveillance du dossier », « retour à l'app »…) — passé au moteur via
   // un ref pour que chaque appelant garde sa propre version de runSync.
+  // v0.4.28 : l'identifiant distant n'est PLUS transmis au moteur — il le
+  // déduit lui-même du coffre ACTIF (voir runSync, syncEngine.ts) ; ce ref
+  // périmé pendant une bascule était la source de la contamination croisée.
   const triggerRef = useRef<string>('automatique');
   const runSync = useCallback(async (trigger?: string) => {
     if (trigger) triggerRef.current = trigger;
@@ -128,7 +131,7 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
     await appendJournalEntries([makeJournalEntry('pause')]);
     setStatus('syncing');
     try {
-      const summary = await runSyncEngine(currentRemoteVaultId, currentUserId, triggerRef.current);
+      const summary = await runSyncEngine(currentUserId, triggerRef.current);
       setLastSummary(summary);
       if (summary.errors.length > 0) {
         setStatus('error');

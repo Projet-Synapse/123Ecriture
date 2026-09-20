@@ -600,6 +600,19 @@ bas) sur le projet Supabase partagé "Projet Synapse".
   ressuscitant en boucle des fichiers supprimés (vécu : copies « (conflit
   2026-09-18…) » revenues sur LORDI puis re-téléchargées partout ; 16 lignes
   nettoyées à la main en base).
+- **Cohérence structurelle du moteur** (v0.4.28) : `runSync(ownerId)`
+  déduit lui-même le coffre distant du coffre ACTIF via le pont
+  (`vaults.getActive()` + registre, résolveur pur `pickActiveRemoteVault`)
+  — exactement comme le dossier haché et toutes les opérations fichiers,
+  qui opèrent par construction sur le coffre actif. Avant, l'identifiant
+  distant venait d'un ref React (latestRef) mis à jour dans un effet :
+  une bascule de coffre immédiatement suivie de « Synchroniser maintenant »
+  croisait l'ANCIEN distant avec le NOUVEAU dossier — le contenu du coffre
+  cliqué partait dans le coffre distant du coffre resté ouvert (cause racine
+  des contaminations croisées des 19-20/09, identifiée en binôme avec
+  l'agent du second PC via la table `agent_coordination`). Le moteur peut
+  désormais au pire synchroniser l'ancien coffre un cycle de trop — jamais
+  deux coffres entremêlés.
 - **Journal de synchronisation** (v0.4.27) : l'équivalent du « journal
   des synchronisations » d'Obsidian Sync — chaque cycle (avec son
   déclencheur : manuel, automatique, surveillance du dossier, retour à
