@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import type { RealtimeChannel } from '@supabase/supabase-js';
 
 import { useAuth } from './AuthContext';
 import { makeJournalEntry } from './journal';
@@ -67,12 +68,20 @@ const SyncStatusReactContext = createContext<SyncStatusContextValue | null>(null
 // v0.4.20 : synchro continue — les changements distants arrivent en moins
 // d'une minute ; les changements locaux partent en quelques secondes via la
 // surveillance du dossier (voir l'effet watch ci-dessous).
-const AUTO_SYNC_INTERVAL_MS = 60 * 1000;
+const AUTO_SYNC_INTERVAL_MS = 20 * 1000;
 
 // Délai avant le PREMIER cycle auto au lancement de l'app — laisse le temps
 // au reste de l'app (vault actif, session Supabase) de finir de se charger
 // sans faire concurrence au démarrage perçu par l'utilisatrice.
 const AUTO_SYNC_STARTUP_DELAY_MS = 5000;
+
+// v0.4.29 : canal broadcast de propagation temps réel + marqueur de session.
+// Volontairement au niveau du MODULE (pas des refs React) : une seule
+// instance de ce contexte existe par app, et le linter React interdit les
+// mutations de refs hors effets — ici, l'effet écrit et runSync lit, sans
+// passer par le rendu.
+const SESSION_TAG = Math.random().toString(36).slice(2);
+let activeBroadcastChannel: RealtimeChannel | null = null;
 
 function summarizeSuccess(summary: SyncSummary): string {
   const base = `${summary.pushed} envoyée(s), ${summary.pulled} reçue(s), ${summary.deleted} supprimée(s), ${summary.conflicts} conflit(s)`;
@@ -144,6 +153,22 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
         setLastConflicts(summary.conflicts);
         setLastResultSummary(summarizeSuccess(summary));
       }
+      // v0.4.29 : annoncer aux autres appareils du compte qu'un cycle a
+      // change le cloud — ils lanceront un cycle ~3 s plus tard au lieu
+      // d'attendre le leur (propagation quasi instantanee, broadcast
+      // Realtime). Best-effort : une emission perdue retombe sur le cycle.
+      if (summary.pushed > 0 || summary.deleted > 0 || summary.conflicts > 0) {
+        void activeBroadcastChannel?.send({
+          type: 'broadcast',
+          event: 'sync',
+          payload: {
+            from: SESSION_TAG,
+            vaultId: currentRemoteVaultId,
+            pushed: summary.pushed,
+            deleted: summary.deleted,
+          },
+        });
+      }
     } catch (error) {
       console.error('[sync] échec de la synchronisation :', error);
       const message = errorMessage(error);
@@ -200,38 +225,46 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
     void window.sync?.watchRestart?.().catch(() => undefined);
   }, [preferences.autoSyncEnabled, cloudSyncConfigured, remoteVaultId]);
 
-  // Réception TEMPS RÉEL (v0.4.26) : abonnement Supabase Realtime aux
-  // changements de `vault_files` du coffre distant actif — un push d'un
-  // autre appareil déclenche un cycle ~4 s plus tard (debounce : un cycle
-  // distant écrit souvent des dizaines de lignes d'un coup, inutile de
-  // tirer 50 fois). Avant, les changements distants n'arrivaient qu'au
-  // cycle de 60 s — « la synchronisation ne détectait pas tout de suite »
-  // (vécu). Le cycle minute reste en secours (Realtime peut se déconnecter
-  // silencieusement) ; le focus de la fenêtre déclenche aussi un cycle
-  // (réveil de mise en veille, retour d'un autre appareil).
+  // Réception TEMPS RÉEL (v0.4.29) : Realtime BROADCAST entre appareils du
+  // même compte — quand un appareil pousse des changements, il l'annonce sur
+  // le canal du compte et les autres lancent un cycle ~3 s plus tard.
+  // Pourquoi broadcast et plus postgres_changes (tenté en v0.4.26) : l'écoute
+  // de la base accepte nos abonnements mais ne diffuse JAMAIS les événements
+  // pour notre schéma privé (publication + replica identity testés sans
+  // effet — vécu) ; le broadcast, lui, passe par le websocket Realtime sans
+  // dépendre du WAL : c'est le canal de propagation instantanée, le « flux
+  // continu » demandé par l'utilisatrice. Le cycle de 20 s reste en filet de
+  // sécurité, et le focus de la fenêtre déclenche aussi un cycle.
+  // L'émission se fait dans runSync (après un cycle qui a changé le cloud) ;
+  // sessionTag identifie cette session pour ignorer ses propres annonces.
   useEffect(() => {
-    if (!preferences.autoSyncEnabled || !remoteVaultId || !supabase) return;
+    if (!preferences.autoSyncEnabled || !userId || !supabase) return;
     let debounce: ReturnType<typeof setTimeout> | null = null;
     const scheduleSync = () => {
       if (debounce) clearTimeout(debounce);
-      debounce = setTimeout(() => void runSync('retour à l’app'), 4000);
+      debounce = setTimeout(() => void runSync('annonce temps réel'), 3000);
     };
     const channel = supabase
-      .channel(`vault-files-${remoteVaultId}`)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'app_123ecriture', table: 'vault_files', filter: `vault_id=eq.${remoteVaultId}` },
-        scheduleSync,
-      )
+      .channel(`sync-activity-${userId}`, { config: { broadcast: { self: false } } })
+      .on('broadcast', { event: 'sync' }, (payload: { payload?: { from?: string; vaultId?: string } }) => {
+        const info = payload.payload ?? {};
+        if (info.from === SESSION_TAG) return;
+        // Seul le coffre ACTIF se synchronise : ignorer les annonces des
+        // autres coffres (ils se synchroniseront à leur activation).
+        if (info.vaultId && info.vaultId !== latestRef.current.remoteVaultId) return;
+        scheduleSync();
+      })
       .subscribe();
+    activeBroadcastChannel = channel;
     const onFocus = () => scheduleSync();
     window.addEventListener('focus', onFocus);
     return () => {
       if (debounce) clearTimeout(debounce);
       window.removeEventListener('focus', onFocus);
+      activeBroadcastChannel = null;
       if (supabase) void supabase.removeChannel(channel);
     };
-  }, [preferences.autoSyncEnabled, remoteVaultId, runSync]);
+  }, [preferences.autoSyncEnabled, userId, runSync]);
 
   const value = useMemo<SyncStatusContextValue>(
     () => ({

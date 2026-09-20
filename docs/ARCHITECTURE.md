@@ -600,6 +600,25 @@ bas) sur le projet Supabase partagé "Projet Synapse".
   ressuscitant en boucle des fichiers supprimés (vécu : copies « (conflit
   2026-09-18…) » revenues sur LORDI puis re-téléchargées partout ; 16 lignes
   nettoyées à la main en base).
+- **Propagation temps réel par BROADCAST** (v0.4.29) : canal Realtime
+  `sync-activity-<userId>` partagé par les appareils du compte — un cycle
+  qui a changé le cloud (envois/suppressions/conflits) y annonce l'événement
+  et les autres appareils lancent un cycle ~3 s plus tard. Pourquoi broadcast
+  et pas l'écoute de la base (postgres_changes, tenté en v0.4.26) : celle-ci
+  accepte les abonnements mais ne diffuse jamais pour notre schéma privé
+  (publication + replica identity testés sans effet) ; le broadcast passe par
+  le websocket Realtime sans dépendre du WAL. Marqueur de session pour
+  s'ignorer soi-même, filtre par coffre actif, cycle de secours raccourci à
+  20 s, focus de fenêtre toujours actif.
+- **Fusion à trois voix diff-match-patch** (v0.4.29, comme Obsidian Sync) :
+  chaque push/pull enregistre la version synchronisée dans
+  `.123ecriture/bases/<clé>` (hors arbre synchronisé). En conflit (fichier
+  modifié des deux côtés), le moteur tente base+local+distant →
+  `tryThreeWayMerge` (pur + testé, merge.ts) : les modifications de parties
+  différentes sont RÉUNIES puis poussées — fin des gagnant/perdant pour la
+  majorité des conflits. Repli sur l'archivage du perdant si les
+  modifications se chevauchent ou si la base manque (premier conflit d'un
+  fichier).
 - **Cohérence structurelle du moteur** (v0.4.28) : `runSync(ownerId)`
   déduit lui-même le coffre distant du coffre ACTIF via le pont
   (`vaults.getActive()` + registre, résolveur pur `pickActiveRemoteVault`)
