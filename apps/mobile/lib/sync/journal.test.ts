@@ -35,7 +35,9 @@ describe('makeJournalEntry / journalEntryLabel', () => {
   });
 
   it('libellés humains pour chaque type clé', () => {
-    expect(journalEntryLabel(makeJournalEntry('cycle-start', { detail: 'manuel' }))).toContain('Détection des changements');
+    // v0.4.30 : le début de cycle s'appelle « Connexion au serveur… »
+    // (façon Obsidian Sync, demande utilisateur).
+    expect(journalEntryLabel(makeJournalEntry('cycle-start', { detail: 'manuel' }))).toContain('Connexion au serveur');
     expect(journalEntryLabel(makeJournalEntry('cycle-end', { detail: '1 envoyé(s)' }))).toContain('Synchronisé');
     expect(journalEntryLabel(makeJournalEntry('delete', { path: 'a.md', detail: 'corbeille' }))).toContain('Supprimé : a.md');
     expect(journalEntryLabel(makeJournalEntry('error', { detail: 'boom' }))).toContain('Erreur : boom');

@@ -8,6 +8,7 @@ import {
   createRemoteVault,
   linkVaultToCloud,
   listRemoteVaults,
+  renameRemoteVault,
   type RemoteVaultSummary,
   type SyncSummary,
 } from '../../lib/sync/syncEngine';
@@ -80,6 +81,11 @@ export function AccountSyncSection() {
   // Coffre local pour lequel le sélecteur « se connecter à un existant » est
   // déplié (les distants déjà reliés à un AUTRE coffre local en sont exclus).
   const [pickingRemoteForVaultId, setPickingRemoteForVaultId] = useState<string | null>(null);
+  // Renommage d'un coffre distant (le nom est cosmétique, l'id reste la clé
+  // de liaison — le renommage se répercute sur tous les appareils).
+  const [renamingRemoteId, setRenamingRemoteId] = useState<string | null>(null);
+  const [renamingRemoteDraft, setRenamingRemoteDraft] = useState('');
+  const [renamingRemoteBusy, setRenamingRemoteBusy] = useState(false);
 
   const runVaultAction = useCallback(async (action: () => Promise<unknown>) => {
     setVaultActionError(null);
@@ -123,6 +129,28 @@ export function AccountSyncSection() {
         setRemoteVaultsError(errorMessage(error));
       });
   }, []);
+
+  // Renomme un COFFRE DISTANT (le nom est cosmétique, l'id reste la clé de
+  // liaison — le renommage se répercute sur tous les appareils au prochain
+  // chargement de la carte). Erreurs affichées sous la carte.
+  const submitRenameRemoteVault = useCallback(
+    async (id: string, name: string) => {
+      const trimmed = name.trim();
+      if (!trimmed || renamingRemoteBusy) return;
+      setRenamingRemoteBusy(true);
+      try {
+        await renameRemoteVault(id, trimmed);
+        setRenamingRemoteId(null);
+        loadRemoteVaults();
+      } catch (error) {
+        console.error('[vaults] échec du renommage :', error);
+        setRemoteVaultsError(errorMessage(error));
+      } finally {
+        setRenamingRemoteBusy(false);
+      }
+    },
+    [renamingRemoteBusy, loadRemoteVaults],
+  );
 
   // Recharge aussi quand le nombre de coffres liés change : la liaison
   // automatique (VaultsContext) crée des coffres distants en arrière-plan,
@@ -387,6 +415,36 @@ export function AccountSyncSection() {
                       </Text>
                     ))}
                   </View>
+                )}
+                {/* Renommage inline (demande utilisateur : nommer les coffres
+                    distants d'après leur contenu réel pour lever les
+                    ambiguïtés). Le nom est cosmétique, l'id reste la clé. */}
+                {renamingRemoteId === r.id ? (
+                  <View style={s.statusRow}>
+                    <TextInput
+                      value={renamingRemoteDraft}
+                      onChangeText={setRenamingRemoteDraft}
+                      onSubmitEditing={() => void submitRenameRemoteVault(r.id, renamingRemoteDraft)}
+                      placeholder="Nouveau nom…"
+                      placeholderTextColor={theme.textMuted}
+                      style={[styles.vaultRenameInput, { color: theme.text, borderColor: theme.border }]}
+                      autoFocus
+                    />
+                    <Pressable
+                      onPress={() => void submitRenameRemoteVault(r.id, renamingRemoteDraft)}
+                      disabled={renamingRemoteBusy}
+                      style={[styles.syncButton, { backgroundColor: theme.accent, opacity: renamingRemoteBusy ? 0.6 : 1 }]}
+                    >
+                      <Text style={s.buttonText}>OK</Text>
+                    </Pressable>
+                    <Pressable onPress={() => setRenamingRemoteId(null)}>
+                      <Text style={{ color: theme.textMuted }}>Annuler</Text>
+                    </Pressable>
+                  </View>
+                ) : (
+                  <Pressable onPress={() => { setRenamingRemoteId(r.id); setRenamingRemoteDraft(r.name); }}>
+                    <Text style={{ color: theme.accent, fontSize: 12 }}>✏️ Renommer</Text>
+                  </Pressable>
                 )}
                 {!linkedLocal && (
                   <Pressable

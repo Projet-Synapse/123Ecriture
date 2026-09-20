@@ -38,6 +38,11 @@ const ICON_BY_TYPE: Record<SyncJournalEntryType, string> = {
   resume: '▶️',
   restore: '↩️',
   info: 'ℹ️',
+  connexion: '🔌',
+  'upload-start': '⬆️',
+  'upload-end': '✅',
+  'download-start': '⬇️',
+  'download-end': '✅',
 };
 
 function formatTime(iso: string): string {

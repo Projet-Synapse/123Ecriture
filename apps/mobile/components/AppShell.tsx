@@ -217,18 +217,28 @@ function SyncStatusChip({ compact }: { compact?: boolean }) {
     icon = '⚠';
     label = 'Erreur de sync';
     color = theme.danger;
-  } else if (syncStatus.status === 'success' && syncStatus.lastSyncedAt) {
-    if (syncStatus.lastConflicts > 0) {
-      icon = '⚠';
-      label = `${syncStatus.lastConflicts} conflit(s)`;
-      color = theme.danger;
-    } else {
-      const synced = new Date(syncStatus.lastSyncedAt);
-      const hh = String(synced.getHours()).padStart(2, '0');
-      const mm = String(synced.getMinutes()).padStart(2, '0');
-      icon = '✓';
-      label = `Synchronisé à ${hh}:${mm}`;
-      color = theme.textMuted;
+    } else if (syncStatus.status === 'success' && syncStatus.lastSyncedAt) {
+      if (syncStatus.lastConflicts > 0) {
+        icon = '⚠';
+        label = `${syncStatus.lastConflicts} conflit(s)`;
+        color = theme.danger;
+      } else if (syncStatus.lastSummary && (syncStatus.lastSummary.pushed > 0 || syncStatus.lastSummary.pulled > 0)) {
+        // Dernière sync avec du contenu échangé : le détail parle plus que
+        // « Synchronisé » (demande utilisateur : la puce raconte ce qui s'est
+        // passé, pas juste un horodatage).
+        const synced = new Date(syncStatus.lastSyncedAt);
+        const hh = String(synced.getHours()).padStart(2, '0');
+        const mm = String(synced.getMinutes()).padStart(2, '0');
+        icon = '✓';
+        label = `${syncStatus.lastSummary.pushed} envoyée(s), ${syncStatus.lastSummary.pulled} reçue(s) · ${hh}:${mm}`;
+        color = theme.textMuted;
+      } else {
+        const synced = new Date(syncStatus.lastSyncedAt);
+        const hh = String(synced.getHours()).padStart(2, '0');
+        const mm = String(synced.getMinutes()).padStart(2, '0');
+        icon = '✓';
+        label = `À jour · ${hh}:${mm}`;
+        color = theme.textMuted;
     }
   }
 
