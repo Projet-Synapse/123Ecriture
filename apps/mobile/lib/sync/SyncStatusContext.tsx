@@ -58,17 +58,6 @@ type SyncStatusContextValue = {
 
 const SyncStatusReactContext = createContext<SyncStatusContextValue | null>(null);
 
-// Intervalle de synchro automatique. 15 minutes : assez fréquent pour que
-// les autres appareils/l'utilisatrice sur le web ne restent jamais très en
-// retard, assez espacé pour ne pas multiplier les allers-retours Storage/
-// table `vault_files` à chaque frappe. Ajustable plus tard si besoin, mais
-// aucune raison objective de descendre plus bas pour une sync qui reste
-// manuelle par défaut.
-// v0.4.20 : synchro continue — les changements distants arrivent en moins
-// d'une minute ; les changements locaux partent en quelques secondes via la
-// surveillance du dossier (voir l'effet watch ci-dessous).
-const AUTO_SYNC_INTERVAL_MS = 20 * 1000;
-
 // Délai avant le PREMIER cycle auto au lancement de l'app — laisse le temps
 // au reste de l'app (vault actif, session Supabase) de finir de se charger
 // sans faire concurrence au démarrage perçu par l'utilisatrice.
@@ -182,19 +171,33 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
 
   // Synchro automatique (Paramètres → Compte et synchronisation → "Synchro-
   // niser automatiquement") : STRICTEMENT rien si la préférence est fausse
-  // (défaut) — un cycle après un court délai au montage/à la reconnexion du
-  // coffre cloud, puis un cycle toutes les AUTO_SYNC_INTERVAL_MS. Les deux
-  // timers sont nettoyés à chaque changement de dépendance pour ne jamais
-  // en cumuler plusieurs (ex. changement de coffre actif pendant qu'un
-  // délai de démarrage était encore en attente).
+  // (défaut) — un seul cycle après le délai de démarrage. PAS de cycle
+  // périodique ensuite : la sync est ÉVÉNEMENTIELLE (demande utilisateur :
+  // plus de loop minute polluant le journal à vide). Les déclencheurs :
+  // - surveillance du dossier (les changements locaux, ~2 s après écriture) ;
+  // - broadcast temps réel (les changements distants, ~3 s après un push
+  //   d'un autre appareil) ;
+  // - retour au premier plan de la fenêtre (rattrape ce qui aurait pu être
+  //   manqué pendant l'inactivité).
+  // Le cycle de démarrage rattrape de toute façon tout ce qui aurait pu
+  // être manqué pendant que l'app était fermée.
   useEffect(() => {
     if (!preferences.autoSyncEnabled || !cloudSyncConfigured) return;
     const startupTimeout = setTimeout(() => void runSync('démarrage'), AUTO_SYNC_STARTUP_DELAY_MS);
-    const interval = setInterval(() => void runSync('automatique (60 s)'), AUTO_SYNC_INTERVAL_MS);
-    return () => {
-      clearTimeout(startupTimeout);
-      clearInterval(interval);
-    };
+    return () => clearTimeout(startupTimeout);
+  }, [preferences.autoSyncEnabled, cloudSyncConfigured, runSync]);
+
+  // Un cycle au retour du premier plan : après une période d'inactivité
+  // (app en arrière-plan, le watcher s'exécute quand même — mais un
+  // événement perdu n'aurait personne pour le rattraper ici), le retour de
+  // l'utilisatrice est le moment le plus sûr pour rattraper.
+  useEffect(() => {
+    if (!preferences.autoSyncEnabled || !cloudSyncConfigured) return;
+    const onFocus = () => void runSync('retour au premier plan');
+    if (typeof window !== 'undefined') {
+      window.addEventListener('focus', onFocus);
+      return () => window.removeEventListener('focus', onFocus);
+    }
   }, [preferences.autoSyncEnabled, cloudSyncConfigured, runSync]);
 
   // Synchro continue (v0.4.20) : le dossier du coffre actif est surveillé —
