@@ -18,7 +18,7 @@
 
 import { randomUUID } from './webUuid';
 import { parseFrontmatter } from '../frontmatter';
-import { inferPropertyType } from '../propertyTypes';
+import { createPropertyScanMerger } from '../propertyScanMerge';
 import { type FsaDirectoryHandleLike, listNoteRelPaths, readFileText, writeFileText } from './webFs';
 
 import { getActiveConfigDir, webVaultRegistry } from './webVaultRegistry';
@@ -560,17 +560,18 @@ export const webPropertiesAdapter = {
 
   // Scan du coffre (demande utilisateur : auto-enregistrement des clés de
   // frontmatter + compteur d'usage) — port direct du handler
-  // properties:scan-vault desktop, même fusion insensible à la casse,
-  // mêmes exclusions created/modified.
+  // properties:scan-vault desktop : la fusion (insensible à la casse, usage
+  // par nom canonique, exclusions created/modified) est la fonction PURE
+  // partagée lib/propertyScanMerge.ts, testée par Vitest.
   scanVault: async (): Promise<PropertyScanResult> => {
     const configDir = await optionalConfigDir();
     const root = await webVaultRegistry.getActiveHandle();
     if (!configDir || !root) return { properties: [], usage: {}, createdCount: 0 };
 
     const properties = await readProperties(configDir);
-    const usage: Record<string, number> = {};
-    const knownByLowerName = new Map(properties.map((property) => [property.name.toLowerCase(), property]));
-    const toCreate: PropertyDefinition[] = [];
+    const merger = createPropertyScanMerger(properties.map((property) => property.name), {
+      newId: randomUUID,
+    });
 
     for (const relPath of await listNoteRelPaths(root, ['.mdx', '.md'])) {
       let content: string;
@@ -579,32 +580,18 @@ export const webPropertiesAdapter = {
       } catch {
         continue; // Note illisible entre le listage et la lecture — ignorée.
       }
-      for (const [key, value] of Object.entries(parseFrontmatter(content).data)) {
-        if (key === 'created' || key === 'modified') continue;
-        usage[key] = (usage[key] ?? 0) + 1;
-        const lower = key.toLowerCase();
-        if (!knownByLowerName.has(lower)) {
-          const definition = {
-            id: randomUUID(),
-            name: key,
-            type: inferPropertyType(value),
-            createdAt: new Date().toISOString(),
-          } as unknown as PropertyDefinition;
-          toCreate.push(definition);
-          knownByLowerName.set(lower, definition);
-        }
-      }
+      merger.absorbNoteFrontmatter(parseFrontmatter(content).data);
     }
 
     const updatedProperties =
-      toCreate.length > 0
-        ? (await writeJson(configDir, 'properties.json', [...properties, ...toCreate]), [
+      merger.toCreate.length > 0
+        ? (await writeJson(configDir, 'properties.json', [...properties, ...merger.toCreate]), [
             ...properties,
-            ...toCreate,
+            ...merger.toCreate,
           ])
         : properties;
 
-    return { properties: updatedProperties, usage, createdCount: toCreate.length };
+    return { properties: updatedProperties, usage: merger.usage, createdCount: merger.toCreate.length };
   },
 } satisfies PropertiesBridge;
 

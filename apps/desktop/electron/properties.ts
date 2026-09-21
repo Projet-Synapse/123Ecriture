@@ -17,10 +17,10 @@ import type { PropertyDefinition, PropertyPatch, PropertyRenameMigrationSummary,
 // paquets séparés.
 import { migrateFrontmatterKey } from '../../mobile/lib/frontmatterMigration';
 // Même logique de partage que migrateFrontmatterKey ci-dessus : le parseur
-// frontmatter de référence (tolérant, testé) + la déduction de type pour
-// l'auto-enregistrement, importés du paquet apps/mobile.
+// frontmatter de référence (tolérant, testé) importé du paquet apps/mobile,
+// plus la fusion du scan en fonction pure testée (propertyScanMerge).
 import { parseFrontmatter } from '../../mobile/lib/frontmatter';
-import { inferPropertyType } from '../../mobile/lib/propertyTypes';
+import { createPropertyScanMerger } from '../../mobile/lib/propertyScanMerge';
 
 // Module "Propriétés" (voir docs/ARCHITECTURE.md §4/§8, panneau
 // PropertiesPanel.tsx dans la barre latérale) : schéma global de
@@ -243,25 +243,24 @@ export function registerPropertiesHandlers(): void {
     return writeProperties(vaultPath, properties);
   });
 
-  // Scan du coffre (demande utilisateur : « toutes les propriétés
-  // mentionnées dans mes fichiers doivent être enregistrées convenablement,
-  // avec un petit chiffre ») : parcourt chaque note, compte les clés de
-  // frontmatter par propriété et CRÉE les définitions manquantes avec le
-  // type déduit de la valeur (inferPropertyType). Fusion insensible à la
-  // casse : une clé `Tags` dans une note et une définition `tags` existante
-  // se partagent la même entrée (le nom exact de la définition gagne).
-  // created/modified sont exclues : matérialisées par l'APP à chaque
-  // sauvegarde (voir NotesScreen.tsx) — les enregistrerait en doublon à
-  // chaque scan. Calculé à la demande (pas d'index) : cohérent avec le
-  // reste de l'app à cette échelle.
+  // Scan du coffre : parcourt chaque note, compte les clés de frontmatter
+  // par propriété et CRÉE les définitions manquantes avec le type déduit de
+  // la valeur. La fusion (insensible à la casse, usage par nom canonique,
+  // exclusions created/modified matérialisées par l'APP — voir
+  // NotesScreen.tsx) vit dans la fonction PURE partagée
+  // createPropertyScanMerger (apps/mobile/lib/propertyScanMerge.ts), testée
+  // par Vitest — le port web de ce handler (webModulesAdapter.scanVault)
+  // l'utilise telle quelle. Calculé à la demande (pas d'index) : cohérent
+  // avec le reste de l'app à cette échelle.
   ipcMain.handle('properties:scan-vault', async () => {
     const vaultPath = getVaultPath();
     if (!vaultPath) return { properties: [], usage: {}, createdCount: 0 };
 
     const properties = readProperties(vaultPath);
-    const usage: Record<string, number> = {};
-    const knownByLowerName = new Map(properties.map((p) => [p.name.toLowerCase(), p]));
-    const toCreate: PropertyDefinition[] = [];
+    const merger = createPropertyScanMerger(
+      properties.map((p) => p.name),
+      { newId: () => crypto.randomUUID() },
+    );
 
     for (const fullPath of await walkNoteFiles(vaultPath)) {
       let content: string;
@@ -270,27 +269,13 @@ export function registerPropertiesHandlers(): void {
       } catch {
         continue; // Note illisible entre le listage et la lecture — ignorée.
       }
-      for (const [key, value] of Object.entries(parseFrontmatter(content).data)) {
-        if (key === 'created' || key === 'modified') continue;
-        usage[key] = (usage[key] ?? 0) + 1;
-        const lower = key.toLowerCase();
-        if (!knownByLowerName.has(lower)) {
-          const definition: PropertyDefinition = {
-            id: crypto.randomUUID(),
-            name: key,
-            type: inferPropertyType(value),
-            createdAt: new Date().toISOString(),
-          };
-          toCreate.push(definition);
-          knownByLowerName.set(lower, definition);
-        }
-      }
+      merger.absorbNoteFrontmatter(parseFrontmatter(content).data);
     }
 
-    const updatedProperties = toCreate.length > 0
-      ? await writeProperties(vaultPath, [...properties, ...toCreate])
+    const updatedProperties = merger.toCreate.length > 0
+      ? await writeProperties(vaultPath, [...properties, ...merger.toCreate])
       : properties;
 
-    return { properties: updatedProperties, usage, createdCount: toCreate.length };
+    return { properties: updatedProperties, usage: merger.usage, createdCount: merger.toCreate.length };
   });
 }
