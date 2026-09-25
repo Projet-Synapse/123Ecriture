@@ -138,17 +138,23 @@ function Root() {
 
 export default function App() {
   return (
-    <PreferencesProvider>
+    // v0.4.32 : VaultsProvider PUIS PreferencesProvider — la personnalisation
+    // est PAR COFFRE (demande de l'utilisatrice : « la personnalisation de
+    // l'interface sur PROGRAMMATION ne sera pas impactée sur DIVERS ») : le
+    // résolveur de thème (PreferencesContext) lit le coffre ACTIF pour
+    // charger `.123ecriture/appearance.json` du coffre. VaultsContext ne
+    // consomme aucune préférence (vérifié) — l'inversion est sûre.
+    <VaultsProvider>
       <AuthProvider>
-        <VaultsProvider>
-          {/* Après Auth/Vaults : la sync a besoin d'une session ET d'un
-              coffre actif pour savoir s'il y a quoi que ce soit à
+        <PreferencesProvider>
+          {/* Après Auth/Préférences : la sync a besoin d'une session ET
+              d'un coffre actif pour savoir s'il y a quoi que ce soit à
               synchroniser (voir SyncStatusContext.tsx). */}
           <SyncStatusProvider>
             <Root />
           </SyncStatusProvider>
-        </VaultsProvider>
+        </PreferencesProvider>
       </AuthProvider>
-    </PreferencesProvider>
+    </VaultsProvider>
   );
 }

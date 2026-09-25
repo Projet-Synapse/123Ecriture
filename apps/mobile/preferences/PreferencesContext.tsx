@@ -6,10 +6,14 @@ import { DEFAULT_CHART_TOOLBAR_ORDER } from '../lib/chartToolbarActions';
 import { DEFAULT_NOTES_TOOLBAR_ORDER, normalizeNotesToolbarOrder } from '../lib/notesToolbarActions';
 import {
   buildTheme,
+  parseVaultAppearance,
   resolveAppearanceProfile,
+  resolveProfileWithVault,
   type AppearanceProfile,
   type AppearanceTokens,
+  type VaultAppearanceFile,
 } from '../lib/appearance';
+import { useVaults } from '../lib/sync/VaultsContext';
 import { darkTheme, lightTheme, type Theme } from '../theme';
 
 // Point central de la personnalisation de l'interface (voir
@@ -70,6 +74,12 @@ type PreferencesContextValue = {
   setAppearance: (mode: 'light' | 'dark', patch: Partial<AppearanceProfile>) => Promise<void>;
   importWallpaper: (mode: 'light' | 'dark') => Promise<boolean>;
   clearWallpaper: (mode: 'light' | 'dark') => Promise<void>;
+  // v0.4.32 : apparence PAR COFFRE (fichier .123ecriture/appearance.json du
+  // coffre actif — overlay champ par champ sur le global). reset = retour
+  // à la personnalisation globale.
+  vaultAppearance: VaultAppearanceFile | null;
+  saveVaultAppearance: (file: VaultAppearanceFile) => Promise<void>;
+  resetVaultAppearance: () => Promise<void>;
   // dataURLs des fonds d'écran par mode (l'écran Personnalisation affiche
   // celui du mode SÉLECTIONNÉ, pas forcément actif).
   wallpapers: { light?: string; dark?: string };
@@ -126,6 +136,10 @@ const PreferencesReactContext = createContext<PreferencesContextValue | null>(nu
 
 export function PreferencesProvider({ children }: { children: ReactNode }) {
   const systemScheme = useColorScheme();
+  // v0.4.32 : la personnalisation est PAR COFFRE — App.tsx place
+  // VaultsProvider AU-DESSUS de ce fournisseur pour que le résolveur de
+  // thème connaisse le coffre actif (son .123ecriture/appearance.json).
+  const { activeVault } = useVaults();
   const bridge = typeof window !== 'undefined' ? window.preferences : undefined;
   const [preferences, setPreferences] = useState<Preferences>(DEFAULT_PREFERENCES);
   // Pas de pont (web/mobile) : rien à charger, "chargé" dès le départ.
@@ -136,6 +150,32 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
   // `window.appearance`), chargées ici en dataURL au démarrage. Web/mobile
   // (pas de pont) : pas d'image, seul le fond couleur fonctionne.
   const [wallpapers, setWallpapers] = useState<{ light?: string; dark?: string }>({});
+  // Apparence DU COFFRE ACTIF (fichier .123ecriture/appearance.json du
+  // dossier du coffre — jamais synchronisé). Rechargé à chaque changement
+  // de coffre actif ; absent = la personnalisation globale s'applique.
+  const [vaultAppearance, setVaultAppearance] = useState<VaultAppearanceFile | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      if (typeof window === 'undefined' || !window.vault?.readNote || !activeVault) {
+        if (!cancelled) setVaultAppearance(null);
+        return;
+      }
+      try {
+        const raw = await window.vault.readNote('.123ecriture/appearance.json');
+        if (!cancelled) setVaultAppearance(parseVaultAppearance(raw));
+      } catch {
+        if (!cancelled) setVaultAppearance(null);
+      }
+    };
+    void load();
+    return () => {
+      cancelled = true;
+    };
+    // Seul l'IDENTIFIANT compte : le fichier d'apparence est relu au
+    // changement de coffre, pas à chaque rendu de l'objet activeVault.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeVault?.id]);
   useEffect(() => {
     const appearance = typeof window !== 'undefined' ? window.appearance : undefined;
     if (!appearance?.getWallpapers) return;
@@ -320,9 +360,9 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
 
   const theme = useMemo<Theme & AppearanceTokens>(() => {
     const base = colorScheme === 'dark' ? darkTheme : lightTheme;
-    const profile = resolveAppearanceProfile(preferences, colorScheme);
+    const profile = resolveProfileWithVault(preferences, vaultAppearance, colorScheme);
     return buildTheme(base, profile, wallpapers[colorScheme]);
-  }, [colorScheme, preferences, wallpapers]);
+  }, [colorScheme, preferences, vaultAppearance, wallpapers]);
 
   // Application GLOBALE de l'apparence (v0.4.30) : une feuille de style
   // unique injectée/mise à jour — police racine (RNWeb hérite du body),
@@ -341,9 +381,27 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     }
     style.textContent = [
       `body { font-family: ${theme.fontStack}; zoom: ${theme.fontScale}; }`,
+    // Correctif v0.4.32 (vécu : « la police reste inchangée ») : les Text
+    // RNWeb n'héritent PAS du font-family du body — on force l'héritage
+    // sur TOUT sauf l'éditeur CodeMirror (ses polices dédiées,
+    // Paramètres → Éditeur, doivent primer).
+      `*:not(.cm-editor):not(.cm-content):not(.cm-gutters):not(.cm-tooltip) { font-family: inherit !important; }`,
       `[role="button"] { border-radius: ${theme.buttonRadius}px !important; }`,
     ].join('\n');
   }, [theme.fontStack, theme.fontScale, theme.buttonRadius]);
+
+  // v0.4.32 : enregistre l'apparence PAR COFFRE dans le dossier du coffre
+  // actif — elle ne touche NI la config globale NI les autres coffres.
+  const saveVaultAppearance = useCallback(async (file: VaultAppearanceFile): Promise<void> => {
+    if (typeof window === 'undefined' || !window.vault?.writeNote) return;
+    await window.vault.writeNote('.123ecriture/appearance.json', JSON.stringify(file, null, 2));
+    setVaultAppearance(file);
+  }, []);
+  const resetVaultAppearance = useCallback(async (): Promise<void> => {
+    if (typeof window === 'undefined' || !window.vault?.delete) return;
+    await window.vault.delete('.123ecriture/appearance.json', { permanent: true, silent: true }).catch(() => undefined);
+    setVaultAppearance(null);
+  }, []);
 
   const value = useMemo<PreferencesContextValue>(
     () => ({
@@ -352,6 +410,9 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       theme,
       colorScheme,
       wallpapers,
+      vaultAppearance,
+      saveVaultAppearance,
+      resetVaultAppearance,
       setThemeMode,
       setAccentColor,
       setAppearance,
@@ -386,12 +447,15 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       preferencesLoaded,
       theme,
       colorScheme,
+      wallpapers,
+      vaultAppearance,
+      saveVaultAppearance,
+      resetVaultAppearance,
       setThemeMode,
       setAccentColor,
       setAppearance,
       importWallpaper,
       clearWallpaper,
-      wallpapers,
       setNotesToolbarOrder,
       setCanvasToolbarOrder,
       setChartToolbarOrder,

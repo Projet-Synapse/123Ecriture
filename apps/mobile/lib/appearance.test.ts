@@ -6,7 +6,13 @@ import {
   clampDim,
   clampFontScale,
   clampRadius,
+  hexToHsv,
+  hexToRgba,
+  hsvToHex,
+  parseVaultAppearance,
   resolveAppearanceProfile,
+  resolveProfileWithVault,
+  type VaultAppearanceFile,
   FONT_STACKS,
 } from './appearance';
 import { darkTheme, lightTheme } from '../theme';
@@ -86,5 +92,53 @@ describe('buildAppearanceTokens / buildTheme', () => {
     expect(theme.background).toBe('#faf5ff');
     expect(theme.text).toBe(lightTheme.text);
     expect(theme.fontStack).toBe(FONT_STACKS.system);
+  });
+});
+
+describe('HSV <-> hex (roue des couleurs)', () => {
+  it('conversions aller-retour', () => {
+    for (const hex of ['#4f46e5', '#dc2626', '#0d9488', '#111114', '#ffffff', '#000000']) {
+      const { h, s, v } = hexToHsv(hex);
+      expect(hsvToHex(h, s, v)).toBe(hex);
+    }
+  });
+
+  it('hsvToHex : primaires', () => {
+    expect(hsvToHex(0, 1, 1)).toBe('#ff0000');
+    expect(hsvToHex(120, 1, 1)).toBe('#00ff00');
+    expect(hsvToHex(240, 1, 1)).toBe('#0000ff');
+  });
+
+  it('hexToRgba : alpha applique', () => {
+    expect(hexToRgba('#ff8800', 0.5)).toBe('rgba(255, 136, 0, 0.5)');
+    expect(hexToRgba('#102030', 1)).toBe('rgba(16, 32, 48, 1)');
+  });
+});
+
+describe('Apparence PAR COFFRE (v0.4.32)', () => {
+  it('l overlay du coffre gagne champ par champ, le reste retombe sur le global', () => {
+    const prefs = { appearanceLight: { accentColor: '#2563eb' } };
+    const vault: VaultAppearanceFile = { light: { fontFamily: 'georgia', surfaceOpacity: 0.7 } };
+    const p = resolveProfileWithVault(prefs, vault, 'light');
+    expect(p.fontFamily).toBe('georgia');
+    expect(p.accentColor).toBe('#2563eb');
+    expect(p.surfaceOpacity).toBe(0.7);
+    expect(p.fontScale).toBe(1);
+  });
+
+  it('sans fichier de coffre = profil global', () => {
+    const prefs = { appearanceDark: { accentColor: '#00ff00' } };
+    expect(resolveProfileWithVault(prefs, null, 'dark').accentColor).toBe('#00ff00');
+  });
+
+  it('parseVaultAppearance : JSON valide/invalide', () => {
+    expect(parseVaultAppearance('{"light":{"fontFamily":"serif"}}')).toEqual({ light: { fontFamily: 'serif' }, dark: undefined });
+    expect(parseVaultAppearance('pas du tout json')).toBeNull();
+  });
+
+  it('buildTheme : surface translucide via rgba', () => {
+    const profil = resolveProfileWithVault({}, { light: { surfaceColor: '#ff0000', surfaceOpacity: 0.6 } }, 'light');
+    const t = buildTheme(lightTheme, profil);
+    expect(t.surface).toBe('rgba(255, 0, 0, 0.6)');
   });
 });

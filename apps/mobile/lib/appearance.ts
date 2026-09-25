@@ -1,12 +1,15 @@
-// Apparence de l'interface PAR MODE (v0.4.30) — pur et testé.
+// Apparence de l'interface — pur et testé.
 //
-// Chaque mode (clair, sombre) possède son PROPRE profil complet : police
-// globale, échelle, couleur d'accent, fond (couleur ou image + voile), style
-// et rayon des boutons. La demande de l'utilisatrice : « Je peux enregistrer
-// une apparence distincte pour le mode sombre et pour le mode clair ».
-// La résolution profil→thème (buildTheme) et les bornes de sécurité vivent
-// ici ; la persistance passe par les préférences, l'image de fond par un
-// pont dédié (fichier dans le dossier de configuration).
+// v0.4.30 : un profil complet PAR MODE (clair/sombre) — police, échelle,
+// accent, fond, boutons. v0.4.32 (demandes de l'utilisatrice) :
+// - PAR COFFRE : chaque coffre possède SON apparence dans
+//   `.123ecriture/appearance.json` (dossier caché, jamais synchronisé) ;
+//   chaîne de résolution : profil du coffre → profil global (config) →
+//   défauts. « La personnalisation de PROGRAMMATION ne sera pas impactée
+//   sur DIVERS. »
+// - PANNEAUX : couleur + translucidité des surfaces (superbe sur un fond
+//   d'écran : les panneaux laissent deviner l'image).
+// - ROUE DES COULEURS : conversions HSV↔hex pour le sélecteur dédié.
 
 import { darkTheme, lightTheme, type Theme } from '../theme';
 
@@ -25,21 +28,21 @@ export type ButtonStyle = 'filled' | 'outline' | 'ghost';
 export type AppearanceProfile = {
   accentColor: string;
   fontFamily: AppFontFamily;
-  // Échelle globale de l'interface (1 = 100 %). Appliquée en `zoom` CSS sur
-  // la racine : proportionnelle, jamais de texte tronqué.
+  // Échelle globale de l'interface (1 = 100 %) — zoom CSS racine.
   fontScale: number;
   // Fond quand il n'y a pas d'image (mode 'color').
   backgroundColor: string;
   backgroundMode: 'color' | 'image';
-  // Voile d'assombrissement AU-DESSUS de l'image (0 = aucun) — la
-  // lisibilité du texte prime sur le fond d'écran.
+  // Voile d'assombrissement AU-DESSUS de l'image (0 = aucun).
   backgroundDim: number;
+  // PANNEAUX (v0.4.32) : couleur des surfaces (cartes, barres) et
+  // translucidité (1 = opaque ; 0.6 = l'image transparaît).
+  surfaceColor: string;
+  surfaceOpacity: number;
   buttonStyle: ButtonStyle;
   buttonRadius: number;
 };
 
-// Piles CSS réelles — les noms cotés sont sûrs sur toutes les plateformes
-// (polices système universelles), rien à télécharger.
 export const FONT_STACKS: Record<AppFontFamily, string> = {
   system:
     'system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
@@ -69,12 +72,11 @@ export const BUTTON_OPTIONS: { value: ButtonStyle; label: string }[] = [
   { value: 'ghost', label: 'Discret' },
 ];
 
-// Bornes de sécurité pour les curseurs — clampValue protège aussi les
-// valeurs corrompues lues depuis un config.json édité à la main.
 export const FONT_SCALE_MIN = 0.85;
 export const FONT_SCALE_MAX = 1.3;
 export const BACKGROUND_DIM_MAX = 0.6;
 export const BUTTON_RADIUS_MAX = 20;
+export const SURFACE_OPACITY_MIN = 0.5;
 
 export function clampFontScale(value: number): number {
   if (!Number.isFinite(value)) return 1;
@@ -91,6 +93,58 @@ export function clampRadius(value: number): number {
   return Math.min(BUTTON_RADIUS_MAX, Math.max(0, value));
 }
 
+export function clampSurfaceOpacity(value: number): number {
+  if (!Number.isFinite(value)) return 1;
+  return Math.min(1, Math.max(SURFACE_OPACITY_MIN, value));
+}
+
+// ---- Couleurs : HSV ↔ hex (roue des couleurs) --------------------------
+// hsv : h en degrés [0, 360), s/v en [0, 1]. Pur et testé — la roue du
+// sélecteur (ColorField) n'est qu'une projection géométrique de ces
+// fonctions : angle = teinte, distance au centre = saturation.
+
+export function hsvToHex(h: number, s: number, v: number): string {
+  const hh = ((h % 360) + 360) % 360;
+  const c = v * Math.max(0, Math.min(1, s));
+  const x = c * (1 - Math.abs(((hh / 60) % 2) - 1));
+  const m = v - c;
+  const seg = Math.floor(hh / 60) % 6;
+  const rgb: [number, number, number] = [
+    [c, x, 0], [x, c, 0], [0, c, x], [0, x, c], [x, 0, c], [c, 0, x],
+  ][seg].map((k) => Math.round((k + m) * 255)) as [number, number, number];
+  return '#' + rgb.map((n) => n.toString(16).padStart(2, '0')).join('');
+}
+
+export function hexToHsv(hex: string): { h: number; s: number; v: number } {
+  const m = /^#?([0-9a-fA-F]{6})$/.exec(hex.trim());
+  if (!m) return { h: 0, s: 0, v: 1 };
+  const n = parseInt(m[1], 16);
+  const r = ((n >> 16) & 255) / 255;
+  const g = ((n >> 8) & 255) / 255;
+  const b = (n & 255) / 255;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const d = max - min;
+  let h = 0;
+  if (d !== 0) {
+    if (max === r) h = 60 * (((g - b) / d) % 6);
+    else if (max === g) h = 60 * ((b - r) / d + 2);
+    else h = 60 * ((r - g) / d + 4);
+  }
+  return { h: ((h % 360) + 360) % 360, s: max === 0 ? 0 : d / max, v: max };
+}
+
+// hex → rgba() pour les surfaces translucides (les couleurs RN n'acceptent
+// pas #rrggbbaa partout — rgba() est universel sur RNWeb).
+export function hexToRgba(hex: string, alpha: number): string {
+  const m = /^#?([0-9a-fA-F]{6})$/.exec(hex.trim());
+  if (!m) return hex;
+  const n = parseInt(m[1], 16);
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${Math.min(1, Math.max(0, alpha))})`;
+}
+
+// ---- Profils -----------------------------------------------------------
+
 export const DEFAULT_LIGHT_PROFILE: AppearanceProfile = {
   accentColor: lightTheme.accent,
   fontFamily: 'system',
@@ -98,6 +152,8 @@ export const DEFAULT_LIGHT_PROFILE: AppearanceProfile = {
   backgroundColor: lightTheme.background,
   backgroundMode: 'color',
   backgroundDim: 0.3,
+  surfaceColor: lightTheme.surface,
+  surfaceOpacity: 1,
   buttonStyle: 'filled',
   buttonRadius: 10,
 };
@@ -109,6 +165,8 @@ export const DEFAULT_DARK_PROFILE: AppearanceProfile = {
   backgroundColor: darkTheme.background,
   backgroundMode: 'color',
   backgroundDim: 0.3,
+  surfaceColor: darkTheme.surface,
+  surfaceOpacity: 1,
   buttonStyle: 'filled',
   buttonRadius: 10,
 };
@@ -117,12 +175,17 @@ export function defaultProfile(mode: 'light' | 'dark'): AppearanceProfile {
   return mode === 'dark' ? { ...DEFAULT_DARK_PROFILE } : { ...DEFAULT_LIGHT_PROFILE };
 }
 
-// Profil EFFECTIF d'un mode, avec repli sur les défauts champ par champ
-// (config.json d'une version antérieure = profil absent ou incomplet) et
-// migration de l'ancienne préférence unique `accentColor` vers le mode
-// clair (elle datait de l'époque « un seul accent pour tout »).
+export type AppearancePrefsLike = {
+  appearanceLight?: Partial<AppearanceProfile>;
+  appearanceDark?: Partial<AppearanceProfile>;
+  accentColor?: string;
+};
+
+// Profil EFFECTIF d'un mode, champ par champ avec repli sur les défauts
+// (config ancienne ou incomplète) + migration de l'ancienne accentColor
+// unique vers le mode clair.
 export function resolveAppearanceProfile(
-  prefs: { appearanceLight?: Partial<AppearanceProfile>; appearanceDark?: Partial<AppearanceProfile>; accentColor?: string },
+  prefs: AppearancePrefsLike,
   mode: 'light' | 'dark',
 ): AppearanceProfile {
   const base = defaultProfile(mode);
@@ -134,6 +197,8 @@ export function resolveAppearanceProfile(
     backgroundColor: typeof partial.backgroundColor === 'string' ? partial.backgroundColor : base.backgroundColor,
     backgroundMode: partial.backgroundMode === 'image' ? 'image' : 'color',
     backgroundDim: clampDim(partial.backgroundDim ?? base.backgroundDim),
+    surfaceColor: typeof partial.surfaceColor === 'string' ? partial.surfaceColor : base.surfaceColor,
+    surfaceOpacity: clampSurfaceOpacity(partial.surfaceOpacity ?? base.surfaceOpacity),
     buttonStyle: partial.buttonStyle && BUTTON_OPTIONS.some((o) => o.value === partial.buttonStyle) ? partial.buttonStyle : base.buttonStyle,
     buttonRadius: clampRadius(partial.buttonRadius ?? base.buttonRadius),
   };
@@ -143,8 +208,45 @@ export function resolveAppearanceProfile(
   return merged;
 }
 
-// Tokens d'apparence portés par le thème consommé partout (via
-// usePreferences().theme) — la police en pile CSS prête à injecter.
+// ---- Fichier d'apparence PAR COFFRE (v0.4.32) --------------------------
+// `.123ecriture/appearance.json` : { light?: Partial, dark?: Partial }.
+// Partiels : chaque champ absent retombe sur le profil GLOBAL du mode puis
+// sur les défauts — un coffre peut n'override que la police, par exemple.
+
+export type VaultAppearanceFile = { light?: Partial<AppearanceProfile>; dark?: Partial<AppearanceProfile> };
+
+export function parseVaultAppearance(raw: string): VaultAppearanceFile | null {
+  try {
+    const parsed = JSON.parse(raw) as Partial<VaultAppearanceFile>;
+    if (!parsed || typeof parsed !== 'object') return null;
+    return { light: parsed.light ?? undefined, dark: parsed.dark ?? undefined };
+  } catch {
+    return null;
+  }
+}
+
+// Résolution COMPLETE d'un mode avec l'overlay du coffre : coffre → global
+// → défauts, champ par champ (le partiel du coffre gagne toujours).
+export function resolveProfileWithVault(
+  prefs: AppearancePrefsLike,
+  vault: VaultAppearanceFile | null,
+  mode: 'light' | 'dark',
+): AppearanceProfile {
+  const global = resolveAppearanceProfile(prefs, mode);
+  const overlay = (mode === 'dark' ? vault?.dark : vault?.light) ?? {};
+  return {
+    ...global,
+    ...overlay,
+    fontScale: clampFontScale(overlay.fontScale ?? global.fontScale),
+    backgroundDim: clampDim(overlay.backgroundDim ?? global.backgroundDim),
+    surfaceOpacity: clampSurfaceOpacity(overlay.surfaceOpacity ?? global.surfaceOpacity),
+    buttonRadius: clampRadius(overlay.buttonRadius ?? global.buttonRadius),
+    backgroundMode: overlay.backgroundMode === 'image' ? 'image' : overlay.backgroundMode === 'color' ? 'color' : global.backgroundMode,
+  } as AppearanceProfile;
+}
+
+// ---- Tokens + thème ----------------------------------------------------
+
 export type AppearanceTokens = {
   fontStack: string;
   fontScale: number;
@@ -152,8 +254,7 @@ export type AppearanceTokens = {
   buttonRadius: number;
   backgroundMode: 'color' | 'image';
   backgroundDim: number;
-  // dataURL de l'image de fond du mode (chargée par le pont) — absente en
-  // mode couleur ou sans image.
+  surfaceOpacity: number;
   wallpaper?: string;
 };
 
@@ -165,17 +266,19 @@ export function buildAppearanceTokens(profile: AppearanceProfile, wallpaper?: st
     buttonRadius: clampRadius(profile.buttonRadius),
     backgroundMode: profile.backgroundMode === 'image' && wallpaper ? 'image' : 'color',
     backgroundDim: clampDim(profile.backgroundDim),
+    surfaceOpacity: clampSurfaceOpacity(profile.surfaceOpacity),
     wallpaper: profile.backgroundMode === 'image' ? wallpaper : undefined,
   };
 }
 
-// Thème effectif = palette de base du mode + profil d'apparence (accent,
-// fond) + tokens. C'est LA seule usine à thème de l'app.
 export function buildTheme(base: Theme, profile: AppearanceProfile, wallpaper?: string): Theme & AppearanceTokens {
   return {
     ...base,
     accent: profile.accentColor,
     background: profile.backgroundMode === 'image' && wallpaper ? base.surface : profile.backgroundColor,
+    // Les panneaux deviennent TRANSLUCIDES quand l'opacité baisse : le fond
+    // d'écran (ou la couleur de fond) transparaît sous les cartes/barres.
+    surface: hexToRgba(profile.surfaceColor, profile.surfaceOpacity),
     ...buildAppearanceTokens(profile, wallpaper),
   };
 }

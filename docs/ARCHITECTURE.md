@@ -600,6 +600,21 @@ bas) sur le projet Supabase partagé "Projet Synapse".
   ressuscitant en boucle des fichiers supprimés (vécu : copies « (conflit
   2026-09-18…) » revenues sur LORDI puis re-téléchargées partout ; 16 lignes
   nettoyées à la main en base).
+- **Personnalisation PAR COFFRE + règles UI** (v0.4.32) : l'apparence
+  vit désormais dans `.123ecriture/appearance.json` DU COFFRE actif (dossier
+  caché, jamais synchronisé) — chaque coffre a la sienne (PROGRAMMATION ≠
+  DIVERS), chaîne de résolution coffre → global → défauts champ par champ.
+  RÈGLES UI posées à la demande de l'utilisatrice (à respecter pour tout
+  futur réglage) : (2) options multiples non numériques = boutons
+  COLLAPSIBLES VERTICAUX (OptionCollapse) ; (3) réglages numériques =
+  CURSEURS (SliderField) ; (4) chaque couleur = préréglages + ROUE DES
+  COULEURS dédiée (ColorField — disque conique CSS, angle=teinte,
+  rayon=saturation, curseur de luminosité, conversions HSV testées) ;
+  (5) panneaux = couleur + translucidide (surfaces rgba, le fond d'écran
+  transparaît) ; (6) modes ☀️/🌙 = boutons qui déploient leurs réglages en
+  brouillon, validés par « Sauvegarder ». Correctif police : les Text RNWeb
+  n'héritent PAS du body — héritage forcé (`*:not(.cm-*)` !important),
+  l'éditeur garde ses polices dédiées.
 - **Apparence complète PAR MODE** (v0.4.30) : chaque mode (clair, sombre)
   possède son propre profil (`lib/appearance.ts`, pur + testé) — police
   globale (8 piles système sûres), échelle de l'interface (85-130 %, zoom
