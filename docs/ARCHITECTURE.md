@@ -600,6 +600,19 @@ bas) sur le projet Supabase partagé "Projet Synapse".
   ressuscitant en boucle des fichiers supprimés (vécu : copies « (conflit
   2026-09-18…) » revenues sur LORDI puis re-téléchargées partout ; 16 lignes
   nettoyées à la main en base).
+- **Populateur opaque + graph v2 + barre d'outils enrichie** (v0.4.38) :
+  la liste d'ajout de propriétés est SCROLLABLE (elle était coupée à 180 px
+  sans moyen de descendre) et à fond OPAQUE (theme.surface est devenu
+  rgba translucide avec la personnalisation des panneaux — le popover
+  se recompose à opacité 1) ; VUE GRAPHIQUE v2 d'après les captures
+  Obsidian : graphe dans la page (plus de scroll horizontal), noms de
+  nœuds affichés, ZOOM boutons, PANNEAU DE RÉGLAGES à droite (recherche,
+  filtre orphelins, taille des nœuds, épaisseur des liens, seuil du
+  texte, et les 4 forces — centrale/répulsion/liaison/distance — qui
+  relancent le layout en direct) ; BARRE D'OUTILS enrichie :
+  annuler/rétablir (commandes CodeMirror natives) et GROUPE COLLAPSIBLE
+  « Hn » regroupant les titres H1-H6 en seconde rangée (comme la capture
+  fournie).
 - **Rails continus + propriétés scroll + vue graphique** (v0.4.37) :
   hauteur FIXE des lignes de l'arborescence (32 px, zéro padding vertical —
   les rails d'indentation couvrent toute la hauteur et forment des colonnes

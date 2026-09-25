@@ -1,25 +1,28 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import Svg, { Circle, Line, Text as SvgText } from 'react-native-svg';
 
+import { SliderField } from './SliderField';
 import type { Theme } from '../theme';
 
-// VUE GRAPHIQUE (v0.4.37 — « page qui lie entre eux les fichiers à l'aide
-// des [[liens internes]] », comme la vue Graph d'Obsidian). Chaque note du
-// coffre est un NŒUD (cercle coloré par dossier parent, taille par nombre
-// de liens), chaque [[lien]] une ARÊTE (ligne). Clic sur un nœud = ouvrir
-// la note. Recherche pour filtrer/mettre en évidence.
+// VUE GRAPHIQUE v2 (v0.4.38) — d'après les captures d'Obsidian fournies :
+// - graphe DANS la page (plus de scroll horizontal) : nœuds colorés +
+//   NOMS affichés, ZOOM boutons, arêtes épaisses rosées comme la capture ;
+// - PANNEAU DE RÉGLAGES à droite (comme Obsidian) : recherche, filtre
+//   orphelins, taille des nœuds, épaisseur des liens, seuil du texte, et
+//   les 4 FORCES (centrale, répulsion, liaison, distance) qui relancent le
+//   layout en direct ;
+// - clic sur le NOM d'un nœud = ouvrir la note.
 //
-// Layout : force-dirigé simplifié (répulsion + attraction des arêtes,
-// quelques centaines d'itérations au chargement). Pas de dépendance externe
-// (d3-force serait overkill ici) — physique maison pure et testée.
+// Layout : simulation de forces MAISON (répulsion + ressorts + centre),
+// relancée quand les curseurs de forces changent. Pure et testée.
 
 export type GraphNode = {
-  id: string; // relPath
-  name: string; // nom sans extension
-  folder: string; // dossier parent (couleur)
+  id: string;
+  name: string;
+  folder: string;
   kind: VaultEntryKind;
-  links: number; // degré (entrants + sortants)
+  links: number;
   x: number;
   y: number;
   vx: number;
@@ -28,7 +31,6 @@ export type GraphNode = {
 
 export type GraphEdge = { source: string; target: string };
 
-// Extrait les cibles [[...]] d'un contenu markdown.
 export function extractWikiLinks(content: string): string[] {
   const out: string[] = [];
   const regex = /\[\[([^\]|#]+)(?:[|#][^\]]*)?\]\]/g;
@@ -40,20 +42,17 @@ export function extractWikiLinks(content: string): string[] {
   return out;
 }
 
-// Construit les nœuds et arêtes du graphe depuis l'arbre + les contenus.
-// Les liens sont résolus par NOM de fichier (sans extension), comme
-// handleOpenWikilink dans NotesScreen.
 export function buildGraph(
   tree: VaultTreeNode[],
   contents: Record<string, string>,
 ): { nodes: GraphNode[]; edges: GraphEdge[] } {
   const nodes: GraphNode[] = [];
-  const byName = new Map<string, string>(); // nom -> relPath
+  const byName = new Map<string, string>();
 
-  const walk = (items: VaultTreeNode[], folder: string) => {
+  const walk = (items: VaultTreeNode[]) => {
     for (const item of items) {
       if (item.type === 'folder') {
-        walk(item.children ?? [], item.relPath);
+        walk(item.children ?? []);
       } else {
         const parentFolder = item.relPath.includes('/') ? item.relPath.slice(0, item.relPath.lastIndexOf('/')) : '';
         nodes.push({
@@ -71,7 +70,7 @@ export function buildGraph(
       }
     }
   };
-  walk(tree, '');
+  walk(tree);
 
   const edges: GraphEdge[] = [];
   const seen = new Set<string>();
@@ -96,16 +95,17 @@ export function buildGraph(
   return { nodes, edges };
 }
 
-// Simulation de forces : répulsion entre nœuds, ressort sur les arêtes,
-// attraction vers le centre. Exécutée au chargement (pas en continu —
-// assez pour un layout lisible, pas de boucle de rendu coûteuse).
-export function runForceLayout(nodes: GraphNode[], edges: GraphEdge[], iterations = 200): void {
+export type ForceOptions = { centrale: number; repulsion: number; liaison: number; distance: number };
+
+export function runForceLayout(
+  nodes: GraphNode[],
+  edges: GraphEdge[],
+  options: ForceOptions,
+  iterations = 250,
+): void {
   const byId = new Map(nodes.map((n) => [n.id, n]));
-  const W = 800;
-  const H = 600;
   for (let iter = 0; iter < iterations; iter++) {
     const cooling = 1 - iter / iterations;
-    // Répulsion (paires)
     for (let i = 0; i < nodes.length; i++) {
       for (let j = i + 1; j < nodes.length; j++) {
         const a = nodes[i];
@@ -113,16 +113,13 @@ export function runForceLayout(nodes: GraphNode[], edges: GraphEdge[], iteration
         const dx = b.x - a.x;
         const dy = b.y - a.y;
         const dist = Math.max(1, Math.hypot(dx, dy));
-        const force = (1200 * cooling) / (dist * dist);
-        const fx = (dx / dist) * force;
-        const fy = (dy / dist) * force;
-        a.vx -= fx;
-        a.vy -= fy;
-        b.vx += fx;
-        b.vy += fy;
+        const force = (options.repulsion * 60 * cooling) / (dist * dist);
+        a.vx -= (dx / dist) * force;
+        a.vy -= (dy / dist) * force;
+        b.vx += (dx / dist) * force;
+        b.vy += (dy / dist) * force;
       }
     }
-    // Ressorts (arêtes)
     for (const e of edges) {
       const a = byId.get(e.source);
       const b = byId.get(e.target);
@@ -130,30 +127,24 @@ export function runForceLayout(nodes: GraphNode[], edges: GraphEdge[], iteration
       const dx = b.x - a.x;
       const dy = b.y - a.y;
       const dist = Math.max(1, Math.hypot(dx, dy));
-      const force = (dist - 80) * 0.05 * cooling;
-      const fx = (dx / dist) * force;
-      const fy = (dy / dist) * force;
-      a.vx += fx;
-      a.vy += fy;
-      b.vx -= fx;
-      b.vy -= fy;
+      const force = (dist - options.distance) * options.liaison * 0.1 * cooling;
+      a.vx += (dx / dist) * force;
+      a.vy += (dy / dist) * force;
+      b.vx -= (dx / dist) * force;
+      b.vy -= (dy / dist) * force;
     }
-    // Centre + intégration
     for (const n of nodes) {
-      n.vx += -n.x * 0.002;
-      n.vy += -n.y * 0.002;
-      n.x += Math.max(-8, Math.min(8, n.vx * 0.6));
-      n.y += Math.max(-8, Math.min(8, n.vy * 0.6));
+      n.vx += -n.x * 0.003 * options.centrale;
+      n.vy += -n.y * 0.003 * options.centrale;
+      n.x += Math.max(-10, Math.min(10, n.vx * 0.6));
+      n.y += Math.max(-10, Math.min(10, n.vy * 0.6));
       n.vx *= 0.85;
       n.vy *= 0.85;
     }
   }
-  void W;
-  void H;
 }
 
-// Couleur d'un nœud selon son dossier (hash simple → palette).
-const FOLDER_PALETTE = ['#7aa2f7', '#bb9af7', '#9ece6a', '#e0af68', '#f7768e', '#7dcfff', '#ff9e64', '#73daca'];
+const FOLDER_PALETTE = ['#b3306d', '#c9437f', '#d95f8c', '#a52a5f', '#8f2350', '#e0709b'];
 export function folderColor(folder: string): string {
   let hash = 0;
   for (let i = 0; i < folder.length; i++) hash = ((hash << 5) - hash + folder.charCodeAt(i)) | 0;
@@ -168,15 +159,22 @@ type Props = {
 export function GraphView({ theme, onOpenNote }: Props) {
   const [nodes, setNodes] = useState<GraphNode[]>([]);
   const [edges, setEdges] = useState<GraphEdge[]>([]);
-  const [recherche, setRecherche] = useState('');
-  const [hovered, setHovered] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [recherche, setRecherche] = useState('');
+  const [panneau, setPanneau] = useState(true);
   const { width, height } = useWindowDimensions();
-  const loadedRef = useRef(false);
+
+  const [nodeScale, setNodeScale] = useState(0.63);
+  const [linkWidth, setLinkWidth] = useState(2.5);
+  const [textThreshold, setTextThreshold] = useState(0.2);
+  const [showOrphans, setShowOrphans] = useState(true);
+  const [forcesOpen, setForcesOpen] = useState(true);
+  const [forces, setForces] = useState<ForceOptions>({ centrale: 1, repulsion: 16, liaison: 0.43, distance: 80 });
+
+  const recomputeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const baseNodesRef = useRef<GraphNode[] | null>(null);
 
   useEffect(() => {
-    if (loadedRef.current) return;
-    loadedRef.current = true;
     const load = async () => {
       if (typeof window === 'undefined' || !window.vault) return;
       try {
@@ -198,7 +196,8 @@ export function GraphView({ theme, onOpenNote }: Props) {
           }
         }
         const graph = buildGraph(tree, contents);
-        runForceLayout(graph.nodes, graph.edges);
+        baseNodesRef.current = graph.nodes;
+        runForceLayout(graph.nodes, graph.edges, { centrale: 1, repulsion: 16, liaison: 0.43, distance: 80 });
         setNodes(graph.nodes);
         setEdges(graph.edges);
       } finally {
@@ -208,109 +207,242 @@ export function GraphView({ theme, onOpenNote }: Props) {
     void load();
   }, []);
 
-  const byId = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
-  const q = recherche.trim().toLowerCase();
-  const matchedNodes = q
-    ? nodes.filter((n) => n.name.toLowerCase().includes(q) || n.folder.toLowerCase().includes(q))
-    : null;
-  const matchedSet = new Set(matchedNodes?.map((n) => n.id) ?? []);
+  const recompute = (next: ForceOptions) => {
+    setForces(next);
+    if (recomputeTimer.current) clearTimeout(recomputeTimer.current);
+    recomputeTimer.current = setTimeout(() => {
+      if (!baseNodesRef.current) return;
+      const fresh = baseNodesRef.current.map((n) => ({ ...n }));
+      runForceLayout(fresh, edges, next);
+      setNodes(fresh);
+    }, 300);
+  };
 
-  // Scale to fit
-  const minX = Math.min(...nodes.map((n) => n.x), 0);
-  const maxX = Math.max(...nodes.map((n) => n.x), 1);
-  const minY = Math.min(...nodes.map((n) => n.y), 0);
-  const maxY = Math.max(...nodes.map((n) => n.y), 1);
-  const scale = Math.min((width - 80) / Math.max(1, maxX - minX), (height - 160) / Math.max(1, maxY - minY), 1.5);
+  const q = recherche.trim().toLowerCase();
+  const orphelinIds = new Set(nodes.filter((n) => n.links === 0).map((n) => n.id));
+  const visibles = nodes.filter((n) => (showOrphans || !orphelinIds.has(n.id)) && (!q || n.name.toLowerCase().includes(q) || n.folder.toLowerCase().includes(q)));
+  const visiblesIds = new Set(visibles.map((n) => n.id));
+  const edgesVisibles = edges.filter((e) => visiblesIds.has(e.source) && visiblesIds.has(e.target));
+
+  const bounds = (() => {
+    if (visibles.length === 0) return { minX: -100, minY: -100, maxX: 100, maxY: 100 };
+    const xs = visibles.map((n) => n.x);
+    const ys = visibles.map((n) => n.y);
+    return { minX: Math.min(...xs), minY: Math.min(...ys), maxX: Math.max(...xs), maxY: Math.max(...ys) };
+  })();
+  const spanX = Math.max(1, bounds.maxX - bounds.minX);
+  const spanY = Math.max(1, bounds.maxY - bounds.minY);
+  const fitScale = Math.min((width - (panneau ? 360 : 80)) / spanX, (height - 150) / spanY, 3);
+  const [zoom, setZoom] = useState(1);
+  const scale = fitScale * zoom;
+  const toScreenX = (x: number) => (x - bounds.minX) * scale + 30;
+  const toScreenY = (y: number) => (y - bounds.minY) * scale + 40;
 
   return (
-    <View style={{ flex: 1 }}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, padding: 12 }}>
-        <Text style={{ color: theme.text, fontWeight: '700', fontSize: 16, flex: 1 }}>🔗 Vue graphique</Text>
-        <TextInput
-          value={recherche}
-          onChangeText={setRecherche}
-          placeholder="Filtrer…"
-          placeholderTextColor={theme.textMuted}
-          style={[styles.search, { color: theme.text, borderColor: theme.border }]}
-        />
-      </View>
-      {loading ? (
-        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-          <Text style={{ color: theme.textMuted }}>Construction du graphe…</Text>
+    <View style={{ flex: 1, flexDirection: 'row' }}>
+      <View style={{ flex: 1 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, padding: 12 }}>
+          <Text style={{ color: theme.text, fontWeight: '700', fontSize: 16, flex: 1 }}>🔗 Vue graphique</Text>
+          <Pressable onPress={() => setZoom((z) => Math.max(0.2, z - 0.2))} accessibilityRole="button" style={[styles.zoomButton, { borderColor: theme.border }]}>
+            <Text style={{ color: theme.text }}>−</Text>
+          </Pressable>
+          <Text style={{ color: theme.textMuted, fontSize: 12, minWidth: 40, textAlign: 'center' }}>{Math.round(zoom * 100)}%</Text>
+          <Pressable onPress={() => setZoom((z) => Math.min(5, z + 0.2))} accessibilityRole="button" style={[styles.zoomButton, { borderColor: theme.border }]}>
+            <Text style={{ color: theme.text }}>+</Text>
+          </Pressable>
+          <Pressable onPress={() => setPanneau((v) => !v)} accessibilityRole="button" style={[styles.zoomButton, { borderColor: theme.border }]}>
+            <Text style={{ color: theme.text }}>⚙</Text>
+          </Pressable>
         </View>
-      ) : (
-        <ScrollView style={{ flex: 1 }} horizontal>
-          <Svg width={Math.max(width, (maxX - minX) * scale + 100)} height={Math.max(height - 100, (maxY - minY) * scale + 100)}>
-            {edges.map((e, i) => {
-              const a = byId.get(e.source);
-              const b = byId.get(e.target);
-              if (!a || !b) return null;
-              const x1 = (a.x - minX) * scale + 50;
-              const y1 = (a.y - minY) * scale + 50;
-              const x2 = (b.x - minX) * scale + 50;
-              const y2 = (b.y - minY) * scale + 50;
-              const isHighlighted =
-                !q ||
-                matchedSet.has(e.source) ||
-                matchedSet.has(e.target);
-              return (
-                <Line
-                  key={i}
-                  x1={x1}
-                  y1={y1}
-                  x2={x2}
-                  y2={y2}
-                  stroke={isHighlighted ? `${theme.textMuted}55` : `${theme.border}22`}
-                  strokeWidth={isHighlighted ? 1.2 : 0.5}
-                />
-              );
-            })}
-            {nodes.map((n) => {
-              const r = 4 + Math.min(8, n.links * 0.8);
-              const cx = (n.x - minX) * scale + 50;
-              const cy = (n.y - minY) * scale + 50;
-              const isMatched = !q || matchedSet.has(n.id);
-              const isHovered = hovered === n.id;
-              const color = folderColor(n.folder);
-              return (
-                <Pressable key={n.id} onPress={() => onOpenNote(n.id)} onHoverIn={() => setHovered(n.id)} onHoverOut={() => setHovered(null)}>
-                  <Circle
-                    cx={cx}
-                    cy={cy}
-                    r={isHovered || isMatched ? r + 2 : r}
-                    fill={color}
-                    opacity={isMatched ? 1 : 0.15}
+
+        {loading ? (
+          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+            <Text style={{ color: theme.textMuted }}>Construction du graphe…</Text>
+          </View>
+        ) : (
+          <View style={[styles.graphBox, { backgroundColor: `${theme.border}33`, marginHorizontal: 12 }]}>
+            <Svg width="100%" height="100%">
+              {edgesVisibles.map((e, i) => {
+                const a = visibles.find((n) => n.id === e.source);
+                const b = visibles.find((n) => n.id === e.target);
+                if (!a || !b) return null;
+                return (
+                  <Line
+                    key={i}
+                    x1={toScreenX(a.x)}
+                    y1={toScreenY(a.y)}
+                    x2={toScreenX(b.x)}
+                    y2={toScreenY(b.y)}
+                    stroke="#c98a9a"
+                    strokeWidth={linkWidth}
+                    opacity={0.55}
                   />
-                  {(isHovered || (q && isMatched)) && (
-                    <SvgText x={cx + r + 4} y={cy + 4} fill={theme.text} fontSize={11}>
-                      {n.name}
-                    </SvgText>
-                  )}
-                </Pressable>
-              );
-            })}
-          </Svg>
+                );
+              })}
+              {visibles.map((n) => {
+                const r = (3 + Math.min(9, n.links * 0.9)) * (0.5 + nodeScale);
+                const isMatch = q && (n.name.toLowerCase().includes(q) || n.folder.toLowerCase().includes(q));
+                const showLabel = zoom >= textThreshold || Boolean(isMatch) || n.links >= 5;
+                return (
+                  <>
+                    <Circle
+                      key={n.id}
+                      cx={toScreenX(n.x)}
+                      cy={toScreenY(n.y)}
+                      r={r}
+                      fill={folderColor(n.folder)}
+                    />
+                    {showLabel && (
+                      <SvgText
+                        key={n.id + '-l'}
+                        x={toScreenX(n.x) + r + 4}
+                        y={toScreenY(n.y) + 4}
+                        fill={theme.text}
+                        fontSize={11}
+                        onPress={() => onOpenNote(n.id)}
+                      >
+                        {n.name}
+                      </SvgText>
+                    )}
+                  </>
+                );
+              })}
+            </Svg>
+          </View>
+        )}
+        <Text style={{ color: theme.textMuted, fontSize: 11, paddingHorizontal: 14, paddingVertical: 6 }}>
+          {visibles.length} fichiers · {edgesVisibles.length} liens{q ? ` · filtré « ${recherche} »` : ''}
+        </Text>
+      </View>
+
+      {panneau && (
+        <ScrollView style={[styles.panneau, { borderLeftColor: theme.border }]} contentContainerStyle={{ padding: 12, gap: 12 }}>
+          <View style={{ gap: 4 }}>
+            <Text style={{ color: theme.textMuted, fontSize: 12 }}>Rechercher des fichiers…</Text>
+            <TextInput
+              value={recherche}
+              onChangeText={setRecherche}
+              placeholder="Rechercher…"
+              placeholderTextColor={theme.textMuted}
+              style={[styles.input, { color: theme.text, borderColor: theme.border }]}
+            />
+          </View>
+
+          <Text style={{ color: theme.text, fontSize: 13, fontWeight: '600' }}>Filtres</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+            <Text style={{ color: theme.text, fontSize: 13 }}>Orphelins (sans lien)</Text>
+            <Switch value={showOrphans} onValueChange={setShowOrphans} trackColor={{ false: theme.border, true: theme.accent }} />
+          </View>
+
+          <Text style={{ color: theme.text, fontSize: 13, fontWeight: '600' }}>Réglages</Text>
+          <SliderField
+            label="Taille des nœuds"
+            value={nodeScale}
+            minimumValue={0.2}
+            maximumValue={1.5}
+            step={0.01}
+            format={(v) => v.toFixed(2)}
+            onValueChange={setNodeScale}
+            theme={theme}
+          />
+          <SliderField
+            label="Épaisseur des liens"
+            value={linkWidth}
+            minimumValue={0.3}
+            maximumValue={5}
+            step={0.1}
+            format={(v) => v.toFixed(2)}
+            onValueChange={setLinkWidth}
+            theme={theme}
+          />
+          <SliderField
+            label="Seuil d'affichage du texte"
+            value={textThreshold}
+            minimumValue={0}
+            maximumValue={1}
+            step={0.05}
+            format={(v) => v.toFixed(2)}
+            onValueChange={setTextThreshold}
+            theme={theme}
+          />
+
+          <Pressable onPress={() => setForcesOpen((v) => !v)} accessibilityRole="button" style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <Text style={{ color: theme.textMuted, fontSize: 12 }}>{forcesOpen ? '▾' : '▸'}</Text>
+            <Text style={{ color: theme.text, fontSize: 13, fontWeight: '600' }}>Forces</Text>
+          </Pressable>
+          {forcesOpen && (
+            <View style={{ gap: 12 }}>
+              <SliderField
+                label="Force centrale"
+                value={forces.centrale}
+                minimumValue={0}
+                maximumValue={3}
+                step={0.05}
+                format={(v) => v.toFixed(2)}
+                onValueChange={(v) => recompute({ ...forces, centrale: v })}
+                theme={theme}
+              />
+              <SliderField
+                label="Force de répulsion"
+                value={forces.repulsion}
+                minimumValue={2}
+                maximumValue={60}
+                step={1}
+                format={(v) => v.toFixed(0)}
+                onValueChange={(v) => recompute({ ...forces, repulsion: v })}
+                theme={theme}
+              />
+              <SliderField
+                label="Force de liaison"
+                value={forces.liaison}
+                minimumValue={0.05}
+                maximumValue={1.5}
+                step={0.01}
+                format={(v) => v.toFixed(2)}
+                onValueChange={(v) => recompute({ ...forces, liaison: v })}
+                theme={theme}
+              />
+              <SliderField
+                label="Distance des liens"
+                value={forces.distance}
+                minimumValue={30}
+                maximumValue={200}
+                step={5}
+                format={(v) => v.toFixed(0)}
+                onValueChange={(v) => recompute({ ...forces, distance: v })}
+                theme={theme}
+              />
+            </View>
+          )}
         </ScrollView>
-      )}
-      {!loading && (
-        <View style={{ flexDirection: 'row', gap: 12, paddingHorizontal: 12, paddingBottom: 8 }}>
-          <Text style={{ color: theme.textMuted, fontSize: 11 }}>
-            {nodes.length} fichiers · {edges.length} liens
-          </Text>
-          {q && <Text style={{ color: theme.accent, fontSize: 11 }}>{matchedNodes?.length ?? 0} résultat(s)</Text>}
-        </View>
       )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  search: {
+  zoomButton: {
+    width: 30,
+    height: 30,
+    borderRadius: 8,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  graphBox: {
+    flex: 1,
+    borderRadius: 10,
+    overflow: 'hidden',
+  },
+  panneau: {
+    width: 300,
+    borderLeftWidth: 1,
+  },
+  input: {
     borderWidth: 1,
     borderRadius: 8,
     paddingVertical: 6,
     paddingHorizontal: 10,
     fontSize: 13,
-    width: 180,
   },
 });
