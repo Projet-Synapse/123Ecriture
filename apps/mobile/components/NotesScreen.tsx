@@ -2267,17 +2267,6 @@ export function NotesScreen({
                         reste donc fixe au-dessus en Intermédiaire, mais
                         repliable (voir PropertiesBlock.tsx) pour rester moins
                         gênante pendant la frappe. */}
-                    {viewMode === 'split' && (
-                      <PropertiesBlock
-                        theme={theme}
-                        activeNote={activeNote}
-                        content={content}
-                        onChangeContent={handleChangeContent}
-                        tree={tree}
-                        interactive
-                      />
-                    )}
-
                     {viewMode !== 'reading' && (
                       <EditorToolbar
                         items={toolbarActions.map((action) => ({
@@ -2312,11 +2301,44 @@ export function NotesScreen({
                             onOpenOccurrence={handleOpenOccurrence}
                           />
                         </ScrollView>
+                      ) : viewMode === 'split' ? (
+                        /* v0.4.37 : le bloc Propriétés fait partie du MÊME
+                           scroll que le texte (demande : « qu'elle fasse partie
+                           du scroll ») — ScrollView commune, CodeMirror en
+                           hauteur auto (pas de scroll interne propre). */
+                        <ScrollView style={styles.previewFull} contentContainerStyle={{ paddingBottom: 40 }}>
+                          <PropertiesBlock
+                            theme={theme}
+                            activeNote={activeNote}
+                            content={content}
+                            onChangeContent={handleChangeContent}
+                            tree={tree}
+                          />
+                          <MdxEditor
+                            value={bodyOnly}
+                            onChange={handleChangeBody}
+                            livePreview
+                            autoHeight
+                            theme={theme}
+                            onOpenWikilink={(t) => void handleOpenWikilink(t)}
+                            onOpenOccurrence={handleOpenOccurrence}
+                            occurrenceWords={occurrenceWordList}
+                            onCreateOccurrence={handleCreateOccurrence}
+                            noteNames={noteNameList}
+                            fontSize={preferences.editorFontSize}
+                            fontFamily={preferences.editorFontFamily}
+                            closeBrackets={preferences.editorCloseBrackets}
+                            shortcuts={noteShortcuts}
+                            onReady={(ref: ReactCodeMirrorRef) => {
+                              viewRef.current = ref.view ?? null;
+                            }}
+                          />
+                        </ScrollView>
                       ) : (
                         <MdxEditor
-                          value={viewMode === 'source' ? content : bodyOnly}
-                          onChange={viewMode === 'source' ? handleChangeContent : handleChangeBody}
-                          livePreview={viewMode === 'split'}
+                          value={content}
+                          onChange={handleChangeContent}
+                          livePreview={false}
                           theme={theme}
                           onOpenWikilink={(t) => void handleOpenWikilink(t)}
                           onOpenOccurrence={handleOpenOccurrence}
