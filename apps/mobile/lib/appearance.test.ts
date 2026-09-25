@@ -24,24 +24,24 @@ import { darkTheme, lightTheme } from '../theme';
 describe('resolveAppearanceProfile', () => {
   it('défauts complets quand rien de configuré', () => {
     const p = resolveAppearanceProfile({}, 'light');
-    expect(p.accentColor).toBe(lightTheme.accent);
+    expect(p.buttonColor).toBe(lightTheme.accent);
     expect(p.backgroundMode).toBe('color');
     expect(p.fontFamily).toBe('system');
-    expect(resolveAppearanceProfile({}, 'dark').accentColor).toBe(darkTheme.accent);
+    expect(resolveAppearanceProfile({}, 'dark').buttonColor).toBe(darkTheme.accent);
   });
 
   it('chaque mode garde SON profil (clair ≠ sombre)', () => {
     const prefs = {
-      appearanceLight: { accentColor: '#ff0000' },
-      appearanceDark: { accentColor: '#00ff00' },
+      appearanceLight: { buttonColor: '#ff0000' },
+      appearanceDark: { buttonColor: '#00ff00' },
     };
-    expect(resolveAppearanceProfile(prefs, 'light').accentColor).toBe('#ff0000');
-    expect(resolveAppearanceProfile(prefs, 'dark').accentColor).toBe('#00ff00');
+    expect(resolveAppearanceProfile(prefs, 'light').buttonColor).toBe('#ff0000');
+    expect(resolveAppearanceProfile(prefs, 'dark').buttonColor).toBe('#00ff00');
   });
 
   it('migration : lancienne accentColor unique devient laccent du mode clair', () => {
-    expect(resolveAppearanceProfile({ accentColor: '#123456' }, 'light').accentColor).toBe('#123456');
-    expect(resolveAppearanceProfile({ accentColor: '#123456' }, 'dark').accentColor).toBe(darkTheme.accent);
+    expect(resolveAppearanceProfile({ accentColor: '#123456' }, 'light').buttonColor).toBe('#123456');
+    expect(resolveAppearanceProfile({ accentColor: '#123456' }, 'dark').buttonColor).toBe(darkTheme.accent);
   });
 
   it('repli champ par champ sur valeurs corrompues', () => {
@@ -85,7 +85,7 @@ describe('buildAppearanceTokens / buildTheme', () => {
 
   it('buildTheme : accent et fond du profil écrasent la palette de base', () => {
     const profil = resolveAppearanceProfile(
-      { appearanceLight: { accentColor: '#e11d48', backgroundColor: '#faf5ff' } },
+      { appearanceLight: { buttonColor: '#e11d48', backgroundColor: '#faf5ff' } },
       'light',
     );
     const theme = buildTheme(lightTheme, profil);
@@ -118,18 +118,18 @@ describe('HSV <-> hex (roue des couleurs)', () => {
 
 describe('Apparence PAR COFFRE (v0.4.32)', () => {
   it('l overlay du coffre gagne champ par champ, le reste retombe sur le global', () => {
-    const prefs = { appearanceLight: { accentColor: '#2563eb' } };
+    const prefs = { appearanceLight: { buttonColor: '#2563eb' } };
     const vault: VaultAppearanceFile = { light: { fontFamily: 'georgia', surfaceOpacity: 0.7 } };
     const p = resolveProfileWithVault(prefs, vault, 'light');
     expect(p.fontFamily).toBe('georgia');
-    expect(p.accentColor).toBe('#2563eb');
+    expect(p.buttonColor).toBe('#2563eb');
     expect(p.surfaceOpacity).toBe(0.7);
     expect(p.fontScale).toBe(1);
   });
 
   it('sans fichier de coffre = profil global', () => {
-    const prefs = { appearanceDark: { accentColor: '#00ff00' } };
-    expect(resolveProfileWithVault(prefs, null, 'dark').accentColor).toBe('#00ff00');
+    const prefs = { appearanceDark: { buttonColor: '#00ff00' } };
+    expect(resolveProfileWithVault(prefs, null, 'dark').buttonColor).toBe('#00ff00');
   });
 
   it('parseVaultAppearance : JSON valide/invalide', () => {

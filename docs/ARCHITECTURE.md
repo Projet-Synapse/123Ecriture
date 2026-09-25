@@ -600,6 +600,14 @@ bas) sur le projet Supabase partagé "Projet Synapse".
   ressuscitant en boucle des fichiers supprimés (vécu : copies « (conflit
   2026-09-18…) » revenues sur LORDI puis re-téléchargées partout ; 16 lignes
   nettoyées à la main en base).
+- **Hiérarchie des couleurs + roues unifiées** (v0.4.35) : « couleur
+  d'accent » devient **« couleur des boutons »**, au bout de la hiérarchie
+  de conteneurs demandée : fond d'écran > carte (panneaux) > bordures/
+  texte > éditeur > boutons. L'écran liste chaque couleur comme une ligne
+  épurée (libellé + PASTILLE de la couleur courante) — la pastille ouvre
+  la ROUE, et les PRÉRÉGLAGES vivent DANS la roue (plus sur la page).
+  Migration : l'ancien accentColor (global et par profil) devient la
+  couleur des boutons automatiquement.
 - **Application immédiate + couleurs étendues** (v0.4.34) : plus de
   bouton « Sauvegarder » — chaque réglage s'applique À L'INSTANT
   (`updateVaultAppearance` : état React immédiat, écriture disque

@@ -261,7 +261,7 @@ export interface Preferences {
 
 // Miroir de AppearanceProfile (apps/mobile/lib/appearance.ts).
 export interface AppearanceProfile {
-  accentColor: string;
+  buttonColor: string;
   fontFamily:
     | 'system'
     | 'serif'
