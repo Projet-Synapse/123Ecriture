@@ -521,6 +521,12 @@ declare global {
     // reste le comportement historique, ce choix n'est jamais fait à la
     // place de l'utilisatrice.
     autoSyncEnabled: boolean;
+    // v0.4.30 : apparence PAR MODE (clair/sombre distincts) — profils
+    // partiels volontairement (une ancienne config n'a aucun des deux : les
+    // défauts de lib/appearance.ts s'appliquent, avec migration de
+    // l'ancienne accentColor unique vers le mode clair).
+    appearanceLight?: import('../lib/appearance').AppearanceProfile;
+    appearanceDark?: import('../lib/appearance').AppearanceProfile;
   }
 
   interface SidebarPanelLayout {
@@ -531,6 +537,17 @@ declare global {
   type SidebarPanelId = 'nav' | 'explorer' | 'rightPanel';
 
   type SidebarLayoutState = Record<SidebarPanelId, SidebarPanelLayout>;
+
+  // Pont d'apparence (v0.4.30) — fonds d'écran : fichiers dédiés dans le
+  // dossier de configuration (jamais dans config.json, trop lourd).
+  // Optionnel : web/mobile n'ont pas d'image de fond (couleur uniquement).
+  interface AppearanceBridge {
+    getWallpapers: () => Promise<{ light?: string; dark?: string }>;
+    // Sélecteur natif (images), enregistre le fichier, renvoie la dataURL —
+    // null si annulé. Fichiers > 12 Mo refusés (alerte côté renderer).
+    importWallpaper: (mode: 'light' | 'dark') => Promise<string | null>;
+    clearWallpaper: (mode: 'light' | 'dark') => Promise<boolean>;
+  }
 
   interface PreferencesBridge {
     get: () => Promise<Preferences>;
@@ -612,6 +629,7 @@ declare global {
     vaults?: VaultsBridge;
     updater?: UpdaterBridge;
     preferences?: PreferencesBridge;
+    appearance?: AppearanceBridge;
     contextMenu?: ContextMenuBridge;
     tasks?: TasksBridge;
     taskLists?: TaskListsBridge;

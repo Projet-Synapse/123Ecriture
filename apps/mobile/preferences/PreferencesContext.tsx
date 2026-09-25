@@ -4,6 +4,12 @@ import { useColorScheme } from 'react-native';
 import { DEFAULT_CANVAS_TOOLBAR_ORDER } from '../lib/canvasToolbarActions';
 import { DEFAULT_CHART_TOOLBAR_ORDER } from '../lib/chartToolbarActions';
 import { DEFAULT_NOTES_TOOLBAR_ORDER, normalizeNotesToolbarOrder } from '../lib/notesToolbarActions';
+import {
+  buildTheme,
+  resolveAppearanceProfile,
+  type AppearanceProfile,
+  type AppearanceTokens,
+} from '../lib/appearance';
 import { darkTheme, lightTheme, type Theme } from '../theme';
 
 // Point central de la personnalisation de l'interface (voir
@@ -51,7 +57,7 @@ const DEFAULT_PREFERENCES: Preferences = {
 
 type PreferencesContextValue = {
   preferences: Preferences;
-  theme: Theme;
+  theme: Theme & AppearanceTokens;
   colorScheme: 'light' | 'dark';
   // Toutes renvoient une Promise qui se résout une fois l'écriture DISQUE
   // terminée (pas seulement l'état React local) — voir `persist` plus bas
@@ -59,6 +65,14 @@ type PreferencesContextValue = {
   // `fileSortMode` depuis le disque à chaque appel).
   setThemeMode: (mode: ThemeMode) => Promise<void>;
   setAccentColor: (color: string) => Promise<void>;
+  // v0.4.30 — apparence par mode (voir lib/appearance.ts) et fonds d'écran
+  // (pont `window.appearance`, fichiers hors config.json).
+  setAppearance: (mode: 'light' | 'dark', patch: Partial<AppearanceProfile>) => Promise<void>;
+  importWallpaper: (mode: 'light' | 'dark') => Promise<boolean>;
+  clearWallpaper: (mode: 'light' | 'dark') => Promise<void>;
+  // dataURLs des fonds d'écran par mode (l'écran Personnalisation affiche
+  // celui du mode SÉLECTIONNÉ, pas forcément actif).
+  wallpapers: { light?: string; dark?: string };
   setNotesToolbarOrder: (order: ToolbarItemConfig[]) => Promise<void>;
   setCanvasToolbarOrder: (order: ToolbarItemConfig[]) => Promise<void>;
   setChartToolbarOrder: (order: ToolbarItemConfig[]) => Promise<void>;
@@ -117,6 +131,20 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
   // Pas de pont (web/mobile) : rien à charger, "chargé" dès le départ.
   const [preferencesLoaded, setPreferencesLoaded] = useState(!bridge);
 
+  // Fonds d'écran par mode (v0.4.30) — images trop lourdes pour config.json :
+  // elles vivent dans des fichiers du dossier de configuration (pont
+  // `window.appearance`), chargées ici en dataURL au démarrage. Web/mobile
+  // (pas de pont) : pas d'image, seul le fond couleur fonctionne.
+  const [wallpapers, setWallpapers] = useState<{ light?: string; dark?: string }>({});
+  useEffect(() => {
+    const appearance = typeof window !== 'undefined' ? window.appearance : undefined;
+    if (!appearance?.getWallpapers) return;
+    void appearance
+      .getWallpapers()
+      .then((w) => setWallpapers({ light: w?.light, dark: w?.dark }))
+      .catch(() => undefined);
+  }, []);
+
   useEffect(() => {
     if (!bridge) return;
     void bridge
@@ -161,6 +189,35 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
 
   const setThemeMode = useCallback((mode: ThemeMode) => persist({ themeMode: mode }), [persist]);
   const setAccentColor = useCallback((color: string) => persist({ accentColor: color }), [persist]);
+
+  // v0.4.30 : apparence PAR MODE — modifie le profil du mode demandé (pas
+  // forcément le mode actif : on peut préparer le mode sombre en clair),
+  // fusionné sur le profil effectif pour ne jamais persister de champ
+  // manquant.
+  const setAppearance = useCallback(
+    (mode: 'light' | 'dark', patch: Partial<AppearanceProfile>): Promise<void> => {
+      const key = mode === 'dark' ? 'appearanceDark' : 'appearanceLight';
+      const current = resolveAppearanceProfile(preferences, mode);
+      return persist({ [key]: { ...current, ...patch } } as Partial<Preferences>);
+    },
+    [persist, preferences],
+  );
+  const importWallpaper = useCallback(
+    async (mode: 'light' | 'dark'): Promise<boolean> => {
+      const appearance = typeof window !== 'undefined' ? window.appearance : undefined;
+      if (!appearance?.importWallpaper) return false;
+      const dataUrl = await appearance.importWallpaper(mode);
+      if (!dataUrl) return false;
+      setWallpapers((prev) => ({ ...prev, [mode]: dataUrl }));
+      return true;
+    },
+    [],
+  );
+  const clearWallpaper = useCallback(async (mode: 'light' | 'dark'): Promise<void> => {
+    const appearance = typeof window !== 'undefined' ? window.appearance : undefined;
+    await appearance?.clearWallpaper?.(mode).catch(() => undefined);
+    setWallpapers((prev) => ({ ...prev, [mode]: undefined }));
+  }, []);
   const setNotesToolbarOrder = useCallback(
     (order: ToolbarItemConfig[]) => persist({ notesToolbarOrder: order }),
     [persist],
@@ -261,10 +318,32 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
   const colorScheme: 'light' | 'dark' =
     preferences.themeMode === 'system' ? (systemScheme === 'dark' ? 'dark' : 'light') : preferences.themeMode;
 
-  const theme = useMemo<Theme>(() => {
+  const theme = useMemo<Theme & AppearanceTokens>(() => {
     const base = colorScheme === 'dark' ? darkTheme : lightTheme;
-    return { ...base, accent: preferences.accentColor };
-  }, [colorScheme, preferences.accentColor]);
+    const profile = resolveAppearanceProfile(preferences, colorScheme);
+    return buildTheme(base, profile, wallpapers[colorScheme]);
+  }, [colorScheme, preferences, wallpapers]);
+
+  // Application GLOBALE de l'apparence (v0.4.30) : une feuille de style
+  // unique injectée/mise à jour — police racine (RNWeb hérite du body),
+  // zoom = échelle de l'interface (proportionnel, Chromium), et rayon des
+  // boutons (les Pressable rendent role="button" ; !important pour battre
+  // les styles en ligne). L'éditeur de notes garde SES polices dédiées
+  // (Paramètres → Éditeur) : elles priment sur la police globale.
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const id = 'app-appearance';
+    let style = document.getElementById(id) as HTMLStyleElement | null;
+    if (!style) {
+      style = document.createElement('style');
+      style.id = id;
+      document.head.appendChild(style);
+    }
+    style.textContent = [
+      `body { font-family: ${theme.fontStack}; zoom: ${theme.fontScale}; }`,
+      `[role="button"] { border-radius: ${theme.buttonRadius}px !important; }`,
+    ].join('\n');
+  }, [theme.fontStack, theme.fontScale, theme.buttonRadius]);
 
   const value = useMemo<PreferencesContextValue>(
     () => ({
@@ -272,8 +351,12 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       preferencesLoaded,
       theme,
       colorScheme,
+      wallpapers,
       setThemeMode,
       setAccentColor,
+      setAppearance,
+      importWallpaper,
+      clearWallpaper,
       setNotesToolbarOrder,
       setCanvasToolbarOrder,
       setChartToolbarOrder,
@@ -305,6 +388,10 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       colorScheme,
       setThemeMode,
       setAccentColor,
+      setAppearance,
+      importWallpaper,
+      clearWallpaper,
+      wallpapers,
       setNotesToolbarOrder,
       setCanvasToolbarOrder,
       setChartToolbarOrder,

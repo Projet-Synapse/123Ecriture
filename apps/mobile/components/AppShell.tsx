@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode, type RefObject } from 'react';
-import { Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { Image, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
 import type { Section } from '../navigation';
 import { useResizablePanel } from '../lib/useResizablePanel';
@@ -146,6 +146,20 @@ export function AppShell({
     <View
       style={[styles.root, { backgroundColor: theme.background }, isWide ? styles.rowLayout : styles.columnLayout]}
     >
+      {/* Fond d'écran du mode (v0.4.30) — image absolue derrière TOUT, +
+          voile d'assombrissement réglable : la lisibilité du texte prime.
+          backgroundMode/image vaut 'color' (ou papier absent) tant que le
+          profil ne demande pas d'image — la couche ne rend alors rien. */}
+      {theme.wallpaper && theme.backgroundMode === 'image' && (
+        <>
+          <Image
+            source={{ uri: theme.wallpaper }}
+            style={styles.wallpaperLayer}
+            resizeMode="cover"
+          />
+          <View style={[styles.wallpaperDim, { opacity: theme.backgroundDim }]} />
+        </>
+      )}
       {isWide && (
         <>
           <View style={styles.sidebarClip}>{nav}</View>
@@ -261,6 +275,24 @@ function SyncStatusChip({ compact }: { compact?: boolean }) {
 const styles = StyleSheet.create({
   root: {
     flex: 1,
+    position: 'relative',
+  },
+  wallpaperLayer: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    left: 0,
+    right: 0,
+    width: '100%',
+    height: '100%',
+  },
+  wallpaperDim: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: '#000000',
   },
   rowLayout: {
     flexDirection: 'row',

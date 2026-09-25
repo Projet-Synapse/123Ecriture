@@ -1,4 +1,6 @@
-import { ipcMain, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
+import fsSync from 'fs';
+import path from 'path';
 
 import { getConfigPath, readConfig, writeConfig } from './config';
 import type { Preferences, ToolbarItemConfig } from './types';
@@ -126,5 +128,56 @@ export function registerPreferencesHandlers(): void {
 
   ipcMain.handle('preferences:reveal-config-folder', () => {
     shell.showItemInFolder(getConfigPath());
+  });
+
+  // ---- Fonds d'écran par mode (v0.4.30) --------------------------------
+  // Les images sont bien trop lourdes pour config.json : chacune vit dans
+  // un fichier dédié du dossier de configuration (`wallpaper-light.dat`…),
+  // rendue au renderer en dataURL. Limite 12 Mo : un fond d'écran de la
+  // taille d'un écran compressé tient très largement dedans, et ça protège
+  // le renderer d'un dataURL démesuré.
+  const wallpaperPath = (mode: 'light' | 'dark'): string =>
+    path.join(app.getPath('userData'), `wallpaper-${mode}.dat`);
+
+  const readWallpaper = (mode: 'light' | 'dark'): string | undefined => {
+    try {
+      const buf = fsSync.readFileSync(wallpaperPath(mode));
+      return `data:image;base64,${buf.toString('base64')}`;
+    } catch {
+      return undefined;
+    }
+  };
+
+  ipcMain.handle('appearance:get-wallpapers', () => ({
+    light: readWallpaper('light'),
+    dark: readWallpaper('dark'),
+  }));
+
+  ipcMain.handle('appearance:import-wallpaper', async (event, mode: 'light' | 'dark') => {
+    void event;
+    if (mode !== 'light' && mode !== 'dark') return null;
+    const win = BrowserWindow.fromWebContents(event.sender);
+    const options: Electron.OpenDialogOptions = {
+      title: mode === 'dark' ? 'Fond d’écran du mode sombre' : 'Fond d’écran du mode clair',
+      properties: ['openFile'],
+      filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp'] }],
+    };
+    const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options);
+    if (result.canceled || !result.filePaths[0]) return null;
+    const stat = fsSync.statSync(result.filePaths[0]);
+    if (stat.size > 12 * 1024 * 1024) {
+      throw new Error('Image trop lourde (maximum 12 Mo).');
+    }
+    fsSync.copyFileSync(result.filePaths[0], wallpaperPath(mode));
+    return readWallpaper(mode) ?? null;
+  });
+
+  ipcMain.handle('appearance:clear-wallpaper', (_event, mode: 'light' | 'dark') => {
+    try {
+      fsSync.unlinkSync(wallpaperPath(mode));
+    } catch {
+      // Déjà absent — nettoyer deux fois n'est pas une erreur.
+    }
+    return true;
   });
 }

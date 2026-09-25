@@ -600,6 +600,20 @@ bas) sur le projet Supabase partagé "Projet Synapse".
   ressuscitant en boucle des fichiers supprimés (vécu : copies « (conflit
   2026-09-18…) » revenues sur LORDI puis re-téléchargées partout ; 16 lignes
   nettoyées à la main en base).
+- **Apparence complète PAR MODE** (v0.4.30) : chaque mode (clair, sombre)
+  possède son propre profil (`lib/appearance.ts`, pur + testé) — police
+  globale (8 piles système sûres), échelle de l'interface (85-130 %, zoom
+  CSS), couleur d'accent, fond (palette + hex OU image importée via un
+  sélecteur natif, fichier dédié dans le dossier de configuration — jamais
+  dans config.json — avec voile de lisibilité réglable), style (rempli/
+  contour/discret) et rayon des boutons. Application : police et échelle
+  injectées en feuille de style racine (RNWeb hérite du body ; zoom
+  proportionnel), rayon global via `[role="button"]` !important, fond
+  image posé en couche absolue sous tout AppShell. Écran
+  Paramètres → Personnalisation refondu en onglets ☀️/🌙 — on règle le
+  mode sombre pendant qu'on lit en clair. Migration douce : l'ancienne
+  `accentColor` unique devient l'accent du mode clair ; l'éditeur de notes
+  garde ses propres polices (elles priment).
 - **Propagation temps réel par BROADCAST** (v0.4.29) : canal Realtime
   `sync-activity-<userId>` partagé par les appareils du compte — un cycle
   qui a changé le cloud (envois/suppressions/conflits) y annonce l'événement
