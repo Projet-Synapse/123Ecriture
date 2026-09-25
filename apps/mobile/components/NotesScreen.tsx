@@ -2269,11 +2269,51 @@ export function NotesScreen({
                         gênante pendant la frappe. */}
                     {viewMode !== 'reading' && (
                       <EditorToolbar
-                        items={toolbarActions.map((action) => ({
-                          id: action.id,
-                          label: action.label,
-                          onPress: () => applyFormatting(action.run),
-                        }))}
+                        items={[
+                          // Annuler/Rétablir (v0.4.38) — commandes CodeMirror
+                          // NATIVES via l'EditorView (historique intégré).
+                          {
+                            id: 'undo',
+                            label: '↩',
+                            onPress: () => {
+                              const view = viewRef.current;
+                              if (view) {
+                                void import('@codemirror/commands').then(({ undo }) => undo(view));
+                              }
+                            },
+                          },
+                          {
+                            id: 'redo',
+                            label: '↪',
+                            onPress: () => {
+                              const view = viewRef.current;
+                              if (view) {
+                                void import('@codemirror/commands').then(({ redo }) => redo(view));
+                              }
+                            },
+                          },
+                          // GROUPE COLLAPSIBLE « Titres » (v0.4.38 — demande :
+                          // « regrouper les en-têtes dans la barre d'outils »)
+                          // — remplace les H2-H6 individuels par un bouton Hn.
+                          {
+                            id: 'headings-group',
+                            label: 'Hn',
+                            subItems: toolbarActions
+                              .filter((a) => /^h[1-6]$/.test(a.id))
+                              .map((a) => ({
+                                id: a.id,
+                                label: a.label,
+                                onPress: () => applyFormatting(a.run),
+                              })),
+                          },
+                          ...toolbarActions
+                            .filter((a) => !/^h[1-6]$/.test(a.id))
+                            .map((action) => ({
+                              id: action.id,
+                              label: action.label,
+                              onPress: () => applyFormatting(action.run),
+                            })),
+                        ]}
                         theme={theme}
                       />
                     )}

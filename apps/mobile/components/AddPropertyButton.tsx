@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { TYPE_ICONS, TYPE_LABELS, TYPE_ORDER } from '../lib/propertyTypes';
+import { usePreferences } from '../preferences/PreferencesContext';
 import type { Theme } from '../theme';
 
 // Bouton "+" en bas des propriétés d'une note — deux usages, dans le même
@@ -20,6 +21,13 @@ type Props = {
 };
 
 export function AddPropertyButton({ available, onAdd, onCreateNew, theme }: Props) {
+  // Fond OPAQUE pour le popover (v0.4.38 — « t'assurer qu'il ne soit pas
+  // transparent ») : theme.surface est rgba translucide depuis la
+  // personnalisation des panneaux ; on recompose la couleur de panneau à
+  // opacité 1 via la résolution du profil du mode actif.
+  const { preferences, colorScheme } = usePreferences();
+  const { resolveAppearanceProfile } = require('../lib/appearance');
+  const opaqueSurface = resolveAppearanceProfile(preferences, colorScheme).surfaceColor;
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState('');
   const [newName, setNewName] = useState('');
@@ -61,7 +69,7 @@ export function AddPropertyButton({ available, onAdd, onCreateNew, theme }: Prop
         // conflit visuel avec la barre des tâches"). En flux normal, cette
         // liste POUSSE le reste du contenu vers le bas au lieu de le
         // recouvrir — plus de chevauchement possible, par construction.
-        <View style={[styles.popover, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+        <View style={[styles.popover, { backgroundColor: opaqueSurface, borderColor: theme.border }]}>
           {available.length > 0 && (
             <>
               <TextInput
@@ -71,7 +79,10 @@ export function AddPropertyButton({ available, onAdd, onCreateNew, theme }: Prop
                 placeholderTextColor={theme.textMuted}
                 style={[styles.filterInput, { color: theme.text, borderColor: theme.border }]}
               />
-              <View style={styles.list}>
+              {/* SCROLL (v0.4.38 — « ajouter une barre de défilement pour le
+                  petit navigateur ») : la liste était coupée à 180px sans
+                  moyen de descendre. */}
+              <ScrollView style={styles.list} nestedScrollEnabled>
                 {filtered.map((def) => (
                   <Pressable
                     key={def.id}
@@ -91,7 +102,7 @@ export function AddPropertyButton({ available, onAdd, onCreateNew, theme }: Prop
                 {filtered.length === 0 && (
                   <Text style={[styles.muted, { color: theme.textMuted }]}>Aucun résultat.</Text>
                 )}
-              </View>
+              </ScrollView>
               <View style={[styles.separator, { borderColor: theme.border }]} />
             </>
           )}
