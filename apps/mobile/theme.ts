@@ -7,6 +7,9 @@
 export type Theme = {
   background: string;
   surface: string;
+  // Fond de l'éditeur de notes réglable (v0.4.34) — absent = background.
+  // Porté par buildTheme (lib/appearance.ts), pas par les palettes de base.
+  editorBackground?: string;
   text: string;
   textMuted: string;
   accent: string;

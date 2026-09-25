@@ -95,7 +95,9 @@ export function MdxEditor({
     () =>
       EditorView.theme({
         '&': {
-          backgroundColor: theme.background,
+          // v0.4.34 : fond de l'éditeur RÉGLABLE indépendamment (Paramètres →
+          // Personnalisation) — retombe sur le fond du mode sinon.
+          backgroundColor: theme.editorBackground ?? theme.background,
           color: theme.text,
           height: '100%',
           fontSize: `${fontSize}px`,

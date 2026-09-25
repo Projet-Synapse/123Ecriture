@@ -600,6 +600,17 @@ bas) sur le projet Supabase partagé "Projet Synapse".
   ressuscitant en boucle des fichiers supprimés (vécu : copies « (conflit
   2026-09-18…) » revenues sur LORDI puis re-téléchargées partout ; 16 lignes
   nettoyées à la main en base).
+- **Application immédiate + couleurs étendues** (v0.4.34) : plus de
+  bouton « Sauvegarder » — chaque réglage s'applique À L'INSTANT
+  (`updateVaultAppearance` : état React immédiat, écriture disque
+  regroupée 800 ms derrière le dernier mouvement de curseur). Nouveaux
+  réglables par mode ET par coffre : **bordures** (borderColor), **couleur
+  du texte** (textColor — le texte secondaire est DÉRIVÉ : 60 % texte +
+  40 % fond, mixHex pur + testé), **fond de l'éditeur de notes**
+  (editorBackgroundColor → token editorBackground, MdxEditor). Les
+  réglages affichés sont TOUJOURS ceux du MODE ACTIF : seuls les boutons
+  « Mode actif » (Système/Clair/Sombre) y donnent accès — les sections
+  ☀️/🌙 séparées ont été retirées à la demande de l'utilisatrice.
 - **Personnalisation PAR COFFRE + règles UI** (v0.4.32) : l'apparence
   vit désormais dans `.123ecriture/appearance.json` DU COFFRE actif (dossier
   caché, jamais synchronisé) — chaque coffre a la sienne (PROGRAMMATION ≠

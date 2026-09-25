@@ -275,6 +275,9 @@ export interface AppearanceProfile {
   backgroundColor: string;
   backgroundMode: 'color' | 'image';
   backgroundDim: number;
+  borderColor: string;
+  textColor: string;
+  editorBackgroundColor: string;
   buttonStyle: 'filled' | 'outline' | 'ghost';
   buttonRadius: number;
 }

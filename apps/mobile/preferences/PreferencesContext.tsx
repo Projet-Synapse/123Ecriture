@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useColorScheme } from 'react-native';
 
 import { DEFAULT_CANVAS_TOOLBAR_ORDER } from '../lib/canvasToolbarActions';
@@ -78,8 +78,9 @@ type PreferencesContextValue = {
   // coffre actif — overlay champ par champ sur le global). reset = retour
   // à la personnalisation globale.
   vaultAppearance: VaultAppearanceFile | null;
-  saveVaultAppearance: (file: VaultAppearanceFile) => Promise<void>;
   resetVaultAppearance: () => Promise<void>;
+  // Application immédiate (thème live) + écriture disque regroupée.
+  updateVaultAppearance: (file: VaultAppearanceFile) => void;
   // dataURLs des fonds d'écran par mode (l'écran Personnalisation affiche
   // celui du mode SÉLECTIONNÉ, pas forcément actif).
   wallpapers: { light?: string; dark?: string };
@@ -392,12 +393,23 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     ].join('\n');
   }, [theme.fontStack, theme.fontScale, theme.buttonRadius]);
 
-  // v0.4.32 : enregistre l'apparence PAR COFFRE dans le dossier du coffre
-  // actif — elle ne touche NI la config globale NI les autres coffres.
-  const saveVaultAppearance = useCallback(async (file: VaultAppearanceFile): Promise<void> => {
-    if (typeof window === 'undefined' || !window.vault?.writeNote) return;
-    await window.vault.writeNote('.123ecriture/appearance.json', JSON.stringify(file, null, 2));
+  // v0.4.34 (demande : « ne pas avoir à sauvegarder pour voir les effets ») :
+  // application IMMÉDIATE en mémoire (le thème change à chaque réglage,
+  // curseurs compris) + écriture disque REGROUPÉE (800 ms après le dernier
+  // changement — un curseur tire des dizaines de valeurs par seconde).
+  const vaultWriteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingVaultFile = useRef<VaultAppearanceFile | null>(null);
+  const updateVaultAppearance = useCallback((file: VaultAppearanceFile): void => {
     setVaultAppearance(file);
+    pendingVaultFile.current = file;
+    if (vaultWriteTimer.current) clearTimeout(vaultWriteTimer.current);
+    vaultWriteTimer.current = setTimeout(() => {
+      const toWrite = pendingVaultFile.current;
+      pendingVaultFile.current = null;
+      if (toWrite && typeof window !== 'undefined' && window.vault?.writeNote) {
+        void window.vault.writeNote('.123ecriture/appearance.json', JSON.stringify(toWrite, null, 2)).catch(() => undefined);
+      }
+    }, 800);
   }, []);
   const resetVaultAppearance = useCallback(async (): Promise<void> => {
     if (typeof window === 'undefined' || !window.vault?.delete) return;
@@ -413,7 +425,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       colorScheme,
       wallpapers,
       vaultAppearance,
-      saveVaultAppearance,
+      updateVaultAppearance,
       resetVaultAppearance,
       setThemeMode,
       setAccentColor,
@@ -451,7 +463,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       colorScheme,
       wallpapers,
       vaultAppearance,
-      saveVaultAppearance,
+      updateVaultAppearance,
       resetVaultAppearance,
       setThemeMode,
       setAccentColor,

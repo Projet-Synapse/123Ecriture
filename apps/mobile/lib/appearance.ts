@@ -39,6 +39,11 @@ export type AppearanceProfile = {
   // translucidité (1 = opaque ; 0.6 = l'image transparaît).
   surfaceColor: string;
   surfaceOpacity: number;
+  // v0.4.34 (demandes de l'utilisatrice) : bordures, couleur du TEXTE, et
+  // fond de l'ÉDITEUR de notes réglables comme tout le reste.
+  borderColor: string;
+  textColor: string;
+  editorBackgroundColor: string;
   buttonStyle: ButtonStyle;
   buttonRadius: number;
 };
@@ -143,6 +148,23 @@ export function hexToRgba(hex: string, alpha: number): string {
   return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${Math.min(1, Math.max(0, alpha))})`;
 }
 
+// Mélange deux hex (ratio = part du premier) — sert à dériver le texte
+// SECONDAIRE (textMuted) de la couleur de texte choisie : 60 % texte + 40 %
+// fond, lisible sur n'importe quelle combinaison sans réglage de plus.
+export function mixHex(a: string, b: string, ratio: number): string {
+  const pa = /^#?([0-9a-fA-F]{6})$/.exec(a.trim());
+  const pb = /^#?([0-9a-fA-F]{6})$/.exec(b.trim());
+  if (!pa || !pb) return a;
+  const na = parseInt(pa[1], 16);
+  const nb = parseInt(pb[1], 16);
+  const r0 = Math.min(1, Math.max(0, ratio));
+  const mix = (sa: number, sb: number) => Math.round(sa * r0 + sb * (1 - r0));
+  const r = mix((na >> 16) & 255, (nb >> 16) & 255);
+  const g = mix((na >> 8) & 255, (nb >> 8) & 255);
+  const bl = mix(na & 255, nb & 255);
+  return '#' + [r, g, bl].map((n) => n.toString(16).padStart(2, '0')).join('');
+}
+
 // ---- Profils -----------------------------------------------------------
 
 export const DEFAULT_LIGHT_PROFILE: AppearanceProfile = {
@@ -154,6 +176,9 @@ export const DEFAULT_LIGHT_PROFILE: AppearanceProfile = {
   backgroundDim: 0.3,
   surfaceColor: lightTheme.surface,
   surfaceOpacity: 1,
+  borderColor: lightTheme.border,
+  textColor: lightTheme.text,
+  editorBackgroundColor: lightTheme.background,
   buttonStyle: 'filled',
   buttonRadius: 10,
 };
@@ -167,6 +192,9 @@ export const DEFAULT_DARK_PROFILE: AppearanceProfile = {
   backgroundDim: 0.3,
   surfaceColor: darkTheme.surface,
   surfaceOpacity: 1,
+  borderColor: darkTheme.border,
+  textColor: darkTheme.text,
+  editorBackgroundColor: darkTheme.background,
   buttonStyle: 'filled',
   buttonRadius: 10,
 };
@@ -199,6 +227,10 @@ export function resolveAppearanceProfile(
     backgroundDim: clampDim(partial.backgroundDim ?? base.backgroundDim),
     surfaceColor: typeof partial.surfaceColor === 'string' ? partial.surfaceColor : base.surfaceColor,
     surfaceOpacity: clampSurfaceOpacity(partial.surfaceOpacity ?? base.surfaceOpacity),
+    borderColor: typeof partial.borderColor === 'string' ? partial.borderColor : base.borderColor,
+    textColor: typeof partial.textColor === 'string' ? partial.textColor : base.textColor,
+    editorBackgroundColor:
+      typeof partial.editorBackgroundColor === 'string' ? partial.editorBackgroundColor : base.editorBackgroundColor,
     buttonStyle: partial.buttonStyle && BUTTON_OPTIONS.some((o) => o.value === partial.buttonStyle) ? partial.buttonStyle : base.buttonStyle,
     buttonRadius: clampRadius(partial.buttonRadius ?? base.buttonRadius),
   };
@@ -248,6 +280,8 @@ export function resolveProfileWithVault(
 // ---- Tokens + thème ----------------------------------------------------
 
 export type AppearanceTokens = {
+  // Fond de l'éditeur de notes (v0.4.34) — absent = fond du mode.
+  editorBackground?: string;
   fontStack: string;
   fontScale: number;
   buttonStyle: ButtonStyle;
@@ -260,6 +294,7 @@ export type AppearanceTokens = {
 
 export function buildAppearanceTokens(profile: AppearanceProfile, wallpaper?: string): AppearanceTokens {
   return {
+    editorBackground: profile.editorBackgroundColor,
     fontStack: FONT_STACKS[profile.fontFamily] ?? FONT_STACKS.system,
     fontScale: clampFontScale(profile.fontScale),
     buttonStyle: profile.buttonStyle,
@@ -279,6 +314,11 @@ export function buildTheme(base: Theme, profile: AppearanceProfile, wallpaper?: 
     // Les panneaux deviennent TRANSLUCIDES quand l'opacité baisse : le fond
     // d'écran (ou la couleur de fond) transparaît sous les cartes/barres.
     surface: hexToRgba(profile.surfaceColor, profile.surfaceOpacity),
+    // v0.4.34 : bordures et texte réglables ; le texte SECONDAIRE est dérivé
+    // (60 % textColor + 40 % fond) pour rester lisible sans réglage de plus.
+    border: profile.borderColor,
+    text: profile.textColor,
+    textMuted: mixHex(profile.textColor, profile.backgroundColor, 0.6),
     ...buildAppearanceTokens(profile, wallpaper),
   };
 }

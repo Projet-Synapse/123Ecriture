@@ -1,4 +1,3 @@
-import { useMemo, useState } from 'react';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import {
@@ -37,6 +36,10 @@ import { SliderField } from './SliderField';
 const ACCENT_PRESETS = ['#4f46e5', '#2563eb', '#0d9488', '#16a34a', '#d97706', '#dc2626', '#db2777', '#7c3aed'];
 const LIGHT_BG_PRESETS = ['#ffffff', '#f5f5f7', '#faf5ff', '#f0fdf4', '#fff7ed', '#f0f9ff', '#fef2f2', '#fdf4ff'];
 const DARK_BG_PRESETS = ['#111114', '#1c1c22', '#0f172a', '#111827', '#1e1b1b', '#141c14', '#1c1420', '#0c0c10'];
+const LIGHT_BORDER_PRESETS = ['#e5e7eb', '#d1d5db', '#c7d2fe', '#fecaca', '#d9f99d'];
+const DARK_BORDER_PRESETS = ['#2a2a33', '#3f3f4a', '#3730a3', '#7f1d1d', '#365314'];
+const LIGHT_TEXT_PRESETS = ['#111114', '#1f2937', '#312e81', '#7f1d1d', '#064e3b'];
+const DARK_TEXT_PRESETS = ['#f5f5f7', '#e5e7eb', '#c7d2fe', '#fecdd3', '#bbf7d0'];
 const LIGHT_SURFACE_PRESETS = ['#f5f5f7', '#ffffff', '#eef2ff', '#f0fdf4', '#fdf2f8'];
 const DARK_SURFACE_PRESETS = ['#1c1c22', '#111114', '#1e293b', '#1e1b1b', '#1c1420'];
 const DIM_STEP = 0.05;
@@ -56,52 +59,23 @@ export function PersonalizationCard() {
     importWallpaper,
     clearWallpaper,
     vaultAppearance,
-    saveVaultAppearance,
+    updateVaultAppearance,
     resetVaultAppearance,
   } = usePreferences();
   const { activeVault } = useVaults();
 
-  // Brouillon PAR MODE initialisé de la résolution courante (coffre →
-  // global → défauts) — « Sauvegarder » (règle 6) écrit le fichier du coffre.
-  const initial = useMemo(
-    () => ({
-      light: resolveProfileWithVault(preferences, vaultAppearance, 'light'),
-      dark: resolveProfileWithVault(preferences, vaultAppearance, 'dark'),
-    }),
-    // Volontaire : le brouillon se reconstruit au CHANGEMENT de coffre, pas
-    // à chaque frappe dans les préférences (elles servent de base lue une
-    // fois à l'ouverture de la carte).
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [activeVault?.id],
-  );
-  const [draft, setDraft] = useState<{ light: AppearanceProfile; dark: AppearanceProfile }>(initial);
-  const [openMode, setOpenMode] = useState<ModeKey | null>(null);
-  const [dirty, setDirty] = useState(false);
-
-  // Changement de coffre actif → recharger le brouillon (le fichier du
-  // coffre précédent n'a rien à voir ici).
-  const [syncedVault, setSyncedVault] = useState(activeVault?.id);
-  if (syncedVault !== activeVault?.id) {
-    setSyncedVault(activeVault?.id);
-    setOpenMode(null);
-    setDraft({
-      light: resolveProfileWithVault(preferences, vaultAppearance, 'light'),
-      dark: resolveProfileWithVault(preferences, vaultAppearance, 'dark'),
-    });
-    setDirty(false);
-  }
-
+  // v0.4.34 : PLUS DE BROUILLON NI DE « Sauvegarder » — chaque réglage
+  // s'applique IMMÉDIATEMENT (updateVaultAppearance : thème live + écriture
+  // disque regroupée 800 ms). Les réglages affichés sont TOUJOURS ceux du
+  // MODE ACTIF : seuls les boutons « Mode actif » y donnent accès (demande
+  // de l'utilisatrice — plus de sections ☀️/🌙 séparées).
+  const file = vaultAppearance ?? {};
   const patchMode = (mode: ModeKey, patch: Partial<AppearanceProfile>) => {
-    setDraft((prev) => ({ ...prev, [mode]: { ...prev[mode], ...patch } }));
-    setDirty(true);
+    const current = resolveProfileWithVault(preferences, vaultAppearance, mode);
+    updateVaultAppearance({ ...file, [mode]: { ...current, ...patch } });
   };
 
-  const sauvegarder = () => {
-    void saveVaultAppearance({ light: draft.light, dark: draft.dark });
-    setDirty(false);
-  };
-
-  const wallpaper = wallpapers[openMode ?? colorScheme];
+  const wallpaper = wallpapers[colorScheme];
   const canWallpaper = typeof window !== 'undefined' && Boolean(window.appearance?.importWallpaper);
 
   return (
@@ -128,26 +102,22 @@ export function PersonalizationCard() {
         })}
       </View>
 
-      {/* ---- Les deux modes : boutons qui déploient leurs réglages (règle 6) ---- */}
-      <View style={{ gap: 8, marginTop: 4 }}>
-        {(['light', 'dark'] as const).map((mode) => {
-          const open = openMode === mode;
-          const p = draft[mode];
+      {/* ---- Réglages du MODE ACTIF (accès UNIQUEMENT via les boutons
+              « Mode actif » ci-dessus — v0.4.34) ---- */}
+      <View style={{ gap: 12, marginTop: 4 }}>
+        {([colorScheme] as const).map((mode) => {
+          const open = true;
+          const p = resolveProfileWithVault(preferences, vaultAppearance, mode);
           return (
             <View key={mode} style={[styles.modeSection, { borderColor: open ? theme.accent : theme.border }]}>
-              <Pressable
-                onPress={() => setOpenMode(open ? null : mode)}
-                accessibilityRole="button"
-                style={[styles.modeHeader, { backgroundColor: theme.surface }]}
-              >
+              <View style={[styles.modeHeader, { backgroundColor: theme.surface }]}>
                 <Text style={{ color: theme.text, fontWeight: '600', fontSize: 15, flex: 1 }}>
-                  {mode === 'light' ? '☀️ Mode clair' : '🌙 Mode sombre'}
+                  {mode === 'light' ? '☀️ Réglages du mode clair' : '🌙 Réglages du mode sombre'}
                 </Text>
                 <Text style={{ color: theme.textMuted, fontSize: 12 }}>
-                  {p.fontFamily} · {Math.round(p.fontScale * 100)} %{colorScheme === mode ? ' · actif' : ''}
+                  {preferences.themeMode === 'system' ? ' (mode système : ' + (mode === 'light' ? 'clair' : 'sombre') + ' détecté)' : ''}
                 </Text>
-                <Text style={{ color: theme.textMuted }}>{open ? '▾' : '▸'}</Text>
-              </Pressable>
+              </View>
 
               {open && (
                 <View style={{ gap: 12, padding: 12 }}>
@@ -265,6 +235,28 @@ export function PersonalizationCard() {
                     theme={theme}
                   />
 
+                  <ColorField
+                    label="Couleur des bordures"
+                    value={p.borderColor}
+                    presets={mode === 'dark' ? DARK_BORDER_PRESETS : LIGHT_BORDER_PRESETS}
+                    onValueChange={(hex) => patchMode(mode, { borderColor: hex })}
+                    theme={theme}
+                  />
+                  <ColorField
+                    label="Couleur du texte"
+                    value={p.textColor}
+                    presets={mode === 'dark' ? DARK_TEXT_PRESETS : LIGHT_TEXT_PRESETS}
+                    onValueChange={(hex) => patchMode(mode, { textColor: hex })}
+                    theme={theme}
+                  />
+                  <ColorField
+                    label="Fond de l&apos;éditeur de notes"
+                    value={p.editorBackgroundColor}
+                    presets={mode === 'dark' ? DARK_BG_PRESETS : LIGHT_BG_PRESETS}
+                    onValueChange={(hex) => patchMode(mode, { editorBackgroundColor: hex })}
+                    theme={theme}
+                  />
+
                   <OptionCollapse<ButtonStyle>
                     label="Style des boutons"
                     value={p.buttonStyle}
@@ -289,37 +281,6 @@ export function PersonalizationCard() {
         })}
       </View>
 
-      {/* ---- Sauvegarder (règle 6) ---- */}
-      <View style={[styles.row, { marginTop: 4 }]}>
-        <Pressable
-          onPress={sauvegarder}
-          disabled={!dirty}
-          accessibilityRole="button"
-          style={[
-            styles.modeButton,
-            { borderColor: theme.accent },
-            dirty && { backgroundColor: theme.accent },
-            !dirty && { opacity: 0.45 },
-          ]}
-        >
-          <Text style={{ color: dirty ? '#ffffff' : theme.text }}>{dirty ? '💾 Sauvegarder ce coffre' : 'Aucune modification'}</Text>
-        </Pressable>
-        {dirty && (
-          <Pressable
-            onPress={() => {
-              setDraft({
-                light: resolveProfileWithVault(preferences, vaultAppearance, 'light'),
-                dark: resolveProfileWithVault(preferences, vaultAppearance, 'dark'),
-              });
-              setDirty(false);
-            }}
-            accessibilityRole="button"
-            style={[styles.modeButton, { borderColor: theme.border }]}
-          >
-            <Text style={{ color: theme.text }}>Annuler</Text>
-          </Pressable>
-        )}
-      </View>
       <Pressable
         onPress={() => void resetVaultAppearance()}
         accessibilityRole="button"
