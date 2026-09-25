@@ -11,6 +11,7 @@ import {
   hsvToHex,
   parseVaultAppearance,
   resolveAppearanceProfile,
+  mixHex,
   resolveProfileWithVault,
   type VaultAppearanceFile,
   FONT_STACKS,
@@ -140,5 +141,25 @@ describe('Apparence PAR COFFRE (v0.4.32)', () => {
     const profil = resolveProfileWithVault({}, { light: { surfaceColor: '#ff0000', surfaceOpacity: 0.6 } }, 'light');
     const t = buildTheme(lightTheme, profil);
     expect(t.surface).toBe('rgba(255, 0, 0, 0.6)');
+  });
+});
+
+describe('Couleurs réglables v0.4.34 (bordures, texte, éditeur)', () => {
+  it('mixHex dérive le texte secondaire', () => {
+    expect(mixHex('#111114', '#ffffff', 0.6)).toBe('#707072');
+    expect(mixHex('#f5f5f7', '#111114', 0.6)).toBe('#9a9a9c');
+  });
+
+  it('buildTheme applique bordure, texte et fond éditeur du profil', () => {
+    const profil = resolveProfileWithVault(
+      {},
+      { light: { borderColor: '#ff0000', textColor: '#00ff00', editorBackgroundColor: '#0000ff' } },
+      'light',
+    );
+    const t = buildTheme(lightTheme, profil);
+    expect(t.border).toBe('#ff0000');
+    expect(t.text).toBe('#00ff00');
+    expect(t.editorBackground).toBe('#0000ff');
+    expect(t.textMuted).toBe(mixHex('#00ff00', profil.backgroundColor, 0.6));
   });
 });
