@@ -46,7 +46,9 @@ import { PropertiesPanel } from './PropertiesPanel';
 import { ResizeHandle } from './ResizeHandle';
 import { RightSidebar, type SidebarTab } from './RightSidebar';
 import { SearchDialog } from './SearchDialog';
-import { NOTE_ICON_BY_KIND, VaultTreeView } from './VaultTreeView';
+import { VaultTreeView } from './VaultTreeView';
+import { NoteIconByKind } from './FileIcons';
+import { FolderPreview } from './FolderPreview';
 import { errorMessage } from '../lib/errorMessage';
 
 // Trois modes d'affichage d'une note — "Source" (CodeMirror nu, texte brut,
@@ -155,6 +157,11 @@ export function NotesScreen({
 
   const [tree, setTree] = useState<VaultTreeNode[]>([]);
   const [activeNote, setActiveNote] = useState<VaultEntry | null>(null);
+  // APERÇU DE DOSSIER (v0.4.36, style Make.md) : quand un dossier est
+  // cliqué dans l'explorateur, son chemin est mémorisé ici et la zone
+  // éditeur affiche FolderPreview au lieu de l'éditeur de note. null =
+  // pas d'aperçu (une note est ouverte, ou rien).
+  const [previewFolderRelPath, setPreviewFolderRelPath] = useState<string | null>(null);
   const [content, setContent] = useState('');
   const [status, setStatus] = useState<Status>('idle');
   const [viewMode, setViewMode] = useState<ViewMode>(preferences.editorDefaultMode);
@@ -525,6 +532,10 @@ export function NotesScreen({
   // //2. 📂 OUVERTURE ET CRÉATION
   // //////////////////////////////////////////////////////////////////////
 
+  const openFolder = useCallback((node: VaultFolderNode) => {
+    setPreviewFolderRelPath(node.relPath);
+  }, []);
+
   const openNote = useCallback(
     async (node: VaultNoteNode) => {
       if (!vault) return;
@@ -548,6 +559,7 @@ export function NotesScreen({
         }
         const text = await vault.readNote(node.relPath);
         setActiveNote(node);
+        setPreviewFolderRelPath(null);
         setContent(text);
         setStatus('idle');
         // Paramètres → Éditeur → "Mode d'édition par défaut" : chaque note
@@ -1980,7 +1992,7 @@ export function NotesScreen({
                   node.relPath === activeNote?.relPath && { backgroundColor: `${theme.accent}22` },
                 ]}
               >
-                <Text style={styles.icon}>{NOTE_ICON_BY_KIND[node.kind]}</Text>
+                <Text style={styles.icon}><NoteIconByKind kind={node.kind} size={14} /></Text>
                 <Text style={{ color: theme.text }} numberOfLines={1}>
                   {node.name}
                 </Text>
@@ -1992,6 +2004,8 @@ export function NotesScreen({
         {explorerViewMode === 'files' ? (
           <ScrollView>
             <VaultTreeView
+              onOpenFolder={openFolder}
+              activeFolderRelPath={previewFolderRelPath}
               nodes={tree}
               theme={theme}
               activeRelPath={activeNote?.relPath}
@@ -2155,7 +2169,7 @@ export function NotesScreen({
                             isActive ? `Onglet actif : ${node.name}` : `Activer l'onglet ${node.name}`
                           }
                         >
-                          <Text style={styles.tabIcon}>{NOTE_ICON_BY_KIND[node.kind]}</Text>
+                          <Text style={styles.tabIcon}><NoteIconByKind kind={node.kind} size={14} /></Text>
                           <Text
                             style={[styles.tabName, { color: isActive ? theme.accent : theme.textMuted }]}
                             numberOfLines={1}
@@ -2361,6 +2375,14 @@ export function NotesScreen({
               )}
             </View>
           </>
+        ) : previewFolderRelPath && tree.length > 0 ? (
+          <FolderPreview
+            folderRelPath={previewFolderRelPath}
+            tree={tree}
+            theme={theme}
+            onOpenNote={(node) => void openNote(node)}
+            onOpenFolder={openFolder}
+          />
         ) : (
           <View style={styles.centered}>
             <Text style={[styles.muted, { color: theme.textMuted }]}>
