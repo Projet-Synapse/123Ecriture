@@ -89,6 +89,12 @@ contextBridge.exposeInMainWorld('preferences', {
   revealConfigFolder: () => ipcRenderer.invoke('preferences:reveal-config-folder'),
 });
 
+contextBridge.exposeInMainWorld('appearance', {
+  getWallpapers: () => ipcRenderer.invoke('appearance:get-wallpapers'),
+  importWallpaper: (mode: 'light' | 'dark') => ipcRenderer.invoke('appearance:import-wallpaper', mode),
+  clearWallpaper: (mode: 'light' | 'dark') => ipcRenderer.invoke('appearance:clear-wallpaper', mode),
+});
+
 contextBridge.exposeInMainWorld('contextMenu', {
   show: (items: { id: string; label: string }[]) => ipcRenderer.invoke('context-menu:show', items),
 });

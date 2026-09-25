@@ -251,6 +251,32 @@ export interface Preferences {
   // le comportement historique, ce choix n'est jamais fait à la place de
   // l'utilisatrice.
   autoSyncEnabled: boolean;
+  // v0.4.30 : apparence PAR MODE — miroir de apps/mobile/lib/appearance.ts
+  // (types non partagés, à maintenir des deux côtés, même convention que
+  // le reste de cette interface). Optionnels : une config antérieure à la
+  // v0.4.30 n'a aucun des deux.
+  appearanceLight?: AppearanceProfile;
+  appearanceDark?: AppearanceProfile;
+}
+
+// Miroir de AppearanceProfile (apps/mobile/lib/appearance.ts).
+export interface AppearanceProfile {
+  accentColor: string;
+  fontFamily:
+    | 'system'
+    | 'serif'
+    | 'rounded'
+    | 'monospace'
+    | 'georgia'
+    | 'verdana'
+    | 'trebuchet'
+    | 'courier';
+  fontScale: number;
+  backgroundColor: string;
+  backgroundMode: 'color' | 'image';
+  backgroundDim: number;
+  buttonStyle: 'filled' | 'outline' | 'ghost';
+  buttonRadius: number;
 }
 
 export interface SidebarPanelLayout {
