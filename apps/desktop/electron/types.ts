@@ -189,6 +189,8 @@ export type ThemeMode = 'system' | 'light' | 'dark';
 export interface ToolbarItemConfig {
   id: string;
   visible: boolean;
+  // v0.4.39 : groupe collapsible personnalise (miroir de global.d.ts).
+  group?: string;
 }
 
 export type NewNoteLocation = 'vaultRoot' | 'sameFolder' | 'custom';

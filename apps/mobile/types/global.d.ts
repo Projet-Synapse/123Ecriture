@@ -446,6 +446,12 @@ declare global {
   interface ToolbarItemConfig {
     id: string;
     visible: boolean;
+    // v0.4.39 : groupe COLLAPSIBLE personnalise (Parametres -> Editeur) :
+    // les items partageant le meme `group` sont regroupes sous UN bouton
+    // (libelle = nom du groupe) qui deploie une seconde rangee. Absent =
+    // bouton individuel. Le groupement auto des titres (Hn) reste applique
+    // en plus quand les Hx n'ont pas de groupe explicite.
+    group?: string;
   }
 
   type NewNoteLocation = 'vaultRoot' | 'sameFolder' | 'custom';

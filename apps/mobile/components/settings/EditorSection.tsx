@@ -155,8 +155,12 @@ export function EditorSection() {
           descriptions={NOTES_TOOLBAR_DESCRIPTIONS}
           shortcuts={NOTES_TOOLBAR_SHORTCUT_LABELS}
           onChange={(order) => void setNotesToolbarOrder(order)}
+          allowGroups
           theme={theme}
         />
+        <Text style={[s.label, { color: theme.textMuted }]}>
+          Champ « groupe… » : donne le MÊME nom de groupe à plusieurs boutons pour les regrouper sous un bouton dépliable (ex. « Titres » sur H2 et H3).
+        </Text>
       </View>
 
       <View style={[s.card, { backgroundColor: theme.surface, borderColor: theme.border }]}>

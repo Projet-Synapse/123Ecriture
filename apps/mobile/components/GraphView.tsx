@@ -172,6 +172,10 @@ export function GraphView({ theme, onOpenNote }: Props) {
   const [forces, setForces] = useState<ForceOptions>({ centrale: 1, repulsion: 16, liaison: 0.43, distance: 80 });
 
   const recomputeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Glisser en cours (pan du graphe) — espace enfoncé ou bouton milieu ;
+  // simplifié : le glisser direct déplace toujours (le clic sur un NOM
+  // de nœud reste prioritaire car porté par le SvgText, pas par la boîte).
+  const panDragRef = useRef({ active: false, lastX: 0, lastY: 0 });
   const baseNodesRef = useRef<GraphNode[] | null>(null);
 
   useEffect(() => {
@@ -234,9 +238,13 @@ export function GraphView({ theme, onOpenNote }: Props) {
   const spanY = Math.max(1, bounds.maxY - bounds.minY);
   const fitScale = Math.min((width - (panneau ? 360 : 80)) / spanX, (height - 150) / spanY, 3);
   const [zoom, setZoom] = useState(1);
+  // PAN (v0.4.39) : décalage du graphe dans son cadre — molette = zoom vers
+  // le curseur, glisser = déplacer, boutons +/- conservés.
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [panneauWidth, setPanneauWidth] = useState(300);
   const scale = fitScale * zoom;
-  const toScreenX = (x: number) => (x - bounds.minX) * scale + 30;
-  const toScreenY = (y: number) => (y - bounds.minY) * scale + 40;
+  const toScreenX = (x: number) => (x - bounds.minX) * scale + 30 + pan.x;
+  const toScreenY = (y: number) => (y - bounds.minY) * scale + 40 + pan.y;
 
   return (
     <View style={{ flex: 1, flexDirection: 'row' }}>
@@ -260,7 +268,32 @@ export function GraphView({ theme, onOpenNote }: Props) {
             <Text style={{ color: theme.textMuted }}>Construction du graphe…</Text>
           </View>
         ) : (
-          <View style={[styles.graphBox, { backgroundColor: `${theme.border}33`, marginHorizontal: 12 }]}>
+          <View
+            style={[styles.graphBox, { backgroundColor: `${theme.border}33`, marginHorizontal: 12 }]}
+            // MOLETTE = zoom (v0.4.39 — demande explicite), GLISSER = pan.
+            // wheel n'est pas une prop RN : transmis tel quel par
+            // react-native-web jusqu'au div (même échappatoire que
+            // draggable dans VaultTreeView).
+            // @ts-expect-error prop web-only (voir commentaire)
+            onWheel={(e: WheelEvent) => {
+              e.preventDefault();
+              setZoom((z) => Math.min(8, Math.max(0.1, z * (e.deltaY < 0 ? 1.12 : 0.89))));
+            }}
+            onStartShouldSetResponder={() => panDragRef.current.active}
+            onMoveShouldSetResponder={() => panDragRef.current.active}
+            onResponderGrant={(e) => {
+              panDragRef.current.lastX = e.nativeEvent.pageX;
+              panDragRef.current.lastY = e.nativeEvent.pageY;
+            }}
+            onResponderMove={(e) => {
+              if (!panDragRef.current.active) return;
+              const dx = e.nativeEvent.pageX - panDragRef.current.lastX;
+              const dy = e.nativeEvent.pageY - panDragRef.current.lastY;
+              panDragRef.current.lastX = e.nativeEvent.pageX;
+              panDragRef.current.lastY = e.nativeEvent.pageY;
+              setPan((p) => ({ x: p.x + dx, y: p.y + dy }));
+            }}
+          >
             <Svg width="100%" height="100%">
               {edgesVisibles.map((e, i) => {
                 const a = visibles.find((n) => n.id === e.source);
@@ -316,7 +349,23 @@ export function GraphView({ theme, onOpenNote }: Props) {
       </View>
 
       {panneau && (
-        <ScrollView style={[styles.panneau, { borderLeftColor: theme.border }]} contentContainerStyle={{ padding: 12, gap: 12 }}>
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => undefined}
+          onHoverIn={() => undefined}
+          style={[styles.resizeHandle, { backgroundColor: theme.border }]}
+          // @ts-expect-error cursor web-only (RN n'admet que auto/pointer)
+          cursor="ew-resize"
+          onStartShouldSetResponder={() => true}
+          onMoveShouldSetResponder={() => true}
+          onResponderMove={(e) => {
+            const versGauche = e.nativeEvent.locationX < 3;
+            setPanneauWidth((w) => Math.min(520, Math.max(200, w + (versGauche ? 8 : -8))));
+          }}
+        />
+      )}
+      {panneau && (
+        <ScrollView style={[styles.panneau, { borderLeftColor: theme.border, width: panneauWidth }]} contentContainerStyle={{ padding: 12, gap: 12 }}>
           <View style={{ gap: 4 }}>
             <Text style={{ color: theme.textMuted, fontSize: 12 }}>Rechercher des fichiers…</Text>
             <TextInput
@@ -435,8 +484,10 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   panneau: {
-    width: 300,
     borderLeftWidth: 1,
+  },
+  resizeHandle: {
+    width: 6,
   },
   input: {
     borderWidth: 1,
