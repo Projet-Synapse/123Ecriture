@@ -355,6 +355,12 @@ export function NotesScreen({
     .map((item) => NOTES_TOOLBAR_ACTIONS.find((action) => action.id === item.id))
     .filter((action): action is ToolbarAction => Boolean(action));
 
+  // v0.4.39 : GROUPES PERSONNALISÉS (Paramètres → Éditeur, champ « groupe… »)
+  // — les actions partageant un même nom de groupe deviennent UN bouton
+  // dépliable (libellé = nom du groupe, seconde rangée = les actions dans
+  // l'ordre de la config). Les actions sans groupe restent individuelles.
+  const groupOf = (id: string): string | undefined =>
+    preferences.notesToolbarOrder.find((item) => item.id === id)?.group;
   // Raccourcis clavier de mise en forme (voir MdxEditor.tsx, prop
   // `shortcuts`) — dérivés de TOUTES les actions connues, pas seulement
   // `toolbarActions` (visibles) : masquer un bouton dans Paramètres est une
@@ -2292,22 +2298,26 @@ export function NotesScreen({
                               }
                             },
                           },
-                          // GROUPE COLLAPSIBLE « Titres » (v0.4.38 — demande :
-                          // « regrouper les en-têtes dans la barre d'outils »)
-                          // — remplace les H2-H6 individuels par un bouton Hn.
-                          {
-                            id: 'headings-group',
-                            label: 'Hn',
-                            subItems: toolbarActions
-                              .filter((a) => /^h[1-6]$/.test(a.id))
-                              .map((a) => ({
-                                id: a.id,
-                                label: a.label,
-                                onPress: () => applyFormatting(a.run),
-                              })),
-                          },
                           ...toolbarActions
-                            .filter((a) => !/^h[1-6]$/.test(a.id))
+                            .filter((a) => /^h[1-6]$/.test(a.id) && !groupOf(a.id))
+                            .map((action, index, all) => ({
+                              // Groupe « Hn » : le PREMIER titre porte les
+                              // sous-items H* (bouton dépliable) ; les
+                              // suivants sont masqués (id vide).
+                              id: index === 0 ? 'headings-group' : '',
+                              label: index === 0 ? 'Hn' : '',
+                              subItems:
+                                index === 0
+                                  ? all.map((a) => ({
+                                      id: a.id,
+                                      label: a.label,
+                                      onPress: () => applyFormatting(a.run),
+                                    }))
+                                  : undefined,
+                            }))
+                            .filter((item) => item.id !== ''),
+                          ...toolbarActions
+                            .filter((a) => !/^h[1-6]$/.test(a.id) && groupOf(a.id) === undefined)
                             .map((action) => ({
                               id: action.id,
                               label: action.label,

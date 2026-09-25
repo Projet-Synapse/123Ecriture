@@ -600,6 +600,14 @@ bas) sur le projet Supabase partagé "Projet Synapse".
   ressuscitant en boucle des fichiers supprimés (vécu : copies « (conflit
   2026-09-18…) » revenues sur LORDI puis re-téléchargées partout ; 16 lignes
   nettoyées à la main en base).
+- **Groupes de barre d'outils personnalisés + graph navigable**
+  (v0.4.39) : Paramètres → Éditeur → Barre d'outils Notes gagne une
+  colonne « groupe… » par bouton — donner le MÊME nom à plusieurs actions
+  les regroupe sous UN bouton dépliable (libellé = nom du groupe), dans
+  l'ordre de la liste ; le groupe « Hn » automatique reste appliqué aux
+  titres non groupés. Vue graphique : MOLETTE = zoom, glisser = déplacer
+  le graphe dans son cadre, et la LARGEUR DU PANNEAU de réglages est
+  ajustable par poignée (200-520 px).
 - **Populateur opaque + graph v2 + barre d'outils enrichie** (v0.4.38) :
   la liste d'ajout de propriétés est SCROLLABLE (elle était coupée à 180 px
   sans moyen de descendre) et à fond OPAQUE (theme.surface est devenu
