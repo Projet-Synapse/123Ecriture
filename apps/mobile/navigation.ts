@@ -16,6 +16,7 @@ export type Section = {
 // dans le plan/la mémoire du projet.
 export const SECTIONS: Section[] = [
   { id: 'notes', label: 'Notes', icon: '📝' },
+  { id: 'graph', label: 'Graphique', icon: '🔗' },
   { id: 'tasks', label: 'Tâches', icon: '✅' },
   { id: 'calendar', label: 'Calendrier', icon: '📅' },
   { id: 'settings', label: 'Paramètres', icon: '⚙️' },

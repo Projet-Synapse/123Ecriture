@@ -3,6 +3,8 @@ import { useCallback, useRef, useState } from 'react';
 
 import { AppShell, type NotesActions } from './components/AppShell';
 import { CalendarScreen } from './components/CalendarScreen';
+import { GraphView } from './components/GraphView';
+import { usePreferences } from './preferences/PreferencesContext';
 import { NotesScreen } from './components/NotesScreen';
 import { SettingsScreen } from './components/SettingsScreen';
 import { TasksScreen } from './components/TasksScreen';
@@ -14,6 +16,7 @@ import { SECTIONS } from './navigation';
 import { PreferencesProvider } from './preferences/PreferencesContext';
 
 function Root() {
+  const { theme } = usePreferences();
   const [activeId, setActiveId] = useState(SECTIONS[0].id);
 
   // Mécanisme partagé "ouvrir cet élément" depuis un autre écran (recherche
@@ -91,6 +94,16 @@ function Root() {
         onRequestOpenTask={requestOpenTask}
         onRequestOpenCalendarDate={requestOpenCalendarDate}
         onRegisterActions={registerNotesActions}
+      />
+    );
+  } else if (activeId === 'graph') {
+    content = (
+      <GraphView
+        theme={theme}
+        onOpenNote={(relPath) => {
+          setActiveId('notes');
+          setPendingOpenRelPath(relPath);
+        }}
       />
     );
   } else if (activeId === 'tasks') {

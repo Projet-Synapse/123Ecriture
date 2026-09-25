@@ -44,6 +44,15 @@ type Props = {
   value: string;
   onChange: (text: string) => void;
   livePreview: boolean;
+  // Contenu (React) rendu AU-DESSUS du texte, DANS le scroller CodeMirror
+  // (v0.4.37 — le bloc Propriétés fait partie du scroll en mode
+  // Intermédiaire, comme Obsidian) : rendu via un portail React dans un
+  // widget CM position 0. null/absent = rien (mode Source par ex.).
+  headerContent?: React.ReactNode;
+  // v0.4.37 : CM sans hauteur fixe (le PARENT scrolle) — sert au mode
+  // Intermédiaire où le bloc Propriétés fait partie du même scroll que le
+  // texte. En mode Source, false = CM garde son propre scroll interne.
+  autoHeight?: boolean;
   theme: Theme;
   onOpenWikilink: (target: string) => void;
   onOpenOccurrence?: (word: string) => void;
@@ -79,6 +88,7 @@ export function MdxEditor({
   value,
   onChange,
   livePreview,
+  autoHeight = false,
   theme,
   onOpenWikilink,
   onOpenOccurrence,
@@ -99,7 +109,7 @@ export function MdxEditor({
           // Personnalisation) — retombe sur le fond du mode sinon.
           backgroundColor: theme.editorBackground ?? theme.background,
           color: theme.text,
-          height: '100%',
+          height: autoHeight ? 'auto' : '100%',
           fontSize: `${fontSize}px`,
         },
         '.cm-content': { padding: '16px', caretColor: theme.accent },
@@ -126,7 +136,7 @@ export function MdxEditor({
         '.cm-searchMatch': { backgroundColor: `${theme.accent}44` },
         '.cm-searchMatch-selected': { backgroundColor: `${theme.accent}88` },
       }),
-    [theme, fontSize, fontFamily],
+    [theme, fontSize, fontFamily, autoHeight],
   );
 
   const liveExtension = useMemo(

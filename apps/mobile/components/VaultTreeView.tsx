@@ -261,7 +261,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    paddingVertical: 7,
+    // HAUTEUR FIXE (v0.4.37) : sans paddingVertical, les rails
+    // d'indentation (alignSelf:'stretch') couvrent toute la hauteur et
+    // les lignes adjacentes forment une colonne CONTINUE — le padding
+    // créait des trous « ----- » entre chaque rangée.
+    height: 32,
     paddingLeft: 4,
     paddingRight: 12,
   },

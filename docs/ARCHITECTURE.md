@@ -600,6 +600,17 @@ bas) sur le projet Supabase partagé "Projet Synapse".
   ressuscitant en boucle des fichiers supprimés (vécu : copies « (conflit
   2026-09-18…) » revenues sur LORDI puis re-téléchargées partout ; 16 lignes
   nettoyées à la main en base).
+- **Rails continus + propriétés scroll + vue graphique** (v0.4.37) :
+  hauteur FIXE des lignes de l'arborescence (32 px, zéro padding vertical —
+  les rails d'indentation couvrent toute la hauteur et forment des colonnes
+  CONTINUES, plus de « ----- ») ; panneau de propriétés refondu style
+  Obsidian (lignes épurées clé/valeur, plus d'icônes emoji de type, type
+  géré uniquement dans Paramètres) et INTÉGRÉ AU SCROLL du mode
+  Intermédiaire (ScrollView commune avec CodeMirror en hauteur auto) ;
+  NOUVELLE SECTION « Graphique » dans la navigation — vue graphique des
+  [[liens internes]] (nœuds colorés par dossier, taille par nombre de
+  liens, layout force-dirigé maison sans dépendance, recherche, clic pour
+  ouvrir la note, arêtes atténuées hors recherche).
 - **Explorateur refondu** (v0.4.36) : lignes d'arborescence RÉELLES
   (rails verticaux continus style IDE — chaque trait fait toute la hauteur
   de ligne, empilés ils forment une ligne continue) ; icônes VECTORIELLES
