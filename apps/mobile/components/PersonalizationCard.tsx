@@ -121,41 +121,11 @@ export function PersonalizationCard() {
 
               {open && (
                 <View style={{ gap: 12, padding: 12 }}>
-                  <OptionCollapse<AppFontFamily>
-                    label="Police de l&apos;interface"
-                    value={p.fontFamily}
-                    options={FONT_OPTIONS.map((o) => ({
-                      value: o.value,
-                      label: o.label,
-                      extra: (
-                        <Text style={{ fontFamily: FONT_STACKS[o.value], color: theme.textMuted, fontSize: 12 }}>
-                          Aa — Exemple
-                        </Text>
-                      ),
-                    }))}
-                    onValueChange={(v) => patchMode(mode, { fontFamily: v })}
-                    theme={theme}
-                  />
-
-                  <SliderField
-                    label="Échelle de l&apos;interface"
-                    value={p.fontScale}
-                    minimumValue={FONT_SCALE_MIN}
-                    maximumValue={FONT_SCALE_MAX}
-                    step={SCALE_STEP}
-                    format={(v) => Math.round(v * 100) + ' %'}
-                    onValueChange={(v) => patchMode(mode, { fontScale: v })}
-                    theme={theme}
-                  />
-
-                  <ColorField
-                    label="Couleur d&apos;accent"
-                    value={p.accentColor}
-                    presets={ACCENT_PRESETS}
-                    onValueChange={(hex) => patchMode(mode, { accentColor: hex })}
-                    theme={theme}
-                  />
-
+                  {/* ---- Hiérarchie des couleurs (v0.4.35, demande de
+                          l'utilisatrice) : fond d'écran > carte (panneaux) >
+                          bordures/texte > éditeur > boutons. Chaque ligne =
+                          libellé + pastille qui ouvre la roue (préréglages
+                          DANS la roue). ---- */}
                   <OptionCollapse<'color' | 'image'>
                     label="Fond du mode"
                     value={p.backgroundMode === 'image' && canWallpaper ? 'image' : 'color'}
@@ -254,6 +224,42 @@ export function PersonalizationCard() {
                     value={p.editorBackgroundColor}
                     presets={mode === 'dark' ? DARK_BG_PRESETS : LIGHT_BG_PRESETS}
                     onValueChange={(hex) => patchMode(mode, { editorBackgroundColor: hex })}
+                    theme={theme}
+                  />
+
+                  <ColorField
+                    label="Couleur des boutons"
+                    value={p.buttonColor}
+                    presets={ACCENT_PRESETS}
+                    onValueChange={(hex) => patchMode(mode, { buttonColor: hex })}
+                    theme={theme}
+                  />
+
+                  {/* ---- Typographie & boutons ---- */}
+                  <OptionCollapse<AppFontFamily>
+                    label="Police de l&apos;interface"
+                    value={p.fontFamily}
+                    options={FONT_OPTIONS.map((o) => ({
+                      value: o.value,
+                      label: o.label,
+                      extra: (
+                        <Text style={{ fontFamily: FONT_STACKS[o.value], color: theme.textMuted, fontSize: 12 }}>
+                          Aa — Exemple
+                        </Text>
+                      ),
+                    }))}
+                    onValueChange={(v) => patchMode(mode, { fontFamily: v })}
+                    theme={theme}
+                  />
+
+                  <SliderField
+                    label="Échelle de l&apos;interface"
+                    value={p.fontScale}
+                    minimumValue={FONT_SCALE_MIN}
+                    maximumValue={FONT_SCALE_MAX}
+                    step={SCALE_STEP}
+                    format={(v) => Math.round(v * 100) + ' %'}
+                    onValueChange={(v) => patchMode(mode, { fontScale: v })}
                     theme={theme}
                   />
 

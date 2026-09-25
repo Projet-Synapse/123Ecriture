@@ -115,33 +115,36 @@ export function ColorField({
 
   return (
     <View style={{ gap: 6 }}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-        <Text style={{ color: theme.textMuted, fontSize: 12, minWidth: 90 }}>{label}</Text>
-        {presets.map((preset) => {
-          const active = preset.toLowerCase() === value.toLowerCase();
-          return (
-            <Pressable
-              key={preset}
-              onPress={() => onValueChange(preset)}
-              accessibilityLabel={label + ' ' + preset}
-              style={[styles.swatch, { backgroundColor: preset }, active && styles.swatchActive]}
-            >
-              {active && <Text style={styles.swatchCheck}>✓</Text>}
-            </Pressable>
-          );
-        })}
-        {/* La pastille courante ouvre la ROUE dédiée (règle : chaque couleur
-            a sa roue — la pastille EST le bouton de la roue). */}
-        <Pressable onPress={openWheel} accessibilityRole="button" style={[styles.wheelButton, { borderColor: theme.border }]}>
-          <View style={[styles.wheelGlyph, { backgroundColor: value }]} />
-          <Text style={{ color: theme.text, fontSize: 12 }}>Roue</Text>
-        </Pressable>
-      </View>
+      {/* v0.4.35 (demandes de l'utilisatrice) : une ligne épurée — libellé à
+          gauche, PASTILLE de la couleur courante à droite — la pastille
+          ouvre la roue ; les PRÉRÉGLAGES vivent DANS la roue, plus sur la
+          page. Hierarchie : fond d'écran > carte > conteneurs > boutons. */}
+      <Pressable onPress={openWheel} accessibilityRole="button" style={[styles.rowButton, { borderColor: theme.border }]}>
+        <Text style={{ color: theme.text, fontSize: 13, flex: 1 }}>{label}</Text>
+        <View style={[styles.wheelGlyph, { backgroundColor: value }]} />
+      </Pressable>
       <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
         <View style={[styles.modalBackdrop]}>
           <View style={[styles.modalCard, { backgroundColor: theme.surface, borderColor: theme.border }]}>
             <Text style={{ color: theme.text, fontWeight: '600' }}>{label}</Text>
             <ColorWheel color={draft} onColorChange={setDraft} theme={theme} />
+            {/* Préréglages — à l'intérieur de la roue (v0.4.35), plus sur
+                la page des paramètres. */}
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+              {presets.map((preset) => {
+                const active = preset.toLowerCase() === draft.toLowerCase();
+                return (
+                  <Pressable
+                    key={preset}
+                    onPress={() => setDraft(preset)}
+                    accessibilityLabel={label + ' ' + preset}
+                    style={[styles.swatch, { backgroundColor: preset }, active && styles.swatchActive]}
+                  >
+                    {active && <Text style={styles.swatchCheck}>✓</Text>}
+                  </Pressable>
+                );
+              })}
+            </View>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
               <View style={[styles.preview, { backgroundColor: draft, borderColor: theme.border }]} />
               <TextInput
@@ -194,21 +197,21 @@ const styles = StyleSheet.create({
     textShadowColor: 'rgba(0,0,0,0.6)',
     textShadowRadius: 2,
   },
-  wheelButton: {
+  rowButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 10,
     borderWidth: 1,
     borderRadius: 8,
-    paddingVertical: 4,
-    paddingHorizontal: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
   },
   wheelGlyph: {
-    width: 16,
-    height: 16,
-    borderRadius: 8,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
     borderWidth: 1,
-    borderColor: 'rgba(0,0,0,0.2)',
+    borderColor: 'rgba(0,0,0,0.25)',
   },
   modalBackdrop: {
     flex: 1,

@@ -26,7 +26,9 @@ export type AppFontFamily =
 export type ButtonStyle = 'filled' | 'outline' | 'ghost';
 
 export type AppearanceProfile = {
-  accentColor: string;
+  // v0.4.35 : « couleur des BOUTONS » (ex-accent) — hierarchie de
+  // conteneurs demandee : fond d'ecran > carte > conteneurs (titre) > boutons.
+  buttonColor: string;
   fontFamily: AppFontFamily;
   // Échelle globale de l'interface (1 = 100 %) — zoom CSS racine.
   fontScale: number;
@@ -168,7 +170,7 @@ export function mixHex(a: string, b: string, ratio: number): string {
 // ---- Profils -----------------------------------------------------------
 
 export const DEFAULT_LIGHT_PROFILE: AppearanceProfile = {
-  accentColor: lightTheme.accent,
+  buttonColor: lightTheme.accent,
   fontFamily: 'system',
   fontScale: 1,
   backgroundColor: lightTheme.background,
@@ -184,7 +186,7 @@ export const DEFAULT_LIGHT_PROFILE: AppearanceProfile = {
 };
 
 export const DEFAULT_DARK_PROFILE: AppearanceProfile = {
-  accentColor: darkTheme.accent,
+  buttonColor: darkTheme.accent,
   fontFamily: 'system',
   fontScale: 1,
   backgroundColor: darkTheme.background,
@@ -219,7 +221,7 @@ export function resolveAppearanceProfile(
   const base = defaultProfile(mode);
   const partial = (mode === 'dark' ? prefs.appearanceDark : prefs.appearanceLight) ?? {};
   const merged: AppearanceProfile = {
-    accentColor: typeof partial.accentColor === 'string' ? partial.accentColor : base.accentColor,
+    buttonColor: typeof partial.buttonColor === 'string' ? partial.buttonColor : base.buttonColor,
     fontFamily: partial.fontFamily && partial.fontFamily in FONT_STACKS ? partial.fontFamily : base.fontFamily,
     fontScale: clampFontScale(partial.fontScale ?? base.fontScale),
     backgroundColor: typeof partial.backgroundColor === 'string' ? partial.backgroundColor : base.backgroundColor,
@@ -234,8 +236,12 @@ export function resolveAppearanceProfile(
     buttonStyle: partial.buttonStyle && BUTTON_OPTIONS.some((o) => o.value === partial.buttonStyle) ? partial.buttonStyle : base.buttonStyle,
     buttonRadius: clampRadius(partial.buttonRadius ?? base.buttonRadius),
   };
-  if (mode === 'light' && prefs.appearanceLight === undefined && typeof prefs.accentColor === 'string') {
-    merged.accentColor = prefs.accentColor;
+  // Migration v0.4.35 : l'ancien accentColor unique, puis l'ancien champ
+  // accentColor des profils v0.4.30-34, deviennent la couleur des boutons.
+  const legacyProfileAccent = (partial as { accentColor?: unknown }).accentColor;
+  if (typeof prefs.accentColor === 'string' && partial.buttonColor === undefined) {
+    if (typeof legacyProfileAccent === 'string') merged.buttonColor = legacyProfileAccent;
+    else if (mode === 'light' && prefs.appearanceLight === undefined) merged.buttonColor = prefs.accentColor;
   }
   return merged;
 }
@@ -309,7 +315,7 @@ export function buildAppearanceTokens(profile: AppearanceProfile, wallpaper?: st
 export function buildTheme(base: Theme, profile: AppearanceProfile, wallpaper?: string): Theme & AppearanceTokens {
   return {
     ...base,
-    accent: profile.accentColor,
+    accent: profile.buttonColor,
     background: profile.backgroundMode === 'image' && wallpaper ? base.surface : profile.backgroundColor,
     // Les panneaux deviennent TRANSLUCIDES quand l'opacité baisse : le fond
     // d'écran (ou la couleur de fond) transparaît sous les cartes/barres.
