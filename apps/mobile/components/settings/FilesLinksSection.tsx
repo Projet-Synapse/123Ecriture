@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Pressable, Text, TextInput, View } from 'react-native';
 
 import { usePreferences } from '../../preferences/PreferencesContext';
@@ -37,6 +37,83 @@ const DEFAULT_OPEN_MODE_OPTIONS: { value: DefaultOpenMode; label: string }[] = [
 // //5. Fichier ouvert par défaut (dernier ouvert / nouvelle note /
 //      spécifique) — voir NotesScreen.tsx pour l'effet d'ouverture et le
 //      défilement automatique de l'explorateur vers la note active.
+
+// v0.4.36 : sélecteur RÉEL pour « Fichier ouvert par défaut » — l'ancien
+// champ texte exigeait de connaître le chemin exact par cœur ; ici on
+// choisit le fichier dans l'arborescence du coffre actif, et le choix
+// s'applique immédiatement (persistance via setDefaultOpenSpecificPath).
+function DefaultOpenFilePicker() {
+  const { preferences, theme, setDefaultOpenSpecificPath } = usePreferences();
+  const [fichiers, setFichiers] = useState<{ relPath: string; nom: string }[]>([]);
+  const [recherche, setRecherche] = useState('');
+  const [ouvert, setOuvert] = useState(false);
+
+  useEffect(() => {
+    if (!ouvert) return;
+    const load = async () => {
+      if (typeof window === 'undefined' || !window.vault?.listTree) return;
+      try {
+        const tree = await window.vault.listTree();
+        const notes: { relPath: string; nom: string }[] = [];
+        const walk = (nodes: VaultTreeNode[], prefix: string) => {
+          for (const n of nodes) {
+            if (n.type === 'note') notes.push({ relPath: n.relPath, nom: (prefix ? prefix + ' / ' : '') + n.name });
+            if (n.type === 'folder' && n.children) walk(n.children, (prefix ? prefix + ' / ' : '') + n.name);
+          }
+        };
+        walk(tree, '');
+        setFichiers(notes);
+      } catch {
+        setFichiers([]);
+      }
+    };
+    void load();
+  }, [ouvert]);
+
+  const filtres = fichiers.filter((f) => f.nom.toLowerCase().includes(recherche.trim().toLowerCase()));
+  const choix = preferences.defaultOpenSpecificPath
+    ? fichiers.find((f) => f.relPath === preferences.defaultOpenSpecificPath)?.nom ?? preferences.defaultOpenSpecificPath
+    : null;
+
+  return (
+    <View style={{ gap: 6 }}>
+      <Pressable onPress={() => setOuvert((v) => !v)} accessibilityRole="button" style={[s.input, { borderColor: theme.border, flex: 0, minWidth: 220, flexDirection: 'row', alignItems: 'center', gap: 8 }]}>
+        <Text style={{ color: choix ? theme.text : theme.textMuted, flex: 1 }} numberOfLines={1}>
+          {choix ?? 'Choisir un fichier…'}
+        </Text>
+        <Text style={{ color: theme.textMuted }}>{ouvert ? '▾' : '▸'}</Text>
+      </Pressable>
+      {ouvert && (
+        <View style={{ gap: 2, maxHeight: 240, borderWidth: 1, borderRadius: 8, padding: 6, borderColor: theme.border }}>
+          <TextInput
+            value={recherche}
+            onChangeText={setRecherche}
+            placeholder="Rechercher…"
+            placeholderTextColor={theme.textMuted}
+            style={[s.input, { color: theme.text, borderColor: theme.border, flex: 0, minWidth: 200 }]}
+          />
+          {filtres.slice(0, 60).map((f) => (
+            <Pressable
+              key={f.relPath}
+              onPress={() => {
+                void setDefaultOpenSpecificPath(f.relPath);
+                setOuvert(false);
+              }}
+              accessibilityRole="button"
+              style={{ paddingVertical: 5, paddingHorizontal: 8, borderRadius: 6, backgroundColor: f.relPath === preferences.defaultOpenSpecificPath ? theme.accent : 'transparent' }}
+            >
+              <Text style={{ color: f.relPath === preferences.defaultOpenSpecificPath ? '#fff' : theme.text, fontSize: 13 }} numberOfLines={1}>
+                {f.nom}
+              </Text>
+            </Pressable>
+          ))}
+          {filtres.length > 60 && <Text style={[s.hint, { color: theme.textMuted }]}>+ {filtres.length - 60} autres…</Text>}
+        </View>
+      )}
+    </View>
+  );
+}
+
 export function FilesLinksSection() {
   const {
     preferences,
@@ -47,7 +124,6 @@ export function FilesLinksSection() {
     setAutoCreateWikilinkTarget,
     setFileSortMode,
     setDefaultOpenMode,
-    setDefaultOpenSpecificPath,
   } = usePreferences();
 
   // Champs texte en brouillon local, validés à la soumission (onBlur/Enter)
@@ -77,17 +153,6 @@ export function FilesLinksSection() {
 
   const submitCustomFolder = () => {
     void setNewNoteCustomFolder(customFolderDraft.trim());
-  };
-
-  const [specificPathDraft, setSpecificPathDraft] = useState(preferences.defaultOpenSpecificPath);
-  const [syncedSpecificPath, setSyncedSpecificPath] = useState(preferences.defaultOpenSpecificPath);
-  if (preferences.defaultOpenSpecificPath !== syncedSpecificPath) {
-    setSyncedSpecificPath(preferences.defaultOpenSpecificPath);
-    setSpecificPathDraft(preferences.defaultOpenSpecificPath);
-  }
-
-  const submitSpecificPath = () => {
-    void setDefaultOpenSpecificPath(specificPathDraft.trim());
   };
 
   return (
@@ -194,17 +259,7 @@ export function FilesLinksSection() {
           );
         })}
       </View>
-      {preferences.defaultOpenMode === 'specific' && (
-        <TextInput
-          value={specificPathDraft}
-          onChangeText={setSpecificPathDraft}
-          onSubmitEditing={submitSpecificPath}
-          onBlur={submitSpecificPath}
-          placeholder="ex. Notes/Journal.mdx"
-          placeholderTextColor={theme.textMuted}
-          style={[s.input, { color: theme.text, borderColor: theme.border, flex: 0, minWidth: 220 }]}
-        />
-      )}
+      {preferences.defaultOpenMode === 'specific' && <DefaultOpenFilePicker />}
       <Text style={[s.hint, { color: theme.textMuted }]}>
         Le fichier ouvert au démarrage de l’app (ou à l’activation d’un coffre) — l’explorateur se déplie et
         défile toujours jusqu’à lui, quel que soit le mode choisi ici.

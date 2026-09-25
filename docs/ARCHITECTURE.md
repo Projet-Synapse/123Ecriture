@@ -600,6 +600,18 @@ bas) sur le projet Supabase partagé "Projet Synapse".
   ressuscitant en boucle des fichiers supprimés (vécu : copies « (conflit
   2026-09-18…) » revenues sur LORDI puis re-téléchargées partout ; 16 lignes
   nettoyées à la main en base).
+- **Explorateur refondu** (v0.4.36) : lignes d'arborescence RÉELLES
+  (rails verticaux continus style IDE — chaque trait fait toute la hauteur
+  de ligne, empilés ils forment une ligne continue) ; icônes VECTORIELLES
+  SVG (dossier ouvert/fermé selon le repli, chevron dédié au repli, types
+  de fichiers différenciés par couleur — finis les emojis) ; EXTENSIONS
+  affichées à la fin des noms (.mdx, .canvas…) ; « Fichier ouvert par
+  défaut » RÉELLEMENT fonctionnel (sélecteur qui parcourt l'arbre du
+  coffre actif + recherche, remplace l'ancien champ texte à deviner) ;
+  dossiers SÉLECTIONNABLES — le clic ouvre l'APERÇU DU DOSSIER à la place
+  de l'éditeur (grille de cartes avec aperçu du texte des notes, filtre,
+  navigation dans les sous-dossiers — style Make.md d'Obsidian), le
+  chevron replie/déplie.
 - **Hiérarchie des couleurs + roues unifiées** (v0.4.35) : « couleur
   d'accent » devient **« couleur des boutons »**, au bout de la hiérarchie
   de conteneurs demandée : fond d'écran > carte (panneaux) > bordures/
