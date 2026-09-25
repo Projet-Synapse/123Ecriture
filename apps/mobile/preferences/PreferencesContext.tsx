@@ -383,9 +383,11 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       `body { font-family: ${theme.fontStack}; zoom: ${theme.fontScale}; }`,
     // Correctif v0.4.32 (vécu : « la police reste inchangée ») : les Text
     // RNWeb n'héritent PAS du font-family du body — on force l'héritage
-    // sur TOUT sauf l'éditeur CodeMirror (ses polices dédiées,
+    // sur tous les DESCENDANTS du body (jamais body lui-même : il
+    // porterait la police par défaut du navigateur — vécu en test réel) sauf
+    // l'éditeur CodeMirror (ses polices dédiées,
     // Paramètres → Éditeur, doivent primer).
-      `*:not(.cm-editor):not(.cm-content):not(.cm-gutters):not(.cm-tooltip) { font-family: inherit !important; }`,
+      `body *:not(.cm-editor):not(.cm-content):not(.cm-gutters):not(.cm-tooltip) { font-family: inherit !important; }`,
       `[role="button"] { border-radius: ${theme.buttonRadius}px !important; }`,
     ].join('\n');
   }, [theme.fontStack, theme.fontScale, theme.buttonRadius]);
