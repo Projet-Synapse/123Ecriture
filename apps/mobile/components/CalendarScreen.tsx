@@ -28,6 +28,9 @@ import { errorMessage } from '../lib/errorMessage';
 // Electron mais jamais exposé dans l'UI avant cette refonte.
 type Props = {
   onRequestOpenNote: (relPath: string) => void;
+  // v0.4.40 : ouvrir une TÂCHE depuis le panneau du jour (échéances) —
+  // même mécanique que requestOpenTask dans App.tsx.
+  onRequestOpenTask?: (taskListId: string, taskId: string) => void;
   // Révélation d'un jour demandée par un AUTRE écran (recherche globale,
   // palette de commandes — voir App.tsx, `requestOpenCalendarDate`, résultat
   // "évènement") : navigue vers le bon mois puis ouvre le panneau du jour.
@@ -44,6 +47,7 @@ type Props = {
 
 export function CalendarScreen({
   onRequestOpenNote,
+  onRequestOpenTask,
   pendingOpenDate,
   onOpenedPendingDate,
   pendingNewEventDate,
@@ -132,6 +136,39 @@ export function CalendarScreen({
       journalFolder.children.filter((child) => child.type === 'note').map((child) => child.name),
     );
   }, [tree]);
+
+  // v0.4.40 : tâches à ÉCHÉANCE du coffre — lues directement dans
+  // .123ecriture/tasks.json (liste plate avec dueDate AAAA-MM-JJ).
+  const [dueTasks, setDueTasks] = useState<Task[]>([]);
+  useEffect(() => {
+    if (!vaultPath) return;
+    let cancelled = false;
+    const load = async () => {
+      if (typeof window === 'undefined' || !window.vault?.readNote) return;
+      try {
+        const raw = await window.vault.readNote('.123ecriture/tasks.json');
+        const all = JSON.parse(raw) as Task[];
+        if (!cancelled) setDueTasks((Array.isArray(all) ? all : []).filter((t) => t.dueDate));
+      } catch {
+        if (!cancelled) setDueTasks([]);
+      }
+    };
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [vaultPath, tree]);
+
+  const dueTasksByDate = useMemo(() => {
+    const map = new Map<string, Task[]>();
+    for (const t of dueTasks) {
+      if (!t.dueDate) continue;
+      const list = map.get(t.dueDate) ?? [];
+      list.push(t);
+      map.set(t.dueDate, list);
+    }
+    return map;
+  }, [dueTasks]);
 
   const eventsByDate = useMemo(() => {
     const map = new Map<string, CalendarEvent[]>();
@@ -387,6 +424,7 @@ export function CalendarScreen({
   }
 
   const selectedDayEvents = selectedDate ? (eventsByDate.get(selectedDate) ?? []) : [];
+  const selectedDayTasks = selectedDate ? (dueTasksByDate.get(selectedDate) ?? []) : [];
   // Titre localisé du panneau du jour — calculé ici (et non en JSX) parce
   // que `selectedDate` n'y est pas narrow-able malgré le `visible` du Modal.
   const selectedDayLabel = selectedDate ? dayLabel(selectedDate) : '';
@@ -442,6 +480,15 @@ export function CalendarScreen({
                 </Text>
                 {hasNote && <Text style={styles.dayNoteDot}>📓</Text>}
               </View>
+              {(dueTasksByDate.get(day.dateIso) ?? []).slice(0, 1).map((t) => (
+                <Text
+                  key={t.id}
+                  numberOfLines={1}
+                  style={[styles.eventChip, { backgroundColor: `${theme.danger}22`, color: theme.text }]}
+                >
+                  ☑ {t.text}
+                </Text>
+              ))}
               {dayEvents.slice(0, 2).map((ev) => (
                 <Text
                   key={ev.id}
@@ -452,8 +499,10 @@ export function CalendarScreen({
                   {ev.title}
                 </Text>
               ))}
-              {dayEvents.length > 2 && (
-                <Text style={[styles.moreEvents, { color: theme.textMuted }]}>+{dayEvents.length - 2}</Text>
+              {dayEvents.length + (dueTasksByDate.get(day.dateIso)?.length ?? 0) > 2 && (
+                <Text style={[styles.moreEvents, { color: theme.textMuted }]}>
+                  +{dayEvents.length + (dueTasksByDate.get(day.dateIso)?.length ?? 0) - 2}
+                </Text>
               )}
             </Pressable>
           );
@@ -478,6 +527,26 @@ export function CalendarScreen({
             {dayActionError && <Text style={[styles.error, { color: theme.danger }]}>⚠️ {dayActionError}</Text>}
 
             <ScrollView style={styles.dayEventsList}>
+              {selectedDayTasks.length > 0 && (
+                <>
+                  <Text style={[styles.dayPanelTitle, { color: theme.textMuted, fontSize: 12, marginBottom: 4 }]}>
+                    Tâches à échéance
+                  </Text>
+                  {selectedDayTasks.map((t) => (
+                    <Pressable
+                      key={t.id}
+                      onPress={() => onRequestOpenTask?.(t.listId, t.id)}
+                      accessibilityRole="button"
+                      style={[styles.dayEventEdit, { borderColor: theme.danger, flexDirection: 'row', alignItems: 'center', gap: 8 }]}
+                    >
+                      <Text style={{ color: theme.text, flex: 1, fontSize: 13 }} numberOfLines={1}>
+                        ☑ {t.text}
+                      </Text>
+                      <Text style={{ color: theme.textMuted, fontSize: 11 }}>Ouvrir ›</Text>
+                    </Pressable>
+                  ))}
+                </>
+              )}
               {selectedDayEvents.map((ev) =>
                 editingEventId === ev.id ? (
                   <View key={ev.id} style={[styles.dayEventEdit, { borderColor: theme.accent }]}>
@@ -569,7 +638,7 @@ export function CalendarScreen({
                   </View>
                 ),
               )}
-              {selectedDayEvents.length === 0 && (
+              {selectedDayEvents.length === 0 && selectedDayTasks.length === 0 && (
                 <Text style={[styles.muted, { color: theme.textMuted }]}>Aucun évènement ce jour-là.</Text>
               )}
             </ScrollView>

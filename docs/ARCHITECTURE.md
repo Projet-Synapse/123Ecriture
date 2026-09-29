@@ -600,6 +600,18 @@ bas) sur le projet Supabase partagé "Projet Synapse".
   ressuscitant en boucle des fichiers supprimés (vécu : copies « (conflit
   2026-09-18…) » revenues sur LORDI puis re-téléchargées partout ; 16 lignes
   nettoyées à la main en base).
+- **Coffres = dossiers Obsidian + tâches enrichies** (v0.4.40) : les 5
+  coffres de l'app POINTENT désormais directement sur
+  `Documents\Obsidian\<nom>` (identités .123ecriture copiées à
+  l'identique — mêmes ids, synchro et réglages par coffre conservés) :
+  Obsidian et 123Ecriture éditent les MÊMES fichiers, chaque côté voit
+  les modifications de l'autre en temps réel. Écran Tâches : barre
+  latérale GAUCHE arborescente (style explorateur — listes = dossiers
+  ouverts, tâches = lignes avec badge d'échéance ; clic = ouvrir la
+  liste / déplier la fiche) en plus de la zone d'édition historique.
+  Calendrier : les tâches à ÉCHÉANCE apparaissent sur leur jour (chip
+  rouge ☑ distinct des évènements) et dans le panneau du jour (clic =
+  ouvrir la tâche dans l'écran Tâches).
 - **Groupes de barre d'outils personnalisés + graph navigable**
   (v0.4.39) : Paramètres → Éditeur → Barre d'outils Notes gagne une
   colonne « groupe… » par bouton — donner le MÊME nom à plusieurs actions
