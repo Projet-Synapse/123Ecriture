@@ -11,6 +11,7 @@ import {
 } from '../lib/taskDueDates';
 import { usePreferences } from '../preferences/PreferencesContext';
 import { ConfirmDialog } from './ConfirmDialog';
+import { FolderOpenIcon, NoteIconByKind } from './FileIcons';
 import { DraftTextField } from './DraftTextField';
 import { errorMessage } from '../lib/errorMessage';
 
@@ -216,6 +217,37 @@ export function TasksScreen({
     }),
     [taskListsBridge, runListAction],
   );
+
+  // v0.4.40 : alias sémantique pour la barre latérale (même mécanique que
+  // le sélecteur historique) + tâches de TOUTES les listes (l'arborescence
+  // latérale montre chaque liste avec ses tâches, pas seulement l'active).
+  const selectList = handleSwitchList;
+  const [tasksByList, setTasksByList] = useState<Record<string, Task[]>>({});
+  useEffect(() => {
+    if (!vault || taskLists.length === 0) return;
+    let cancelled = false;
+    const load = async () => {
+      // tasks.json est une liste PLATE de tâches avec listId (voir
+      // apps/desktop/electron/tasks.ts) — on la lit directement pour
+      // regrouper par liste, sans dépendre de la liste ACTIVE du pont.
+      try {
+        const raw = await vault.readNote('.123ecriture/tasks.json');
+        const all = JSON.parse(raw) as Task[];
+        const out: Record<string, Task[]> = {};
+        for (const list of taskLists) out[list.id] = [];
+        for (const task of Array.isArray(all) ? all : []) {
+          if (out[task.listId]) out[task.listId].push(task);
+        }
+        if (!cancelled) setTasksByList(out);
+      } catch {
+        if (!cancelled) setTasksByList({});
+      }
+    };
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [vault, taskLists, tasks]);
 
   const submitCreateList = useCallback(async () => {
     const name = createListDraft.trim();
@@ -694,7 +726,85 @@ export function TasksScreen({
   };
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, styles.screenRow]}>
+      {/* Barre latérale gauche (v0.4.40) — l'arborescence des listes et de
+          leurs tâches, même principe que l'explorateur de Notes (rail,
+          icônes, sélection). Cliquer une liste = l'ouvrir à droite ; cliquer
+          une tâche = ouvrir sa liste ET déplier sa fiche. */}
+      <View style={[styles.sidebar, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+        <Text style={[styles.sidebarTitle, { color: theme.textMuted }]}>Tâches</Text>
+        <ScrollView style={styles.sidebarScroll} nestedScrollEnabled>
+          {taskLists.length === 0 && (
+            <Text style={[styles.sidebarMuted, { color: theme.textMuted }]}>Aucune liste.</Text>
+          )}
+          {taskLists.map((list) => {
+            const isListActive = list.id === activeListId;
+            const listTasks = tasksByList[list.id] ?? [];
+            return (
+              <View key={list.id}>
+                <Pressable
+                  onPress={() => void selectList(list.id)}
+                  accessibilityRole="button"
+                  style={[
+                    styles.sidebarRow,
+                    isListActive && { backgroundColor: `${theme.accent}22` },
+                  ]}
+                >
+                  <FolderOpenIcon size={15} />
+                  <Text
+                    style={{ color: isListActive ? theme.accent : theme.text, fontSize: 13, fontWeight: '600', flex: 1 }}
+                    numberOfLines={1}
+                  >
+                    {list.name}
+                  </Text>
+                  <Text style={{ color: theme.textMuted, fontSize: 11 }}>
+                    {listTasks.filter((t) => !t.done).length}
+                  </Text>
+                </Pressable>
+                {listTasks.map((task) => {
+                  const isActive = isListActive && task.id === expandedTaskId;
+                  return (
+                    <Pressable
+                      key={task.id}
+                      onPress={() => {
+                        if (!isListActive) void selectList(list.id);
+                        setExpandedTaskId(task.id);
+                      }}
+                      accessibilityRole="button"
+                      style={[
+                        styles.sidebarRow,
+                        styles.sidebarTaskRow,
+                        isActive && { backgroundColor: `${theme.accent}22` },
+                      ]}
+                    >
+                      <NoteIconByKind kind="markdown" size={12} />
+                      <Text
+                        style={{
+                          color: task.done ? theme.textMuted : theme.text,
+                          fontSize: 12,
+                          flex: 1,
+                          textDecorationLine: task.done ? 'line-through' : 'none',
+                        }}
+                        numberOfLines={1}
+                      >
+                        {task.text}
+                      </Text>
+                      {dueDateBadge(task) && (
+                        <Text style={{ color: dueDateBadge(task)!.color, fontSize: 10 }}>
+                          {task.dueDate!.slice(5)}
+                        </Text>
+                      )}
+                    </Pressable>
+                  );
+                })}
+              </View>
+            );
+          })}
+        </ScrollView>
+      </View>
+
+      {/* Colonne droite : l'écran historique (en-tête de liste + édition) */}
+      <View style={styles.mainColumn}>
       <View style={styles.listHeaderRow}>
         {isRenamingActiveList ? (
           <TextInput
@@ -875,11 +985,52 @@ export function TasksScreen({
           onSettled={() => setConfirmDeleteList(null)}
         />
       )}
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  // v0.4.40 : disposition à deux colonnes (sidebar arborescente + édition).
+  screenRow: {
+    flexDirection: 'row',
+  },
+  sidebar: {
+    width: 230,
+    borderRightWidth: 1,
+    padding: 8,
+    gap: 4,
+  },
+  sidebarTitle: {
+    fontSize: 11,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    paddingHorizontal: 6,
+    paddingBottom: 4,
+  },
+  sidebarScroll: {
+    flex: 1,
+  },
+  sidebarRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 6,
+    borderRadius: 6,
+  },
+  sidebarTaskRow: {
+    paddingLeft: 22,
+  },
+  sidebarMuted: {
+    fontSize: 12,
+    paddingHorizontal: 6,
+  },
+  mainColumn: {
+    flex: 1,
+    minWidth: 0,
+  },
   container: {
     flex: 1,
     padding: 20,

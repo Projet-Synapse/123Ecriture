@@ -119,6 +119,7 @@ function Root() {
     content = (
       <CalendarScreen
         onRequestOpenNote={requestOpenNote}
+        onRequestOpenTask={requestOpenTask}
         pendingOpenDate={pendingOpenCalendarDate}
         onOpenedPendingDate={clearPendingOpenCalendarDate}
         pendingNewEventDate={pendingNewEventDate}
