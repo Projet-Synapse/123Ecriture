@@ -1,11 +1,24 @@
+import { Alert } from 'react-native';
+
 import { registerRootComponent } from 'expo';
 
 import App from './App';
 import { installNativeBridges } from './lib/storage/installNativeBridges';
 import { installWebBridges } from './lib/storage/installWebBridges';
 
-// Pose window.vault/window.vaults sur Android natif avant le premier rendu
-// (voir lib/storage/installNativeBridges.ts) — no-op sur web/Electron.
+// v0.4.40-diag : en build RELEASE, une erreur JS non capturée terminait
+// l'app sans AUCUN message (pas de red box en production) — l'utilisatrice
+// ne voyait qu'un crash mystère. Ce gestionnaire GLOBAL l'intercepte et
+// AFFICHE le stack à l'écran (Alert natif, disponible en release) pour
+// diagnostic. À retirer une fois la cause corrigée.
+ErrorUtils.setGlobalHandler((error, isFatal) => {
+  const stack = error && (error as { stack?: string }).stack ? String((error as { stack?: string }).stack) : String(error);
+  try {
+    Alert.alert(isFatal ? 'Erreur fatale' : 'Erreur', stack.slice(0, 1500));
+  } catch {
+    // Alert indisponible — rien de plus à faire, le log système garde le stack.
+  }
+});
 installNativeBridges();
 
 // Pose les ponts web (File System Access API) avant le premier rendu en
