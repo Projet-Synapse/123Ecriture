@@ -1,4 +1,6 @@
+import React from 'react';
 import { StatusBar } from 'expo-status-bar';
+import { Text, View } from 'react-native';
 import { useCallback, useRef, useState } from 'react';
 
 import { AppShell, type NotesActions } from './components/AppShell';
@@ -14,6 +16,36 @@ import { SyncStatusProvider } from './lib/sync/SyncStatusContext';
 import { VaultsProvider } from './lib/sync/VaultsContext';
 import { SECTIONS } from './navigation';
 import { PreferencesProvider } from './preferences/PreferencesContext';
+
+// v0.4.40-diag : barrière d'erreur de rendu — en release, une exception
+// React démontait l'app entière sans message. Affiche le stack à l'écran.
+class RootErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { error: Error | null }
+> {
+  state = { error: null as Error | null };
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+  componentDidCatch(error: Error) {
+    console.error('[diag] erreur de rendu :', error);
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <View style={{ flex: 1, padding: 24, justifyContent: 'center', backgroundColor: '#fff' }}>
+          <Text style={{ color: '#dc2626', fontWeight: '700', marginBottom: 12 }}>
+            Erreur de rendu (diagnostic)
+          </Text>
+          <Text style={{ color: '#111', fontSize: 12 }} selectable>
+            {String(this.state.error.stack || this.state.error).slice(0, 2000)}
+          </Text>
+        </View>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 function Root() {
   const { theme } = usePreferences();
@@ -165,7 +197,9 @@ export default function App() {
               d'un coffre actif pour savoir s'il y a quoi que ce soit à
               synchroniser (voir SyncStatusContext.tsx). */}
           <SyncStatusProvider>
-            <Root />
+            <RootErrorBoundary>
+              <Root />
+            </RootErrorBoundary>
           </SyncStatusProvider>
         </PreferencesProvider>
       </AuthProvider>
