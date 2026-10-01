@@ -25,9 +25,10 @@ ErrorUtils.setGlobalHandler((error, isFatal) => {
   } catch {
     // Alert indisponible — logcat garde le stack.
   }
-  if (__DEV__) {
-    console.error('[crash]', stack);
-  }
+  // v0.4.40-diag4 : TOUJOURS logger en logcat (lisible par `adb logcat`
+  // avec le débogage USB, même en release) — le fichier seul ne suffit pas
+  // si l'app crash avant que le fichier soit lu.
+  console.error('[crash-diag]', stack);
 });
 
 // Export vide : ce module n'existe que pour son effet d'installation.

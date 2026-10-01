@@ -1,3 +1,4 @@
+import { Platform } from 'react-native';
 import type { Session } from '@supabase/supabase-js';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
@@ -32,8 +33,14 @@ function webRedirectTo(): string {
   return `${window.location.origin}${canonical.endsWith('/') ? canonical : `${canonical}/`}`;
 }
 
+// v0.4.41 — CORRECTIF DU CRASH ANDROID : `window` existe sur React Native
+// natif MAIS `window.location` n'existe pas (notion navigateur) — l'ancien
+// test `typeof window !== 'undefined'` appelait webRedirectTo() sur
+// Android, plantant le chargement du module (TypeError « pathname of
+// undefined »), ce qui avortait tout le bundle (« main has not been
+// registered »). Test fiable : Platform.OS === 'web' uniquement.
 const REDIRECT_TO =
-  typeof window !== 'undefined' && !IS_ELECTRON ? webRedirectTo() : 'app123ecriture://auth-callback';
+  Platform.OS === 'web' && !IS_ELECTRON ? webRedirectTo() : 'app123ecriture://auth-callback';
 
 type AuthUser = { id: string; email: string | null };
 
