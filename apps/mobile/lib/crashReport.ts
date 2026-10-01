@@ -9,8 +9,19 @@ import { Alert } from 'react-native';
 ErrorUtils.setGlobalHandler((error, isFatal) => {
   const err = error as { stack?: string; message?: string } | undefined;
   const stack = err?.stack || err?.message || String(error);
+  const bloc = '=== ERREUR ' + (isFatal ? 'FATALE' : 'non-fatale') + ' ' + new Date().toISOString() + ' ===' + String.fromCharCode(10) + stack.slice(0, 2000) + String.fromCharCode(10, 10);
   try {
-    Alert.alert(isFatal ? 'Erreur fatale (JS)' : 'Erreur (JS)', stack.slice(0, 1500));
+    const FileSystem = require('expo-file-system');
+    void FileSystem.writeAsStringAsync(
+      FileSystem.documentDirectory + 'crash-js.txt',
+      bloc,
+      { encoding: FileSystem.EncodingType.UTF8 },
+    ).catch(() => undefined);
+  } catch {
+    // canal fichier indisponible
+  }
+  try {
+    Alert.alert(isFatal ? 'Erreur fatale (JS)' : 'Erreur (JS)', stack.slice(0, 1200));
   } catch {
     // Alert indisponible — logcat garde le stack.
   }
@@ -20,4 +31,25 @@ ErrorUtils.setGlobalHandler((error, isFatal) => {
 });
 
 // Export vide : ce module n'existe que pour son effet d'installation.
-export {};
+// Erreur rapportée par un appelant (ponts, initialisation) — même canal
+// fichier + Alert que le gestionnaire global.
+export function reportError(source: string, error: unknown): void {
+  const err = error as { stack?: string; message?: string } | undefined;
+  const stack = err?.stack || err?.message || String(error);
+  const bloc = '=== ERREUR ' + source + ' ' + new Date().toISOString() + ' ===' + String.fromCharCode(10) + stack.slice(0, 2000) + String.fromCharCode(10, 10);
+  try {
+    const FileSystem = require('expo-file-system');
+    void FileSystem.writeAsStringAsync(
+      FileSystem.documentDirectory + 'crash-js.txt',
+      bloc,
+      { encoding: FileSystem.EncodingType.UTF8 },
+    ).catch(() => undefined);
+  } catch {
+    // canal fichier indisponible
+  }
+  try {
+    Alert.alert('Erreur (JS) — ' + source, stack.slice(0, 1200));
+  } catch {
+    // pas d'Alert
+  }
+}
