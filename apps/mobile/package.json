@@ -1,6 +1,6 @@
 {
   "name": "@123ecriture/mobile",
-  "version": "0.4.40",
+  "version": "0.4.41",
   "private": true,
   "main": "index.ts",
   "scripts": {
