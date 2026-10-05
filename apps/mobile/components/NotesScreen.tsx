@@ -1767,30 +1767,7 @@ export function NotesScreen({
     applyFormatting(action.run);
   };
 
-  const toolbarItems = (() => {
-    const items: { id: string; label: string; onPress?: () => void; subItems?: { id: string; label: string; onPress: () => void }[]; divider?: boolean }[] = [];
-    preferences.notesToolbarGroups.forEach((group, groupIndex) => {
-      if (groupIndex > 0) {
-        items.push({ id: `divider-${group.id}`, label: '', divider: true });
-      }
-      const resolved = group.buttons
-        .map((id) => NOTES_TOOLBAR_ACTIONS.find((action) => action.id === id))
-        .filter((action): action is ToolbarAction => Boolean(action));
-      if (group.collapsible) {
-        items.push({
-          id: `group-${group.id}`,
-          label: group.label,
-          subItems: resolved.map((action) => ({ id: action.id, label: action.label, onPress: () => runToolbarAction(action) })),
-        });
-      } else {
-        resolved.forEach((action, index) => {
-          if (index > 0) items.push({ id: `divider-${group.id}-${index}`, label: '', divider: true });
-          items.push({ id: action.id, label: action.label, onPress: () => runToolbarAction(action) });
-        });
-      }
-    });
-    return items;
-  })();
+
 
   // //8. ⭐ FAVORIS
   // //////////////////////////////////////////////////////////////////////
@@ -2480,7 +2457,34 @@ export function NotesScreen({
                         repliable (voir PropertiesBlock.tsx) pour rester moins
                         gênante pendant la frappe. */}
                     {!isNativeNotes && effectiveViewMode !== 'reading' && (
-                      <EditorToolbar items={toolbarItems} theme={theme} />
+                      <EditorToolbar
+items={(() => {
+                          const items: { id: string; label: string; onPress?: () => void; subItems?: { id: string; label: string; onPress: () => void }[]; divider?: boolean }[] = [];
+                          preferences.notesToolbarGroups.forEach((group, groupIndex) => {
+                            if (groupIndex > 0) {
+                              items.push({ id: `divider-${group.id}`, label: '', divider: true });
+                            }
+                            const resolved = group.buttons
+                              .map((id) => NOTES_TOOLBAR_ACTIONS.find((action) => action.id === id))
+                              .filter((action): action is ToolbarAction => Boolean(action));
+                            if (group.collapsible) {
+                              items.push({
+                                id: `group-${group.id}`,
+                                label: group.label,
+                                subItems: resolved.map((action) => ({ id: action.id, label: action.label, onPress: () => runToolbarAction(action) })),
+                              });
+                            } else {
+                              resolved.forEach((action, index) => {
+                                if (index > 0) items.push({ id: `divider-${group.id}-${index}`, label: '', divider: true });
+                                items.push({ id: action.id, label: action.label, onPress: () => runToolbarAction(action) });
+                              });
+                            }
+                          });
+                          return items;
+
+                                          })()}
+                        theme={theme}
+                      />
                     )}
 
                     <View style={styles.editorBody}>

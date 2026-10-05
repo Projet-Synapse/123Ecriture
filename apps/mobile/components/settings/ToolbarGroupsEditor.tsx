@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { NOTES_TOOLBAR_DESCRIPTIONS, type ToolbarActionId } from '../../lib/notesToolbarActions';
+import type { ToolbarActionId } from '../../lib/notesToolbarActions';
 import type { Theme } from '../../theme';
 import { settingsStyles as s } from './settingsStyles';
 
@@ -32,9 +32,6 @@ export function ToolbarGroupsEditor({ groups, descriptions, onChange, theme }: P
 
   const setGroup = (groupId: string, patch: Partial<NotesToolbarGroup>) =>
     onChange(groups.map((g) => (g.id === groupId ? { ...g, ...patch } : g)));
-
-  const removeButton = (groupId: string, buttonId: string) =>
-    onChange(groups.map((g) => (g.id === groupId ? { ...g, buttons: g.buttons.filter((b: string) => b !== buttonId) } : g)));
 
   const addButton = (groupId: string, buttonId: string, index?: number) =>
     onChange(
