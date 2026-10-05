@@ -1,4 +1,4 @@
-import { Fragment, type ComponentProps, type ComponentType } from 'react';
+import { Fragment, memo, type ComponentProps, type ComponentType } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import type { Theme } from '../theme';
@@ -99,7 +99,12 @@ type Props = {
 // //2. 🌳 PROPS/RENDU
 // ////////////////////////////////////////////////////////////////////////
 
-export function VaultTreeView({
+// Mémoïsé (voir propsAreEqual en bas de fichier) : chaque FRAPPE re-rend
+// NotesScreen en entier (le contenu de la note est son state) et ce
+// sous-arbre représente des centaines de lignes sur un gros coffre — le
+// re-rendu par frappe était le premier coût de frappe ressenti sur PC
+// (Intermédiaire, 2026-10-05).
+function VaultTreeViewImpl({
   nodes,
   depth = 0,
   theme,
@@ -239,7 +244,7 @@ export function VaultTreeView({
               </View>
             )}
             {isFolder && !isCollapsed && (
-              <VaultTreeView
+              <VaultTreeViewImpl
                 nodes={node.children}
                 depth={depth + 1}
                 theme={theme}
@@ -262,6 +267,29 @@ export function VaultTreeView({
     </>
   );
 }
+
+// Comparateur : ignore VOLONTAIREMENT les props fonctions (onOpenNote,
+// onToggleCollapse, onOpenFolder, onNodeLongPress, rename.*) — chacune
+// ferme sur un état couvert par une prop comparée ci-dessus (tree,
+// activeRelPath, selectedRelPaths, collapsedPaths…), donc un handler
+// périmé ne peut pas survivre à un changement visible de l'arbre.
+function vaultTreePropsAreEqual(prev: Props, next: Props): boolean {
+  return (
+    prev.nodes === next.nodes &&
+    prev.theme === next.theme &&
+    prev.activeRelPath === next.activeRelPath &&
+    prev.activeFolderRelPath === next.activeFolderRelPath &&
+    prev.collapsedPaths === next.collapsedPaths &&
+    prev.selectedRelPaths === next.selectedRelPaths &&
+    prev.draggingRelPath === next.draggingRelPath &&
+    prev.dragOverInsertion === next.dragOverInsertion &&
+    prev.dragEnabled === next.dragEnabled &&
+    prev.rename?.relPath === next.rename?.relPath &&
+    prev.rename?.value === next.rename?.value
+  );
+}
+
+export const VaultTreeView = memo(VaultTreeViewImpl, vaultTreePropsAreEqual);
 
 // //3. 🎨 STYLES
 // ////////////////////////////////////////////////////////////////////////

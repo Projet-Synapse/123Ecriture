@@ -2,6 +2,7 @@
 // contextBridge. N'existent que côté Electron desktop (window.vault,
 // window.updater, window.preferences, window.contextMenu sont undefined
 // sur web/mobile — Phase 2 pour ces plateformes).
+import type { NotesToolbarGroup as SharedNotesToolbarGroup } from '../lib/notesToolbarActions';
 export {};
 
 declare global {
@@ -454,6 +455,11 @@ declare global {
     group?: string;
   }
 
+  // Groupes CONTENEURS de la barre d'outils Notes (v0.4.43) — ordonnés,
+  // nommables, dépliants ou non, portant leurs boutons dans l'ordre (voir
+  // lib/notesToolbarActions.ts). Un bouton absent des groupes est masqué.
+  type NotesToolbarGroup = SharedNotesToolbarGroup;
+
   type NewNoteLocation = 'vaultRoot' | 'sameFolder' | 'custom';
 
   type EditorViewMode = 'source' | 'split' | 'reading';
@@ -483,6 +489,7 @@ declare global {
     themeMode: ThemeMode;
     accentColor: string;
     notesToolbarOrder: ToolbarItemConfig[];
+    notesToolbarGroups: NotesToolbarGroup[];
     canvasToolbarOrder: ToolbarItemConfig[];
     chartToolbarOrder: ToolbarItemConfig[];
     // Paramètres → Gestion des fichiers et des liens.

@@ -19,6 +19,19 @@ import { AudioEmbed } from './AudioEmbed';
 // côté. D'où ce petit type élargi plutôt qu'un `any`.
 type NodeWithMeta = ASTNode & { sourceMeta?: { target?: string } };
 
+// Style d'un titre d'aperçu — taille par niveau (voir les rules) + mise en
+// forme commune. `node.children` est l'arbre déjà rendu par la lib (gras,
+// liens… imbriqués conservés).
+function headingStyle(theme: Theme, fontSize: number): { fontSize: number; fontWeight: '700'; color: string; marginTop: number; marginBottom: number } {
+  return {
+    fontSize,
+    fontWeight: '700',
+    color: theme.text,
+    marginTop: fontSize >= 24 ? 14 : 8,
+    marginBottom: 4,
+  };
+}
+
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg']);
 const AUDIO_EXTENSIONS = new Set(['.mp3', '.wav', '.ogg', '.m4a', '.flac']);
 
@@ -90,6 +103,29 @@ export function NoteRenderer({ content, theme, onOpenWikilink, knownOccurrenceWo
 
   const rules: RenderRules = useMemo(
     () => ({
+      // Taille PAR NIVEAU, explicite (demande 2026-10-05) : les défauts de
+      // la lib mettaient h5 à 13px — SOUS la taille du corps, ce qui
+      // aplatissait les notes structurées en #####. Échelle alignée sur le
+      // mode Intermédiaire (base ~16px) : chaque niveau reste au-dessus du
+      // corps, gras, avec un respiration verticale.
+      heading1: (node, children) => (
+        <Text key={node.key} style={headingStyle(theme, 32)}>{children}</Text>
+      ),
+      heading2: (node, children) => (
+        <Text key={node.key} style={headingStyle(theme, 27)}>{children}</Text>
+      ),
+      heading3: (node, children) => (
+        <Text key={node.key} style={headingStyle(theme, 24)}>{children}</Text>
+      ),
+      heading4: (node, children) => (
+        <Text key={node.key} style={headingStyle(theme, 20)}>{children}</Text>
+      ),
+      heading5: (node, children) => (
+        <Text key={node.key} style={headingStyle(theme, 18)}>{children}</Text>
+      ),
+      heading6: (node, children) => (
+        <Text key={node.key} style={headingStyle(theme, 16)}>{children}</Text>
+      ),
       wikilink: (node) => {
         const target = String((node as NodeWithMeta).sourceMeta?.target ?? node.content);
         return (

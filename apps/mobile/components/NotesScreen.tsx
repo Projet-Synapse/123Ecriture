@@ -397,17 +397,7 @@ export function NotesScreen({
   // un ref/state React ni de la "forcer" après coup.
   const viewRef = useRef<EditorView | null>(null);
 
-  const toolbarActions: ToolbarAction[] = preferences.notesToolbarOrder
-    .filter((item) => item.visible)
-    .map((item) => NOTES_TOOLBAR_ACTIONS.find((action) => action.id === item.id))
-    .filter((action): action is ToolbarAction => Boolean(action));
 
-  // v0.4.39 : GROUPES PERSONNALISÉS (Paramètres → Éditeur, champ « groupe… »)
-  // — les actions partageant un même nom de groupe deviennent UN bouton
-  // dépliable (libellé = nom du groupe, seconde rangée = les actions dans
-  // l'ordre de la config). Les actions sans groupe restent individuelles.
-  const groupOf = (id: string): string | undefined =>
-    preferences.notesToolbarOrder.find((item) => item.id === id)?.group;
   // Raccourcis clavier de mise en forme (voir MdxEditor.tsx, prop
   // `shortcuts`) — dérivés de TOUTES les actions connues, pas seulement
   // `toolbarActions` (visibles) : masquer un bouton dans Paramètres est une
@@ -1540,6 +1530,7 @@ export function NotesScreen({
     scheduleSave(text);
   };
 
+
   // Sauvegarde immédiate (Ctrl/Cmd+S) : court-circuite le debounce de
   // scheduleSave plutôt que d'attendre AUTOSAVE_DELAY_MS — l'autosave existe
   // déjà pour ne rien perdre, mais un raccourci "Enregistrer" qui attend
@@ -1751,6 +1742,55 @@ export function NotesScreen({
       setAttachmentError(errorMessage(error));
     }
   }, [vault, activeNote, content, scheduleSave]);
+
+  // Barre d'outils depuis les GROUPES (v0.4.43, Paramètres → Éditeur) :
+  // groupe dépliant = un bouton qui déploie sa rangée au survol/appui ;
+  // groupe ouvert = boutons côte à côte, séparés entre groupes. Annuler/
+  // Rétablir (commands CodeMirror natives) et Pièce jointe (importAttachment
+  // + insert au curseur) sont des ids de la config branchés sur leurs
+  // handlers réels.
+  const runToolbarAction = (action: ToolbarAction) => {
+    if (action.id === 'attach') {
+      void handleInsertAttachment();
+      return;
+    }
+    if (action.id === 'undo') {
+      const view = viewRef.current;
+      if (view) void import('@codemirror/commands').then(({ undo }) => undo(view));
+      return;
+    }
+    if (action.id === 'redo') {
+      const view = viewRef.current;
+      if (view) void import('@codemirror/commands').then(({ redo }) => redo(view));
+      return;
+    }
+    applyFormatting(action.run);
+  };
+
+  const toolbarItems = (() => {
+    const items: { id: string; label: string; onPress?: () => void; subItems?: { id: string; label: string; onPress: () => void }[]; divider?: boolean }[] = [];
+    preferences.notesToolbarGroups.forEach((group, groupIndex) => {
+      if (groupIndex > 0) {
+        items.push({ id: `divider-${group.id}`, label: '', divider: true });
+      }
+      const resolved = group.buttons
+        .map((id) => NOTES_TOOLBAR_ACTIONS.find((action) => action.id === id))
+        .filter((action): action is ToolbarAction => Boolean(action));
+      if (group.collapsible) {
+        items.push({
+          id: `group-${group.id}`,
+          label: group.label,
+          subItems: resolved.map((action) => ({ id: action.id, label: action.label, onPress: () => runToolbarAction(action) })),
+        });
+      } else {
+        resolved.forEach((action, index) => {
+          if (index > 0) items.push({ id: `divider-${group.id}-${index}`, label: '', divider: true });
+          items.push({ id: action.id, label: action.label, onPress: () => runToolbarAction(action) });
+        });
+      }
+    });
+    return items;
+  })();
 
   // //8. ⭐ FAVORIS
   // //////////////////////////////////////////////////////////////////////
@@ -2421,9 +2461,9 @@ export function NotesScreen({
                             </Text>
                           </Pressable>
                         ))}
-                      <Pressable onPress={() => void handleInsertAttachment()} style={styles.attachButton}>
-                        <Text style={{ color: theme.textMuted }}>📎 Joindre un fichier</Text>
-                      </Pressable>
+                      {/* Pièce jointe : désormais un bouton de la barre
+                          d'outils (groupe « Divers » par défaut, demande
+                          2026-10-05) — ce bouton à part est retiré. */}
                     </View>
                     {attachmentError && <Text style={[styles.error, { color: theme.danger }]}>⚠️ {attachmentError}</Text>}
                     {wikilinkNotice && <Text style={[styles.error, { color: theme.danger }]}>⚠️ {wikilinkNotice}</Text>}
@@ -2440,58 +2480,7 @@ export function NotesScreen({
                         repliable (voir PropertiesBlock.tsx) pour rester moins
                         gênante pendant la frappe. */}
                     {!isNativeNotes && effectiveViewMode !== 'reading' && (
-                      <EditorToolbar
-                        items={[
-                          // Annuler/Rétablir (v0.4.38) — commandes CodeMirror
-                          // NATIVES via l'EditorView (historique intégré).
-                          {
-                            id: 'undo',
-                            label: '↩',
-                            onPress: () => {
-                              const view = viewRef.current;
-                              if (view) {
-                                void import('@codemirror/commands').then(({ undo }) => undo(view));
-                              }
-                            },
-                          },
-                          {
-                            id: 'redo',
-                            label: '↪',
-                            onPress: () => {
-                              const view = viewRef.current;
-                              if (view) {
-                                void import('@codemirror/commands').then(({ redo }) => redo(view));
-                              }
-                            },
-                          },
-                          ...toolbarActions
-                            .filter((a) => /^h[1-6]$/.test(a.id) && !groupOf(a.id))
-                            .map((action, index, all) => ({
-                              // Groupe « Hn » : le PREMIER titre porte les
-                              // sous-items H* (bouton dépliable) ; les
-                              // suivants sont masqués (id vide).
-                              id: index === 0 ? 'headings-group' : '',
-                              label: index === 0 ? 'Hn' : '',
-                              subItems:
-                                index === 0
-                                  ? all.map((a) => ({
-                                      id: a.id,
-                                      label: a.label,
-                                      onPress: () => applyFormatting(a.run),
-                                    }))
-                                  : undefined,
-                            }))
-                            .filter((item) => item.id !== ''),
-                          ...toolbarActions
-                            .filter((a) => !/^h[1-6]$/.test(a.id) && groupOf(a.id) === undefined)
-                            .map((action) => ({
-                              id: action.id,
-                              label: action.label,
-                              onPress: () => applyFormatting(action.run),
-                            })),
-                        ]}
-                        theme={theme}
-                      />
+                      <EditorToolbar items={toolbarItems} theme={theme} />
                     )}
 
                     <View style={styles.editorBody}>

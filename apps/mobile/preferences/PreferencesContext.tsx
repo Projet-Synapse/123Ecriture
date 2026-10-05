@@ -3,7 +3,13 @@ import { useColorScheme } from 'react-native';
 
 import { DEFAULT_CANVAS_TOOLBAR_ORDER } from '../lib/canvasToolbarActions';
 import { DEFAULT_CHART_TOOLBAR_ORDER } from '../lib/chartToolbarActions';
-import { DEFAULT_NOTES_TOOLBAR_ORDER, normalizeNotesToolbarOrder } from '../lib/notesToolbarActions';
+import {
+  DEFAULT_NOTES_TOOLBAR_ORDER,
+  DEFAULT_NOTES_TOOLBAR_GROUPS,
+  migrateNotesToolbarGroups,
+  normalizeNotesToolbarGroups,
+  normalizeNotesToolbarOrder,
+} from '../lib/notesToolbarActions';
 import {
   buildTheme,
   parseVaultAppearance,
@@ -31,6 +37,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   themeMode: 'system',
   accentColor: lightTheme.accent,
   notesToolbarOrder: DEFAULT_NOTES_TOOLBAR_ORDER,
+  notesToolbarGroups: DEFAULT_NOTES_TOOLBAR_GROUPS.map((group) => ({ ...group, buttons: [...group.buttons] })),
   canvasToolbarOrder: DEFAULT_CANVAS_TOOLBAR_ORDER,
   chartToolbarOrder: DEFAULT_CHART_TOOLBAR_ORDER,
   attachmentsFolder: 'attachments',
@@ -96,6 +103,7 @@ type PreferencesContextValue = {
   // celui du mode SÉLECTIONNÉ, pas forcément actif).
   wallpapers: { light?: string; dark?: string };
   setNotesToolbarOrder: (order: ToolbarItemConfig[]) => Promise<void>;
+  setNotesToolbarGroups: (groups: NotesToolbarGroup[]) => Promise<void>;
   setCanvasToolbarOrder: (order: ToolbarItemConfig[]) => Promise<void>;
   setChartToolbarOrder: (order: ToolbarItemConfig[]) => Promise<void>;
   setAttachmentsFolder: (folder: string) => Promise<void>;
@@ -210,6 +218,12 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
         // niveaux individuels, sans quoi ce bouton disparaîtrait de la
         // barre pour une utilisatrice ayant déjà personnalisé son ordre.
         merged.notesToolbarOrder = normalizeNotesToolbarOrder(merged.notesToolbarOrder);
+        // Groupes v0.4.43 : si la préférence n'existe pas encore sur disque,
+        // migration depuis l'ancien ordre plat (respect des masqués/groupes
+        // d'alors) ; sinon simple complétion des boutons nouveaux.
+        merged.notesToolbarGroups = stored?.notesToolbarGroups
+          ? normalizeNotesToolbarGroups(stored.notesToolbarGroups)
+          : migrateNotesToolbarGroups(stored?.notesToolbarOrder);
         setPreferences(merged);
       })
       .catch((error) => console.error('[preferences] échec du chargement :', error))
@@ -274,6 +288,10 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
   }, []);
   const setNotesToolbarOrder = useCallback(
     (order: ToolbarItemConfig[]) => persist({ notesToolbarOrder: order }),
+    [persist],
+  );
+  const setNotesToolbarGroups = useCallback(
+    (groups: NotesToolbarGroup[]) => persist({ notesToolbarGroups: groups }),
     [persist],
   );
   const setCanvasToolbarOrder = useCallback(
@@ -468,6 +486,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       importWallpaper,
       clearWallpaper,
       setNotesToolbarOrder,
+      setNotesToolbarGroups,
       setCanvasToolbarOrder,
       setChartToolbarOrder,
       setAttachmentsFolder,
@@ -508,6 +527,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       importWallpaper,
       clearWallpaper,
       setNotesToolbarOrder,
+      setNotesToolbarGroups,
       setCanvasToolbarOrder,
       setChartToolbarOrder,
       setAttachmentsFolder,

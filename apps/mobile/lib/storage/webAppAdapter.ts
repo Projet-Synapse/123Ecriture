@@ -25,6 +25,12 @@ import { WEB_PREFERENCES_KEY } from './webVaultAdapter';
 const DEFAULT_PREFERENCES: Preferences = {
   themeMode: 'system',
   accentColor: '#4f46e5',
+  notesToolbarGroups: [
+    { id: 'titres', label: 'Titres', collapsible: true, buttons: ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'] },
+    { id: 'mise-en-forme', label: 'Mise en forme', collapsible: false, buttons: ['undo', 'redo', 'bold', 'italic', 'code', 'quote'] },
+    { id: 'listes-liens', label: 'Listes & liens', collapsible: false, buttons: ['bullet', 'numbered', 'link'] },
+    { id: 'divers', label: 'Divers', collapsible: false, buttons: ['table', 'attach'] },
+  ],
   notesToolbarOrder: [
     { id: 'heading-group', visible: true },
     { id: 'bold', visible: true },

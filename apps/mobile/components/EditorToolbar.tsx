@@ -30,6 +30,9 @@ type Item = {
   label: string;
   onPress?: () => void;
   subItems?: SubItem[];
+  // Séparateur vertical entre groupes (v0.4.43) : rien n'est rendu à part
+  // un trait fin — le label/id sont ignorés.
+  divider?: boolean;
 };
 
 type Props = {
@@ -48,12 +51,19 @@ export function EditorToolbar({ items, theme }: Props) {
     <View style={[styles.container, { borderColor: theme.border }]}>
       <View style={styles.toolbar}>
         {items.map((item) => {
+          if (item.divider) {
+            return <View key={item.id} style={[styles.divider, { backgroundColor: theme.border }]} />;
+          }
           const isGroup = Boolean(item.subItems);
           const isOpen = isGroup && item.id === openGroupId;
           return (
             <Pressable
               key={item.id}
               onPress={() => (isGroup ? setOpenGroupId(isOpen ? null : item.id) : item.onPress?.())}
+              // Groupe dépliant : le survol (PC) OU l'appui (tactile) suffit
+              // à le déployer — plus besoin de cliquer (demande 2026-10-05).
+              onHoverIn={() => isGroup && setOpenGroupId(item.id)}
+              onPressIn={() => isGroup && setOpenGroupId(item.id)}
               style={[
                 styles.toolbarButton,
                 { backgroundColor: theme.surface },
@@ -89,6 +99,12 @@ export function EditorToolbar({ items, theme }: Props) {
 }
 
 const styles = StyleSheet.create({
+  divider: {
+    width: 1,
+    alignSelf: 'stretch',
+    marginHorizontal: 4,
+    marginVertical: 6,
+  },
   container: {
     borderBottomWidth: 1,
     paddingBottom: 10,

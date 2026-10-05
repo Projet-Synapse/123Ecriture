@@ -244,7 +244,11 @@ function buildDecorations(view: EditorView, colors: LivePreviewColors, callbacks
       }
       ranges.push({ from: match.to - match.markerLength, to: match.to, decoration: Decoration.replace({}) });
     } else if (match.kind === 'heading') {
-      const sizeByLevel = [0, '1.5em', '1.3em', '1.15em', '1.05em', '1em', '1em'];
+      // Taille PAR NIVEAU, nettement graduée (demande 2026-10-05 :
+      // « les en-têtes ont leur taille ajustée en fonction de leur niveau »)
+      // — l'ancienne échelle faisait h5/h6 à 1em, invisibles dans les notes
+      // qui structurent leurs sections en #####.
+      const sizeByLevel = [0, '2em', '1.75em', '1.5em', '1.3em', '1.15em', '1em'];
       if (!active) {
         ranges.push({ from: match.from, to: match.contentFrom, decoration: Decoration.replace({}) });
       }

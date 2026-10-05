@@ -7,6 +7,7 @@ import { NOTES_TOOLBAR_DESCRIPTIONS, NOTES_TOOLBAR_SHORTCUT_LABELS } from '../..
 import { usePreferences } from '../../preferences/PreferencesContext';
 import { SettingsToggle } from './SettingsToggle';
 import { settingsStyles as s } from './settingsStyles';
+import { ToolbarGroupsEditor } from './ToolbarGroupsEditor';
 import { ToolbarOrderEditor } from './ToolbarOrderEditor';
 
 const MIN_FONT_SIZE = 12;
@@ -44,6 +45,7 @@ export function EditorSection() {
     setEditorCloseBrackets,
     setEditorInlineTitle,
     setNotesToolbarOrder,
+    setNotesToolbarGroups,
     setCanvasToolbarOrder,
     setChartToolbarOrder,
   } = usePreferences();
@@ -149,18 +151,16 @@ export function EditorSection() {
 
       <View style={[s.card, { backgroundColor: theme.surface, borderColor: theme.border }]}>
         <Text style={[s.cardTitle, { color: theme.text }]}>📝 Barre d’outils Notes</Text>
-        <Text style={[s.label, { color: theme.textMuted }]}>Ordre et boutons affichés</Text>
-        <ToolbarOrderEditor
-          items={preferences.notesToolbarOrder}
+        <Text style={[s.label, { color: theme.textMuted }]}>
+          Groupes de boutons : crée un groupe avec « + Nouveau groupe », nomme-le, glisse les boutons dedans (clic = saisir puis
+          déposer sur une destination ; sur PC, glisse directement). Un bouton hors groupe est masqué de la barre.
+        </Text>
+        <ToolbarGroupsEditor
+          groups={preferences.notesToolbarGroups}
           descriptions={NOTES_TOOLBAR_DESCRIPTIONS}
-          shortcuts={NOTES_TOOLBAR_SHORTCUT_LABELS}
-          onChange={(order) => void setNotesToolbarOrder(order)}
-          allowGroups
+          onChange={(groups) => void setNotesToolbarGroups(groups)}
           theme={theme}
         />
-        <Text style={[s.label, { color: theme.textMuted }]}>
-          Champ « groupe… » : donne le MÊME nom de groupe à plusieurs boutons pour les regrouper sous un bouton dépliable (ex. « Titres » sur H2 et H3).
-        </Text>
       </View>
 
       <View style={[s.card, { backgroundColor: theme.surface, borderColor: theme.border }]}>
