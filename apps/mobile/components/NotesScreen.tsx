@@ -2477,6 +2477,21 @@ export function NotesScreen({
                           return items;
                         })()}
                         theme={theme}
+                        onItemRun={(item) => {
+                          if (!item.run) return;
+                          if (item.run.id === 'attach') {
+                            void handleInsertAttachment();
+                            return;
+                          }
+                          if (item.run.id === 'undo' || item.run.id === 'redo') {
+                            const view = viewRef.current;
+                            if (view) {
+                              void import('@codemirror/commands').then((commands) => (item.run!.id === 'undo' ? commands.undo : commands.redo)(view));
+                            }
+                            return;
+                          }
+                          if (item.run.formatRun) applyFormatting(item.run.formatRun);
+                        }}
                       />
                     )}
 
