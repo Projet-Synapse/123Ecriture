@@ -19,6 +19,14 @@ export type MarkMatch = {
   from: number;
   to: number;
   markerLength: number;
+  // Segments du CONTENU (entre les marqueurs) qui ne recouvrent aucun token
+  // retenu — v2 « les liens internes doivent TOUJOURS être détectés » : un
+  // token gagne toujours sur la mise en forme qui l'entoure, le mark est
+  // donc DÉCOUPÉ autour de lui (les marqueurs **/_ restent masqués, le texte
+  // hors token reste stylé, la plage du token appartient à sa propre
+  // décoration). Ex. `**texte [[lien]] suite**` → marqueurs remplacés,
+  // spans = [texte] et [suite], le wikilink vit de son côté.
+  contentSpans: { from: number; to: number }[];
 };
 
 export type HeadingMatch = {
@@ -27,6 +35,10 @@ export type HeadingMatch = {
   to: number;
   level: number;
   contentFrom: number; // début du texte du titre, après "#… "
+  // Même découpage que MarkMatch.contentSpans, appliqué au contenu du
+  // titre : `# Titre avec [[lien]]` garde son préfixe masqué et son style,
+  // le wikilink reste une pastille cliquable DANS le titre.
+  contentSpans: { from: number; to: number }[];
 };
 
 export type TokenType = 'wikilink' | 'tag' | 'occurrence' | 'embed';
@@ -47,7 +59,14 @@ function findBold(text: string): MarkMatch[] {
   const re = /\*\*([^*\n]+?)\*\*/g;
   let match: RegExpExecArray | null;
   while ((match = re.exec(text))) {
-    matches.push({ kind: 'mark', type: 'bold', from: match.index, to: match.index + match[0].length, markerLength: 2 });
+    matches.push({
+      kind: 'mark',
+      type: 'bold',
+      from: match.index,
+      to: match.index + match[0].length,
+      markerLength: 2,
+      contentSpans: [],
+    });
   }
   return matches;
 }
@@ -57,7 +76,14 @@ function findItalic(text: string): MarkMatch[] {
   const re = /_([^_\n]+?)_/g;
   let match: RegExpExecArray | null;
   while ((match = re.exec(text))) {
-    matches.push({ kind: 'mark', type: 'italic', from: match.index, to: match.index + match[0].length, markerLength: 1 });
+    matches.push({
+      kind: 'mark',
+      type: 'italic',
+      from: match.index,
+      to: match.index + match[0].length,
+      markerLength: 1,
+      contentSpans: [],
+    });
   }
   return matches;
 }
@@ -73,6 +99,7 @@ function findHeadings(text: string): HeadingMatch[] {
       to: match.index + match[0].length,
       level: match[1].length,
       contentFrom: match.index + match[0].length - match[2].length,
+      contentSpans: [],
     });
   }
   return matches;
@@ -142,6 +169,28 @@ function findOccurrences(text: string): TokenMatch[] {
   return matches;
 }
 
+// Retire de [from, to) les plages de tokens retenues qui la chevauchent —
+// renvoie les segments restants (troncature, jamais de suppression du
+// marqueur lui-même). Les plages sont visitées dans l'ordre de la liste
+// (triée par from en amont), les segments sortent donc triés.
+function subtractSpans(from: number, to: number, blockers: TokenMatch[]): { from: number; to: number }[] {
+  let segments: { from: number; to: number }[] = [{ from, to }];
+  for (const token of blockers) {
+    if (token.to <= from || token.from >= to) continue;
+    const next: { from: number; to: number }[] = [];
+    for (const segment of segments) {
+      if (token.to <= segment.from || token.from >= segment.to) {
+        next.push(segment);
+        continue;
+      }
+      if (token.from > segment.from) next.push({ from: segment.from, to: token.from });
+      if (token.to < segment.to) next.push({ from: token.to, to: segment.to });
+    }
+    segments = next;
+  }
+  return segments;
+}
+
 // Toutes les correspondances du document, triées par position, SANS
 // chevauchement : mdxLivePreview.ts alimente un RangeSetBuilder CodeMirror
 // qui exige des plages ajoutées dans l'ordre strictement croissant — deux
@@ -152,26 +201,61 @@ function findOccurrences(text: string): TokenMatch[] {
 // pour tout le document : le mode "Intermédiaire" retombait visuellement
 // en mode "Source" sans explication (bug observé au lancement réel, même
 // famille que celui documenté dans mdxLivePreview.ts pour l'ordre
-// intra-correspondance). La première correspondance triée gagne, la
-// syntaxe imbriquée reste en texte brut — cut v1 assumé, cohérent avec
-// "pas de gras imbriqué dans un lien" ci-dessus.
+// intra-correspondance).
+//
+// RÉSOLUTION v2 (demande utilisateur : « même s'il y a de la mise en forme
+// autour, les liens internes doivent TOUJOURS être détectés ») — les TOKENS
+// (wikilink/embed/tag/occurrence) gagnent sur la mise en forme : deux
+// passes, 1) on retient les tokens sans chevauchement ENTRE eux, 2) les
+// marks/titres survivants sont DÉCOUPÉS autour des tokens (marqueurs masqués,
+// contenu restant stylé via contentSpans) plutôt que d'éliminer le token.
+// Marks entre eux : premier trié gagne (inchangé — `_**gras**_` garde
+// l'italique seul, comme avant).
 export function findLiveMatches(text: string): LiveMatch[] {
-  const matches: LiveMatch[] = [
-    ...findBold(text),
-    ...findItalic(text),
-    ...findHeadings(text),
-    ...findWikilinksAndEmbeds(text),
-    ...findTags(text),
-    ...findOccurrences(text),
-  ];
-  matches.sort((a, b) => a.from - b.from);
+  const tokens = [...findWikilinksAndEmbeds(text), ...findTags(text), ...findOccurrences(text)];
+  tokens.sort((a, b) => a.from - b.from);
 
-  const nonOverlapping: LiveMatch[] = [];
-  let lastTo = -1;
-  for (const match of matches) {
-    if (match.from < lastTo) continue; // chevauche la correspondance retenue
-    nonOverlapping.push(match);
-    lastTo = match.to;
+  // Passe 1 — tokens entre eux : premier trié gagne (aucun cas réel connu
+  // de tokens imbriqués ; la garde reste le garde-fou anti-crash).
+  const keptTokens: TokenMatch[] = [];
+  let lastTokenTo = -1;
+  for (const token of tokens) {
+    if (token.from < lastTokenTo) continue;
+    keptTokens.push(token);
+    lastTokenTo = token.to;
   }
-  return nonOverlapping;
+
+  // Passe 2 — marks/titres : survivent s'ils ne chevauchent ni un token
+  // retenu ni un autre mark déjà retenu ; leur contenu est découpé autour
+  // des tokens.
+  const others = [...findBold(text), ...findItalic(text), ...findHeadings(text)];
+  others.sort((a, b) => a.from - b.from);
+
+  const marksAndHeadings: (MarkMatch | HeadingMatch)[] = [];
+  let lastOtherTo = -1;
+  for (const match of others) {
+    if (match.from < lastOtherTo) continue; // chevauche un mark déjà retenu
+    if (keptTokens.some((token) => token.from < match.to && token.to > match.from)) {
+      // Chevauche un token retenu : on ne le garde PAS comme plage stylée
+      // entière (elle recouvrirait le token), il est découpé ci-dessous —
+      // mais ses MARQUEURS restent masqués, il vit donc quand même, en
+      // morceaux : on pousse une copie avec contentSpans calculées, hors
+      // du classement anti-chevauchement des plages entières.
+      const contentFrom = match.kind === 'mark' ? match.from + match.markerLength : match.contentFrom;
+      const contentTo = match.kind === 'mark' ? match.to - match.markerLength : match.to;
+      match.contentSpans = subtractSpans(contentFrom, contentTo, keptTokens);
+      marksAndHeadings.push(match);
+      lastOtherTo = Math.max(lastOtherTo, match.to);
+      continue;
+    }
+    const contentFrom = match.kind === 'mark' ? match.from + match.markerLength : match.contentFrom;
+    const contentTo = match.kind === 'mark' ? match.to - match.markerLength : match.to;
+    match.contentSpans = [{ from: contentFrom, to: contentTo }];
+    marksAndHeadings.push(match);
+    lastOtherTo = match.to;
+  }
+
+  const matches: LiveMatch[] = [...keptTokens, ...marksAndHeadings];
+  matches.sort((a, b) => a.from - b.from);
+  return matches;
 }

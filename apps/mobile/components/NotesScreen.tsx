@@ -494,6 +494,32 @@ export function NotesScreen({
   // (création/renommage/déplacement), pas à la frappe.
   const noteNameList = useMemo(() => flattenNotes(tree).map((note) => note.name), [tree]);
 
+  // Résolution des embeds `![[...]]` en data URL (widget image du Live
+  // Preview, voir MdxEditor.tsx/mdxLivePreview.ts) — MÊME bridge que
+  // NoteRenderer (readAttachmentDataUrl, qui cherche aussi par nom dans
+  // tout le coffre). Cache par coffre dans un ref : le widget est recréé à
+  // chaque frappe (chaque buildDecorations), sans cache chaque caractère
+  // tapé relirait le fichier image sur le disque. Quand le coffre actif
+  // change, le cache repart à zéro (les chemins relatifs changent de sens)
+  // — c'est l'invalidation voulue.
+  const embedCacheRef = useRef({ vaultPath: null as string | null, map: new Map<string, Promise<string | null>>() });
+  const embedUrlResolver = useCallback(
+    (target: string): Promise<string | null> => {
+      const cache = embedCacheRef.current;
+      if (cache.vaultPath !== vaultPath) {
+        cache.vaultPath = vaultPath;
+        cache.map.clear();
+      }
+      let pending = cache.map.get(target);
+      if (!pending) {
+        pending = vault?.readAttachmentDataUrl(target).catch(() => null) ?? Promise.resolve(null);
+        cache.map.set(target, pending);
+      }
+      return pending;
+    },
+    [vault, vaultPath],
+  );
+
   // Créer un mot à la volée depuis l'autocomplétion `{{` (voir
   // MdxEditor.tsx/lib/occurrenceAutocomplete.ts) — même bridge que
   // OccurrencesPanel, mais déclenché depuis l'éditeur plutôt que le
@@ -2375,6 +2401,7 @@ export function NotesScreen({
                             occurrenceWords={occurrenceWordList}
                             onCreateOccurrence={handleCreateOccurrence}
                             noteNames={noteNameList}
+                            resolveEmbedUrl={embedUrlResolver}
                             fontSize={preferences.editorFontSize}
                             fontFamily={preferences.editorFontFamily}
                             closeBrackets={preferences.editorCloseBrackets}
