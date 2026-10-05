@@ -7,6 +7,12 @@ import path from 'path';
 import { readConfig } from './config';
 import * as vaults from './vaults';
 import type { FileSortMode, VaultEntryKind, VaultOrder, VaultTreeNode } from './types';
+// Critères de résolution des cibles d'embed façon Obsidian (chemin exact →
+// suffixe → nom seul, casse ignorée) — fonction PURE partagée avec le port
+// web (webVaultAdapter.ts) et le Live Preview, importée telle quelle comme
+// frontmatterMigration/propertyScanMerge (esbuild bundle l'import
+// cross-package, vérifié).
+import { matchesEmbedTarget } from '../../mobile/lib/embedResolution';
 
 type GetWindow = () => BrowserWindow | null;
 
@@ -170,6 +176,37 @@ function resolveInVault(vaultPath: string, relPath: string): string {
     throw new Error(`Chemin hors du vault refusé : ${relPath}`);
   }
   return resolved;
+}
+
+// Dernière étape de résolution d'un embed (voir lib/embedResolution.ts) :
+// parcours récursif du coffre à la recherche d'un fichier répondant à la
+// cible (chemin exact, suffixe ou nom seul — matchesEmbedTarget). Même
+// contention que walkNoteFiles (properties.ts) : chemins construits par
+// Node depuis la racine résolue, bornés explicitement au coffre, dossiers
+// cachés exclus (.trash, .123ecriture, .obsidian…). À chaque niveau les
+// fichiers sont testés AVANT de descendre : la première correspondance est
+// la moins profonde (comportement Obsidian en cas d'homonymes).
+async function findAttachmentByRelPath(vaultPath: string, target: string): Promise<string | null> {
+  const rootAbs = path.resolve(vaultPath) + path.sep;
+
+  async function walk(dir: string): Promise<string | null> {
+    const entries = await fs.readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isFile()) continue;
+      const fullPath = path.join(dir, entry.name);
+      if (matchesEmbedTarget(path.relative(vaultPath, fullPath), target)) return fullPath;
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+      const subDir = path.join(dir, entry.name);
+      if (!(path.resolve(subDir) + path.sep).startsWith(rootAbs)) continue;
+      const hit = await walk(subDir);
+      if (hit) return hit;
+    }
+    return null;
+  }
+
+  return walk(path.resolve(vaultPath));
 }
 
 // Déplace un fichier/dossier vers `<coffre>/.trash/<relPath>` (structure
@@ -645,19 +682,37 @@ export function registerVaultHandlers(getWindow: GetWindow): void {
   });
 
   // Contenu d'une pièce jointe en URI `data:` (image/audio affichés inline
-  // dans NoteRenderer.tsx) — plus simple et plus fiable ici qu'un protocole
-  // personnalisé dédié (le renderer charge déjà tout via `app://`/le
-  // serveur de dev Expo, un `file://` direct se heurterait aux règles de
-  // sécurité de Chromium selon l'origine). Accepte un nom seul (résolu dans
-  // `attachments/`) ou un relPath complet, pour rester utilisable si des
-  // pièces jointes non conventionnelles apparaissent plus tard.
+  // dans NoteRenderer.tsx et le widget image du Live Preview) — plus simple
+  // et plus fiable ici qu'un protocole personnalisé dédié (le renderer
+  // charge déjà tout via `app://`/le serveur de dev Expo, un `file://`
+  // direct se heurterait aux règles de sécurité de Chromium selon
+  // l'origine). RÉSOLUTION FAÇON OBSIDIAN (voir lib/embedResolution.ts) :
+  // 1) le chemin tel que référencé, 2) `attachments/<nom>` (convention de
+  // l'app, voir import-attachment), 3) recherche PAR NOM dans tout le
+  // coffre — les coffres importés d'Obsidian écrivent `![[image.png]]`
+  // alors que l'image vit n'importe où (« Pièces jointes/ », sous-dossier,
+  // à côté de la note…) ; sans l'étape 3, l'embed restait « pièce jointe
+  // introuvable » pour un coffre qui n'est pas né dans cette app.
   ipcMain.handle('vault:read-attachment-data-url', async (_event, relPath: string) => {
     const vaultPath = getVaultPath();
     if (!vaultPath) throw new Error('Aucun vault sélectionné');
-    const target = relPath && relPath.includes('/') ? relPath : path.join(getAttachmentsFolder(), relPath ?? '');
-    const fullPath = resolveInVault(vaultPath, target);
-    const buffer = await fs.readFile(fullPath);
-    return `data:${guessMimeType(fullPath)};base64,${buffer.toString('base64')}`;
+    const wanted = (relPath ?? '').trim();
+    if (!wanted) throw new Error('Pièce jointe : chemin vide.');
+
+    const candidates = [wanted];
+    if (!wanted.includes('/')) candidates.push(path.join(getAttachmentsFolder(), wanted));
+    for (const candidate of candidates) {
+      const fullPath = resolveInVault(vaultPath, candidate);
+      if (fsSync.existsSync(fullPath) && fsSync.statSync(fullPath).isFile()) {
+        const buffer = await fs.readFile(fullPath);
+        return `data:${guessMimeType(fullPath)};base64,${buffer.toString('base64')}`;
+      }
+    }
+
+    const found = await findAttachmentByRelPath(vaultPath, wanted);
+    if (!found) throw new Error(`Pièce jointe introuvable : ${wanted}`);
+    const buffer = await fs.readFile(found);
+    return `data:${guessMimeType(found)};base64,${buffer.toString('base64')}`;
   });
 
   // //8. 📡 HANDLERS IPC — ORGANISATION (renommer/déplacer/supprimer)

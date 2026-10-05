@@ -23,6 +23,7 @@
 // types/global.d.ts) — comme partout dans l'app, pas d'import nécessaire.
 
 import { parseFrontmatter } from '../frontmatter';
+import { matchesEmbedTarget } from '../embedResolution';
 import {
   type FsaDirectoryHandleLike,
   type FsaFileHandleLike,
@@ -93,6 +94,49 @@ function guessMimeType(fileName: string): string {
   const dot = fileName.lastIndexOf('.');
   const extension = dot === -1 ? '' : fileName.slice(dot).toLowerCase();
   return MIME_BY_EXTENSION[extension] ?? 'application/octet-stream';
+}
+
+async function readAttachmentFileAsDataUrl(
+  root: FsaDirectoryHandleLike,
+  relPath: string,
+): Promise<string> {
+  const file = await (await getFileByRelPath(root, relPath)).getFile();
+  const buffer = new Uint8Array(await file.arrayBuffer());
+  let binary = '';
+  const CHUNK = 0x8000;
+  for (let offset = 0; offset < buffer.length; offset += CHUNK) {
+    binary += String.fromCharCode(...buffer.subarray(offset, offset + CHUNK));
+  }
+  return `data:${guessMimeType(file.name)};base64,${btoa(binary)}`;
+}
+
+// Recherche par nom dans TOUT le coffre (3e étape de résolution, voir
+// lib/embedResolution.ts) — port web du helper desktop du même nom, même
+// walker que listNoteRelPaths (webFs) : dossiers cachés exclus, les fichiers
+// de CHAQUE niveau testés avant d'y descendre (la correspondance la moins
+// profonde gagne, comportement Obsidian en cas d'homonymes).
+async function findAttachmentByRelPath(
+  root: FsaDirectoryHandleLike,
+  target: string,
+): Promise<string | null> {
+  async function walk(dir: FsaDirectoryHandleLike, prefix: string): Promise<string | null> {
+    const subDirs: [FsaDirectoryHandleLike, string][] = [];
+    for await (const entry of dir.values()) {
+      if (entry.name.startsWith('.')) continue;
+      const relPath = prefix ? `${prefix}/${entry.name}` : entry.name;
+      if (entry.kind === 'directory') {
+        subDirs.push([entry, relPath]);
+      } else if (matchesEmbedTarget(relPath, target)) {
+        return relPath;
+      }
+    }
+    for (const [subDir, relPath] of subDirs) {
+      const hit = await walk(subDir, relPath);
+      if (hit) return hit;
+    }
+    return null;
+  }
+  return walk(root, '');
 }
 
 function defaultContentForKind(kind: VaultEntryKind, safeName: string): string {
@@ -420,18 +464,28 @@ export const webVaultAdapter = {
 
   // Contenu d'une pièce jointe en URI data: — lecture binaire + base64 par
   // tranches (String.fromCharCode direct casse au-delà de ~100 Ko).
+  // RÉSOLUTION FAÇON OBSIDIAN (voir lib/embedResolution.ts, port direct du
+  // handler desktop vault:read-attachment-data-url) : tel quel →
+  // attachments/<nom> → recherche PAR NOM dans tout le coffre. Sans la
+  // 3e étape, un coffre importé d'Obsidian (`![[image.png]]` référencée
+  // depuis un sous-dossier quelconque) restait « pièce jointe introuvable ».
   readAttachmentDataUrl: async (relPath: string): Promise<string> => {
     const root = await requireActiveRoot();
     const folder = readWebAttachmentsFolder();
-    const target = relPath && relPath.includes('/') ? relPath : `${folder}/${relPath ?? ''}`;
-    const file = await (await getFileByRelPath(root, target)).getFile();
-    const buffer = new Uint8Array(await file.arrayBuffer());
-    let binary = '';
-    const CHUNK = 0x8000;
-    for (let offset = 0; offset < buffer.length; offset += CHUNK) {
-      binary += String.fromCharCode(...buffer.subarray(offset, offset + CHUNK));
+    const wanted = (relPath ?? '').trim();
+    if (!wanted) throw new Error('Pièce jointe : chemin vide.');
+
+    const candidates = [wanted];
+    if (!wanted.includes('/')) candidates.push(`${folder}/${wanted}`);
+    for (const candidate of candidates) {
+      if (await entryExists(root, candidate)) {
+        return readAttachmentFileAsDataUrl(root, candidate);
+      }
     }
-    return `data:${guessMimeType(file.name)};base64,${btoa(binary)}`;
+
+    const found = await findAttachmentByRelPath(root, wanted);
+    if (!found) throw new Error(`Pièce jointe introuvable : ${wanted}`);
+    return readAttachmentFileAsDataUrl(root, found);
   },
 
   // //5. 🔀 ORGANISATION (rename / move / set-path / delete)
