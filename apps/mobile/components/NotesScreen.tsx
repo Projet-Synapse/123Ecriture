@@ -149,6 +149,68 @@ type Props = {
   onRegisterActions?: (actions: NotesActions) => void;
 };
 
+// Construit les items de la barre d'outils depuis les GROUPES (v0.4.43,
+// Paramètres → Éditeur) : groupe dépliant = un bouton qui déploie sa rangée
+// au survol/appui (voir EditorToolbar) ; groupe ouvert = boutons côte à
+// côte séparés entre groupes. Annuler/Rétablir (commands CodeMirror
+// natives) et Pièce jointe (importAttachment + insertion au curseur) sont
+// des ids de la config branchés sur leurs handlers réels. Fonction HORS
+// composant : elle ne touche aucun ref — l'EditorView et l'insertion
+// arrivent en paramètres (l'accès à viewRef.current pendant le rendu est
+// interdit par react-hooks/refs, et la règle ne voit ici que des closures
+// d'évènements passées en props).
+type ToolbarItem = {
+  id: string;
+  label: string;
+  onPress?: () => void;
+  subItems?: { id: string; label: string; onPress: () => void }[];
+  divider?: boolean;
+};
+
+function buildNotesToolbarItems(
+  getView: () => EditorView | null,
+  insertAttachment: () => void,
+  applyFormat: (run: (text: string, selection: Selection) => FormattingResult) => void,
+  groups: NotesToolbarGroup[],
+): ToolbarItem[] {
+  const items: ToolbarItem[] = [];
+  const run = (actionId: string, formatRun?: (text: string, selection: Selection) => FormattingResult) => {
+    if (actionId === 'attach') {
+      insertAttachment();
+      return;
+    }
+    if (actionId === 'undo' || actionId === 'redo') {
+      const view = getView();
+      if (view) {
+        void import('@codemirror/commands').then((commands) => (actionId === 'undo' ? commands.undo : commands.redo)(view));
+      }
+      return;
+    }
+    if (formatRun) applyFormat(formatRun);
+  };
+  groups.forEach((group, groupIndex) => {
+    if (groupIndex > 0) {
+      items.push({ id: `divider-${group.id}`, label: '', divider: true });
+    }
+    const resolved = group.buttons
+      .map((id) => NOTES_TOOLBAR_ACTIONS.find((action) => action.id === id))
+      .filter((action): action is ToolbarAction => Boolean(action));
+    if (group.collapsible) {
+      items.push({
+        id: `group-${group.id}`,
+        label: group.label,
+        subItems: resolved.map((action) => ({ id: action.id, label: action.label, onPress: () => run(action.id, action.run) })),
+      });
+    } else {
+      resolved.forEach((action, index) => {
+        if (index > 0) items.push({ id: `divider-${group.id}-${index}`, label: '', divider: true });
+        items.push({ id: action.id, label: action.label, onPress: () => run(action.id, action.run) });
+      });
+    }
+  });
+  return items;
+}
+
 export function NotesScreen({
   pendingOpenRelPath,
   onOpenedPendingNote,
@@ -1749,23 +1811,7 @@ export function NotesScreen({
   // Rétablir (commands CodeMirror natives) et Pièce jointe (importAttachment
   // + insert au curseur) sont des ids de la config branchés sur leurs
   // handlers réels.
-  const runToolbarAction = (action: ToolbarAction) => {
-    if (action.id === 'attach') {
-      void handleInsertAttachment();
-      return;
-    }
-    if (action.id === 'undo') {
-      const view = viewRef.current;
-      if (view) void import('@codemirror/commands').then(({ undo }) => undo(view));
-      return;
-    }
-    if (action.id === 'redo') {
-      const view = viewRef.current;
-      if (view) void import('@codemirror/commands').then(({ redo }) => redo(view));
-      return;
-    }
-    applyFormatting(action.run);
-  };
+
 
 
 
@@ -2458,7 +2504,21 @@ export function NotesScreen({
                         gênante pendant la frappe. */}
                     {!isNativeNotes && effectiveViewMode !== 'reading' && (
                       <EditorToolbar
-items={(() => {
+                        items={(() => {
+                          const run = (actionId: string, formatRun?: (text: string, selection: Selection) => FormattingResult) => {
+                            if (actionId === 'attach') {
+                              void handleInsertAttachment();
+                              return;
+                            }
+                            if (actionId === 'undo' || actionId === 'redo') {
+                              const view = viewRef.current;
+                              if (view) {
+                                void import('@codemirror/commands').then((commands) => (actionId === 'undo' ? commands.undo : commands.redo)(view));
+                              }
+                              return;
+                            }
+                            if (formatRun) applyFormatting(formatRun);
+                          };
                           const items: { id: string; label: string; onPress?: () => void; subItems?: { id: string; label: string; onPress: () => void }[]; divider?: boolean }[] = [];
                           preferences.notesToolbarGroups.forEach((group, groupIndex) => {
                             if (groupIndex > 0) {
@@ -2471,18 +2531,17 @@ items={(() => {
                               items.push({
                                 id: `group-${group.id}`,
                                 label: group.label,
-                                subItems: resolved.map((action) => ({ id: action.id, label: action.label, onPress: () => runToolbarAction(action) })),
+                                subItems: resolved.map((action) => ({ id: action.id, label: action.label, onPress: () => run(action.id, action.run) })),
                               });
                             } else {
                               resolved.forEach((action, index) => {
                                 if (index > 0) items.push({ id: `divider-${group.id}-${index}`, label: '', divider: true });
-                                items.push({ id: action.id, label: action.label, onPress: () => runToolbarAction(action) });
+                                items.push({ id: action.id, label: action.label, onPress: () => run(action.id, action.run) });
                               });
                             }
                           });
                           return items;
-
-                                          })()}
+                        })()}
                         theme={theme}
                       />
                     )}
