@@ -1,6 +1,6 @@
 {
   "name": "@123ecriture/mobile",
-  "version": "0.4.41",
+  "version": "0.4.42",
   "private": true,
   "main": "index.ts",
   "scripts": {
@@ -11,7 +11,8 @@
     "build:web": "expo export --platform web",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "build:editor-web": "node scripts/build-editor-web.mjs"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.3",
@@ -21,6 +22,7 @@
     "@codemirror/search": "^6.7.2",
     "@codemirror/state": "^6.7.1",
     "@codemirror/view": "^6.43.9",
+    "@lezer/highlight": "^1.2.5",
     "@lezer/markdown": "^1.7.2",
     "@react-native-community/slider": "^5.2.1",
     "@supabase/supabase-js": "^2.58.0",
@@ -36,12 +38,14 @@
     "react-native": "0.86.2",
     "react-native-markdown-display": "^7.0.2",
     "react-native-svg": "^15.15.5",
-    "react-native-web": "^0.21.2"
+    "react-native-web": "^0.21.2",
+    "react-native-webview": "13.16.1"
   },
   "devDependencies": {
     "@types/diff-match-patch": "^1.0.36",
     "@types/markdown-it": "^14.1.2",
     "@types/react": "~19.2.2",
+    "esbuild": "0.28.2",
     "typescript": "~6.0.3",
     "vitest": "^3.2.4"
   }
