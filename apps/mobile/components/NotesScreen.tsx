@@ -2453,20 +2453,6 @@ export function NotesScreen({
                     {!isNativeNotes && effectiveViewMode !== 'reading' && (
                       <EditorToolbar
                         items={(() => {
-                          const run = (actionId: string, formatRun?: (text: string, selection: Selection) => FormattingResult) => {
-                            if (actionId === 'attach') {
-                              void handleInsertAttachment();
-                              return;
-                            }
-                            if (actionId === 'undo' || actionId === 'redo') {
-                              const view = viewRef.current;
-                              if (view) {
-                                void import('@codemirror/commands').then((commands) => (actionId === 'undo' ? commands.undo : commands.redo)(view));
-                              }
-                              return;
-                            }
-                            if (formatRun) applyFormatting(formatRun);
-                          };
                           const items: { id: string; label: string; divider?: boolean; subItems?: { id: string; label: string }[]; run?: { id: string; formatRun?: (text: string, selection: Selection) => FormattingResult } }[] = [];
                           preferences.notesToolbarGroups.forEach((group, groupIndex) => {
                             if (groupIndex > 0) {
