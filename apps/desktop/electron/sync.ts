@@ -32,6 +32,28 @@ async function hashFileContent(fullPath: string): Promise<string> {
   return crypto.createHash('sha256').update(content).digest('hex');
 }
 
+// Cache de hachage entre deux cycles (perf, lenteur de frappe rapportée) :
+// chaque sauvegarde débouncée déclenche un cycle de synchro ~2 s plus tard,
+// qui relisait + hachait TOUT le coffre DANS le process principal — 1,4 s
+// mesuré sur un coffre réel (224 fichiers, 169 Mo dont 3 notes de 32 Mo),
+// pendant que l'utilisatrice continue de taper : le renderer attendait ses
+// IPC derrière un main saturé, l'écriture devenait « extrêmement lente ».
+// mtimeMs + size suffisent à identifier un fichier inchangé (même convention
+// que les synchros grand public) : on ne relit désormais que ce qui a
+// réellement changé depuis le cycle précédent — typiquement la note en
+// cours d'édition. Cache jetable au changement de coffre actif (les chemins
+// relatifs changent de sens) ; reconstruit à chaque cycle (les entrées des
+// fichiers supprimés disparaissent d'elles-mêmes).
+let hashCacheVaultPath: string | null = null;
+const hashCache = new Map<string, { mtimeMs: number; size: number; hash: string }>();
+
+function resetHashCache(vaultPath: string): void {
+  if (hashCacheVaultPath !== vaultPath) {
+    hashCache.clear();
+    hashCacheVaultPath = vaultPath;
+  }
+}
+
 async function walkAndHash(dir: string, vaultRoot: string, out: HashedNote[]): Promise<HashedNote[]> {
   // Contention anti-traversée : le point d'entrée vient d'IPC (chemin du
   // coffre transmis par le renderer). readdir récursif renvoie des chemins
@@ -48,6 +70,7 @@ async function walkAndHash(dir: string, vaultRoot: string, out: HashedNote[]): P
     recursive: true,
     withFileTypes: true,
   });
+  const nextCache = new Map<string, { mtimeMs: number; size: number; hash: string }>();
   for (const entry of entries) {
     if (entry.name.startsWith('.')) continue;
     const parentAbs = path.resolve(entry.parentPath);
@@ -60,8 +83,8 @@ async function walkAndHash(dir: string, vaultRoot: string, out: HashedNote[]): P
     // les appareils du compte, chaque suppression y atterrit partout).
     // Apparence PAR COFFRE (v0.4.42) : .123ecriture/appearance.json voyage
     // avec le coffre — le thème réglé sur un appareil se retrouve sur tous.
-    const relPath = path.relative(vaultRoot, fullPath);
-    const isAppearanceFile = relPath === '.123ecriture' + path.sep + 'appearance.json';
+    const appearanceRelPath = path.relative(vaultRoot, fullPath);
+    const isAppearanceFile = appearanceRelPath === '.123ecriture' + path.sep + 'appearance.json';
     if (
       !isAppearanceFile &&
       relSegments[0] !== '.trash' &&
@@ -72,9 +95,23 @@ async function walkAndHash(dir: string, vaultRoot: string, out: HashedNote[]): P
     if (entry.isFile() && (isAppearanceFile || EXTENSION_TO_KIND[path.extname(entry.name)])) {
       try {
         const stat = await fs.stat(fullPath);
+        const relPath = path.relative(vaultRoot, fullPath);
+        const cached = hashCache.get(relPath);
+        if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
+          nextCache.set(relPath, cached);
+          out.push({
+            relPath,
+            contentHash: cached.hash,
+            sizeBytes: stat.size,
+            modifiedAt: stat.mtimeMs,
+          });
+          continue;
+        }
+        const contentHash = await hashFileContent(fullPath);
+        nextCache.set(relPath, { mtimeMs: stat.mtimeMs, size: stat.size, hash: contentHash });
         out.push({
-          relPath: path.relative(vaultRoot, fullPath),
-          contentHash: await hashFileContent(fullPath),
+          relPath,
+          contentHash,
           sizeBytes: stat.size,
           modifiedAt: stat.mtimeMs,
         });
@@ -88,6 +125,10 @@ async function walkAndHash(dir: string, vaultRoot: string, out: HashedNote[]): P
       }
     }
   }
+  // Remplace (ne fusionne pas) : un fichier absent de CE parcours est
+  // supprimé — garder son entrée ne servirait à rien et gonflerait le cache.
+  hashCache.clear();
+  for (const [key, value] of nextCache) hashCache.set(key, value);
   return out;
 }
 
@@ -135,6 +176,7 @@ export function registerSyncHandlers(getWindow?: () => BrowserWindow | null): vo
         "Le dossier à l'emplacement enregistré ne contient plus l'identité du coffre (déplacé ?) — retrouvez le nouvel emplacement via Paramètres → Coffres locaux → « Retrouver le dossier… ».",
       );
     }
+    resetHashCache(vaultPath);
     return walkAndHash(vaultPath, vaultPath, []);
   });
 

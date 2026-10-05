@@ -68,6 +68,12 @@ type Props = {
   // NOM (comme handleOpenWikilink dans NotesScreen.tsx), pas par chemin.
   // Optionnel pour la même raison qu'occurrenceWords.
   noteNames?: string[];
+  // Résolution d'un embed `![[...]]` en data URL affichable dans le flux
+  // (widget image du Live Preview) — fournie par NotesScreen.tsx AVEC son
+  // cache de session (le widget est recréé à chaque frappe : sans cache,
+  // chaque caractère tapé relirait le fichier image). Optionnel : sans
+  // elle, les embeds image gardent la pastille 📎 historique.
+  resolveEmbedUrl?: (target: string) => Promise<string | null>;
   onReady?: (ref: ReactCodeMirrorRef) => void;
   // Paramètres → Éditeur (voir PreferencesContext.tsx). Valeurs par défaut
   // alignées sur DEFAULT_PREFERENCES pour rester utilisable si le composant
@@ -96,6 +102,7 @@ export function MdxEditor({
   occurrenceWords,
   onCreateOccurrence,
   noteNames,
+  resolveEmbedUrl,
   onReady,
   fontSize = 15,
   fontFamily = 'system',
@@ -136,6 +143,29 @@ export function MdxEditor({
         '.cm-panels label': { color: theme.textMuted },
         '.cm-searchMatch': { backgroundColor: `${theme.accent}44` },
         '.cm-searchMatch-selected': { backgroundColor: `${theme.accent}88` },
+        // Mini-navigateur d'autocomplétion (popup flottant des sources
+        // `[[` et `{{`, voir completionExtension plus bas) : sans ces
+        // règles il sort dans les couleurs par défaut de CodeMirror —
+        // blanc sur les deux thèmes, sélection grise — et passe pour un
+        // élément étranger. Mêmes couleurs que le reste de l'app.
+        '.cm-tooltip.cm-tooltip-autocomplete': {
+          backgroundColor: theme.surface,
+          border: `1px solid ${theme.border}`,
+          borderRadius: '8px',
+          overflow: 'hidden',
+          boxShadow: '0 8px 24px rgba(0, 0, 0, 0.25)',
+          fontFamily: 'inherit',
+        },
+        '.cm-tooltip-autocomplete ul li': {
+          color: theme.text,
+          padding: '5px 10px',
+          fontSize: '0.92em',
+        },
+        '.cm-tooltip-autocomplete ul li[aria-selected]': {
+          backgroundColor: `${theme.accent}26`,
+          color: theme.accent,
+        },
+        '.cm-completionDetail': { color: theme.textMuted, fontStyle: 'normal' },
       }),
     [theme, fontSize, fontFamily, autoHeight],
   );
@@ -144,9 +174,9 @@ export function MdxEditor({
     () =>
       createLivePreviewExtension(
         { accent: theme.accent, surface: theme.surface, border: theme.border, textMuted: theme.textMuted },
-        { onOpenWikilink, onOpenOccurrence },
+        { onOpenWikilink, onOpenOccurrence, resolveEmbedUrl },
       ),
-    [theme, onOpenWikilink, onOpenOccurrence],
+    [theme, onOpenWikilink, onOpenOccurrence, resolveEmbedUrl],
   );
 
   // Recréée seulement quand le dictionnaire, la liste de notes ou les

@@ -99,16 +99,46 @@ describe('findLiveMatches — tri', () => {
 });
 
 describe('findLiveMatches — chevauchements', () => {
-  // Garde-fou du crash "Ranges must be added sorted by `from`" (voir
-  // findLiveMatches) : deux syntaxes imbriquées font replonger le
-  // RangeSetBuilder en arrière → CodeMirror désactive tout le plugin.
-  it('un gras contenant un wikilink : ne garde que le gras (premier trié)', () => {
-    const matches = findLiveMatches('avant **voir [[Note]]** après');
-    expect(matches.some((m) => m.kind === 'mark')).toBe(true);
-    expect(matches.some((m) => m.kind === 'token')).toBe(false);
+  // v2 (demande utilisateur : « les liens internes doivent TOUJOURS être
+  // détectés, même s'il y a de la mise en forme autour ») : les TOKENS
+  // gagnent, le mark englobant est découpé (marqueurs masqués, contenu hors
+  // token stylé) — l'ancien comportement éliminait le wikilink au profit du
+  // gras, et le RangeSetBuilder crashait ou cachait le lien.
+  it('un gras contenant un wikilink : le LIEN gagne, le gras est découpé', () => {
+    const text = 'avant **voir [[Note]]** après';
+    const matches = findLiveMatches(text);
+    const link = matches.find((m): m is TokenMatch => m.kind === 'token');
+    const bold = matches.find((m): m is MarkMatch => m.kind === 'mark');
+    expect(link?.target).toBe('Note');
+    // Le gras survit en morceaux : marqueurs ** masqués, le texte hors
+    // token («voir ») reste stylé gras.
+    expect(bold).toBeDefined();
+    expect(text.slice(bold!.from, bold!.from + bold!.markerLength)).toBe('**');
+    expect(text.slice(bold!.to - bold!.markerLength, bold!.to)).toBe('**');
+    expect(bold!.contentSpans.map((span) => text.slice(span.from, span.to))).toEqual(['voir ']);
   });
 
-  it('un italique englobant un gras : ne garde que l’italique', () => {
+  it('un italique autour d’un lien : le texte hors lien reste stylé', () => {
+    const text = '_avant [[Note]] après_';
+    const matches = findLiveMatches(text);
+    const italic = matches.find((m): m is MarkMatch => m.kind === 'mark');
+    expect(italic?.type).toBe('italic');
+    expect(italic?.contentSpans.map((span) => text.slice(span.from, span.to))).toEqual(['avant ', ' après']);
+  });
+
+  it('un titre contenant un wikilink : titre stylé + lien détecté', () => {
+    const text = '# Bienvenue [[Accueil]] ici';
+    const matches = findLiveMatches(text);
+    const heading = matches.find((m): m is HeadingMatch => m.kind === 'heading');
+    const link = matches.find((m): m is TokenMatch => m.kind === 'token');
+    expect(link?.target).toBe('Accueil');
+    expect(heading?.contentSpans.map((span) => text.slice(span.from, span.to))).toEqual([
+      'Bienvenue ',
+      ' ici',
+    ]);
+  });
+
+  it('un italique englobant un gras : ne garde que l’italique (marks entre eux, inchangé)', () => {
     const matches = findLiveMatches('_du **gras** dedans_');
     expect(matches.filter((m) => m.kind === 'mark')).toHaveLength(1);
     expect(matches[0]).toMatchObject({ kind: 'mark', type: 'italic' });

@@ -1,20 +1,27 @@
-import { RangeSetBuilder } from '@codemirror/state';
 import { Decoration, type DecorationSet, EditorView, ViewPlugin, type ViewUpdate, WidgetType } from '@codemirror/view';
 
+import { isImageEmbedTarget } from './embedResolution';
 import { findBold, findItalic, findLiveMatches, type LiveMatch, type TokenType } from './liveDecorations';
 
 // Le vrai Live Preview inline (mode "Intermédiaire", voir components/
 // MdxEditor.tsx) : un `ViewPlugin` CodeMirror qui décore le document selon
 // les correspondances pures de lib/liveDecorations.ts — gras/italique
 // stylés (marqueurs masqués), titres agrandis (préfixe "#…" masqué),
-// liens/tags/occurrences/embeds remplacés par une pastille cliquable — SAUF
-// quand le curseur touche la syntaxe concernée, où le texte brut reste
-// visible pour pouvoir l'éditer normalement (comportement "façon Obsidian").
+// liens/tags/occurrences remplacés par une pastille cliquable, EMBEDS
+// IMAGES affichés en vrai (`![[photo.png]]` → l'image elle-même, façon
+// Obsidian) — SAUF quand le curseur touche la syntaxe concernée, où le
+// texte brut reste visible pour pouvoir l'éditer normalement.
 //
-// Recalcule sur tout le document à chaque mise à jour pertinente (pas de
-// scan limité aux lignes visibles) — plus simple, suffisant pour la taille
-// de note attendue ; à revoir si ça devient un vrai goulot sur de très
-// grosses notes.
+// Toutes les plages sont d'abord COLLECTÉES puis triées via
+// `Decoration.set(ranges, true)` : depuis que les marks sont DÉCOUPÉS autour
+// des tokens (v2, voir liveDecorations.ts), les plages d'un même mark ne
+// sont plus contiguës avec celles du token qu'il entoure — l'ajout direct
+// au RangeSetBuilder dans l'ordre des correspondances (l'ancienne
+// approche) replongeait en arrière et relevait le crash documenté "Ranges
+// must be added sorted by `from` position and `startSide`", qui désactive
+// le ViewPlugin en entier et en silence. Le tri par CodeMirror lui-même
+// élimine cette classe de bug par construction — et permet gratuitement le
+// découpage imbriqué des titres ci-dessous (segments gras/italique).
 
 const ICON_BY_TOKEN_TYPE: Record<TokenType, string> = {
   wikilink: '🔗',
@@ -33,6 +40,12 @@ export type LivePreviewColors = {
 export type LivePreviewCallbacks = {
   onOpenWikilink?: (target: string) => void;
   onOpenOccurrence?: (word: string) => void;
+  // Résolution d'une cible d'embed en URI `data:` affichable — le widget
+  // image du Live Preview l'appelle au montage. Le cache (éviter de relire
+  // le fichier à CHAQUE frappe : le widget est recréé à chaque
+  // buildDecorations) vit chez le fournisseur (NotesScreen.tsx), qui sait
+  // quand le coffre actif change et peut l'invalider.
+  resolveEmbedUrl?: (target: string) => Promise<string | null>;
 };
 
 class TokenPillWidget extends WidgetType {
@@ -52,7 +65,7 @@ class TokenPillWidget extends WidgetType {
 
   toDOM(): HTMLElement {
     const span = document.createElement('span');
-    span.textContent = `${ICON_BY_TOKEN_TYPE[this.type]} ${this.type === 'tag' ? this.label : this.label}`;
+    span.textContent = `${ICON_BY_TOKEN_TYPE[this.type]} ${this.label}`;
     span.style.color = this.colors.accent;
     span.style.backgroundColor = `${this.colors.accent}1a`;
     span.style.border = `1px solid ${this.colors.accent}55`;
@@ -82,6 +95,70 @@ class TokenPillWidget extends WidgetType {
   }
 }
 
+// Image affichée en vrai dans le flux du texte (`![[photo.png]]`), façon
+// Obsidian — le chemin passe par le même resolver que l'aperçu
+// (readAttachmentDataUrl, qui cherche aussi par nom dans tout le coffre
+// depuis v0.4.42, voir lib/embedResolution.ts). La lecture est asynchrone :
+// le <img> est créé vide puis alimenté quand la data URL arrive ; en cas
+// d'échec, on retombe sur la pastille pièce jointe historique. Le widget
+// est recréé à chaque frappe : c'est le cache du RESOLVER (fourni par
+// NotesScreen) qui empêche la relecture disque.
+class EmbedImageWidget extends WidgetType {
+  constructor(
+    private readonly target: string,
+    private readonly colors: LivePreviewColors,
+    private readonly callbacks: LivePreviewCallbacks,
+  ) {
+    super();
+  }
+
+  eq(other: EmbedImageWidget): boolean {
+    return other.target === this.target;
+  }
+
+  toDOM(): HTMLElement {
+    const wrap = document.createElement('span');
+    wrap.style.display = 'inline-block';
+    wrap.style.maxWidth = '100%';
+    wrap.style.verticalAlign = 'top';
+
+    const img = document.createElement('img');
+    img.alt = this.target;
+    img.style.display = 'block';
+    img.style.maxWidth = '100%';
+    // Plafond raisonnable : une photo pleine définition ne doit pas prendre
+    // tout l'écran (comme Obsidian, qui limite aussi à la largeur du panneau).
+    img.style.maxHeight = '360px';
+    img.style.borderRadius = '6px';
+    img.style.border = `1px solid ${this.colors.border}`;
+    wrap.appendChild(img);
+
+    const resolver = this.callbacks.resolveEmbedUrl;
+    if (!resolver) {
+      wrap.textContent = `${ICON_BY_TOKEN_TYPE.embed} ${this.target}`;
+      return wrap;
+    }
+    resolver(this.target)
+      .then((url) => {
+        if (url) {
+          img.src = url;
+        } else {
+          wrap.textContent = `⚠️ ${this.target}`;
+          wrap.style.color = this.colors.textMuted;
+        }
+      })
+      .catch(() => {
+        wrap.textContent = `${ICON_BY_TOKEN_TYPE.embed} ${this.target}`;
+        wrap.style.color = this.colors.accent;
+      });
+    return wrap;
+  }
+
+  ignoreEvent(): boolean {
+    return false;
+  }
+}
+
 // Un peu de marge autour d'une correspondance pour décider si le curseur la
 // "touche" — inclut la position juste après la syntaxe (curseur qui vient
 // de la fermer) en plus de l'intérieur strict.
@@ -89,10 +166,21 @@ function selectionTouches(view: EditorView, from: number, to: number): boolean {
   return view.state.selection.ranges.some((range) => range.from <= to && range.to >= from);
 }
 
-// Découpe [from, to) en stylant le texte libre avec `style` et en masquant
-// les marqueurs de gras/italique IMBRIQUÉS (`**_texte_**`, `# __Titre__`…),
-// style cumulé au sien, récursivement. Corrige deux bugs vus sur le
-// téléphone (2026-10-03) :
+type DecorationRange = { from: number; to: number; decoration: Decoration };
+
+// Garde-fou (lenteur de frappe rapportée) : les décorations du Live Preview
+// coûtent une passe de détection sur TOUT le document à chaque frappe —
+// linéaire et négligeable sur une note normale, mais 2,3 s mesuré par
+// CARACTÈRE sur une note de 32 Mo (coffres réels : 3 fiches de cette
+// taille). Au-delà de ce seuil, on retombe volontairement sur du texte
+// brut (comportement Obsidian sur les notes énormes) : la frappe redevient
+// instantanée, la mise en forme réapparaît dans les modes Source/Aperçu.
+const MAX_LIVE_PREVIEW_CHARS = 500_000;
+
+// Découpe RÉCURSIVE de [from, to) — masque les marqueurs de gras/italique
+// IMBRIQUÉS (`**_texte_**`, `__** Corbeaux **__`, titres contenant du
+// gras…) en cumulant les styles, et stylise le texte libre avec `style`.
+// Corrige deux bugs vus en réel (2026-10-03) :
 // 1. l'italique dans le gras (`**_Procédure_**`) était ABANDONNÉ par le
 //    dédoublonnage de findLiveMatches — les `_` restaient visibles autour
 //    du mot, seul le gras extérieur était décoré ;
@@ -100,52 +188,45 @@ function selectionTouches(view: EditorView, from: number, to: number): boolean {
 //    (segment.from, 0-based dans le contenu) à une position ABSOLUE
 //    (cursor = contentFrom ≥ 2) : le PREMIER segment de chaque titre
 //    (`##### **2•** …`) était systématiquement sauté, marqueurs visibles.
-// `style` cumule ceux des ancêtres (titre → gras → italique) ; les plages
-// sont émises de gauche à droite (contrainte d'ordre du RangeSetBuilder).
-// Chaque niveau de récursion consomme au moins les deux marqueurs, donc
-// l'imbrication terminée est garantie.
-function addMarkedRange(
-  builder: RangeSetBuilder<Decoration>,
-  text: string,
-  from: number,
-  to: number,
-  style: string,
-): void {
+// `style` cumule ceux des ancêtres (titre → gras → italique). Chaque
+// niveau de récursion consomme au moins les deux marqueurs, donc
+// l'imbrication terminée est garantie ; les plages sortent de gauche à
+// droite (le tri final de Decoration.set couvre le reste).
+function pushMarkedRanges(ranges: DecorationRange[], text: string, from: number, to: number, style: string): void {
   const inner = [...findBold(text.slice(from, to)), ...findItalic(text.slice(from, to))].sort(
     (a, b) => a.from - b.from,
   );
   let cursor = from;
   const emitPlain = (f: number, t: number) => {
-    if (f < t) builder.add(f, t, Decoration.mark({ attributes: { style } }));
+    if (f < t) ranges.push({ from: f, to: t, decoration: Decoration.mark({ attributes: { style } }) });
   };
   for (const segment of inner) {
     const absFrom = from + segment.from;
     const absTo = from + segment.to;
     if (absFrom < cursor) continue; // chevauche le segment retenu (dédoublonnage local)
     emitPlain(cursor, absFrom);
-    builder.add(absFrom, absFrom + segment.markerLength, Decoration.replace({}));
-    addMarkedRange(
-      builder,
+    ranges.push({ from: absFrom, to: absFrom + segment.markerLength, decoration: Decoration.replace({}) });
+    pushMarkedRanges(
+      ranges,
       text,
       absFrom + segment.markerLength,
       absTo - segment.markerLength,
       `${style};${segment.type === 'bold' ? 'font-weight:700' : 'font-style:italic'}`,
     );
-    builder.add(absTo - segment.markerLength, absTo, Decoration.replace({}));
+    ranges.push({ from: absTo - segment.markerLength, to: absTo, decoration: Decoration.replace({}) });
     cursor = absTo;
   }
   emitPlain(cursor, to);
 }
 
-function buildDecorations(
-  view: EditorView,
-  colors: LivePreviewColors,
-  callbacks: LivePreviewCallbacks,
-  colorize: boolean,
-): DecorationSet {
+function buildDecorations(view: EditorView, colors: LivePreviewColors, callbacks: LivePreviewCallbacks, colorize: boolean): DecorationSet {
+  // doc.length est O(1) : le garde-fou court AVANT tout toString().
+  if (view.state.doc.length > MAX_LIVE_PREVIEW_CHARS) {
+    return Decoration.none;
+  }
   const text = view.state.doc.toString();
   const matches: LiveMatch[] = findLiveMatches(text);
-  const builder = new RangeSetBuilder<Decoration>();
+  const ranges: DecorationRange[] = [];
 
   for (const match of matches) {
     const active = selectionTouches(view, match.from, match.to);
@@ -153,48 +234,45 @@ function buildDecorations(
     if (match.kind === 'mark') {
       if (active) continue; // texte brut révélé pendant l'édition
       const styleClass = match.type === 'bold' ? 'font-weight:700' : 'font-style:italic';
-      // RangeSetBuilder exige des plages ajoutées dans l'ordre STRICTEMENT
-      // croissant de `from` — le marqueur ouvrant (from) doit donc être
-      // ajouté AVANT le contenu stylé (from+markerLength), lui-même avant
-      // le marqueur fermant. Les ajouter dans le mauvais ordre (contenu
-      // d'abord, marqueurs ensuite, comme précédemment) fait planter tout
-      // le builder pour CE document — CodeMirror désactive alors le
-      // ViewPlugin en entier, silencieusement, dès la première occurrence
-      // de gras/italique : c'est ce qui faisait ressembler le mode
-      // "Intermédiaire" au mode "Source" (aucune décoration nulle part),
-      // confirmé en lançant l'app réelle (console : "Ranges must be added
-      // sorted by `from` position and `startSide`").
-      builder.add(match.from, match.from + match.markerLength, Decoration.replace({}));
-      addMarkedRange(builder, text, match.from + match.markerLength, match.to - match.markerLength, styleClass);
-      builder.add(match.to - match.markerLength, match.to, Decoration.replace({}));
+      ranges.push({ from: match.from, to: match.from + match.markerLength, decoration: Decoration.replace({}) });
+      // Le contenu est découpé en spans hors tokens (v2) ; chaque span passe
+      // par le découpage récursif pour masquer à son tour les marqueurs de
+      // gras/italique IMBRIQUÉS (`**_Procédure_**` : les `_` disparaissent
+      // aussi — vécu 2026-10-03).
+      for (const span of match.contentSpans) {
+        pushMarkedRanges(ranges, text, span.from, span.to, styleClass);
+      }
+      ranges.push({ from: match.to - match.markerLength, to: match.to, decoration: Decoration.replace({}) });
     } else if (match.kind === 'heading') {
       const sizeByLevel = [0, '1.5em', '1.3em', '1.15em', '1.05em', '1em', '1em'];
-      const headingMark = `${colorize ? `color:${colors.accent};` : ''}font-weight:700;font-size:${sizeByLevel[match.level] ?? '1em'}`;
-      // Même contrainte d'ordre croissant que pour 'mark' ci-dessus : le
-      // préfixe masqué (from → contentFrom) doit être ajouté AVANT le
-      // contenu stylé (contentFrom → to), pas après.
-      if (active) {
-        builder.add(
-          match.contentFrom,
-          match.to,
-          Decoration.mark({ attributes: { style: headingMark } }),
-        );
-      } else {
-        builder.add(match.from, match.contentFrom, Decoration.replace({}));
-        // Le contenu du titre passe par le même découpage récursif : ses
-        // `**`/`__`/`_`/`*` imbriqués sont masqués et stylés (le dedup de
-        // findLiveMatches saute sinon tout ce qui chevauche un titre).
-        addMarkedRange(builder, text, match.contentFrom, match.to, headingMark);
+      if (!active) {
+        ranges.push({ from: match.from, to: match.contentFrom, decoration: Decoration.replace({}) });
+      }
+      const headingStyle = `font-weight:700;font-size:${sizeByLevel[match.level]}${colorize ? `;color:${colors.accent}` : ''}`;
+      // Un titre contenant un token ([[lien]] etc.) est DÉCOUPÉ (voir
+      // liveDecorations.ts) : seuls les segments hors token portent le
+      // style — la plage du token porte sa propre décoration. Chaque
+      // segment passe par le découpage récursif : ses `**`/`__`/`_`/`*`
+      // imbriqués sont masqués et stylés (vécu 2026-10-03 : le PREMIER
+      // segment de titre gardait ses marqueurs visibles — comparaison
+      // d'une position relative à une absolue dans l'ancien code).
+      for (const span of match.contentSpans) {
+        pushMarkedRanges(ranges, text, span.from, span.to, headingStyle);
       }
     } else {
       // token : wikilink/tag/occurrence/embed
       if (active) continue; // texte brut révélé pendant l'édition
-      const widget = new TokenPillWidget(match.type, match.label, match.target, colors, callbacks);
-      builder.add(match.from, match.to, Decoration.replace({ widget, side: 0 }));
+      const widget = isImageEmbedTarget(match.target)
+        ? new EmbedImageWidget(match.target, colors, callbacks)
+        : new TokenPillWidget(match.type, match.label, match.target, colors, callbacks);
+      ranges.push({ from: match.from, to: match.to, decoration: Decoration.replace({ widget, side: 0 }) });
     }
   }
 
-  return builder.finish();
+  return Decoration.set(
+    ranges.map((range) => range.decoration.range(range.from, range.to)),
+    true,
+  );
 }
 
 export function createLivePreviewExtension(
