@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
+import type { FormattingResult, Selection } from '../lib/mdxFormatting';
+
 import type { Theme } from '../theme';
 
 // Barre d'outils partagée par les 3 éditeurs de fichier (Notes, Canvas,
@@ -22,7 +24,7 @@ import type { Theme } from '../theme';
 type SubItem = {
   id: string;
   label: string;
-  onPress: () => void;
+  onPress?: () => void;
 };
 
 type Item = {
@@ -33,14 +35,20 @@ type Item = {
   // Séparateur vertical entre groupes (v0.4.43) : rien n'est rendu à part
   // un trait fin — le label/id sont ignorés.
   divider?: boolean;
+  // Action DÉLÉGUÉE (v0.4.43) : au clic, l'appelant reçoit l'item et exécute
+  // lui-même l'action (annuler/rétablir touchent l'EditorView, la pièce
+  // jointe ouvre le sélecteur) — les closures refs restent dans le scope du
+  // prop JSX de l'appelant, où la règle react-hooks/refs les accepte.
+  run?: { id: string; formatRun?: (text: string, selection: Selection) => FormattingResult };
 };
 
 type Props = {
   items: Item[];
   theme: Theme;
+  onItemRun?: (item: Item) => void;
 };
 
-export function EditorToolbar({ items, theme }: Props) {
+export function EditorToolbar({ items, theme, onItemRun }: Props) {
   const [openGroupId, setOpenGroupId] = useState<string | null>(null);
 
   if (items.length === 0) return null;
@@ -59,7 +67,14 @@ export function EditorToolbar({ items, theme }: Props) {
           return (
             <Pressable
               key={item.id}
-              onPress={() => (isGroup ? setOpenGroupId(isOpen ? null : item.id) : item.onPress?.())}
+              onPress={() => {
+                if (isGroup) {
+                  setOpenGroupId(isOpen ? null : item.id);
+                  return;
+                }
+                if (item.run) onItemRun?.(item);
+                else item.onPress?.();
+              }}
               // Groupe dépliant : le survol (PC) OU l'appui (tactile) suffit
               // à le déployer — plus besoin de cliquer (demande 2026-10-05).
               onHoverIn={() => isGroup && setOpenGroupId(item.id)}
@@ -84,7 +99,7 @@ export function EditorToolbar({ items, theme }: Props) {
             <Pressable
               key={subItem.id}
               onPress={() => {
-                subItem.onPress();
+                subItem.onPress?.();
                 setOpenGroupId(null);
               }}
               style={[styles.toolbarButton, { backgroundColor: theme.surface }]}

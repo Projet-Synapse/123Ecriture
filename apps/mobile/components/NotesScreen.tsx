@@ -159,58 +159,6 @@ type Props = {
 // arrivent en paramètres (l'accès à viewRef.current pendant le rendu est
 // interdit par react-hooks/refs, et la règle ne voit ici que des closures
 // d'évènements passées en props).
-type ToolbarItem = {
-  id: string;
-  label: string;
-  onPress?: () => void;
-  subItems?: { id: string; label: string; onPress: () => void }[];
-  divider?: boolean;
-};
-
-function buildNotesToolbarItems(
-  getView: () => EditorView | null,
-  insertAttachment: () => void,
-  applyFormat: (run: (text: string, selection: Selection) => FormattingResult) => void,
-  groups: NotesToolbarGroup[],
-): ToolbarItem[] {
-  const items: ToolbarItem[] = [];
-  const run = (actionId: string, formatRun?: (text: string, selection: Selection) => FormattingResult) => {
-    if (actionId === 'attach') {
-      insertAttachment();
-      return;
-    }
-    if (actionId === 'undo' || actionId === 'redo') {
-      const view = getView();
-      if (view) {
-        void import('@codemirror/commands').then((commands) => (actionId === 'undo' ? commands.undo : commands.redo)(view));
-      }
-      return;
-    }
-    if (formatRun) applyFormat(formatRun);
-  };
-  groups.forEach((group, groupIndex) => {
-    if (groupIndex > 0) {
-      items.push({ id: `divider-${group.id}`, label: '', divider: true });
-    }
-    const resolved = group.buttons
-      .map((id) => NOTES_TOOLBAR_ACTIONS.find((action) => action.id === id))
-      .filter((action): action is ToolbarAction => Boolean(action));
-    if (group.collapsible) {
-      items.push({
-        id: `group-${group.id}`,
-        label: group.label,
-        subItems: resolved.map((action) => ({ id: action.id, label: action.label, onPress: () => run(action.id, action.run) })),
-      });
-    } else {
-      resolved.forEach((action, index) => {
-        if (index > 0) items.push({ id: `divider-${group.id}-${index}`, label: '', divider: true });
-        items.push({ id: action.id, label: action.label, onPress: () => run(action.id, action.run) });
-      });
-    }
-  });
-  return items;
-}
-
 export function NotesScreen({
   pendingOpenRelPath,
   onOpenedPendingNote,
@@ -2519,7 +2467,7 @@ export function NotesScreen({
                             }
                             if (formatRun) applyFormatting(formatRun);
                           };
-                          const items: { id: string; label: string; onPress?: () => void; subItems?: { id: string; label: string; onPress: () => void }[]; divider?: boolean }[] = [];
+                          const items: { id: string; label: string; divider?: boolean; subItems?: { id: string; label: string }[]; run?: { id: string; formatRun?: (text: string, selection: Selection) => FormattingResult } }[] = [];
                           preferences.notesToolbarGroups.forEach((group, groupIndex) => {
                             if (groupIndex > 0) {
                               items.push({ id: `divider-${group.id}`, label: '', divider: true });
@@ -2531,12 +2479,12 @@ export function NotesScreen({
                               items.push({
                                 id: `group-${group.id}`,
                                 label: group.label,
-                                subItems: resolved.map((action) => ({ id: action.id, label: action.label, onPress: () => run(action.id, action.run) })),
+                                subItems: resolved.map((action) => ({ id: action.id, label: action.label })),
                               });
                             } else {
                               resolved.forEach((action, index) => {
                                 if (index > 0) items.push({ id: `divider-${group.id}-${index}`, label: '', divider: true });
-                                items.push({ id: action.id, label: action.label, onPress: () => run(action.id, action.run) });
+                                items.push({ id: action.id, label: action.label, run: { id: action.id, formatRun: action.run } });
                               });
                             }
                           });

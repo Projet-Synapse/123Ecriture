@@ -3,7 +3,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { CANVAS_TOOLBAR_DESCRIPTIONS } from '../../lib/canvasToolbarActions';
 import { EDITOR_FONT_STACKS } from '../MdxEditor';
 import { CHART_TOOLBAR_DESCRIPTIONS } from '../../lib/chartToolbarActions';
-import { NOTES_TOOLBAR_DESCRIPTIONS, NOTES_TOOLBAR_SHORTCUT_LABELS } from '../../lib/notesToolbarActions';
+import { NOTES_TOOLBAR_DESCRIPTIONS } from '../../lib/notesToolbarActions';
 import { usePreferences } from '../../preferences/PreferencesContext';
 import { SettingsToggle } from './SettingsToggle';
 import { settingsStyles as s } from './settingsStyles';
@@ -44,7 +44,6 @@ export function EditorSection() {
     setEditorDefaultMode,
     setEditorCloseBrackets,
     setEditorInlineTitle,
-    setNotesToolbarOrder,
     setNotesToolbarGroups,
     setCanvasToolbarOrder,
     setChartToolbarOrder,
