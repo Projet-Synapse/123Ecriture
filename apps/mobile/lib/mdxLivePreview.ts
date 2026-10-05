@@ -167,7 +167,20 @@ function selectionTouches(view: EditorView, from: number, to: number): boolean {
 
 type DecorationRange = { from: number; to: number; decoration: Decoration };
 
+// Garde-fou (lenteur de frappe rapportée) : les décorations du Live Preview
+// coûtent une passe de détection sur TOUT le document à chaque frappe —
+// linéaire et négligeable sur une note normale, mais 2,3 s mesuré par
+// CARACTÈRE sur une note de 32 Mo (coffres réels : 3 fiches de cette
+// taille). Au-delà de ce seuil, on retombe volontairement sur du texte
+// brut (comportement Obsidian sur les notes énormes) : la frappe redevient
+// instantanée, la mise en forme réapparaît dans les modes Source/Aperçu.
+const MAX_LIVE_PREVIEW_CHARS = 500_000;
+
 function buildDecorations(view: EditorView, colors: LivePreviewColors, callbacks: LivePreviewCallbacks): DecorationSet {
+  // doc.length est O(1) : le garde-fou court AVANT tout toString().
+  if (view.state.doc.length > MAX_LIVE_PREVIEW_CHARS) {
+    return Decoration.none;
+  }
   const text = view.state.doc.toString();
   const matches: LiveMatch[] = findLiveMatches(text);
   const ranges: DecorationRange[] = [];

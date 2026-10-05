@@ -1453,16 +1453,26 @@ export function NotesScreen({
   const scheduleSave = useCallback(
     (text: string) => {
       if (!vault || !activeNote) return;
-      setStatus('saving');
+      // PAS de setStatus('saving') ici : cette fonction tourne à CHAQUE
+      // frappe, et un setState supplémentaire = un re-render complet de
+      // NotesScreen par caractère (l'app est déjà re-rendue par
+      // setContent). Le statut passe à "saving" dans le timer, au moment
+      // où l'écriture a réellement lieu.
       if (saveTimer.current) clearTimeout(saveTimer.current);
       saveTimer.current = setTimeout(() => {
         void (async () => {
           try {
+            setStatus('saving');
             const finalText = await materializeTimestamps(activeNote.relPath, text);
             if (finalText !== text) setContent(finalText);
             await vault.writeNote(activeNote.relPath, finalText);
             setStatus('saved');
-            await refreshTree();
+            // PAS de refreshTree() ici (contrairement à flushSave) : un
+            // simple edit ne change pas la structure du coffre, et un walk
+            // complet du coffre + re-render de l'explorateur après CHAQUE
+            // pause de frappe étranglait l'écriture (l'arbre est
+            // rafraîchi par les chemins qui changent réellement la
+            // structure : création, renommage, suppression, déplacement).
           } catch (error) {
             console.error('[vault] échec de sauvegarde :', error);
             setStatus('error');
@@ -1470,7 +1480,7 @@ export function NotesScreen({
         })();
       }, AUTOSAVE_DELAY_MS);
     },
-    [vault, activeNote, refreshTree, materializeTimestamps],
+    [vault, activeNote, materializeTimestamps],
   );
 
   const handleChangeContent = (text: string) => {
@@ -1576,12 +1586,19 @@ export function NotesScreen({
   // Compteur mots/caractères (barre d'en-tête, markdown uniquement) —
   // compté sur le CORPS (frontmatter exclu) quel que soit le mode
   // d'affichage : c'est le texte lu/écrit qui compte, pas la config YAML.
-  // Déjà dérivé d'un state mis à jour à chaque frappe, le recalcul est
-  // négligeable (un split) face au re-rendu existant.
-  const wordStats = useMemo(
-    () => ({ words: countWords(bodyOnly), characters: countCharacters(bodyOnly) }),
-    [bodyOnly],
-  );
+  // DÉBOUNCÉ (l'ancien useMemo recalculait à chaque frappe) : le comptage
+  // est linéaire sur TOUT le corps, négligeable sur une note normale
+  // (~1 ms) mais catastrophique sur une note géante (2,3 s mesuré sur une
+  // note de 32 Mo → chaque caractère tapé gelait l'éditeur). Un retard de
+  // 400 ms sur l'affichage du compteur est invisible ; un gel par frappe
+  // ne l'est pas.
+  const [wordStats, setWordStats] = useState({ words: 0, characters: 0 });
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setWordStats({ words: countWords(bodyOnly), characters: countCharacters(bodyOnly) });
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [bodyOnly]);
   const handleChangeBody = (newBody: string) => handleChangeContent(serializeFrontmatter(frontmatterData, newBody));
 
   // Dispatché directement sur l'EditorView (pas de setContent/scheduleSave
