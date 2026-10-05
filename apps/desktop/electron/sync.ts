@@ -58,10 +58,18 @@ async function walkAndHash(dir: string, vaultRoot: string, out: HashedNote[]): P
     // corbeille de conflits…) — SAUF `.trash`, la corbeille du coffre,
     // volontairement SYNCHRONISÉE (v0.4.26 : elle est partagée entre tous
     // les appareils du compte, chaque suppression y atterrit partout).
-    if (relSegments[0] !== '.trash' && relSegments.some((segment) => segment.startsWith('.'))) {
+    // Apparence PAR COFFRE (v0.4.42) : .123ecriture/appearance.json voyage
+    // avec le coffre — le thème réglé sur un appareil se retrouve sur tous.
+    const relPath = path.relative(vaultRoot, fullPath);
+    const isAppearanceFile = relPath === '.123ecriture' + path.sep + 'appearance.json';
+    if (
+      !isAppearanceFile &&
+      relSegments[0] !== '.trash' &&
+      relSegments.some((segment) => segment.startsWith('.'))
+    ) {
       continue;
     }
-    if (entry.isFile() && EXTENSION_TO_KIND[path.extname(entry.name)]) {
+    if (entry.isFile() && (isAppearanceFile || EXTENSION_TO_KIND[path.extname(entry.name)])) {
       try {
         const stat = await fs.stat(fullPath);
         out.push({

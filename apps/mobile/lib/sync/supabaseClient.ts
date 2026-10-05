@@ -1,4 +1,7 @@
+import { Platform } from 'react-native';
 import { createClient } from '@supabase/supabase-js';
+
+import { nativeAuthStorage } from './nativeAuthStorage';
 
 // Client Supabase partagé (auth + synchro) — voir docs/ARCHITECTURE.md §6.
 // Projet "Projet Synapse", partagé avec d'autres apps : toutes les tables de
@@ -9,8 +12,11 @@ import { createClient } from '@supabase/supabase-js';
 // Expo les inline au build (voir apps/mobile/.env.example) — cette clé est
 // SÛRE à exposer côté client, elle n'autorise que ce que les policies RLS
 // permettent explicitement (voir la migration SQL).
-const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL;
-const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+// Exportées pour les téléchargements Storage hors supabase-js (voir
+// syncEngine.downloadRemoteText : expo/fetch tamponne les réponses en
+// mémoire Java → OOM natif sur Android).
+export const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL;
+export const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
 
 // `null` si les variables d'env ne sont pas renseignées (ex. build sans
 // .env local) plutôt que de planter au chargement du module — AuthContext/
@@ -25,10 +31,13 @@ export const supabase =
           // classique ne convient pas à une redirection vers un schéma
           // d'URL personnalisé (app123ecriture://...).
           flowType: 'pkce',
-          // localStorage persiste la session entre redémarrages de l'app
-          // dans le renderer Electron (partition par défaut, persistante) —
-          // comportement par défaut du client, laissé explicite ici pour la
-          // documentation.
+          // Session persistée : localStorage dans le renderer Electron
+          // (partition par défaut, persistante — comportement par défaut du
+          // client, laissé explicite ici pour la documentation) ; fichier
+          // JSON du stockage privé sur natif (nativeAuthStorage.ts) — sans
+          // lui, supabase-js retombe sur un stockage en mémoire et la
+          // session disparaît à chaque redémarrage de l'app.
+          storage: Platform.OS === 'web' ? undefined : nativeAuthStorage,
           persistSession: true,
           // En NAVIGATEUR PUR (pas de pont Electron), le retour Google →
           // Supabase recharge la page du site avec ?code=... : supabase-js
@@ -36,7 +45,10 @@ export const supabase =
           // l'URL). Dans le renderer Electron, le callback arrive via le
           // protocole app123ecriture:// et AuthContext appelle explicitement
           // exchangeCodeForSession — la détection d'URL doit rester off.
-          detectSessionInUrl: typeof window !== 'undefined' && !('electronBridge' in window),
+          // (Test explicite sur Platform : `typeof window` ne suffit pas —
+          // window existe aussi sous Hermes natif.)
+          detectSessionInUrl:
+            Platform.OS === 'web' && typeof window !== 'undefined' && !('electronBridge' in window),
         },
       })
     : null;

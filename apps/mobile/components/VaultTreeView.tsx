@@ -91,6 +91,9 @@ type Props = {
   draggingRelPath?: string | null;
   dragOverInsertion?: { relPath: string; edge: 'above' | 'below' | 'inside' } | null;
   dragEnabled?: boolean;
+  // Maintien de doigt (natif) — l'équivalent tactile du clic droit desktop
+  // (menu contextuel, voir NotesScreen.showContextMenuFor).
+  onNodeLongPress?: (node: VaultTreeNode) => void;
 };
 
 // //2. 🌳 PROPS/RENDU
@@ -111,6 +114,7 @@ export function VaultTreeView({
   draggingRelPath,
   dragOverInsertion,
   dragEnabled = true,
+  onNodeLongPress,
 }: Props) {
   return (
     <>
@@ -133,6 +137,7 @@ export function VaultTreeView({
               </View>
             )}
             <DraggablePressable
+              onLongPress={onNodeLongPress ? () => onNodeLongPress(node) : undefined}
               onPress={(event) => {
                 // `nativeEvent` est ici la vraie MouseEvent du clic (voir le
                 // commentaire de la prop `onOpenNote` ci-dessous).
@@ -201,12 +206,17 @@ export function VaultTreeView({
               )}
 
               {isRenaming ? (
+                // Champ MIROIR de l'édition de titre : SANS autoFocus ni
+                // onBlur-auto-submit — le titre inline (ou l'endroit d'où
+                // vient le renommage) garde le focus. Deux champs autoFocus
+                // montés ensemble se volaient le focus en boucle : chaque
+                // blur déclenchait onSubmit → le champ se refermait
+                // aussitôt (mobile ET desktop, vécu 2026-10-02) et
+                // l'ancien code ajoutait un « 2 » au nom à chaque blur.
                 <TextInput
-                  autoFocus
                   value={rename.value}
                   onChangeText={rename.onChangeValue}
                   onSubmitEditing={rename.onSubmit}
-                  onBlur={rename.onSubmit}
                   onKeyPress={(event) => {
                     if (event.nativeEvent.key === 'Escape') rename.onCancel();
                   }}

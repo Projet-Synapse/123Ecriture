@@ -1,7 +1,7 @@
 import { RangeSetBuilder } from '@codemirror/state';
 import { Decoration, type DecorationSet, EditorView, ViewPlugin, type ViewUpdate, WidgetType } from '@codemirror/view';
 
-import { findLiveMatches, type LiveMatch, type TokenType } from './liveDecorations';
+import { findBold, findItalic, findLiveMatches, type LiveMatch, type TokenType } from './liveDecorations';
 
 // Le vrai Live Preview inline (mode "Intermédiaire", voir components/
 // MdxEditor.tsx) : un `ViewPlugin` CodeMirror qui décore le document selon
@@ -89,7 +89,60 @@ function selectionTouches(view: EditorView, from: number, to: number): boolean {
   return view.state.selection.ranges.some((range) => range.from <= to && range.to >= from);
 }
 
-function buildDecorations(view: EditorView, colors: LivePreviewColors, callbacks: LivePreviewCallbacks): DecorationSet {
+// Découpe [from, to) en stylant le texte libre avec `style` et en masquant
+// les marqueurs de gras/italique IMBRIQUÉS (`**_texte_**`, `# __Titre__`…),
+// style cumulé au sien, récursivement. Corrige deux bugs vus sur le
+// téléphone (2026-10-03) :
+// 1. l'italique dans le gras (`**_Procédure_**`) était ABANDONNÉ par le
+//    dédoublonnage de findLiveMatches — les `_` restaient visibles autour
+//    du mot, seul le gras extérieur était décoré ;
+// 2. l'ancienne segmentation des titres comparait une position RELATIVE
+//    (segment.from, 0-based dans le contenu) à une position ABSOLUE
+//    (cursor = contentFrom ≥ 2) : le PREMIER segment de chaque titre
+//    (`##### **2•** …`) était systématiquement sauté, marqueurs visibles.
+// `style` cumule ceux des ancêtres (titre → gras → italique) ; les plages
+// sont émises de gauche à droite (contrainte d'ordre du RangeSetBuilder).
+// Chaque niveau de récursion consomme au moins les deux marqueurs, donc
+// l'imbrication terminée est garantie.
+function addMarkedRange(
+  builder: RangeSetBuilder<Decoration>,
+  text: string,
+  from: number,
+  to: number,
+  style: string,
+): void {
+  const inner = [...findBold(text.slice(from, to)), ...findItalic(text.slice(from, to))].sort(
+    (a, b) => a.from - b.from,
+  );
+  let cursor = from;
+  const emitPlain = (f: number, t: number) => {
+    if (f < t) builder.add(f, t, Decoration.mark({ attributes: { style } }));
+  };
+  for (const segment of inner) {
+    const absFrom = from + segment.from;
+    const absTo = from + segment.to;
+    if (absFrom < cursor) continue; // chevauche le segment retenu (dédoublonnage local)
+    emitPlain(cursor, absFrom);
+    builder.add(absFrom, absFrom + segment.markerLength, Decoration.replace({}));
+    addMarkedRange(
+      builder,
+      text,
+      absFrom + segment.markerLength,
+      absTo - segment.markerLength,
+      `${style};${segment.type === 'bold' ? 'font-weight:700' : 'font-style:italic'}`,
+    );
+    builder.add(absTo - segment.markerLength, absTo, Decoration.replace({}));
+    cursor = absTo;
+  }
+  emitPlain(cursor, to);
+}
+
+function buildDecorations(
+  view: EditorView,
+  colors: LivePreviewColors,
+  callbacks: LivePreviewCallbacks,
+  colorize: boolean,
+): DecorationSet {
   const text = view.state.doc.toString();
   const matches: LiveMatch[] = findLiveMatches(text);
   const builder = new RangeSetBuilder<Decoration>();
@@ -112,25 +165,27 @@ function buildDecorations(view: EditorView, colors: LivePreviewColors, callbacks
       // confirmé en lançant l'app réelle (console : "Ranges must be added
       // sorted by `from` position and `startSide`").
       builder.add(match.from, match.from + match.markerLength, Decoration.replace({}));
-      builder.add(
-        match.from + match.markerLength,
-        match.to - match.markerLength,
-        Decoration.mark({ attributes: { style: styleClass } }),
-      );
+      addMarkedRange(builder, text, match.from + match.markerLength, match.to - match.markerLength, styleClass);
       builder.add(match.to - match.markerLength, match.to, Decoration.replace({}));
     } else if (match.kind === 'heading') {
       const sizeByLevel = [0, '1.5em', '1.3em', '1.15em', '1.05em', '1em', '1em'];
+      const headingMark = `${colorize ? `color:${colors.accent};` : ''}font-weight:700;font-size:${sizeByLevel[match.level] ?? '1em'}`;
       // Même contrainte d'ordre croissant que pour 'mark' ci-dessus : le
       // préfixe masqué (from → contentFrom) doit être ajouté AVANT le
       // contenu stylé (contentFrom → to), pas après.
-      if (!active) {
+      if (active) {
+        builder.add(
+          match.contentFrom,
+          match.to,
+          Decoration.mark({ attributes: { style: headingMark } }),
+        );
+      } else {
         builder.add(match.from, match.contentFrom, Decoration.replace({}));
+        // Le contenu du titre passe par le même découpage récursif : ses
+        // `**`/`__`/`_`/`*` imbriqués sont masqués et stylés (le dedup de
+        // findLiveMatches saute sinon tout ce qui chevauche un titre).
+        addMarkedRange(builder, text, match.contentFrom, match.to, headingMark);
       }
-      builder.add(
-        match.contentFrom,
-        match.to,
-        Decoration.mark({ attributes: { style: `font-weight:700;font-size:${sizeByLevel[match.level]}` } }),
-      );
     } else {
       // token : wikilink/tag/occurrence/embed
       if (active) continue; // texte brut révélé pendant l'édition
@@ -142,18 +197,27 @@ function buildDecorations(view: EditorView, colors: LivePreviewColors, callbacks
   return builder.finish();
 }
 
-export function createLivePreviewExtension(colors: LivePreviewColors, callbacks: LivePreviewCallbacks) {
+export function createLivePreviewExtension(
+  colors: LivePreviewColors,
+  callbacks: LivePreviewCallbacks,
+  options?: {
+    // Mobile uniquement : titres/contenu colorés avec l'accent (le rendu
+    // vivant desktop reste monochrome, comme toujours).
+    colorize?: boolean;
+  },
+) {
+  const colorize = options?.colorize === true;
   return ViewPlugin.fromClass(
     class {
       decorations: DecorationSet;
 
       constructor(view: EditorView) {
-        this.decorations = buildDecorations(view, colors, callbacks);
+        this.decorations = buildDecorations(view, colors, callbacks, colorize);
       }
 
       update(update: ViewUpdate) {
         if (update.docChanged || update.selectionSet || update.viewportChanged) {
-          this.decorations = buildDecorations(update.view, colors, callbacks);
+          this.decorations = buildDecorations(update.view, colors, callbacks, colorize);
         }
       }
     },

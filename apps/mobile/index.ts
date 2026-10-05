@@ -1,4 +1,7 @@
 import './lib/crashReport';
+// Filet natif : addEventListener/removeEventListener no-op sur Hermes —
+// voir lib/nativeShims.ts (crash « undefined is not a function » v0.4.41).
+import './lib/nativeShims';
 
 import { registerRootComponent } from 'expo';
 

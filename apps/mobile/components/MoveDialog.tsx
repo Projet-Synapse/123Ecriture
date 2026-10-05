@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput } from 'react-native';
+import { Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput } from 'react-native';
 
 import { collectFolderOptions } from '../lib/vaultTree';
 import { useScrollIntoView } from '../lib/useScrollIntoView';
@@ -114,7 +114,7 @@ export function MoveDialog({ node, tree, theme, onSelect, onCancel, multiCount }
   // (racine déjà courante, parent actuel) sont SAUTÉES : s'y arrêter
   // n'aboutirait qu'à une Entrée sans effet.
   useEffect(() => {
-    if (typeof window === 'undefined' || !isOpen) return;
+    if (Platform.OS !== 'web' || !isOpen) return;
     const moveSelection = (from: number, delta: number) => {
       let next = from;
       do {

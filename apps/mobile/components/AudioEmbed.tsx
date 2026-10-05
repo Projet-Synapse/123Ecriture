@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { View } from 'react-native';
+import { Platform, Text, View } from 'react-native';
 
 // Lecteur audio minimal pour les pièces jointes audio des notes (voir
 // NoteRenderer.tsx, `![[fichier.mp3]]`) — RN n'a pas de composant <audio>
@@ -30,5 +30,12 @@ export function AudioEmbed({ dataUrl }: Props) {
     };
   }, [dataUrl]);
 
+  if (Platform.OS !== 'web') {
+    return (
+      <View style={{ marginVertical: 4 }}>
+        <Text style={{ fontSize: 12, opacity: 0.7 }}>{"🎧 Audio non lisible sur mobile pour l'instant."}</Text>
+      </View>
+    );
+  }
   return <View ref={containerRef} style={{ marginVertical: 4, minHeight: 32 }} />;
 }

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import {
   isSearchResultOpenable,
@@ -114,7 +114,7 @@ export function SearchDialog({ theme, onOpenResult, onCancel }: Props) {
   };
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
+    if (Platform.OS !== 'web') return;
     const handleKeyDown = (event: KeyboardEvent) => {
       // Échap ferme — même convention que CommandPalette.tsx (qui l'avait
       // dès l'origine) : deux boîtes de recherche qui réagissent

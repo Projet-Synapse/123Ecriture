@@ -1,10 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
+  GestureResponderEvent,
+  Platform,
   Pressable,
   ScrollView,
+  StatusBar,
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from 'react-native';
 
@@ -36,8 +40,10 @@ import { CanvasEditor } from './CanvasEditor';
 import { ChartEditor } from './ChartEditor';
 import { EditorToolbar } from './EditorToolbar';
 import { EditPathDialog } from './EditPathDialog';
+import { ActionMenu } from './ActionMenu';
 import { ExcalidrawEditor } from './ExcalidrawEditor';
 import { MdxEditor } from './MdxEditor';
+import { MdxEditorWeb } from './MdxEditorWeb';
 import { MoveDialog } from './MoveDialog';
 import { NoteRenderer } from './NoteRenderer';
 import { OccurrencesPanel } from './OccurrencesPanel';
@@ -153,6 +159,28 @@ export function NotesScreen({
   const { preferences, preferencesLoaded, theme, setFileSortMode, toggleFavorite } = usePreferences();
   const vault = typeof window !== 'undefined' ? window.vault : undefined;
   const contextMenuBridge = typeof window !== 'undefined' ? window.contextMenu : undefined;
+  // Menu contextuel unifié : pont Electron desktop (`contextMenuBridge.show`,
+  // menu natif du clic droit) OU carte tactile `ActionMenu` sur natif —
+  // mêmes items, mêmes handlers, un seul point de branchement (presentMenu).
+  const [nativeMenu, setNativeMenu] = useState<{ title?: string; items: { id: string; label: string }[] } | null>(null);
+  const nativeMenuResolver = useRef<((choice: string | null) => void) | null>(null);
+  const presentMenu = useCallback(
+    (title: string | undefined, items: { id: string; label: string }[]): Promise<string | null> => {
+      if (Platform.OS === 'web') {
+        return contextMenuBridge ? contextMenuBridge.show(items) : Promise.resolve(null);
+      }
+      return new Promise((resolve) => {
+        nativeMenuResolver.current = resolve;
+        setNativeMenu({ title, items });
+      });
+    },
+    [contextMenuBridge],
+  );
+  const closeNativeMenu = useCallback((choice: string | null) => {
+    setNativeMenu(null);
+    nativeMenuResolver.current?.(choice);
+    nativeMenuResolver.current = null;
+  }, []);
   const { vaults, switchVault, activeVaultPath: vaultPath } = useVaults();
 
   const [tree, setTree] = useState<VaultTreeNode[]>([]);
@@ -165,6 +193,12 @@ export function NotesScreen({
   const [content, setContent] = useState('');
   const [status, setStatus] = useState<Status>('idle');
   const [viewMode, setViewMode] = useState<ViewMode>(preferences.editorDefaultMode);
+  // Sur natif, l'éditeur CodeMirror est du pur DOM (crash au montage) :
+  // l'Intermédiaire embarque désormais le MÊME éditeur web que le desktop
+  // dans une WebView (MdxEditorWeb — v0.4.42, demande 2026-10-02), le
+  // mode Source reste un TextInput natif et l'Aperçu le NoteRenderer natif.
+  const isNativeNotes = Platform.OS !== 'web';
+  const effectiveViewMode: ViewMode = viewMode;
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [wikilinkNotice, setWikilinkNotice] = useState<string | null>(null);
   // Repli des dossiers de l'explorateur — persisté PAR COFFRE dans
@@ -215,7 +249,20 @@ export function NotesScreen({
   // le bouton ◀/▶ de l'en-tête) — `onCollapseIntent` fait juste converger
   // le glisser-jusqu'à-zéro vers ce même bouton plutôt que d'introduire une
   // deuxième notion de "fermé" qui pourrait diverger.
+  // Plafond de largeur de l'explorateur : la largeur persistée (jusqu'à
+  // 480, pensée pour desktop) sur un écran de téléphone laissait ~225 px à
+  // l'éditeur — titre sur 6 lignes, apparence cassée (vécu sur A13). Le
+  // plafond initial (45 %) empêchait aussi TOUT élargissement au doigt —
+  // demande 2026-10-03 : « gérer leur largeur à l'aide de mon doigt » —
+  // relâché à 60 % : l'éditeur garde toujours ~40 % de fenêtre.
+  const { width: windowWidth } = useWindowDimensions();
   const explorerPanel = useResizablePanel('explorer', { min: 180, max: 480, edge: 1 });
+  // Largeur RÉELLE de l'explorateur (la même que le style du panneau plus
+  // bas) — pilote l'empilement de l'en-tête (voir listHeaderActionsStacked).
+  const explorerWidth = Math.min(explorerPanel.width, windowWidth * 0.6);
+  // Sous ~280 dp, la ligne « bouton + 3 icônes » ne tient plus (sur un
+  // téléphone l'explorateur fait ~162 dp) : en-tête sur deux rangées.
+  const explorerHeaderStacked = explorerWidth < 280;
   const rightPanelWidth = useResizablePanel('rightPanel', {
     min: 220,
     max: 480,
@@ -814,6 +861,9 @@ export function NotesScreen({
 
     const container = listAreaRef.current as unknown as HTMLElement | null;
     if (!container) return;
+    // querySelector/scrollIntoView = DOM web uniquement (no-op natif : le
+    // scroll vers la note active reviendra avec l'explorateur natif).
+    if (Platform.OS !== 'web') return;
     const frame = requestAnimationFrame(() => {
       const row = container.querySelector(`[data-relpath="${CSS.escape(activeNote.relPath)}"]`);
       row?.scrollIntoView({ block: 'nearest' });
@@ -1068,23 +1118,19 @@ export function NotesScreen({
   // //////////////////////////////////////////////////////////////////////
 
   const showSortMenu = useCallback(() => {
-    if (!contextMenuBridge) return;
     const options: { id: FileSortMode; label: string }[] = [
       { id: 'alphabetical', label: 'Alphabétique' },
       { id: 'recent', label: 'Plus récent d’abord' },
       { id: 'oldest', label: 'Moins récent d’abord' },
       { id: 'manual', label: 'Personnalisé (glisser-déposer)' },
     ];
-    void contextMenuBridge
-      .show(options.map((o) => ({ id: o.id, label: o.id === preferences.fileSortMode ? `✅ ${o.label}` : o.label })))
-      .then((choice) => {
-        if (choice) void setFileSortMode(choice as FileSortMode);
-      });
-  }, [contextMenuBridge, preferences.fileSortMode, setFileSortMode]);
+    void presentMenu(undefined, options.map((o) => ({ id: o.id, label: o.id === preferences.fileSortMode ? `✅ ${o.label}` : o.label }))).then((choice) => {
+      if (choice) void setFileSortMode(choice as FileSortMode);
+    });
+  }, [presentMenu, preferences.fileSortMode, setFileSortMode]);
 
   const showContextMenuFor = useCallback(
     (node: VaultTreeNode | null) => {
-      if (!contextMenuBridge) return;
       const items = !node
         ? [
             { id: 'new-note', label: 'Nouvelle note' },
@@ -1119,7 +1165,7 @@ export function NotesScreen({
               { id: 'delete', label: 'Supprimer' },
             ];
 
-      void contextMenuBridge.show(items).then((choice) => {
+      void presentMenu(node?.name, items).then((choice) => {
         if (choice === 'new-note') void handleCreateNote();
         if (choice === 'new-canvas') void handleCreateNote(undefined, 'canvas');
         if (choice === 'new-chart') void handleCreateNote(undefined, 'chart');
@@ -1139,7 +1185,7 @@ export function NotesScreen({
       });
     },
     [
-      contextMenuBridge,
+      presentMenu,
       handleCreateNote,
       handleCreateFolder,
       startRename,
@@ -1160,32 +1206,30 @@ export function NotesScreen({
   // activeNote (même forme que `{ type: 'note', ...activeNote }` du
   // renommage par clic titre).
   const showEditorActionsMenu = useCallback(() => {
-    if (!contextMenuBridge || !activeNote) return;
+    if (!activeNote) return;
     const node: VaultTreeNode = { type: 'note', ...activeNote };
-    void contextMenuBridge
-      .show([
-        { id: 'rename', label: 'Renommer' },
-        { id: 'move', label: 'Déplacer vers…' },
-        { id: 'edit-path', label: 'Modifier le chemin' },
-        { id: 'duplicate', label: 'Dupliquer' },
-        {
-          id: 'toggle-favorite',
-          label: preferences.favoriteRelPaths.includes(node.relPath)
-            ? 'Retirer des favoris'
-            : 'Ajouter aux favoris',
-        },
-        { id: 'delete', label: 'Supprimer' },
-      ])
-      .then((choice) => {
-        if (choice === 'rename') startRename(node);
-        if (choice === 'move') startMove(node);
-        if (choice === 'edit-path') startEditPath(node);
-        if (choice === 'duplicate') void handleDuplicateNode(node);
-        if (choice === 'toggle-favorite') void toggleFavorite(node.relPath);
-        if (choice === 'delete') void handleDeleteNode(node);
-      });
+    void presentMenu(node.name, [
+      { id: 'rename', label: 'Renommer' },
+      { id: 'move', label: 'Déplacer vers…' },
+      { id: 'edit-path', label: 'Modifier le chemin' },
+      { id: 'duplicate', label: 'Dupliquer' },
+      {
+        id: 'toggle-favorite',
+        label: preferences.favoriteRelPaths.includes(node.relPath)
+          ? 'Retirer des favoris'
+          : 'Ajouter aux favoris',
+      },
+      { id: 'delete', label: 'Supprimer' },
+    ]).then((choice) => {
+      if (choice === 'rename') startRename(node);
+      if (choice === 'move') startMove(node);
+      if (choice === 'edit-path') startEditPath(node);
+      if (choice === 'duplicate') void handleDuplicateNode(node);
+      if (choice === 'toggle-favorite') void toggleFavorite(node.relPath);
+      if (choice === 'delete') void handleDeleteNode(node);
+    });
   }, [
-    contextMenuBridge,
+    presentMenu,
     activeNote,
     preferences.favoriteRelPaths,
     startRename,
@@ -1235,6 +1279,11 @@ export function NotesScreen({
   // une valeur périmée du state si elles le lisaient directement — la ref,
   // elle, reste toujours à jour.
   useEffect(() => {
+    // Glisser-déposer DOM = desktop/web uniquement — sur natif, les refs RN
+    // ne sont pas des HTMLElement (crash « undefined is not a function »,
+    // offset 1:1903343 v0.4.41-fix2, au premier coffre actif). Le
+    // réordonnancement tactile reviendra avec une vraie implémentation RN.
+    if (Platform.OS !== 'web') return;
     const container = listAreaRef.current as unknown as HTMLElement | null;
     if (!container || !vault) return;
 
@@ -1412,6 +1461,9 @@ export function NotesScreen({
   // glisser ne faisait sinon rigoureusement rien de visible en dehors du
   // mode manuel, ce qui ressemblait à une fonctionnalité cassée.
   useEffect(() => {
+    // Attribut `draggable` des lignes = DOM web uniquement (même raison que
+    // le glisser-déposer ci-dessus — offset 1:1902664 sur fix2).
+    if (Platform.OS !== 'web') return;
     const container = listAreaRef.current as unknown as HTMLElement | null;
     if (!container) return;
     const rows = container.querySelectorAll<HTMLElement>('[data-relpath]');
@@ -1485,11 +1537,11 @@ export function NotesScreen({
   // recherche globale) vit dans AppShell.tsx, pas ici — voir le
   // commentaire du bloc retiré ci-dessus ("1.5"). La recherche DANS la
   // note (Ctrl/Cmd+F) vit dans MdxEditor.tsx (keymap CodeMirror).
-  // Web/Electron uniquement (`window` n'existe pas sur natif) —
-  // `preventDefault` évite que le navigateur n'ouvre sa propre boîte de
-  // dialogue "Enregistrer sous" sur Ctrl+S.
+  // Web/Electron uniquement — `typeof window` ne suffit pas : window existe
+  // sous Hermes natif mais addEventListener n'y est pas une fonction (crash
+  // au démarrage v0.4.41). Garde Platform.OS.
   useEffect(() => {
-    if (typeof window === 'undefined') return;
+    if (Platform.OS !== 'web') return;
     const handleKeyDown = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey)) return;
       switch (event.key.toLowerCase()) {
@@ -1523,7 +1575,7 @@ export function NotesScreen({
   // peut être détruit avant la résolution, mais le message est déjà parti
   // au main process, qui termine l'écriture de son côté.
   useEffect(() => {
-    if (typeof window === 'undefined') return;
+    if (Platform.OS !== 'web') return;
     const handleBeforeUnload = () => {
       const note = activeNoteRef.current;
       if (!saveTimer.current || !note) return;
@@ -1913,50 +1965,74 @@ export function NotesScreen({
   const activeNoteIsRenaming = activeNote !== null && renamingRelPath === activeNote.relPath;
 
   return (
-    <View style={styles.row}>
+    // paddingTop : rien ne réservait la hauteur de la barre système — le
+    // chemin du coffre et le titre inline passaient SOUS l'horloge.
+    <View style={[styles.row, { paddingTop: StatusBar.currentHeight ?? 0 }]}>
       <View
         ref={listAreaRef}
         style={[
           styles.list,
-          { width: explorerPanel.width, borderColor: theme.border, backgroundColor: theme.surface },
+          {
+            // Même largeur que explorerWidth (plus haut) — qui pilote aussi
+            // l'empilement de l'en-tête.
+            width: explorerWidth,
+            borderColor: theme.border,
+            backgroundColor: theme.surface,
+          },
         ]}
       >
         <View style={styles.listHeader}>
           <Text style={[styles.vaultPath, { color: theme.textMuted }]} numberOfLines={1}>
             {vaultPath}
           </Text>
-          <View style={styles.listHeaderActions}>
+          {/* Panneau étroit (téléphone : la moitié de 360 dp ≈ 162 dp) :
+              le bouton flex et les 3 boutons fixes de 34 dp ne tiennent pas
+              sur une seule ligne — le libellé « + Nouvelle note »
+              s'empilait une lettre par ligne (vécu A13, 2026-10-03). Sous
+              ~280 dp, deux rangées : bouton pleine largeur puis icônes. */}
+          <View style={[styles.listHeaderActions, explorerHeaderStacked && styles.listHeaderActionsStacked]}>
             <Pressable
               onPress={() => void handleCreateNote()}
-              style={[styles.newButton, styles.newButtonFlex, { backgroundColor: theme.accent }]}
+              style={[
+                styles.newButton,
+                !explorerHeaderStacked && styles.newButtonFlex,
+                { backgroundColor: theme.accent },
+              ]}
             >
               <Text style={styles.buttonText}>+ Nouvelle note</Text>
             </Pressable>
-            <Pressable
-              onPress={() => setSearchOpen(true)}
-              style={[styles.searchButton, { borderColor: theme.border }]}
-              accessibilityLabel="Rechercher"
-            >
-              <Text style={{ color: theme.text }}>🔍</Text>
-            </Pressable>
-            <Pressable
-              onPress={showSortMenu}
-              style={[styles.searchButton, { borderColor: theme.border }]}
-              accessibilityLabel="Ordre de tri"
-            >
-              <Text style={{ color: theme.text }}>⇅</Text>
-            </Pressable>
-            <Pressable
-              onPress={() => void toggleExplorerViewMode()}
-              style={[
-                styles.searchButton,
-                { borderColor: theme.border },
-                explorerViewMode === 'tags' && { backgroundColor: theme.accent, borderColor: theme.accent },
-              ]}
-              accessibilityLabel={explorerViewMode === 'tags' ? 'Revenir aux fichiers' : 'Voir les tags'}
-            >
-              <Text style={{ color: explorerViewMode === 'tags' ? '#fff' : theme.text }}>🏷️</Text>
-            </Pressable>
+            {/* Groupe d'icônes isolé dans un sous-View : à l'étroit, il
+                passe sous le bouton et ses icônes se partagent la ligne
+                (flex:1) au lieu de débordrent. Sur desktop (>280 dp), ce
+                sous-View est transparent pour le rendu historique. */}
+            <View style={styles.listHeaderIcons}>
+              <Pressable
+                onPress={() => setSearchOpen(true)}
+                style={[styles.searchButton, explorerHeaderStacked && styles.searchButtonFlex, { borderColor: theme.border }]}
+                accessibilityLabel="Rechercher"
+              >
+                <Text style={{ color: theme.text }}>🔍</Text>
+              </Pressable>
+              <Pressable
+                onPress={showSortMenu}
+                style={[styles.searchButton, explorerHeaderStacked && styles.searchButtonFlex, { borderColor: theme.border }]}
+                accessibilityLabel="Ordre de tri"
+              >
+                <Text style={{ color: theme.text }}>⇅</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => void toggleExplorerViewMode()}
+                style={[
+                  styles.searchButton,
+                  explorerHeaderStacked && styles.searchButtonFlex,
+                  { borderColor: theme.border },
+                  explorerViewMode === 'tags' && { backgroundColor: theme.accent, borderColor: theme.accent },
+                ]}
+                accessibilityLabel={explorerViewMode === 'tags' ? 'Revenir aux fichiers' : 'Voir les tags'}
+              >
+                <Text style={{ color: explorerViewMode === 'tags' ? '#fff' : theme.text }}>🏷️</Text>
+              </Pressable>
+            </View>
           </View>
         </View>
 
@@ -2032,6 +2108,7 @@ export function NotesScreen({
                     }
                   : null
               }
+              onNodeLongPress={showContextMenuFor}
             />
             {tree.length === 0 && (
               <Text style={[styles.muted, { color: theme.textMuted, padding: 16 }]}>
@@ -2085,6 +2162,9 @@ export function NotesScreen({
         collapsed={explorerPanel.collapsed}
         isDragging={explorerPanel.isDragging}
         onMouseDown={explorerPanel.onHandleMouseDown}
+        onTouchStart={explorerPanel.onHandleTouchStart}
+        onTouchMove={explorerPanel.onHandleTouchMove}
+        onTouchEnd={explorerPanel.onHandleTouchEnd}
         onToggleCollapsed={explorerPanel.toggleCollapsed}
       />
       <View style={styles.editor}>
@@ -2099,17 +2179,34 @@ export function NotesScreen({
                   scrollable équivalente, donc gardent toujours le titre ici. */}
               {!(preferences.editorInlineTitle && activeNote.kind === 'markdown') &&
                 (activeNoteIsRenaming ? (
-                  <TextInput
-                    autoFocus
-                    value={renamingValue}
-                    onChangeText={setRenamingValue}
-                    onSubmitEditing={() => void submitRename()}
-                    onBlur={() => void submitRename()}
-                    onKeyPress={(event) => {
-                      if (event.nativeEvent.key === 'Escape') cancelRename();
-                    }}
-                    style={[styles.editorTitleInput, { color: theme.text, borderColor: theme.accent }]}
-                  />
+                  // Validation explicite (Entrée ou ✓) — voir le titre inline
+                  // plus bas pour le pourquoi de l'absence de onBlur.
+                  <View style={styles.renameRow}>
+                    <TextInput
+                      autoFocus
+                      value={renamingValue}
+                      onChangeText={setRenamingValue}
+                      onSubmitEditing={() => void submitRename()}
+                      onKeyPress={(event) => {
+                        if (event.nativeEvent.key === 'Escape') cancelRename();
+                      }}
+                      style={[styles.editorTitleInput, { color: theme.text, borderColor: theme.accent, flex: 1 }]}
+                    />
+                    <Pressable
+                      onPress={() => void submitRename()}
+                      style={[styles.renameAction, { backgroundColor: theme.accent }]}
+                      accessibilityLabel="Valider le titre"
+                    >
+                      <Text style={styles.buttonText}>✓</Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={cancelRename}
+                      style={[styles.renameAction, { borderColor: theme.border }]}
+                      accessibilityLabel="Annuler le renommage"
+                    >
+                      <Text style={{ color: theme.textMuted }}>✕</Text>
+                    </Pressable>
+                  </View>
                 ) : (
                   <Pressable onPress={() => startRename({ type: 'note', ...activeNote })}>
                     <Text style={[styles.editorTitle, { color: theme.text }]}>{activeNote.name}</Text>
@@ -2121,11 +2218,6 @@ export function NotesScreen({
                   space-between ne disperse pas quatre éléments sur toute
                   la largeur (le titre reste seul à gauche). */}
               <View style={styles.editorHeaderRight}>
-                {activeNote.kind === 'markdown' && (
-                  <Text style={[styles.status, { color: theme.textMuted }]}>
-                    {formatCount(wordStats.words)} mots · {formatCount(wordStats.characters)} caractères
-                  </Text>
-                )}
                 <Text style={[styles.status, { color: theme.textMuted }]}>
                   {status === 'saving' && 'Enregistrement…'}
                   {status === 'saved' && 'Enregistré'}
@@ -2201,31 +2293,64 @@ export function NotesScreen({
               <View style={styles.noteContent}>
                 {activeNote.kind === 'canvas' ? (
                   <View style={styles.editorBody}>
-                    <CanvasEditor relPath={activeNote.relPath} onOpenNote={openNoteByRelPath} />
+                    {isNativeNotes ? (
+                      <NativeFileTypeUnavailable color={theme.textMuted} />
+                    ) : (
+                      <CanvasEditor relPath={activeNote.relPath} onOpenNote={openNoteByRelPath} />
+                    )}
                   </View>
                 ) : activeNote.kind === 'chart' ? (
                   <View style={styles.editorBody}>
-                    <ChartEditor relPath={activeNote.relPath} />
+                    {isNativeNotes ? (
+                      <NativeFileTypeUnavailable color={theme.textMuted} />
+                    ) : (
+                      <ChartEditor relPath={activeNote.relPath} />
+                    )}
                   </View>
                 ) : activeNote.kind === 'excalidraw' ? (
                   <View style={styles.editorBody}>
-                    <ExcalidrawEditor relPath={activeNote.relPath} />
+                    {isNativeNotes ? (
+                      <NativeFileTypeUnavailable color={theme.textMuted} />
+                    ) : (
+                      <ExcalidrawEditor relPath={activeNote.relPath} />
+                    )}
                   </View>
                 ) : (
                   <>
                     {preferences.editorInlineTitle &&
                       (activeNoteIsRenaming ? (
-                        <TextInput
-                          autoFocus
-                          value={renamingValue}
-                          onChangeText={setRenamingValue}
-                          onSubmitEditing={() => void submitRename()}
-                          onBlur={() => void submitRename()}
-                          onKeyPress={(event) => {
-                            if (event.nativeEvent.key === 'Escape') cancelRename();
-                          }}
-                          style={[styles.editorTitleInline, { color: theme.text, borderColor: theme.accent }]}
-                        />
+                        // Validation EXPLICITE uniquement (Entrée ou ✓) : le
+                        // onBlur auto-submit ferait fermer le champ à la
+                        // première secousse de mise en page (clavier
+                        // Android, focus volé par l'éditeur web sur PC) —
+                        // « n'ouvre pas de champ » sur PC, « 2 » ajoutés
+                        // sur Android (vécu 2026-10-02).
+                        <View style={styles.renameRow}>
+                          <TextInput
+                            autoFocus
+                            value={renamingValue}
+                            onChangeText={setRenamingValue}
+                            onSubmitEditing={() => void submitRename()}
+                            onKeyPress={(event) => {
+                              if (event.nativeEvent.key === 'Escape') cancelRename();
+                            }}
+                            style={[styles.editorTitleInline, { color: theme.text, borderColor: theme.accent, flex: 1 }]}
+                          />
+                          <Pressable
+                            onPress={() => void submitRename()}
+                            style={[styles.renameAction, { backgroundColor: theme.accent }]}
+                            accessibilityLabel="Valider le titre"
+                          >
+                            <Text style={styles.buttonText}>✓</Text>
+                          </Pressable>
+                          <Pressable
+                            onPress={cancelRename}
+                            style={[styles.renameAction, { borderColor: theme.border }]}
+                            accessibilityLabel="Annuler le renommage"
+                          >
+                            <Text style={{ color: theme.textMuted }}>✕</Text>
+                          </Pressable>
+                        </View>
                       ) : (
                         <Pressable onPress={() => startRename({ type: 'note', ...activeNote })}>
                           <Text style={[styles.editorTitleInline, { color: theme.text }]}>
@@ -2234,27 +2359,25 @@ export function NotesScreen({
                         </Pressable>
                       ))}
                     <View style={[styles.modeRow, { borderColor: theme.border }]}>
-                      {(
-                        [
-                          ['source', 'Source'],
-                          ['split', 'Intermédiaire'],
-                          ['reading', 'Aperçu'],
-                        ] as [ViewMode, string][]
-                      ).map(([mode, label]) => (
-                        <Pressable
-                          key={mode}
-                          onPress={() => setViewMode(mode)}
-                          style={[
-                            styles.modeButton,
-                            { borderColor: theme.border },
-                            viewMode === mode && { backgroundColor: theme.accent, borderColor: theme.accent },
-                          ]}
-                        >
-                          <Text style={{ color: viewMode === mode ? '#fff' : theme.textMuted, fontSize: 12 }}>
-                            {label}
-                          </Text>
-                        </Pressable>
-                      ))}
+                      {((
+                        isNativeNotes
+                          ? ([['source', 'Source'], ['split', 'Intermédiaire'], ['reading', 'Aperçu']] as [ViewMode, string][])
+                          : ([['source', 'Source'], ['split', 'Intermédiaire'], ['reading', 'Aperçu']] as [ViewMode, string][])
+                      )).map(([mode, label]) => (
+                          <Pressable
+                            key={mode}
+                            onPress={() => setViewMode(mode)}
+                            style={[
+                              styles.modeButton,
+                              { borderColor: theme.border },
+                              viewMode === mode && { backgroundColor: theme.accent, borderColor: theme.accent },
+                            ]}
+                          >
+                            <Text style={{ color: viewMode === mode ? '#fff' : theme.textMuted, fontSize: 12 }}>
+                              {label}
+                            </Text>
+                          </Pressable>
+                        ))}
                       <Pressable onPress={() => void handleInsertAttachment()} style={styles.attachButton}>
                         <Text style={{ color: theme.textMuted }}>📎 Joindre un fichier</Text>
                       </Pressable>
@@ -2273,7 +2396,7 @@ export function NotesScreen({
                         reste donc fixe au-dessus en Intermédiaire, mais
                         repliable (voir PropertiesBlock.tsx) pour rester moins
                         gênante pendant la frappe. */}
-                    {viewMode !== 'reading' && (
+                    {!isNativeNotes && effectiveViewMode !== 'reading' && (
                       <EditorToolbar
                         items={[
                           // Annuler/Rétablir (v0.4.38) — commandes CodeMirror
@@ -2329,8 +2452,8 @@ export function NotesScreen({
                     )}
 
                     <View style={styles.editorBody}>
-                      {viewMode === 'reading' ? (
-                        <ScrollView style={styles.previewFull}>
+                      {effectiveViewMode === 'reading' ? (
+                        <NativeReadingScroll scrollbarColor={`${theme.accent}88`}>
                           {/* À l'intérieur du ScrollView (pas au-dessus, contrairement
                               au mode Intermédiaire) : défile avec le reste de la note
                               plutôt que de rester figée en haut — possible ici sans
@@ -2350,8 +2473,64 @@ export function NotesScreen({
                             knownOccurrenceWords={knownOccurrenceWords}
                             onOpenOccurrence={handleOpenOccurrence}
                           />
-                        </ScrollView>
-                      ) : viewMode === 'split' ? (
+                        </NativeReadingScroll>
+                      ) : isNativeNotes && effectiveViewMode === 'split' ? (
+                        // Intermédiaire natif — le MÊME éditeur web que le
+                        // desktop (CodeMirror + aperçu vivant) embarqué dans
+                        // une WebView en HAUTEUR AUTO : le bloc Propriétés
+                        // ET le texte défilent ENSEMBLE dans le ScrollView
+                        // natif (demande 2026-10-02 : « il doit se défiler
+                        // comme le reste ») — même esprit que le scroll
+                        // commun du desktop. Même coquille que la lecture :
+                        // barre de défilement maintenable au doigt
+                        // (demande 2026-10-03).
+                        <NativeReadingScroll scrollbarColor={`${theme.accent}88`}>
+                          <PropertiesBlock
+                            theme={theme}
+                            activeNote={activeNote}
+                            content={content}
+                            onChangeContent={handleChangeContent}
+                            tree={tree}
+                          />
+                          <MdxEditorWeb
+                            value={content}
+                            onChange={handleChangeContent}
+                            onOpenWikilink={(t) => void handleOpenWikilink(t)}
+                            onCreateOccurrence={handleCreateOccurrence}
+                            occurrenceWords={occurrenceWordList}
+                            noteNames={noteNameList}
+                            theme={theme}
+                            fontSize={preferences.editorFontSize}
+                            fontFamily={preferences.editorFontFamily}
+                            closeBrackets={preferences.editorCloseBrackets}
+                            autoHeight
+                          />
+                        </NativeReadingScroll>
+                      ) : isNativeNotes ? (
+                        // Mode Source natif — le MÊME éditeur web que
+                        // l'Intermédiaire, SANS l'aperçu vivant (l'extension
+                        // n'est pas envoyée à la WebView) : l'ancien
+                        // TextInput natif ne permettait ni coloration ni
+                        // barre de défilement manipulable (Android ne sait
+                        // pas faire défiler un TextInput par programme —
+                        // vécu 2026-10-04 : « le glisser ne répond pas »).
+                        <NativeReadingScroll scrollbarColor={`${theme.accent}88`}>
+                          <MdxEditorWeb
+                            value={content}
+                            onChange={handleChangeContent}
+                            onOpenWikilink={(t) => void handleOpenWikilink(t)}
+                            onCreateOccurrence={handleCreateOccurrence}
+                            occurrenceWords={occurrenceWordList}
+                            noteNames={noteNameList}
+                            theme={theme}
+                            fontSize={preferences.editorFontSize}
+                            fontFamily={preferences.editorFontFamily}
+                            closeBrackets={preferences.editorCloseBrackets}
+                            livePreview={false}
+                            autoHeight
+                          />
+                        </NativeReadingScroll>
+                      ) : effectiveViewMode === 'split' ? (
                         /* v0.4.37 : le bloc Propriétés fait partie du MÊME
                            scroll que le texte (demande : « qu'elle fasse partie
                            du scroll ») — ScrollView commune, CodeMirror en
@@ -2405,6 +2584,20 @@ export function NotesScreen({
                         />
                       )}
                     </View>
+                    {/* Barre bas d'éditeur : compteur + statut de sauvegarde
+                        (demande 2026-10-02 — sortis de l'en-tête où ils
+                        écrasaient le titre sur téléphone). Toujours visible
+                        quand une note markdown est ouverte. */}
+                    <View style={[styles.editorStatusBar, { borderTopColor: theme.border }]}>
+                      <Text style={[styles.status, { color: theme.textMuted }]}>
+                        {formatCount(wordStats.words)} mots · {formatCount(wordStats.characters)} caractères
+                      </Text>
+                      <Text style={[styles.status, { color: theme.textMuted }]}>
+                        {status === 'saving' && 'Enregistrement…'}
+                        {status === 'saved' && 'Enregistré'}
+                        {status === 'error' && '⚠️ Échec de la sauvegarde'}
+                      </Text>
+                    </View>
                   </>
                 )}
               </View>
@@ -2417,6 +2610,9 @@ export function NotesScreen({
                     collapsed={false}
                     isDragging={rightPanelWidth.isDragging}
                     onMouseDown={rightPanelWidth.onHandleMouseDown}
+                    onTouchStart={rightPanelWidth.onHandleTouchStart}
+                    onTouchMove={rightPanelWidth.onHandleTouchMove}
+                    onTouchEnd={rightPanelWidth.onHandleTouchEnd}
                     onToggleCollapsed={() => setSidebarOpen(false)}
                   />
                   <RightSidebar
@@ -2471,6 +2667,17 @@ export function NotesScreen({
           l'autre est déjà ouvert), donc dispatcher `onSelect`/`onCancel`
           selon lequel des deux est actif suffit, pas besoin de deux Modal
           montés. */}
+      {/* Menu d'actions natif (tactile) — voit les items posés par
+          presentMenu ; sur web c'est le pont Electron qui tient ce rôle. */}
+      <ActionMenu
+        visible={nativeMenu !== null}
+        title={nativeMenu?.title}
+        items={nativeMenu?.items ?? []}
+        onPick={(id) => closeNativeMenu(id)}
+        onClose={() => closeNativeMenu(null)}
+        theme={theme}
+      />
+
       <MoveDialog
         node={movingNode}
         multiCount={bulkMoveOpen ? selectedRelPaths.size : undefined}
@@ -2513,6 +2720,137 @@ export function NotesScreen({
   );
 }
 
+// Aperçu des types de fichier non portés sur natif (canvas / chart /
+// excalidraw = bibliothèques DOM, cf. leurs .tsx) — un placeholder vaut
+// mieux qu'un crash au montage ; le portage viendra avec le chantier
+// d'édition mobile (WebView ou éditeurs natifs).
+function NativeFileTypeUnavailable({ color }: { color: string }) {
+  return (
+    <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+      <Text style={{ color, textAlign: 'center', fontSize: 13 }}>
+        {"L'aperçu de ce type de fichier (canvas, graphique, excalidraw) n'est pas encore disponible\nsur mobile — ouvre-le depuis la version desktop."}
+      </Text>
+    </View>
+  );
+}
+
+// Barre de défilement fine à droite de l'éditeur natif — React Native
+// n'affiche ses barres qu'un instant pendant le geste, inutilisable pour
+// se repérer dans une note longue (demande explicite). Un pouce simple
+// positionné par onScroll ; masqué quand le contenu tient dans la vue.
+// MAINTENABLE AU DOIGT (demande 2026-10-03 : « la maintenir avec mon doigt
+// et la diriger ») : quand `scrollTo` est fourni, la bande de 24 dp à
+// droite capte le toucher — la saisie saute à la position du doigt puis le
+// suit ; le pouce s'élargit pendant la prise. Sans `scrollTo` (TextInput
+// de mode Source : pas de scroll programmatique), elle reste un simple
+// indicateur non interactif.
+function NativeScrollbar({ viewportHeight, contentHeight, scrollOffset, color, scrollTo }: {
+  viewportHeight: number;
+  contentHeight: number;
+  scrollOffset: number;
+  color: string;
+  scrollTo?: (y: number) => void;
+}) {
+  const [dragging, setDragging] = useState(false);
+  // Position du pouce PENDANT la prise, pilotée par le doigt : le
+  // scrollOffset remonte par un évènement asynchrone (aller-retour natif)
+  // et arrive en retard sur le doigt — s'en servir pendant le glisser
+  // fait trembler le pouce (vécu 2026-10-04 : « assez instable »). On
+  // fige donc la position au geste, puis on rend la main à scrollOffset.
+  const [dragThumbTop, setDragThumbTop] = useState<number | null>(null);
+  if (contentHeight <= viewportHeight + 1) return null;
+  const track = viewportHeight - 8;
+  const thumbHeight = Math.max(32, (viewportHeight / contentHeight) * track);
+  const maxScroll = contentHeight - viewportHeight;
+  const thumbTopFromScroll = maxScroll > 0 ? 4 + (scrollOffset / maxScroll) * (track - thumbHeight) : 4;
+  // Position du pouce visée par le doigt : centre du pouce aligné sur le
+  // toucher (locationY = position dans la bande), borné au parcours.
+  const applyAt = (touchY: number) => {
+    const usable = track - thumbHeight;
+    if (maxScroll <= 0 || usable <= 0) return;
+    const fraction = Math.min(1, Math.max(0, (touchY - thumbHeight / 2) / usable));
+    setDragThumbTop(4 + fraction * usable);
+    scrollTo?.(fraction * maxScroll);
+  };
+  const thumbTop = dragThumbTop !== null ? dragThumbTop : thumbTopFromScroll;
+  return (
+    <View
+      pointerEvents={scrollTo ? 'auto' : 'none'}
+      style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 24, alignItems: 'flex-end' }}
+      {...(scrollTo
+        ? {
+            onStartShouldSetResponder: () => true,
+            onMoveShouldSetResponder: () => true,
+            onResponderGrant: (event: GestureResponderEvent) => {
+              setDragging(true);
+              applyAt(event.nativeEvent.locationY);
+            },
+            onResponderMove: (event: GestureResponderEvent) => applyAt(event.nativeEvent.locationY),
+            onResponderRelease: () => {
+              setDragging(false);
+              setDragThumbTop(null);
+            },
+            onResponderTerminate: () => {
+              setDragging(false);
+              setDragThumbTop(null);
+            },
+          }
+        : {})}
+    >
+      <View
+        style={{
+          position: 'absolute',
+          right: 2,
+          width: dragging ? 8 : 5,
+          borderRadius: dragging ? 4 : 2.5,
+          backgroundColor: color,
+          height: thumbHeight,
+          top: Math.min(thumbTop, 4 + track - thumbHeight),
+        }}
+      />
+    </View>
+  );
+}
+
+// Lecteur du mode Aperçu — le ScrollView existant + la barre de
+// défilement (maintenant maintenable au doigt, voir NativeScrollbar).
+// Utilisé aussi sur web (même comportement, overlay en plus), et par le
+// mode Intermédiaire natif (WebView en hauteur auto — même scroll commun).
+function NativeReadingScroll({ scrollbarColor, children }: { scrollbarColor: string; children: ReactNode }) {
+  const [viewHeight, setViewHeight] = useState(0);
+  const [contentHeight, setContentHeight] = useState(0);
+  const [scrollOffset, setScrollOffset] = useState(0);
+  const scrollRef = useRef<ScrollView>(null);
+  return (
+    <View style={{ flex: 1 }}>
+      <ScrollView
+        ref={scrollRef}
+        style={styles.previewFull}
+        contentContainerStyle={{ paddingBottom: 40 }}
+        onScroll={(event) => setScrollOffset(event.nativeEvent.contentOffset.y)}
+        onLayout={(event) => setViewHeight(event.nativeEvent.layout.height)}
+        onContentSizeChange={(_, height) => setContentHeight(height)}
+        scrollEventThrottle={16}
+      >
+        {children}
+      </ScrollView>
+      <NativeScrollbar
+        viewportHeight={viewHeight}
+        contentHeight={contentHeight}
+        scrollOffset={scrollOffset}
+        color={scrollbarColor}
+        scrollTo={(y) => scrollRef.current?.scrollTo({ y, animated: false })}
+      />
+    </View>
+  );
+}
+
+// (L'ancien éditeur Source natif TextInput a été retiré : Android ne sait
+// pas faire défiler un TextInput par programme, sa barre de défilement
+// restait purement décorative. Le mode Source passe désormais par le même
+// éditeur web que l'Intermédiaire, sans aperçu vivant — voir la branche
+// `isNativeNotes` du rendu.)
+
 const styles = StyleSheet.create({
   row: {
     flex: 1,
@@ -2546,6 +2884,9 @@ const styles = StyleSheet.create({
   list: {
     width: 260,
     borderRightWidth: 1,
+    // Replié (largeur 0), l'en-tête ne doit PAS déborder sur l'éditeur —
+    // c'était les « boutons parasites » vus par-dessus la note ouverte.
+    overflow: 'hidden',
   },
   listHeader: {
     padding: 12,
@@ -2555,6 +2896,19 @@ const styles = StyleSheet.create({
     fontSize: 11,
   },
   listHeaderActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  // Panneau étroit (téléphone) : le bouton et le groupe d'icônes
+  // s'empilent — colonne étirée au lieu d'une ligne qui écrase le bouton.
+  listHeaderActionsStacked: {
+    flexDirection: 'column',
+    alignItems: 'stretch',
+  },
+  // Groupe des 3 icônes (recherche / tri / tags) : ligne transparente sur
+  // desktop, deuxième rangée du bouton « + Nouvelle note » à l'étroit.
+  listHeaderIcons: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
@@ -2574,6 +2928,11 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  // À l'étroit (rangée dédiée sous le bouton) : les icônes se partagent
+  // la largeur au lieu de rester collées à 34 dp.
+  searchButtonFlex: {
+    flex: 1,
   },
   // Barre d'actions groupées (multi-sélection, //9) — bandeau compact entre
   // l'en-tête de l'explorateur et l'arbre, même esprit visuel que
@@ -2645,6 +3004,20 @@ const styles = StyleSheet.create({
   editorTitle: {
     fontSize: 16,
     fontWeight: '600',
+  },
+  // Renommage de titre (en-tête et inline) : champ + boutons explicites
+  // valider/annuler — voir les commentaires des deux blocs de rendu.
+  renameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flex: 1,
+  },
+  renameAction: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
   },
   editorTitleInput: {
     fontSize: 16,
@@ -2749,6 +3122,14 @@ const styles = StyleSheet.create({
   editorBody: {
     flex: 1,
     flexDirection: 'row',
+  },
+  editorStatusBar: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderTopWidth: 1,
   },
   previewFull: {
     flex: 1,

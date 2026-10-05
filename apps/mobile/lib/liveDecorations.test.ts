@@ -17,6 +17,27 @@ describe('findLiveMatches — gras/italique', () => {
     expect('avant _fin_ après'.slice(italic!.from, italic!.to)).toBe('_fin_');
   });
 
+  // 2026-10-03 : l'italique-étoile restait non décoré (cut v1), les `*`
+  // restaient visibles dans les notes importées.
+  it('repère un *italique* étoile', () => {
+    const matches = findLiveMatches('avant *fin* après');
+    const italic = matches.find((m): m is MarkMatch => m.kind === 'mark' && m.type === 'italic');
+    expect(italic).toBeDefined();
+    expect('avant *fin* après'.slice(italic!.from, italic!.to)).toBe('*fin*');
+  });
+
+  it('ne prend pas une multiplication pour de l’italique (espaces aux bords)', () => {
+    const matches = findLiveMatches('2 * 3 * 4 = 12');
+    expect(matches.some((m) => m.kind === 'mark')).toBe(false);
+  });
+
+  it('repère un __gras__ underscore', () => {
+    const matches = findLiveMatches('__** Corbeaux **__');
+    expect(matches).toHaveLength(1);
+    expect(matches[0]).toMatchObject({ kind: 'mark', type: 'bold' });
+    expect('__** Corbeaux **__'.slice(matches[0].from, matches[0].to)).toBe('__** Corbeaux **__');
+  });
+
   it('ne traverse pas un saut de ligne', () => {
     const matches = findLiveMatches('**a\nb**');
     expect(matches.some((m) => m.kind === 'mark')).toBe(false);

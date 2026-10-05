@@ -1,4 +1,5 @@
 import type { PropsWithChildren } from 'react';
+import { View } from 'react-native';
 import { Svg, Path, Circle } from 'react-native-svg';
 
 import type { Theme } from '../theme';
@@ -38,11 +39,18 @@ export function FolderOpenIcon(props: IconProps) {
 }
 
 // Chevron de repli/dépli (flèche) — remplace le triangle Text.
+// ⚠️ La rotation vit sur un View RN (transform tableau), PAS sur le <Svg> :
+// en natif, react-native-svg parse l'attribut transform en syntaxe SVG et
+// rejette la forme CSS (« Expected transform functions but "r" found ») —
+// crash du rendu de TOUT l'explorateur dès qu'un dossier existait
+// (v0.4.41-fix5 : arbre rempli = écran d'erreur, arbre vide = rien).
 export function ChevronIcon({ size = 12, color = '#888', expanded = false }: IconProps & { expanded?: boolean }) {
   return (
-    <Svg width={size} height={size} viewBox="0 0 12 12" fill="none" style={{ transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>
-      <Path d="M3 1.5 L8 6 L3 10.5" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-    </Svg>
+    <View style={{ width: size, height: size, transform: expanded ? [{ rotate: '90deg' }] : [] }}>
+      <Svg width={size} height={size} viewBox="0 0 12 12" fill="none">
+        <Path d="M3 1.5 L8 6 L3 10.5" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+      </Svg>
+    </View>
   );
 }
 

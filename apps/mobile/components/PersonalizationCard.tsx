@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import {
@@ -14,6 +15,7 @@ import {
   type AppFontFamily,
   type ButtonStyle,
 } from '../lib/appearance';
+import { errorMessage } from '../lib/errorMessage';
 import { usePreferences } from '../preferences/PreferencesContext';
 import { useVaults } from '../lib/sync/VaultsContext';
 import { ColorField } from './ColorField';
@@ -60,15 +62,38 @@ export function PersonalizationCard() {
     clearWallpaper,
     vaultAppearance,
     updateVaultAppearance,
+    saveVaultAppearance,
     resetVaultAppearance,
   } = usePreferences();
   const { activeVault } = useVaults();
 
-  // v0.4.34 : PLUS DE BROUILLON NI DE « Sauvegarder » — chaque réglage
-  // s'applique IMMÉDIATEMENT (updateVaultAppearance : thème live + écriture
-  // disque regroupée 800 ms). Les réglages affichés sont TOUJOURS ceux du
-  // MODE ACTIF : seuls les boutons « Mode actif » y donnent accès (demande
-  // de l'utilisatrice — plus de sections ☀️/🌙 séparées).
+  // v0.4.34 : PLUS DE BROUILLON — chaque réglage s'applique IMMÉDIATEMENT
+  // (updateVaultAppearance : thème live + écriture disque regroupée 800 ms).
+  // Les réglages affichés sont TOUJOURS ceux du MODE ACTIF : seuls les
+  // boutons « Mode actif » y donnent accès (demande de l'utilisatrice —
+  // plus de sections ☀️/🌙 séparées).
+  //
+  // Le bouton « Sauvegarder » REVIENT (demande 2026-10-04) : sur Android,
+  // l'écriture automatique pouvait échouer SILENCIEUSEMENT (SAF créait un
+  // doublon « appearance (1).json » au lieu d'écraser — l'apparence
+  // semblait se réinitialiser à chaque relance) ; un bouton explicite avec
+  // retour visible (enregistré / échec) rassure et diagnostique.
+  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [saveError, setSaveError] = useState('');
+  const handleSave = () => {
+    setSaveState('saving');
+    setSaveError('');
+    saveVaultAppearance()
+      .then(() => {
+        setSaveState('saved');
+        setTimeout(() => setSaveState((current) => (current === 'saved' ? 'idle' : current)), 2500);
+      })
+      .catch((error) => {
+        setSaveState('error');
+        setSaveError(errorMessage(error));
+      });
+  };
+
   const file = vaultAppearance ?? {};
   const patchMode = (mode: ModeKey, patch: Partial<AppearanceProfile>) => {
     const current = resolveProfileWithVault(preferences, vaultAppearance, mode);
@@ -84,6 +109,30 @@ export function PersonalizationCard() {
       <Text style={[styles.hint, { color: theme.textMuted }]}>
         Apparence du coffre actif : {activeVault ? activeVault.name : 'aucun'} — chaque coffre a la sienne.
       </Text>
+
+      <Pressable
+        accessibilityRole="button"
+        onPress={handleSave}
+        style={[
+          styles.saveButton,
+          { borderColor: theme.border },
+          saveState === 'saved' && { backgroundColor: `${theme.accent}22`, borderColor: theme.accent },
+          saveState === 'error' && { backgroundColor: `${theme.danger ?? '#dc2626'}22`, borderColor: theme.danger ?? '#dc2626' },
+        ]}
+      >
+        <Text style={{ color: saveState === 'error' ? (theme.danger ?? '#dc2626') : theme.text, fontWeight: '600' }}>
+          {saveState === 'saving'
+            ? 'Enregistrement…'
+            : saveState === 'saved'
+              ? '✓ Apparence enregistrée'
+              : saveState === 'error'
+                ? '⚠ Échec de la sauvegarde — touche pour réessayer'
+                : '💾 Sauvegarder l’apparence'}
+        </Text>
+      </Pressable>
+      {saveState === 'error' && saveError ? (
+        <Text style={{ color: theme.danger ?? '#dc2626', fontSize: 12 }}>{saveError}</Text>
+      ) : null}
 
       <Text style={[styles.label, { color: theme.textMuted }]}>Mode actif</Text>
       <View style={styles.row}>
@@ -318,6 +367,14 @@ const styles = StyleSheet.create({
   },
   hint: {
     fontSize: 12,
+  },
+  // Bouton « 💾 Sauvegarder l'apparence » — pleine largeur, juste sous le
+  // titre de la carte (visible sans défiler).
+  saveButton: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingVertical: 10,
+    alignItems: 'center',
   },
   row: {
     flexDirection: 'row',

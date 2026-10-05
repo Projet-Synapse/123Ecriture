@@ -10,6 +10,7 @@ import { Prec } from '@codemirror/state';
 import { createLivePreviewExtension } from '../lib/mdxLivePreview';
 import { occurrenceCompletionSource } from '../lib/occurrenceAutocomplete';
 import { wikilinkCompletionSource } from '../lib/wikilinkAutocomplete';
+import { editorHighlightExtensions } from '../lib/codemirrorHighlight';
 import type { FormattingResult, Selection } from '../lib/mdxFormatting';
 import type { Theme } from '../theme';
 
@@ -213,7 +214,11 @@ export function MdxEditor({
   const extensions = useMemo(() => {
     const base = [markdown(), EditorView.lineWrapping, completionExtension, ...searchExtensions];
     const withShortcuts = shortcutsExtension ? [...base, shortcutsExtension] : base;
-    return livePreview ? [...withShortcuts, liveExtension] : withShortcuts;
+    const withLive = livePreview ? [...withShortcuts, liveExtension] : withShortcuts;
+    // Titres SANS soulignement (voir lib/codemirrorHighlight.ts) — en
+    // dernier pour que ses règles de coloration soient montées après
+    // celles du basicSetup.
+    return [...withLive, ...editorHighlightExtensions];
   }, [livePreview, liveExtension, completionExtension, shortcutsExtension, searchExtensions]);
 
   return (

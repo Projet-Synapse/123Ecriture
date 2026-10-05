@@ -21,6 +21,18 @@
         <action android:name="android.intent.action.MAIN"/>
         <category android:name="android.intent.category.LAUNCHER"/>
       </intent-filter>
+      <!-- Retour OAuth Google : le navigateur système redirige vers
+           app123ecriture://auth-callback (redirectTo du signInWithOAuth,
+           voir AuthContext.tsx / nativeAuthBridge.ts) — ce filtre rouvre
+           l'app avec l'URL du callback. singleTask + BROWSABLE : le lien
+           arrive dans l'instance existante (Linking 'url') ou lance l'app
+           à froid (Linking.getInitialURL). -->
+      <intent-filter>
+        <action android:name="android.intent.action.VIEW"/>
+        <category android:name="android.intent.category.DEFAULT"/>
+        <category android:name="android.intent.category.BROWSABLE"/>
+        <data android:scheme="app123ecriture"/>
+      </intent-filter>
     </activity>
   </application>
 </manifest>

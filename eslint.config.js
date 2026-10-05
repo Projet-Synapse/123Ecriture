@@ -126,6 +126,13 @@ module.exports = defineConfig([
       'apps/desktop/release/**',
       'apps/desktop/electron-dist/**',
       'supabase/functions/**',
+      // Entrée du bundle WEB de l'éditeur (mode Intermédiaire Android) :
+      // volontairement HORS tsconfig (compilé par esbuild seul, voir
+      // scripts/build-editor-web.mjs) — le projectService ne peut donc pas
+      // la typer ; elle n'est pas non plus du code RN lintable. La source
+      // de vérité des libs partagées (lib/liveDecorations.ts etc.) reste
+      // lintée normalement.
+      'apps/mobile/webview/**',
     ],
   },
 ]);

@@ -79,7 +79,7 @@ function summarizeSuccess(summary: SyncSummary): string {
 export function SyncStatusProvider({ children }: { children: ReactNode }) {
   const auth = useAuth();
   const { activeVault } = useVaults();
-  const { preferences } = usePreferences();
+  const { preferences, reloadVaultAppearance } = usePreferences();
 
   const [status, setStatus] = useState<SyncStatus>('idle');
   const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(null);
@@ -140,6 +140,10 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
         setLastConflicts(summary.conflicts);
         setLastResultSummary(summarizeSuccess(summary));
       }
+      // L'apparence PAR COFFRE est synchronisee (v0.4.42) : un cycle qui a
+      // rapatrie des fichiers a pu la mettre a jour — le theme suit sans
+      // attendre un changement de coffre.
+      if (summary.pulled > 0) reloadVaultAppearance();
       // v0.4.29 : annoncer aux autres appareils du compte qu'un cycle a
       // change le cloud — ils lanceront un cycle ~3 s plus tard au lieu
       // d'attendre le leur (propagation quasi instantanee, broadcast
@@ -167,7 +171,9 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
       await window.sync?.watchResume?.().catch(() => undefined);
       syncingRef.current = false;
     }
-  }, []);
+    // reloadVaultAppearance est stable (useCallback [] côté Preferences),
+    // la dépendance ne recrée jamais runSync — elle satisfait juste le lint.
+  }, [reloadVaultAppearance]);
 
   // Synchro automatique (Paramètres → Compte et synchronisation → "Synchro-
   // niser automatiquement") : STRICTEMENT rien si la préférence est fausse

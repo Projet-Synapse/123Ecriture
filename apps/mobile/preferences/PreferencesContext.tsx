@@ -24,7 +24,10 @@ import { darkTheme, lightTheme, type Theme } from '../theme';
 // web/mobile (pas de window.preferences), tout reste en mémoire pour la
 // session — pas de crash, juste pas de persistance.
 
-const DEFAULT_PREFERENCES: Preferences = {
+// Exporté pour nativePreferencesAdapter (pont natif de persistance —
+// avant lui, les préférences restaient en mémoire sur Android et
+// l'apparence se réinitialisait à chaque relance, vécu 2026-10-03).
+export const DEFAULT_PREFERENCES: Preferences = {
   themeMode: 'system',
   accentColor: lightTheme.accent,
   notesToolbarOrder: DEFAULT_NOTES_TOOLBAR_ORDER,
@@ -78,9 +81,17 @@ type PreferencesContextValue = {
   // coffre actif — overlay champ par champ sur le global). reset = retour
   // à la personnalisation globale.
   vaultAppearance: VaultAppearanceFile | null;
+  // Relecture du fichier d'apparence du coffre — appelé après un cycle de
+  // synchro qui a rapatrié des fichiers (l'apparence par coffre est
+  // synchronisée depuis v0.4.42, le thème suit sans changer de coffre).
+  reloadVaultAppearance: () => void;
   resetVaultAppearance: () => Promise<void>;
   // Application immédiate (thème live) + écriture disque regroupée.
   updateVaultAppearance: (file: VaultAppearanceFile) => void;
+  // Écriture IMMÉDIATE et awaitée (bouton « Sauvegarder » de la carte
+  // Personnalisation) — flush le regroupement et résout après le disque,
+  // pour pouvoir afficher succès/échec.
+  saveVaultAppearance: () => Promise<void>;
   // dataURLs des fonds d'écran par mode (l'écran Personnalisation affiche
   // celui du mode SÉLECTIONNÉ, pas forcément actif).
   wallpapers: { light?: string; dark?: string };
@@ -155,6 +166,8 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
   // dossier du coffre — jamais synchronisé). Rechargé à chaque changement
   // de coffre actif ; absent = la personnalisation globale s'applique.
   const [vaultAppearance, setVaultAppearance] = useState<VaultAppearanceFile | null>(null);
+  const [appearanceReloadTick, setAppearanceReloadTick] = useState(0);
+  const reloadVaultAppearance = useCallback(() => setAppearanceReloadTick((tick) => tick + 1), []);
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
@@ -176,7 +189,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     // Seul l'IDENTIFIANT compte : le fichier d'apparence est relu au
     // changement de coffre, pas à chaque rendu de l'objet activeVault.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeVault?.id]);
+  }, [activeVault?.id, appearanceReloadTick]);
   useEffect(() => {
     const appearance = typeof window !== 'undefined' ? window.appearance : undefined;
     if (!appearance?.getWallpapers) return;
@@ -363,6 +376,9 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     const base = colorScheme === 'dark' ? darkTheme : lightTheme;
     const profile = resolveProfileWithVault(preferences, vaultAppearance, colorScheme);
     return buildTheme(base, profile, wallpapers[colorScheme]);
+    // reloadVaultAppearance volontairement absent : le tick qu'il incrémente
+    // relit appearance.json dans le state `vaultAppearance`, déjà dépendance
+    // — le thème suit le rechargement sans dépendre du callback.
   }, [colorScheme, preferences, vaultAppearance, wallpapers]);
 
   // Application GLOBALE de l'apparence (v0.4.30) : une feuille de style
@@ -399,18 +415,35 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
   // changement — un curseur tire des dizaines de valeurs par seconde).
   const vaultWriteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingVaultFile = useRef<VaultAppearanceFile | null>(null);
+  // Écriture IMMÉDIATE (et awaitée) de l'apparence du coffre — utilisée par
+  // le bouton « Sauvegarder » de la carte Personnalisation (demande
+  // 2026-10-04 : sur Android l'écriture silencieuse pouvait échouer sans
+  // aucun retour ; un bouton explicite montre le succès/échec) et par le
+  // regroupement automatique ci-dessous. Résout APRÈS l'écriture disque.
+  const saveVaultAppearance = useCallback(async (): Promise<void> => {
+    if (vaultWriteTimer.current) {
+      clearTimeout(vaultWriteTimer.current);
+      vaultWriteTimer.current = null;
+    }
+    const toWrite = pendingVaultFile.current ?? vaultAppearance;
+    pendingVaultFile.current = null;
+    if (!toWrite) return; // rien à enregistrer (aucun réglage du coffre)
+    if (typeof window === 'undefined' || !window.vault?.writeNote) return;
+    await window.vault.writeNote('.123ecriture/appearance.json', JSON.stringify(toWrite, null, 2));
+    // Le rechargement n'est pas nécessaire ici : setVaultAppearance a déjà
+    // appliqué l'état (et writeNote invalide l'arbre côté adaptateur).
+  }, [vaultAppearance]);
   const updateVaultAppearance = useCallback((file: VaultAppearanceFile): void => {
     setVaultAppearance(file);
     pendingVaultFile.current = file;
     if (vaultWriteTimer.current) clearTimeout(vaultWriteTimer.current);
     vaultWriteTimer.current = setTimeout(() => {
-      const toWrite = pendingVaultFile.current;
-      pendingVaultFile.current = null;
-      if (toWrite && typeof window !== 'undefined' && window.vault?.writeNote) {
-        void window.vault.writeNote('.123ecriture/appearance.json', JSON.stringify(toWrite, null, 2)).catch(() => undefined);
-      }
+      // L'échec est DÉSORMAIS journalisé (avant : catch silencieux — une
+      // écriture qui rate se voyait « réinitialisée » à la relance sans
+      // aucune trace, vécu A13 2026-10-04).
+      saveVaultAppearance().catch((error) => console.error('[apparence] échec de la sauvegarde :', error));
     }, 800);
-  }, []);
+  }, [saveVaultAppearance]);
   const resetVaultAppearance = useCallback(async (): Promise<void> => {
     if (typeof window === 'undefined' || !window.vault?.delete) return;
     await window.vault.delete('.123ecriture/appearance.json', { permanent: true, silent: true }).catch(() => undefined);
@@ -425,7 +458,9 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       colorScheme,
       wallpapers,
       vaultAppearance,
+      reloadVaultAppearance,
       updateVaultAppearance,
+      saveVaultAppearance,
       resetVaultAppearance,
       setThemeMode,
       setAccentColor,
@@ -463,7 +498,9 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       colorScheme,
       wallpapers,
       vaultAppearance,
+      reloadVaultAppearance,
       updateVaultAppearance,
+      saveVaultAppearance,
       resetVaultAppearance,
       setThemeMode,
       setAccentColor,

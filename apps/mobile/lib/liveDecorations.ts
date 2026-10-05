@@ -9,9 +9,10 @@
 // pendant la frappe (masquer/révéler selon la position du curseur) — deux
 // besoins différents, même si les syntaxes reconnues sont les mêmes.
 //
-// Portée v1 volontairement réduite : gras `**...**` et italique `_..._`
-// seulement (pas `*...*` pour l'italique — ambigu à désambiguïser
-// proprement du gras en pur regex sans un vrai parseur, cut assumé).
+// Portée : gras `**...**` et `__...__`, italique `_..._` et `*...*` (pas
+// `***…***` triple — ambigu en pur regex sans un vrai parseur, cut assumé :
+// le dédoublonnage ci-dessous lui fait quand même rendre quelque chose de
+// lisible).
 
 export type MarkMatch = {
   kind: 'mark';
@@ -42,22 +43,44 @@ export type TokenMatch = {
 
 export type LiveMatch = MarkMatch | HeadingMatch | TokenMatch;
 
-function findBold(text: string): MarkMatch[] {
+// Exportés pour le découpage des titres en segments stylés
+// (lib/mdxLivePreview.ts, mode Intermédiaire natif).
+export function findBold(text: string): MarkMatch[] {
   const matches: MarkMatch[] = [];
-  const re = /\*\*([^*\n]+?)\*\*/g;
-  let match: RegExpExecArray | null;
-  while ((match = re.exec(text))) {
-    matches.push({ kind: 'mark', type: 'bold', from: match.index, to: match.index + match[0].length, markerLength: 2 });
+  // Deux syntaxes de gras : `**…**` ET `__…__` (gras-underscore, style
+  // Obsidian — vécu : les `__` restaient visibles autour du gras dans les
+  // notes importées, ex. `__** Corbeaux **__`). L'italique `_…_` ne doit
+  // PAS matcher l'intérieur des `__…__` : le dédoublonnage de
+  // findLiveMatches (premier match trié gagne) s'en charge, le gras étant
+  // toujours positionné avant.
+  for (const re of [/\*\*([^*\n]+?)\*\*/g, /__([^_\n]+?)__/g]) {
+    let match: RegExpExecArray | null;
+    while ((match = re.exec(text))) {
+      matches.push({ kind: 'mark', type: 'bold', from: match.index, to: match.index + match[0].length, markerLength: 2 });
+    }
   }
   return matches;
 }
 
-function findItalic(text: string): MarkMatch[] {
+// Exporté pour le découpage des titres en segments stylés (voir findBold).
+export function findItalic(text: string): MarkMatch[] {
   const matches: MarkMatch[] = [];
-  const re = /_([^_\n]+?)_/g;
-  let match: RegExpExecArray | null;
-  while ((match = re.exec(text))) {
-    matches.push({ kind: 'mark', type: 'italic', from: match.index, to: match.index + match[0].length, markerLength: 1 });
+  // Deux syntaxes d'italique : `_…_` et `*…*` (la seconde ajoutée
+  // 2026-10-03 : les notes importées usent surtout de l'italique-étoile et
+  // les `*` restaient visibles). Le contenu exige un caractère NON espace
+  // en fin (`[^*\n]*\S`) et pas d'espace juste après l'étoile ouvrante —
+  // `2 * 3 * 4` (multiplication) ne doit pas se déguiser en italique, même
+  // règle de bordure que le rendu markdown réel. `**…**` est absorbé par le
+  // dédoublonnage de findLiveMatches : `**a**` produit un faux `*a*`
+  // intérieur, systématiquement chevauché par le match de gras (positionné
+  // avant dans la liste, il gagne). Lookahead seulement (pas de
+  // lookbehind) : ce fichier est parsé par Hermes en natif, qui ne le
+  // supporte pas.
+  for (const re of [/_([^_\n]+?)_/g, /\*(?!\s)([^*\n]*\S)\*/g]) {
+    let match: RegExpExecArray | null;
+    while ((match = re.exec(text))) {
+      matches.push({ kind: 'mark', type: 'italic', from: match.index, to: match.index + match[0].length, markerLength: 1 });
+    }
   }
   return matches;
 }
@@ -83,7 +106,12 @@ function findHeadings(text: string): HeadingMatch[] {
 // re-matche la partie `[[...]]` d'un embed comme un lien à part entière.
 function findWikilinksAndEmbeds(text: string): TokenMatch[] {
   const matches: TokenMatch[] = [];
-  const re = /(!)?\[\[([^\]]+?)\]\]/g;
+  // Un retour à la ligne exclu de la classe : un `[[` non refermé avalerait
+  // des lignes entières et produirait une décoration multiligne — interdite
+  // par CodeMirror (« Decorations.replace line breaks… », crash de tout
+  // l'éditeur, vécu sur un sommaire `{{…}}` multiligne de 3 Mo — voir
+  // findOccurrences).
+  const re = /(!)?\[\[([^\]\n]+?)\]\]/g;
   let match: RegExpExecArray | null;
   while ((match = re.exec(text))) {
     const isEmbed = Boolean(match[1]);
@@ -125,7 +153,10 @@ function findTags(text: string): TokenMatch[] {
 
 function findOccurrences(text: string): TokenMatch[] {
   const matches: TokenMatch[] = [];
-  const re = /\{\{([^}]+?)\}\}/g;
+  // Un retour à la ligne exclu — même raison que findWikilinksAndEmbeds :
+  // un `{{` de déco/sommaire fermé bien plus loin avalait tout le bloc
+  // (3,1 Mo, crash CodeMirror vécu sur le desktop).
+  const re = /\{\{([^}\n]+?)\}\}/g;
   let match: RegExpExecArray | null;
   while ((match = re.exec(text))) {
     const word = match[1].trim();
@@ -170,6 +201,11 @@ export function findLiveMatches(text: string): LiveMatch[] {
   let lastTo = -1;
   for (const match of matches) {
     if (match.from < lastTo) continue; // chevauche la correspondance retenue
+    // Filet défensif : CodeMirror interdit les Decoration.replace qui
+    // traversent un retour à la ligne — une correspondance multiligne
+    // restée malgré les regex ci-dessus ferait planter TOUT l'éditeur.
+    // Ces syntaxes restent simplement en texte brut.
+    if (text.slice(match.from, match.to).includes('\n')) continue;
     nonOverlapping.push(match);
     lastTo = match.to;
   }

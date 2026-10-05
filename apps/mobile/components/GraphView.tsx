@@ -49,15 +49,30 @@ export function buildGraph(
   const nodes: GraphNode[] = [];
   const byName = new Map<string, string>();
 
+  // Affichage et liens s'appuient sur le nom SANS extension (« Note » et
+  // non « Note.md ») — mais l'arbre natif Android a longtemps livré le nom
+  // AVEC extension (divergence avec le desktop corrigée dans
+  // nativeVaultAdapter), et certains liens l'écrivent explicitement
+  // (« [[Note.md]] ») : les DEUX formes sont indexées pour que les
+  // `[[liens internes]]` soient retrouvés dans tous les cas. Avant ce
+  // double index, les cibles sans extension ne matchaient jamais le nom
+  // indexé avec « .md » sur le téléphone : graphe chargé avec 0 liens
+  // (vécu A13, 2026-10-03).
+  const baseNameOf = (name: string): string => {
+    const dot = name.lastIndexOf('.');
+    return dot > 0 ? name.slice(0, dot) : name;
+  };
+
   const walk = (items: VaultTreeNode[]) => {
     for (const item of items) {
       if (item.type === 'folder') {
         walk(item.children ?? []);
       } else {
         const parentFolder = item.relPath.includes('/') ? item.relPath.slice(0, item.relPath.lastIndexOf('/')) : '';
+        const baseName = baseNameOf(item.name);
         nodes.push({
           id: item.relPath,
-          name: item.name,
+          name: baseName,
           folder: parentFolder,
           kind: item.kind,
           links: 0,
@@ -66,6 +81,7 @@ export function buildGraph(
           vx: 0,
           vy: 0,
         });
+        byName.set(baseName.toLowerCase(), item.relPath);
         byName.set(item.name.toLowerCase(), item.relPath);
       }
     }
@@ -161,8 +177,28 @@ export function GraphView({ theme, onOpenNote }: Props) {
   const [edges, setEdges] = useState<GraphEdge[]>([]);
   const [loading, setLoading] = useState(true);
   const [recherche, setRecherche] = useState('');
-  const [panneau, setPanneau] = useState(true);
   const { width, height } = useWindowDimensions();
+  // Sur téléphone, le panneau de réglages démarre REPLIÉ : à 300 px de
+  // large il masquait la moitié du graphe (constat 2026-10-03) — le bouton
+  // ⚙ permet de l'ouvrir. Sur grand écran : ouvert comme avant.
+  const [panneau, setPanneau] = useState(width >= 720);
+  // Sur un écran étroit (mobile), la largeur persistée du panneau (pensée
+  // desktop, jusqu'à 520) masquait tout le graphe — plafond : la moitié de
+  // l'écran. Le plafond se calcule sur la largeur MESURÉE du conteneur
+  // (onLayout) et non sur useWindowDimensions : sur certains téléphones
+  // (zoom d'affichage Samsung, vécu A13 2026-10-04) les deux échelles
+  // DIFFÈRENT — le mélange rendait le panneau figé au plafond, insensible
+  // à la poignée dans les deux sens. `panneauWidth === null` = pas encore
+  // déplié/redimensionné : la valeur par défaut (300, pensée desktop)
+  // s'applique, plafonnée.
+  const [rowWidth, setRowWidth] = useState(0);
+  const panneauCap = rowWidth > 0 ? Math.round(rowWidth * 0.5) : Math.round(width * 0.5);
+  const [panneauWidth, setPanneauWidth] = useState<number | null>(null);
+  const panneauEffectif = Math.min(panneauWidth ?? Math.min(300, panneauCap), panneauCap);
+  // [diag-poignee-graphe] TEMPORAIRE
+  useEffect(() => {
+    console.error('[diag-graphe] état', JSON.stringify({ panneauWidth, panneauEffectif, panneauCap, rowWidth, windowWidth: width }));
+  }, [panneauWidth, panneauEffectif, panneauCap, rowWidth, width]);
 
   const [nodeScale, setNodeScale] = useState(0.63);
   const [linkWidth, setLinkWidth] = useState(2.5);
@@ -177,12 +213,19 @@ export function GraphView({ theme, onOpenNote }: Props) {
   // de nœud reste prioritaire car porté par le SvgText, pas par la boîte).
   const panDragRef = useRef({ active: false, lastX: 0, lastY: 0 });
   const baseNodesRef = useRef<GraphNode[] | null>(null);
+  // Glisser de la poignée du panneau de réglages — x de prise + largeur de
+  // départ (voir onResponderGrant plus bas).
+  const resizeDrag = useRef<{ startX: number; startWidth: number } | null>(null);
 
   useEffect(() => {
     const load = async () => {
-      if (typeof window === 'undefined' || !window.vault) return;
+      // Le garde est DANS le try : avant, un retour anticipé (pas de pont
+      // vault au montage) court-circuitait le finally et laissait
+      // « Construction du graphe… » à l'écran pour toujours.
       try {
-        const tree = await window.vault.listTree();
+        const vault = typeof window === 'undefined' ? undefined : window.vault;
+        if (!vault) return;
+        const tree = await vault.listTree();
         const notes: { relPath: string }[] = [];
         const walk = (items: VaultTreeNode[]) => {
           for (const n of items) {
@@ -192,13 +235,24 @@ export function GraphView({ theme, onOpenNote }: Props) {
         };
         walk(tree);
         const contents: Record<string, string> = {};
-        for (const note of notes.slice(0, 500)) {
-          try {
-            contents[note.relPath] = await window.vault.readNote(note.relPath);
-          } catch {
-            contents[note.relPath] = '';
-          }
-        }
+        // Lectures en parallèle à concurrence fixe : sur le coffre natif
+        // Android (SAF), une lecture = une ouverture de document, ~0,4 s
+        // chacune — en séquentiel, 200+ notes tenaient l'écran sur
+        // « Construction du graphe… » pendant 1 à 2 minutes (vécu A13,
+        // 2026-10-03, lecture suivie comme un chargement infini). Un pool
+        // de 12 divise le temps par ~10 sans saturer le pont SAF.
+        const queue = notes.slice(0, 500);
+        await Promise.all(
+          Array.from({ length: Math.min(12, queue.length) }, async () => {
+            for (let next = queue.shift(); next; next = queue.shift()) {
+              try {
+                contents[next.relPath] = await vault.readNote(next.relPath);
+              } catch {
+                contents[next.relPath] = '';
+              }
+            }
+          }),
+        );
         const graph = buildGraph(tree, contents);
         baseNodesRef.current = graph.nodes;
         runForceLayout(graph.nodes, graph.edges, { centrale: 1, repulsion: 16, liaison: 0.43, distance: 80 });
@@ -236,18 +290,22 @@ export function GraphView({ theme, onOpenNote }: Props) {
   })();
   const spanX = Math.max(1, bounds.maxX - bounds.minX);
   const spanY = Math.max(1, bounds.maxY - bounds.minY);
-  const fitScale = Math.min((width - (panneau ? 360 : 80)) / spanX, (height - 150) / spanY, 3);
+  const fitScale = Math.min((width - (panneau ? panneauEffectif + 40 : 80)) / spanX, (height - 150) / spanY, 3);
   const [zoom, setZoom] = useState(1);
   // PAN (v0.4.39) : décalage du graphe dans son cadre — molette = zoom vers
   // le curseur, glisser = déplacer, boutons +/- conservés.
   const [pan, setPan] = useState({ x: 0, y: 0 });
-  const [panneauWidth, setPanneauWidth] = useState(300);
   const scale = fitScale * zoom;
   const toScreenX = (x: number) => (x - bounds.minX) * scale + 30 + pan.x;
   const toScreenY = (y: number) => (y - bounds.minY) * scale + 40 + pan.y;
 
   return (
-    <View style={{ flex: 1, flexDirection: 'row' }}>
+    // onLayout : largeur RÉELLE du conteneur, dans le MÊME espace de
+    // coordonnées que les pageX des responders (voir panneauCap ci-dessus).
+    <View
+      style={{ flex: 1, flexDirection: 'row' }}
+      onLayout={(e) => setRowWidth(e.nativeEvent.layout.width)}
+    >
       <View style={{ flex: 1 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, padding: 12 }}>
           <Text style={{ color: theme.text, fontWeight: '700', fontSize: 16, flex: 1 }}>🔗 Vue graphique</Text>
@@ -349,23 +407,63 @@ export function GraphView({ theme, onOpenNote }: Props) {
       </View>
 
       {panneau && (
-        <Pressable
-          accessibilityRole="button"
-          onPress={() => undefined}
-          onHoverIn={() => undefined}
-          style={[styles.resizeHandle, { backgroundColor: theme.border }]}
+        // View (PAS Pressable) : Pressable gère SES propres responders et
+        // n'expose pas proprement onStartShouldSetResponder personnalisé —
+        // la poignée ne capte alors jamais le geste (vécu : « la poignée de
+        // la vue graphique ne fonctionne pas », 2026-10-04). Le pattern
+        // View+responders est celui de ResizeHandle.tsx, qui fonctionne.
+        <View
+          style={[
+            styles.resizeHandle,
+            // Barre visible fine côté graphe, fond transparent : la zone
+            // de 24 dp doit se fondre dans l'interface (voir ci-dessus).
+            { backgroundColor: 'transparent', borderRightWidth: 2, borderRightColor: theme.border },
+          ]}
           // @ts-expect-error cursor web-only (RN n'admet que auto/pointer)
           cursor="ew-resize"
           onStartShouldSetResponder={() => true}
           onMoveShouldSetResponder={() => true}
+          onResponderGrant={(e) => {
+            // [diag-poignee-graphe] TEMPORAIRE
+            console.error('[diag-graphe] grant', JSON.stringify({ pageX: e.nativeEvent.pageX, startWidth: panneauEffectif, cap: panneauCap, rowWidth }));
+            resizeDrag.current = { startX: e.nativeEvent.pageX, startWidth: panneauEffectif };
+          }}
           onResponderMove={(e) => {
-            const versGauche = e.nativeEvent.locationX < 3;
-            setPanneauWidth((w) => Math.min(520, Math.max(200, w + (versGauche ? 8 : -8))));
+            const drag = resizeDrag.current;
+            if (!drag) return;
+            // Panneau à DROITE : tirer vers la gauche (pageX décroissant)
+            // l'élargit. Glissement ABSOLU (delta depuis la prise).
+            // Bornes : [min(200, cap), cap] — la borne haute est le plafond
+            // d'écran, la basse ne doit JAMAIS dépasser la haute.
+            const next = drag.startWidth + (drag.startX - e.nativeEvent.pageX);
+            console.error('[diag-graphe] move', JSON.stringify({ pageX: e.nativeEvent.pageX, next }));
+            setPanneauWidth(Math.max(Math.min(200, panneauCap), Math.min(next, panneauCap)));
+          }}
+          onResponderRelease={() => {
+            resizeDrag.current = null;
+          }}
+          onResponderTerminate={() => {
+            resizeDrag.current = null;
           }}
         />
       )}
       {panneau && (
-        <ScrollView style={[styles.panneau, { borderLeftColor: theme.border, width: panneauWidth }]} contentContainerStyle={{ padding: 12, gap: 12 }}>
+        <ScrollView
+          style={[
+            styles.panneau,
+            {
+              borderLeftColor: theme.border,
+              width: panneauEffectif,
+              // Sur certains réglages d'affichage (zoom Samsung), la largeur
+              // fixe était ignorée au profit de la largeur du CONTENU
+              // (panneau figé à ~276 dp, insensible à la poignée — vécu
+              // A13, 2026-10-04) : flexGrow/Shrink à 0 force la largeur.
+              flexGrow: 0,
+              flexShrink: 0,
+            },
+          ]}
+          contentContainerStyle={{ padding: 12, gap: 12 }}
+        >
           <View style={{ gap: 4 }}>
             <Text style={{ color: theme.textMuted, fontSize: 12 }}>Rechercher des fichiers…</Text>
             <TextInput
@@ -487,7 +585,9 @@ const styles = StyleSheet.create({
     borderLeftWidth: 1,
   },
   resizeHandle: {
-    width: 6,
+    // Largeur TACTILE (24 dp) — la barre visible est la bordure elle-même ;
+    // sur desktop le curseur 'ew-resize' rend les 24 dp aussi confortables.
+    width: 24,
   },
   input: {
     borderWidth: 1,

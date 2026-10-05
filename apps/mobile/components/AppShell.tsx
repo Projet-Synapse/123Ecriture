@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode, type RefObject } from 'react';
-import { Image, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { Image, Platform, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
 import type { Section } from '../navigation';
 import { useResizablePanel } from '../lib/useResizablePanel';
@@ -76,7 +76,10 @@ export function AppShell({
   // seul Ctrl+K y ouvrait la recherche globale ET cette palette superposées.
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   useEffect(() => {
-    if (typeof window === 'undefined') return;
+    // Raccourcis clavier = desktop uniquement — `typeof window` ne suffit pas
+    // en natif (window existe sous Hermes, mais window.addEventListener n'est
+    // pas une fonction : crash au démarrage, v0.4.41).
+    if (Platform.OS !== 'web') return;
     const isMac = /Mac|iPhone|iPad/.test(navigator.platform ?? '');
     const handleKeyDown = (event: KeyboardEvent) => {
       // Alt+1..4 : saut direct aux sections dans l'ordre de la barre
@@ -163,14 +166,20 @@ export function AppShell({
       {isWide && (
         <>
           <View style={styles.sidebarClip}>{nav}</View>
-          <ResizeHandle
-            theme={theme}
-            side="left"
-            collapsed={navPanel.collapsed}
-            isDragging={navPanel.isDragging}
-            onMouseDown={navPanel.onHandleMouseDown}
-            onToggleCollapsed={navPanel.toggleCollapsed}
-          />
+          {/* Poignée de redimensionnement : web/desktop uniquement — elle
+              repose sur les évènements souris du DOM (useResizablePanel),
+              inexistants en natif (barre figée constatée en paysage). La
+              largeur du panneau reste à sa valeur enregistrée sur mobile. */}
+          {Platform.OS === 'web' && (
+            <ResizeHandle
+              theme={theme}
+              side="left"
+              collapsed={navPanel.collapsed}
+              isDragging={navPanel.isDragging}
+              onMouseDown={navPanel.onHandleMouseDown}
+              onToggleCollapsed={navPanel.toggleCollapsed}
+            />
+          )}
         </>
       )}
       {/* Vue simple (pas de ScrollView) : chaque écran gère son propre

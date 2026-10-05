@@ -1,19 +1,71 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Pressable, Text, View } from 'react-native';
+import { ActivityIndicator, Platform, Pressable, Text, View } from 'react-native';
 
 import {
   NOTES_TOOLBAR_ACTIONS,
   NOTES_TOOLBAR_DESCRIPTIONS,
   NOTES_TOOLBAR_SHORTCUT_LABELS,
 } from '../../lib/notesToolbarActions';
+import { fetchLatestRelease, openReleasePage, type LatestRelease } from '../../lib/updaterAndroid';
 import { usePreferences } from '../../preferences/PreferencesContext';
 import { SettingsToggle } from './SettingsToggle';
 import { settingsStyles as s } from './settingsStyles';
 
+// Carte de mise à jour NATIVE (Android) — vérifie la dernière release
+// GitHub publiée et ouvre sa page de téléchargement (voir
+// lib/updaterAndroid.ts). Volontairement simple : pas de comparaison de
+// version embarquée (le numéro de version de l'APK est géré à la main) —
+// l'utilisatrice voit la dernière version publiée et décide.
+function MobileUpdateCard() {
+  const { theme } = usePreferences();
+  const [checking, setChecking] = useState(false);
+  const [latest, setLatest] = useState<LatestRelease | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleCheck = useCallback(async () => {
+    setChecking(true);
+    setError(null);
+    try {
+      setLatest(await fetchLatestRelease());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setChecking(false);
+    }
+  }, []);
+
+  return (
+    <View style={[s.card, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+      <Text style={[s.cardTitle, { color: theme.text }]}>Mises à jour</Text>
+      <Pressable onPress={() => void handleCheck()} style={[s.button, { backgroundColor: theme.accent }]} disabled={checking}>
+        <Text style={s.buttonText}>{checking ? 'Vérification…' : 'Vérifier les mises à jour'}</Text>
+      </Pressable>
+      {error ? <Text style={{ color: theme.danger }}>⚠️ {error}</Text> : null}
+      {latest ? (
+        <>
+          <Text style={[s.cardValue, { color: theme.textMuted }]}>
+            Dernière version publiée : {latest.version}
+            {latest.publishedAt ? ` (${new Date(latest.publishedAt).toLocaleDateString('fr-FR')})` : ''}
+          </Text>
+          <Pressable
+            onPress={() => openReleasePage(latest.url)}
+            style={[s.button, { backgroundColor: theme.accent }]}
+          >
+            <Text style={s.buttonText}>Ouvrir la page de téléchargement</Text>
+          </Pressable>
+          <Text style={{ color: theme.textMuted, fontSize: 12 }}>
+            {"Télécharge l'APK depuis la page, puis ouvre-le pour installer la mise à jour."}
+          </Text>
+        </>
+      ) : null}
+    </View>
+  );
+}
+
 // Section "À propos" — version installée + statut du updater, déplacée
 // telle quelle depuis l'ancien SettingsScreen plat (qui l'appelait "Mises à
-// jour" sans section dédiée). Dépend de window.updater, exposé uniquement
-// par Electron desktop (voir apps/desktop/electron/preload.ts).
+// jour" sans section dédiée). Sur desktop, dépend de window.updater (Electron,
+// voir apps/desktop/electron/preload.ts) ; sur natif, voir MobileUpdateCard.
 export function AboutSection() {
   const { theme } = usePreferences();
   const updater = typeof window !== 'undefined' ? window.updater : undefined;
@@ -114,9 +166,16 @@ export function AboutSection() {
     return (
       <>
         {shortcuts}
-        <Text style={[s.muted, { color: theme.textMuted }]}>
-          Les mises à jour sont disponibles sur la version desktop pour l’instant.
-        </Text>
+        {/* NATIF (Android) : vérification des releases GitHub + ouverture
+            de la page de téléchargement de l'APK (voir lib/updaterAndroid.ts).
+            L'installation in-app d'un APK exige des permissions système
+            spécifiques — le flux navigateur est le plus fiable. */}
+        {Platform.OS !== 'web' && <MobileUpdateCard />}
+        {Platform.OS === 'web' && (
+          <Text style={[s.muted, { color: theme.textMuted }]}>
+            Les mises à jour sont disponibles sur la version desktop pour l’instant.
+          </Text>
+        )}
       </>
     );
   }

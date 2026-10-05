@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import {
   buildMonthGrid,
@@ -329,7 +329,9 @@ export function CalendarScreen({
   // Déclaré APRÈS `cancelEditEvent` (le linter react-hooks refuse
   // d'utiliser une variable avant sa déclaration, même dans un effet).
   useEffect(() => {
-    if (selectedDate === null || typeof window === 'undefined') return;
+    // Échap = desktop/web uniquement (window.addEventListener n'existe pas
+    // sur Hermes natif — garde Platform.OS, cf. lib/nativeShims.ts).
+    if (selectedDate === null || Platform.OS !== 'web') return;
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
       event.preventDefault();

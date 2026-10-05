@@ -1,5 +1,10 @@
+import { Platform } from 'react-native';
+import * as FileSystem from 'expo-file-system/legacy';
+
 import {
   APP_SCHEMA,
+  SUPABASE_ANON_KEY,
+  SUPABASE_URL,
   supabase,
   VAULT_DEVICES_TABLE,
   VAULT_FILES_BUCKET,
@@ -19,6 +24,9 @@ import {
 } from './journal';
 import { tryThreeWayMerge } from './merge';
 import { vaultStorageObjectKey } from './storageKeys';
+// randomUUID portable — crypto.randomUUID n'existe pas sous Hermes natif
+// (le helper web tombe sur Math.random), voir lib/storage/webUuid.ts.
+import { randomUUID as uuid } from '../storage/webUuid';
 
 // Orchestrateur de synchro (v0, manuel, sans timer — voir
 // docs/ARCHITECTURE.md §6) : appelle le pont Electron (hash local, lecture/
@@ -220,7 +228,7 @@ export async function createRemoteVault(name: string, ownerId: string): Promise<
   const { data, error } = await client
     .schema(APP_SCHEMA)
     .from(VAULTS_TABLE)
-    .insert({ owner_id: ownerId, local_vault_id: `account:${crypto.randomUUID()}`, name: safeName })
+    .insert({ owner_id: ownerId, local_vault_id: `account:${uuid()}`, name: safeName })
     .select('id, name, local_vault_id, created_at, created_by_device')
     .single();
   if (error) throw error;
@@ -369,7 +377,11 @@ async function fetchRemoteFiles(remoteVaultId: string): Promise<RemoteVaultFile[
     .eq('vault_id', remoteVaultId);
   if (error) throw error;
   return (data ?? []).map((row) => ({
-    relPath: row.rel_path as string,
+    // Le desktop Windows pousse des relPaths à séparateurs `\` — normalisés
+    // en `/` ici, sinon le pull aplatissait les sous-dossiers en fichiers à
+    // racine (Android refuse les `\` dans les noms) et aucun chemin ne
+    // correspondait entre le hash local et les lignes distantes.
+    relPath: (row.rel_path as string).replace(/\\/g, '/'),
     contentHash: row.content_hash as string,
     sizeBytes: row.size_bytes as number,
     updatedAt: row.updated_at as string,
@@ -382,12 +394,51 @@ async function fetchRemoteFiles(remoteVaultId: string): Promise<RemoteVaultFile[
 // vault_files (storage_object_path) : les fichiers poussés avant v0.4.9
 // sous leur nom brut restent ainsi téléchargeables ; la clé recalculée ne
 // sert qu'aux lignes qui n'en auraient pas.
+// ⚠️ `Blob.text()` n'existe pas sur le Blob polyfillé de React Native :
+// chaque pull levait « undefined is not a function » (v0.4.41-fix4, sur
+// TOUT fichier tiré du cloud). FileReader lit le blob en texte UTF-8 sur
+// toutes les plateformes (navigateur, Electron, Hermes).
+async function blobToText(data: Blob): Promise<string> {
+  if (typeof data.text === 'function') return data.text();
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result ?? ''));
+    reader.onerror = () => reject(reader.error ?? new Error('Lecture du fichier téléchargé impossible.'));
+    reader.readAsText(data);
+  });
+}
+
 async function downloadRemoteText(remoteVaultId: string, relPath: string, objectPath?: string): Promise<string> {
   const { supabase: client } = requireBridges();
   const key = objectPath ?? storageObjectPath(remoteVaultId, relPath);
+  // ⚠️ Sur NATIF, ne PAS passer par storage.download() : supabase-js le
+  // fait transiter par expo/fetch, qui tamponne TOUTE la réponse en
+  // mémoire Java (DirectByteBuffer) — OutOfMemoryError natif au bout de
+  // quelques fichiers, mort du processus (vécu : « la synchro charge
+  // indéfiniment », fix4/fix5). Téléchargement DIRECT vers un fichier de
+  // cache (okhttp → disque, zéro tampon JS/Java), lecture, nettoyage.
+  if (Platform.OS !== 'web') {
+    const { data: sessionData } = await client.auth.getSession();
+    const token = sessionData.session?.access_token;
+    if (!token) throw new Error('Session absente — reconnecte-toi pour télécharger les fichiers.');
+    const tmpPath = `${FileSystem.cacheDirectory}sync-dl-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    try {
+      const result = await FileSystem.downloadAsync(
+        `${SUPABASE_URL}/storage/v1/object/${VAULT_FILES_BUCKET}/${key}`,
+        tmpPath,
+        { headers: { Authorization: `Bearer ${token}`, apikey: SUPABASE_ANON_KEY } },
+      );
+      if (result.status >= 400) {
+        throw new Error(`Téléchargement du fichier impossible (HTTP ${result.status}).`);
+      }
+      return await FileSystem.readAsStringAsync(tmpPath);
+    } finally {
+      await FileSystem.deleteAsync(tmpPath, { idempotent: true }).catch(() => undefined);
+    }
+  }
   const { data, error } = await client.storage.from(VAULT_FILES_BUCKET).download(key);
   if (error) throw error;
-  return data.text();
+  return blobToText(data);
 }
 
 async function pushFile(remoteVaultId: string, ownerId: string, note: LocalHashedNote): Promise<void> {
