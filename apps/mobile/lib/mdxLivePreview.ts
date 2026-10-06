@@ -159,11 +159,18 @@ class EmbedImageWidget extends WidgetType {
   }
 }
 
-// Un peu de marge autour d'une correspondance pour décider si le curseur la
-// "touche" — inclut la position juste après la syntaxe (curseur qui vient
-// de la fermer) en plus de l'intérieur strict.
+// Révélation STRICTEMENT intérieure (comme Obsidian) : le texte brut ne
+// réapparaît que si la sélection chevauche l'intérieur de la syntaxe — le
+// curseur collé à l'EXTÉRIEUR (juste avant le premier marqueur ou juste
+// après le dernier) laisse la mise en forme en place. L'ancienne condition
+// inclusive aux bornes (`<=`/`>=`) réveillait les marqueurs dès qu'on
+// approchait le curseur : en se déplaçant dans une note, la mise en forme
+// s'affichait/se masquait en cascade (rapporté : « l'apparition de la mise
+// en forme est très chaotique en déplaçant le curseur »). Le curseur ENTRE
+// les marqueurs (ex. sur le second `*` du `**` ouvrant) ou dans le contenu
+// révèle toujours, pour pouvoir éditer la syntaxe elle-même.
 function selectionTouches(view: EditorView, from: number, to: number): boolean {
-  return view.state.selection.ranges.some((range) => range.from <= to && range.to >= from);
+  return view.state.selection.ranges.some((range) => range.from < to && range.to > from);
 }
 
 type DecorationRange = { from: number; to: number; decoration: Decoration };
