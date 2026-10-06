@@ -4,7 +4,7 @@ import CodeMirror, { EditorView, type ReactCodeMirrorRef } from '@uiw/react-code
 import { markdown } from '@codemirror/lang-markdown';
 import { autocompletion } from '@codemirror/autocomplete';
 import { search as searchExtension, searchKeymap } from '@codemirror/search';
-import { keymap } from '@codemirror/view';
+import { ViewPlugin, keymap } from '@codemirror/view';
 import { Prec } from '@codemirror/state';
 
 import { createLivePreviewExtension } from '../lib/mdxLivePreview';
@@ -13,6 +13,25 @@ import { wikilinkCompletionSource } from '../lib/wikilinkAutocomplete';
 import { editorHighlightExtensions } from '../lib/codemirrorHighlight';
 import type { FormattingResult, Selection } from '../lib/mdxFormatting';
 import type { Theme } from '../theme';
+
+// Panneau emoji Windows (Win+.) : avec `autocorrect="off"`/`autocapitalize=
+// "off"` sur le champ éditable, Chromium REFUSE d'insérer la sélection du
+// panneau (bug documenté côté Chromium ; symptôme rapporté : le panneau
+// s'ouvre, l'emoji n'apparaît jamais). CodeMirror pose exactement ces
+// attributs sur son champ à la création de la view — on les retire ici.
+// CodeMirror s'en sert aussi pour deux contournements d'autocorrection
+// iOS/Enter : sans effet sur Windows (l'autocorrect système n'y existe pas),
+// d'où un retrait inconditionnel. Le plugin repasse à chaque création de
+// view (remontage du composant), donc le strip reste en place.
+const enableOsEmojiInsertion = ViewPlugin.fromClass(
+  class {
+    constructor(view: EditorView) {
+      view.contentDOM.removeAttribute('autocorrect');
+      view.contentDOM.removeAttribute('autocapitalize');
+      view.contentDOM.removeAttribute('writingsuggestions');
+    }
+  },
+);
 
 // Piles de police web-safe pour Paramètres → Éditeur → Police d'écriture.
 // 'system' garde le comportement d'origine ('inherit', hérite de la police
@@ -242,7 +261,7 @@ export function MdxEditor({
   const searchExtensions = useMemo(() => [searchExtension({ top: true }), keymap.of(searchKeymap)], []);
 
   const extensions = useMemo(() => {
-    const base = [markdown(), EditorView.lineWrapping, completionExtension, ...searchExtensions];
+    const base = [markdown(), EditorView.lineWrapping, enableOsEmojiInsertion, completionExtension, ...searchExtensions];
     const withShortcuts = shortcutsExtension ? [...base, shortcutsExtension] : base;
     const withLive = livePreview ? [...withShortcuts, liveExtension] : withShortcuts;
     // Titres SANS soulignement (voir lib/codemirrorHighlight.ts) — en

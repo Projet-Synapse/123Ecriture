@@ -89,15 +89,28 @@ export function findItalic(text: string): MarkMatch[] {
   // les `*` restaient visibles). Le contenu exige un caractère NON espace
   // en fin (`[^*\n]*\S`) et pas d'espace juste après l'étoile ouvrante —
   // `2 * 3 * 4` (multiplication) ne doit pas se déguiser en italique, même
-  // règle de bordure que le rendu markdown réel. `**…**` est absorbé par le
-  // dédoublonnage de findLiveMatches : `**a**` produit un faux `*a*`
-  // intérieur, systématiquement chevauché par le match de gras (positionné
-  // avant dans la liste, il gagne). Lookahead seulement (pas de
-  // lookbehind) : ce fichier est parsé par Hermes en natif, qui ne le
+  // règle de bordure que le rendu markdown réel. Lookahead seulement (pas
+  // de lookbehind) : ce fichier est parsé par Hermes en natif, qui ne le
   // supporte pas.
-  for (const re of [/_([^_\n]+?)_/g, /\*(?!\s)([^*\n]*\S)\*/g]) {
+  //
+  // Garde anti-clignotement (rapporté : « l'apparition de la mise en forme
+  // est très chaotique ») : un italique ACCOLÉ au même délimiteur à
+  // l'extérieur (`**gras*` produit un faux `*gras*` intérieur, `__mot_` un
+  // faux `_mot_`) est un GRAS EN COURS DE FRAPPE. Le laisser stylé faisait
+  // basculer l'affichage italique → gras au dernier caractère tapé ; on
+  // l'ignore — texte brut pendant la frappe, puis le gras complet se
+  // stylise d'un seul mouvement. (`**gras**` COMPLET reste couvert par le
+  // gras, qui gagne au dédoublonnage de findLiveMatches.)
+  const patterns: { re: RegExp; delimiter: string }[] = [
+    { re: /_([^_\n]+?)_/g, delimiter: '_' },
+    { re: /\*(?!\s)([^*\n]*\S)\*/g, delimiter: '*' },
+  ];
+  for (const { re, delimiter } of patterns) {
     let match: RegExpExecArray | null;
     while ((match = re.exec(text))) {
+      const charBefore = text[match.index - 1];
+      const charAfter = text[match.index + match[0].length];
+      if (charBefore === delimiter || charAfter === delimiter) continue;
       matches.push({
         kind: 'mark',
         type: 'italic',

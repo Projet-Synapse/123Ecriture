@@ -17,6 +17,20 @@ describe('findLiveMatches — gras/italique', () => {
     expect('avant _fin_ après'.slice(italic!.from, italic!.to)).toBe('_fin_');
   });
 
+  // Garde anti-clignotement (rapporté : « l'apparition de la mise en forme
+  // est très chaotique ») : un italique accolé au même délimiteur à
+  // l'extérieur est un GRAS EN COURS DE FRAPPE — il ne doit PAS être stylé
+  // (sinon l'affichage basculait italique → gras au dernier caractère).
+  it('un gras en cours de frappe (`**fort*`) ne se déguise pas en italique', () => {
+    const matches = findLiveMatches('avant **fort*');
+    expect(matches.filter((m) => m.kind === 'mark')).toHaveLength(0);
+  });
+
+  it('un gras-underscore en cours de frappe (`__mot_`) ne se déguise pas en italique', () => {
+    const matches = findLiveMatches('avant __mot_');
+    expect(matches.filter((m) => m.kind === 'mark')).toHaveLength(0);
+  });
+
   // 2026-10-03 : l'italique-étoile restait non décoré (cut v1), les `*`
   // restaient visibles dans les notes importées.
   it('repère un *italique* étoile', () => {

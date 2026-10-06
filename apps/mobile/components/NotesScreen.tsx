@@ -1554,7 +1554,7 @@ export function NotesScreen({
   // //////////////////////////////////////////////////////////////////////
 
   const scheduleSave = useCallback(
-    (text: string) => {
+    () => {
       if (!vault || !activeNote) return;
       // PAS de setStatus('saving') ici : cette fonction tourne à CHAQUE
       // frappe, et un setState supplémentaire = un re-render complet de
@@ -1565,9 +1565,23 @@ export function NotesScreen({
       saveTimer.current = setTimeout(() => {
         void (async () => {
           try {
+            // La note a été quittée pendant les 600 ms (openNote a flushé
+            // elle-même) : abandonner plutôt que réécrire l'ancien fichier
+            // avec le contenu courant d'une AUTRE note.
+            if (activeNoteRef.current?.relPath !== activeNote.relPath) return;
             setStatus('saving');
-            const finalText = await materializeTimestamps(activeNote.relPath, text);
-            if (finalText !== text) setContent(finalText);
+            // Texte lu au MOMENT de l'exécution (pas au schedule) : une
+            // frappe arrivée entre les deux doit être incluse — sinon la
+            // sauvegarde écrasait le disque avec une version périmée.
+            const finalText = await materializeTimestamps(activeNote.relPath, contentRef.current);
+            // PAS de setContent(finalText) : réinjecter le texte matérialisé
+            // dans l'éditeur le remplaçait ENTIÈREMENT côté CodeMirror
+            // (mode Source : value=content) — si l'utilisatrice reprenait
+            // sa frappe pendant l'aller-retour, ses frappes étaient
+            // écrasées (« des morceaux s'annulent tout seuls ») et le
+            // curseur sautait. La matérialisation des dates va sur le
+            // DISQUE ; l'éditeur reste la source de l'affichage, les clés
+            // créées (created/modified) apparaissent à la réouverture.
             await vault.writeNote(activeNote.relPath, finalText);
             setStatus('saved');
             // PAS de refreshTree() ici (contrairement à flushSave) : un
@@ -1588,7 +1602,7 @@ export function NotesScreen({
 
   const handleChangeContent = (text: string) => {
     setContent(text);
-    scheduleSave(text);
+    scheduleSave();
   };
 
 
@@ -1602,8 +1616,12 @@ export function NotesScreen({
     setStatus('saving');
     void (async () => {
       try {
+        // Mêmes garde-fous que scheduleSave : ne pas réécrire l'ancien
+        // fichier si la note a changé pendant l'aller-retour, et ne pas
+        // réinjecter le texte matérialisé dans l'éditeur (remplacement
+        // intégral CodeMirror = curseur déplacé, frappes écrasées).
+        if (activeNoteRef.current?.relPath !== activeNote.relPath) return;
         const finalText = await materializeTimestamps(activeNote.relPath, contentRef.current);
-        if (finalText !== contentRef.current) setContent(finalText);
         await vault.writeNote(activeNote.relPath, finalText);
         setStatus('saved');
         await refreshTree();
@@ -1796,7 +1814,7 @@ export function NotesScreen({
       } else {
         const newText = `${content}${embed}`;
         setContent(newText);
-        scheduleSave(newText);
+        scheduleSave();
       }
     } catch (error) {
       console.error('[vault] échec de l’import de la pièce jointe :', error);
