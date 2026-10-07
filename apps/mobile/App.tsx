@@ -8,6 +8,7 @@ import { CalendarScreen } from './components/CalendarScreen';
 import { GraphView } from './components/GraphView';
 import { usePreferences } from './preferences/PreferencesContext';
 import { NotesScreen } from './components/NotesScreen';
+import { TablesScreen } from './components/TablesScreen';
 import { SettingsScreen } from './components/SettingsScreen';
 import { TasksScreen } from './components/TasksScreen';
 import { toIsoDate } from './lib/calendarDates';
@@ -131,6 +132,16 @@ function Root() {
   } else if (activeId === 'graph') {
     content = (
       <GraphView
+        theme={theme}
+        onOpenNote={(relPath) => {
+          setActiveId('notes');
+          setPendingOpenRelPath(relPath);
+        }}
+      />
+    );
+  } else if (activeId === 'tables') {
+    content = (
+      <TablesScreen
         theme={theme}
         onOpenNote={(relPath) => {
           setActiveId('notes');

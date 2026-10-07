@@ -52,7 +52,10 @@ import { PropertiesBlock } from './PropertiesBlock';
 import { PropertiesPanel } from './PropertiesPanel';
 import { ResizeHandle } from './ResizeHandle';
 import { RightSidebar, type SidebarTab } from './RightSidebar';
+import { OutlinePanel } from './OutlinePanel';
 import { SearchDialog } from './SearchDialog';
+import { lintMarkdown } from '../lib/markdownLinter';
+import { listTemplateNotes } from '../lib/templates';
 import { VaultTreeView } from './VaultTreeView';
 import { NoteIconByKind } from './FileIcons';
 import { FolderPreview } from './FolderPreview';
@@ -1272,6 +1275,52 @@ export function NotesScreen({
   // quel que soit l'état de l'arbre. Le nœud est reconstruit depuis
   // activeNote (même forme que `{ type: 'note', ...activeNote }` du
   // renommage par clic titre).
+  // « 📋 Insérer un modèle » (v0.4.44, demande Templates) — liste les notes
+  // des dossiers MODÈLES/TEMPLATES du coffre ; le choix insère le contenu
+  // du modèle au curseur (via ActionMenu, natif ET desktop).
+  const [templateMenu, setTemplateMenu] = useState<{ id: string; label: string }[] | null>(null);
+  const showTemplateMenu = useCallback(() => {
+    const notes = listTemplateNotes(tree);
+    if (!activeNote) return;
+    if (notes.length === 0) {
+      setWikilinkNotice('Aucun modèle dans le coffre — place-les dans un dossier MODÈLES ou TEMPLATES.');
+      return;
+    }
+    void presentMenu(
+      'Insérer un modèle',
+      notes.map((note) => ({ id: note.relPath, label: note.name })),
+    );
+  }, [tree, activeNote, presentMenu]);
+
+  // Insertion du CONTENU d'un modèle au curseur (le frontmatter du modèle
+  // est retiré — il n'a pas de sens dans la note cible). Nécessite
+  // l'EditorView (Source/Intermédiaire).
+  const insertTemplateById = useCallback(
+    async (relPath: string) => {
+      if (!vault || !activeNote) return;
+      try {
+        const raw = await vault.readNote(relPath);
+        const body = raw.startsWith('---\n') ? raw.slice(raw.indexOf('\n---\n', 4) + 6) : raw;
+        const view = viewRef.current;
+        if (!view) {
+          setWikilinkNotice("L'insertion se fait depuis un éditeur Source ou Intermédiaire.");
+          return;
+        }
+        const sel = view.state.selection.main;
+        const doc = view.state.doc.toString();
+        view.dispatch({
+          changes: { from: 0, to: doc.length, insert: doc.slice(0, sel.from) + body + doc.slice(sel.to) },
+          selection: { anchor: sel.from + body.length },
+        });
+        view.focus();
+      } catch (error) {
+        console.error("[modèles] échec de l'insertion :", error);
+        setWikilinkNotice("Échec de l'insertion du modèle.");
+      }
+    },
+    [vault, activeNote],
+  );
+
   const showEditorActionsMenu = useCallback(() => {
     if (!activeNote) return;
     const node: VaultTreeNode = { type: 'note', ...activeNote };
@@ -1280,6 +1329,7 @@ export function NotesScreen({
       { id: 'move', label: 'Déplacer vers…' },
       { id: 'edit-path', label: 'Modifier le chemin' },
       { id: 'duplicate', label: 'Dupliquer' },
+      { id: 'lint-note', label: '✨ Formater la note' },
       {
         id: 'toggle-favorite',
         label: preferences.favoriteRelPaths.includes(node.relPath)
@@ -1292,6 +1342,7 @@ export function NotesScreen({
       if (choice === 'move') startMove(node);
       if (choice === 'edit-path') startEditPath(node);
       if (choice === 'duplicate') void handleDuplicateNode(node);
+      if (choice === 'lint-note') handleChangeContent(lintMarkdown(contentRef.current));
       if (choice === 'toggle-favorite') void toggleFavorite(node.relPath);
       if (choice === 'delete') void handleDeleteNode(node);
     });
@@ -2560,6 +2611,14 @@ export function NotesScreen({
                         theme={theme}
                         onItemRun={(item) => {
                           if (!item.run) return;
+                          if (item.run.id === 'template') {
+                            showTemplateMenu();
+                            return;
+                          }
+                          if (item.run.id === 'lint') {
+                            handleChangeContent(lintMarkdown(contentRef.current));
+                            return;
+                          }
                           if (item.run.id === 'attach') {
                             void handleInsertAttachment();
                             return;
@@ -2754,6 +2813,22 @@ export function NotesScreen({
                         content={content}
                         onChangeContent={handleChangeContent}
                         tree={tree}
+                      />
+                    ) : sidebarTab === 'outline' ? (
+                      // Plan de la note (v0.4.44) : titres cliquables = saut
+                      // dans l'éditeur (Source/Intermédiaire via l'EditorView ;
+                      // en Aperçu ou en WebView native, la liste reste
+                      // consultable sans saut).
+                      <OutlinePanel
+                        body={bodyOnly}
+                        theme={theme}
+                        canJump={Boolean(viewRef.current)}
+                        onJump={(offset) => {
+                          const view = viewRef.current;
+                          if (!view) return;
+                          view.dispatch({ selection: { anchor: offset }, scrollIntoView: true });
+                          view.focus();
+                        }}
                       />
                     ) : (
                       <OccurrencesPanel

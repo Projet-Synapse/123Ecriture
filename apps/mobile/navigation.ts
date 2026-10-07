@@ -17,6 +17,7 @@ export type Section = {
 export const SECTIONS: Section[] = [
   { id: 'notes', label: 'Notes', icon: '📝' },
   { id: 'graph', label: 'Graphique', icon: '🔗' },
+  { id: 'tables', label: 'Tables', icon: '🗂️' },
   { id: 'tasks', label: 'Tâches', icon: '✅' },
   { id: 'calendar', label: 'Calendrier', icon: '📅' },
   { id: 'settings', label: 'Paramètres', icon: '⚙️' },

@@ -10,13 +10,14 @@ import type { Theme } from '../theme';
 // d'où un rail générique plutôt que deux composants ad hoc. Composant
 // purement présentationnel : NotesScreen possède l'état (onglet actif) et
 // lui fournit déjà le bon contenu via `children`.
-export type SidebarTab = 'properties' | 'occurrences';
+export type SidebarTab = 'properties' | 'occurrences' | 'outline';
 
 type SidebarTabConfig = { id: SidebarTab; icon: string; label: string };
 
 const TABS: SidebarTabConfig[] = [
   { id: 'properties', icon: '🏷️', label: 'Propriétés' },
   { id: 'occurrences', icon: '🔤', label: 'Occurrences' },
+  { id: 'outline', icon: '📑', label: 'Plan' },
 ];
 
 type Props = {

@@ -34,7 +34,9 @@ export type ToolbarActionId =
   | 'table'
   | 'attach'
   | 'undo'
-  | 'redo';
+  | 'redo'
+  | 'template'
+  | 'lint';
 
 export type ToolbarAction = {
   id: ToolbarActionId;
@@ -84,6 +86,12 @@ export const NOTES_TOOLBAR_ACTIONS: ToolbarAction[] = [
   // NotesScreen branche sur undo/redo de @codemirror/commands.
   { id: 'undo', label: '↩', run: (text, sel) => ({ text, selection: sel }) },
   { id: 'redo', label: '↪', run: (text, sel) => ({ text, selection: sel }) },
+  // Modèle : ouvre le sélecteur de modèles du coffre (NotesScreen branche
+  // l'id sur showTemplateMenu) — pas une transformation de texte.
+  { id: 'template', label: '📋', run: (text, sel) => ({ text, selection: sel }) },
+  // Linter : normalisation conservatrice (voir lib/markdownLinter.ts) —
+  // branché sur handleChangeContent(lintMarkdown(...)) côté NotesScreen.
+  { id: 'lint', label: '✨', run: (text, sel) => ({ text, selection: sel }) },
 ];
 
 // Libellés lisibles pour la liste de réorganisation dans Paramètres (plus
@@ -106,6 +114,8 @@ export const NOTES_TOOLBAR_DESCRIPTIONS: Record<ToolbarActionId, string> = {
   attach: 'Pièce jointe',
   undo: 'Annuler',
   redo: 'Rétablir',
+  template: 'Insérer un modèle',
+  lint: 'Formater (linter)',
 };
 
 // Affichage humain du raccourci (⌘/Ctrl selon la plateforme) pour Paramètres
