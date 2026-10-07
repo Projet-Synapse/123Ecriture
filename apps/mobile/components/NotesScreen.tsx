@@ -1275,26 +1275,13 @@ export function NotesScreen({
   // quel que soit l'état de l'arbre. Le nœud est reconstruit depuis
   // activeNote (même forme que `{ type: 'note', ...activeNote }` du
   // renommage par clic titre).
-  // « 📋 Insérer un modèle » (v0.4.44, demande Templates) — liste les notes
-  // des dossiers MODÈLES/TEMPLATES du coffre ; le choix insère le contenu
-  // du modèle au curseur (via ActionMenu, natif ET desktop).
-  const [templateMenu, setTemplateMenu] = useState<{ id: string; label: string }[] | null>(null);
-  const showTemplateMenu = useCallback(() => {
-    const notes = listTemplateNotes(tree);
-    if (!activeNote) return;
-    if (notes.length === 0) {
-      setWikilinkNotice('Aucun modèle dans le coffre — place-les dans un dossier MODÈLES ou TEMPLATES.');
-      return;
-    }
-    void presentMenu(
-      'Insérer un modèle',
-      notes.map((note) => ({ id: note.relPath, label: note.name })),
-    );
-  }, [tree, activeNote, presentMenu]);
-
+  // (DÉPLACÉ plus bas, après handleChangeContent dont il dépend — déclaré
+  // const plus bas dans le composant, l'utiliser avant sa déclaration
+  // relevait à la fois du TDZ et de la règle react-hooks du compilateur.)
   // Insertion du CONTENU d'un modèle au curseur (le frontmatter du modèle
   // est retiré — il n'a pas de sens dans la note cible). Nécessite
-  // l'EditorView (Source/Intermédiaire).
+  // l'EditorView (Source/Intermédiaire). Déclarée AVANT showTemplateMenu,
+  // qui l'appelle au choix du menu.
   const insertTemplateById = useCallback(
     async (relPath: string) => {
       if (!vault || !activeNote) return;
@@ -1321,42 +1308,30 @@ export function NotesScreen({
     [vault, activeNote],
   );
 
-  const showEditorActionsMenu = useCallback(() => {
+  // « 📋 Insérer un modèle » (v0.4.44, demande Templates) — liste les notes
+  // des dossiers MODÈLES/TEMPLATES du coffre ; le choix insère le contenu
+  // du modèle au curseur (via ActionMenu, natif ET desktop). L'insertion
+  // (insertTemplateById, ci-dessus) est branchée sur le choix du menu —
+  // elle était déclarée mais JAMAIS appelée (le menu s'affichait, choisir
+  // un modèle ne faisait rien) : fin de branchement + fix lint.
+  const showTemplateMenu = useCallback(() => {
+    const notes = listTemplateNotes(tree);
     if (!activeNote) return;
-    const node: VaultTreeNode = { type: 'note', ...activeNote };
-    void presentMenu(node.name, [
-      { id: 'rename', label: 'Renommer' },
-      { id: 'move', label: 'Déplacer vers…' },
-      { id: 'edit-path', label: 'Modifier le chemin' },
-      { id: 'duplicate', label: 'Dupliquer' },
-      { id: 'lint-note', label: '✨ Formater la note' },
-      {
-        id: 'toggle-favorite',
-        label: preferences.favoriteRelPaths.includes(node.relPath)
-          ? 'Retirer des favoris'
-          : 'Ajouter aux favoris',
-      },
-      { id: 'delete', label: 'Supprimer' },
-    ]).then((choice) => {
-      if (choice === 'rename') startRename(node);
-      if (choice === 'move') startMove(node);
-      if (choice === 'edit-path') startEditPath(node);
-      if (choice === 'duplicate') void handleDuplicateNode(node);
-      if (choice === 'lint-note') handleChangeContent(lintMarkdown(contentRef.current));
-      if (choice === 'toggle-favorite') void toggleFavorite(node.relPath);
-      if (choice === 'delete') void handleDeleteNode(node);
+    if (notes.length === 0) {
+      setWikilinkNotice('Aucun modèle dans le coffre — place-les dans un dossier MODÈLES ou TEMPLATES.');
+      return;
+    }
+    void presentMenu(
+      'Insérer un modèle',
+      notes.map((note) => ({ id: note.relPath, label: note.name })),
+    ).then((choice) => {
+      if (choice) void insertTemplateById(choice);
     });
-  }, [
-    presentMenu,
-    activeNote,
-    preferences.favoriteRelPaths,
-    startRename,
-    startMove,
-    startEditPath,
-    handleDuplicateNode,
-    toggleFavorite,
-    handleDeleteNode,
-  ]);
+  }, [tree, activeNote, presentMenu, insertTemplateById]);
+
+  // (DÉPLACÉ plus bas, après handleChangeContent dont il dépend — déclaré
+  // const plus bas dans le composant, l'utiliser avant sa déclaration
+  // relevait à la fois du TDZ et de la règle react-hooks du compilateur.)
 
   // Un seul écouteur "contextmenu" délégué sur tout le conteneur de la
   // liste, plutôt qu'un handler par ligne : chaque ligne de VaultTreeView
@@ -1641,10 +1616,61 @@ export function NotesScreen({
     [vault, activeNote, materializeTimestamps],
   );
 
-  const handleChangeContent = (text: string) => {
-    setContent(text);
-    scheduleSave();
-  };
+  // useCallback (pas une simple flèche) : dépendre de showEditorActionsMenu
+  // ci-dessous — une fonction recréée à chaque rendu aurait fait tourner ce
+  // callback à chaque frappe (react-hooks/exhaustive-deps).
+  const handleChangeContent = useCallback(
+    (text: string) => {
+      setContent(text);
+      scheduleSave();
+    },
+    [scheduleSave],
+  );
+
+  // Menu « ⋯ » de l'en-tête de l'éditeur (bouton rendu plus bas) — mêmes
+  // actions que le clic droit sur la ligne de la note dans l'arbre
+  // (showContextMenuFor), mais accessibles sans aller la retrouver dans
+  // l'explorateur. ICI (et pas plus haut) car il appelle handleChangeContent
+  // (« ✨ Formater la note ») — déclaré const plus haut dans le composant,
+  // l'utiliser avant sa déclaration relevait à la fois du TDZ et de la
+  // règle react-hooks du compilateur.
+  const showEditorActionsMenu = useCallback(() => {
+    if (!activeNote) return;
+    const node: VaultTreeNode = { type: 'note', ...activeNote };
+    void presentMenu(node.name, [
+      { id: 'rename', label: 'Renommer' },
+      { id: 'move', label: 'Déplacer vers…' },
+      { id: 'edit-path', label: 'Modifier le chemin' },
+      { id: 'duplicate', label: 'Dupliquer' },
+      { id: 'lint-note', label: '✨ Formater la note' },
+      {
+        id: 'toggle-favorite',
+        label: preferences.favoriteRelPaths.includes(node.relPath)
+          ? 'Retirer des favoris'
+          : 'Ajouter aux favoris',
+      },
+      { id: 'delete', label: 'Supprimer' },
+    ]).then((choice) => {
+      if (choice === 'rename') startRename(node);
+      if (choice === 'move') startMove(node);
+      if (choice === 'edit-path') startEditPath(node);
+      if (choice === 'duplicate') void handleDuplicateNode(node);
+      if (choice === 'lint-note') handleChangeContent(lintMarkdown(contentRef.current));
+      if (choice === 'toggle-favorite') void toggleFavorite(node.relPath);
+      if (choice === 'delete') void handleDeleteNode(node);
+    });
+  }, [
+    presentMenu,
+    activeNote,
+    preferences.favoriteRelPaths,
+    startRename,
+    startMove,
+    startEditPath,
+    handleDuplicateNode,
+    toggleFavorite,
+    handleDeleteNode,
+    handleChangeContent,
+  ]);
 
 
   // Sauvegarde immédiate (Ctrl/Cmd+S) : court-circuite le debounce de
@@ -2818,11 +2844,14 @@ export function NotesScreen({
                       // Plan de la note (v0.4.44) : titres cliquables = saut
                       // dans l'éditeur (Source/Intermédiaire via l'EditorView ;
                       // en Aperçu ou en WebView native, la liste reste
-                      // consultable sans saut).
+                      // consultable sans saut). canJump reflète la condition
+                      // « un éditeur CodeMirror est monté » SANS lire le ref
+                      // pendant le rendu (interdit par react-hooks/refs) :
+                      // l'éditeur est monté ssi mode non-lecture côté web.
                       <OutlinePanel
                         body={bodyOnly}
                         theme={theme}
-                        canJump={Boolean(viewRef.current)}
+                        canJump={!isNativeNotes && effectiveViewMode !== 'reading'}
                         onJump={(offset) => {
                           const view = viewRef.current;
                           if (!view) return;
