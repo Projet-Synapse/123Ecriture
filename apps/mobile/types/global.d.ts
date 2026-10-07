@@ -9,8 +9,10 @@ declare global {
   // Type de fichier reconnu par le vault, dérivé de l'extension (voir
   // walkTree dans apps/desktop/electron/vault.js) — pilote l'aiguillage de
   // NotesScreen.tsx vers l'éditeur MDX, CanvasEditor.tsx ou ChartEditor.tsx,
-  // et l'icône affichée par VaultTreeView.tsx.
-  type VaultEntryKind = 'markdown' | 'canvas' | 'chart' | 'excalidraw';
+  // et l'icône affichée par VaultTreeView.tsx. 'code' = fichiers de
+  // programmation (.py/.ts/.js/…, voir lib/codeLanguages.ts — éditeur
+  // CodeEditor.tsx avec coloration + soulignements d'erreurs).
+  type VaultEntryKind = 'markdown' | 'canvas' | 'chart' | 'excalidraw' | 'code';
 
   interface VaultEntry {
     relPath: string;

@@ -37,6 +37,7 @@ import { useVaults } from '../lib/sync/VaultsContext';
 import { usePreferences } from '../preferences/PreferencesContext';
 import type { NotesActions } from './AppShell';
 import { CanvasEditor } from './CanvasEditor';
+import { CodeEditor } from './CodeEditor';
 import { ChartEditor } from './ChartEditor';
 import { EditorToolbar } from './EditorToolbar';
 import { EditPathDialog } from './EditPathDialog';
@@ -341,7 +342,12 @@ export function NotesScreen({
   // Déclaré ICI (avant openNote qui l'appelle au flush de changement de
   // note) : react-hooks exige que le hook précède sa capture.
   const materializeTimestamps = useCallback(
-    async (relPath: string, text: string): Promise<string> => {
+    // kind passé par chaque appelant (kind de la note SAUVEGARDÉE, qui peut
+    // différer de la note active pendant un flush) : la matérialisation est
+    // MARKDOWN-ONLY — sur un fichier code, elle insèrerait un frontmatter
+    // YAML inventé dans un .py (fichier corrompu).
+    async (relPath: string, text: string, kind?: VaultEntryKind): Promise<string> => {
+      if (kind && kind !== 'markdown') return text;
       if (!vault?.getTimestamps) return text;
       try {
         const { data, body } = parseFrontmatter(text);
@@ -630,7 +636,7 @@ export function NotesScreen({
           clearTimeout(saveTimer.current);
           saveTimer.current = null;
           const leftNote = activeNoteRef.current;
-          void materializeTimestamps(leftNote.relPath, contentRef.current)
+          void materializeTimestamps(leftNote.relPath, contentRef.current, leftNote.kind)
             .then((finalText) => vault.writeNote(leftNote.relPath, finalText))
             .catch((error) => {
               console.error('[vault] échec de la sauvegarde différée au changement de note :', error);
@@ -774,7 +780,10 @@ export function NotesScreen({
   // dossier), l'emplacement est résolu depuis Paramètres → Gestion des
   // fichiers et des liens → "Emplacement par défaut des nouvelles notes".
   const handleCreateNote = useCallback(
-    async (parentRelPath?: string, kind?: VaultEntryKind) => {
+    // `name` : nom EXPLICITE avec extension, utilisé par les fichiers code
+    // (`Sans titre.py` — l'extension choisie dans le menu langage) ; les
+    // autres kinds gardent « Sans titre » + leur extension fixe.
+    async (parentRelPath?: string, kind?: VaultEntryKind, name?: string) => {
       if (!vault) return;
       const resolvedParent =
         parentRelPath ??
@@ -786,7 +795,7 @@ export function NotesScreen({
             ? preferences.newNoteCustomFolder || undefined
             : undefined);
       try {
-        const entry = await vault.createNote('Sans titre', resolvedParent, kind);
+        const entry = await vault.createNote(name ?? 'Sans titre', resolvedParent, kind);
         await refreshTree();
         await openNote({ type: 'note', ...entry });
       } catch (error) {
@@ -1157,12 +1166,41 @@ export function NotesScreen({
 
   const showContextMenuFor = useCallback(
     (node: VaultTreeNode | null) => {
+      // « Nouveau fichier de code » : deuxième menu pour choisir le LANGAGE
+      // (l'extension est ce qui détermine coloration + soulignements — voir
+      // lib/codeLanguages.ts). Le nom devient `Sans titre.<ext>`, modifiable
+      // ensuite par renommage inline comme pour toutes les notes.
+      const createCodeFile = (parentRelPath: string | undefined) => {
+        const languageChoices: { id: string; label: string }[] = [
+          { id: '.py', label: 'Python (.py)' },
+          { id: '.js', label: 'JavaScript (.js)' },
+          { id: '.ts', label: 'TypeScript (.ts)' },
+          { id: '.tsx', label: 'React/TypeScript (.tsx)' },
+          { id: '.html', label: 'HTML (.html)' },
+          { id: '.css', label: 'CSS (.css)' },
+          { id: '.json', label: 'JSON (.json)' },
+          { id: '.sql', label: 'SQL (.sql)' },
+          { id: '.sh', label: 'Script shell (.sh)' },
+          { id: '.java', label: 'Java (.java)' },
+          { id: '.cs', label: 'C# (.cs)' },
+          { id: '.cpp', label: 'C++ (.cpp)' },
+          { id: '.go', label: 'Go (.go)' },
+          { id: '.rs', label: 'Rust (.rs)' },
+          { id: '.php', label: 'PHP (.php)' },
+          { id: '.rb', label: 'Ruby (.rb)' },
+          { id: '.yaml', label: 'YAML (.yaml)' },
+        ];
+        void presentMenu('Quel langage ?', languageChoices).then((choice) => {
+          if (choice) void handleCreateNote(parentRelPath, 'code', `Sans titre${choice}`);
+        });
+      };
       const items = !node
         ? [
             { id: 'new-note', label: 'Nouvelle note' },
             { id: 'new-canvas', label: 'Nouveau canvas' },
             { id: 'new-chart', label: 'Nouveau graphique' },
             { id: 'new-excalidraw', label: 'Nouveau excalidraw' },
+            { id: 'new-code', label: 'Nouveau fichier de code…' },
             { id: 'new-folder', label: 'Nouveau dossier' },
           ]
         : node.type === 'folder'
@@ -1171,6 +1209,7 @@ export function NotesScreen({
               { id: 'new-canvas-here', label: 'Nouveau canvas ici' },
               { id: 'new-chart-here', label: 'Nouveau graphique ici' },
               { id: 'new-excalidraw-here', label: 'Nouveau excalidraw ici' },
+              { id: 'new-code-here', label: 'Nouveau fichier de code ici…' },
               { id: 'new-folder-here', label: 'Nouveau dossier ici' },
               { id: 'rename', label: 'Renommer' },
               { id: 'move', label: 'Déplacer vers…' },
@@ -1196,11 +1235,13 @@ export function NotesScreen({
         if (choice === 'new-canvas') void handleCreateNote(undefined, 'canvas');
         if (choice === 'new-chart') void handleCreateNote(undefined, 'chart');
         if (choice === 'new-excalidraw') void handleCreateNote(undefined, 'excalidraw');
+        if (choice === 'new-code') createCodeFile(undefined);
         if (choice === 'new-folder') void handleCreateFolder();
         if (node && choice === 'new-note-here') void handleCreateNote(node.relPath);
         if (node && choice === 'new-canvas-here') void handleCreateNote(node.relPath, 'canvas');
         if (node && choice === 'new-chart-here') void handleCreateNote(node.relPath, 'chart');
         if (node && choice === 'new-excalidraw-here') void handleCreateNote(node.relPath, 'excalidraw');
+        if (node && choice === 'new-code-here') createCodeFile(node.relPath);
         if (node && choice === 'new-folder-here') void handleCreateFolder(node.relPath);
         if (node && choice === 'rename') startRename(node);
         if (node && choice === 'move') startMove(node);
@@ -1522,7 +1563,7 @@ export function NotesScreen({
             // Texte lu au MOMENT de l'exécution (pas au schedule) : une
             // frappe arrivée entre les deux doit être incluse — sinon la
             // sauvegarde écrasait le disque avec une version périmée.
-            const finalText = await materializeTimestamps(activeNote.relPath, contentRef.current);
+            const finalText = await materializeTimestamps(activeNote.relPath, contentRef.current, activeNote.kind);
             // PAS de setContent(finalText) : réinjecter le texte matérialisé
             // dans l'éditeur le remplaçait ENTIÈREMENT côté CodeMirror
             // (mode Source : value=content) — si l'utilisatrice reprenait
@@ -1570,7 +1611,7 @@ export function NotesScreen({
         // réinjecter le texte matérialisé dans l'éditeur (remplacement
         // intégral CodeMirror = curseur déplacé, frappes écrasées).
         if (activeNoteRef.current?.relPath !== activeNote.relPath) return;
-        const finalText = await materializeTimestamps(activeNote.relPath, contentRef.current);
+        const finalText = await materializeTimestamps(activeNote.relPath, contentRef.current, activeNote.kind);
         await vault.writeNote(activeNote.relPath, finalText);
         setStatus('saved');
         await refreshTree();
@@ -2385,6 +2426,28 @@ export function NotesScreen({
                       <NativeFileTypeUnavailable color={theme.textMuted} />
                     ) : (
                       <ExcalidrawEditor relPath={activeNote.relPath} />
+                    )}
+                  </View>
+                ) : activeNote.kind === 'code' ? (
+                  // Fichier de programmation (.py/.ts/.js/…) — CodeEditor
+                  // (coloration syntaxique + soulignements d'erreurs/
+                  // avertissements, voir lib/codeLanguages.ts/codeLint.ts).
+                  // PC/web uniquement : CodeMirror est un composant web,
+                  // comme MdxEditor (le natif garde son message dédié).
+                  <View style={styles.editorBody}>
+                    {isNativeNotes ? (
+                      <NativeFileTypeUnavailable color={theme.textMuted} />
+                    ) : (
+                      <CodeEditor
+                        value={content}
+                        onChange={handleChangeContent}
+                        fileName={activeNote.name}
+                        theme={theme}
+                        fontSize={Math.min(preferences.editorFontSize, 16)}
+                        onReady={(ref) => {
+                          viewRef.current = ref.view ?? null;
+                        }}
+                      />
                     )}
                   </View>
                 ) : (

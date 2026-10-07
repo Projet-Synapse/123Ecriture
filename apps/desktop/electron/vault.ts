@@ -13,6 +13,10 @@ import type { FileSortMode, VaultEntryKind, VaultOrder, VaultTreeNode } from './
 // frontmatterMigration/propertyScanMerge (esbuild bundle l'import
 // cross-package, vérifié).
 import { matchesEmbedTarget } from '../../mobile/lib/embedResolution';
+// Liste des extensions reconnues comme fichiers CODE (.py/.ts/.js/…) —
+// source de vérité unique partagée avec les adaptateurs web/natif (même
+// modèle d'import cross-package que embedResolution ci-dessus).
+import { CODE_FILE_EXTENSIONS, isCodeFile } from '../../mobile/lib/codeLanguages';
 
 type GetWindow = () => BrowserWindow | null;
 
@@ -109,6 +113,7 @@ export const EXTENSION_TO_KIND: Record<string, VaultEntryKind> = {
   // (vécu : 14 fichiers jamais poussés) — traités comme du texte markdown,
   // ils s'éditent dans l'éditeur de notes et se synchronisent.
   '.base': 'markdown',
+  ...Object.fromEntries(CODE_FILE_EXTENSIONS.map((extension) => [extension, 'code' as const])),
 };
 
 const KIND_TO_EXTENSION: Record<VaultEntryKind, string> = {
@@ -116,6 +121,10 @@ const KIND_TO_EXTENSION: Record<VaultEntryKind, string> = {
   canvas: '.canvas',
   chart: '.chart',
   excalidraw: '.excalidraw',
+  // Extension de RETENU pour un fichier code créé sans extension dans son
+  // nom — le flux normal (voir NotesScreen) fournit toujours le nom AVEC
+  // l'extension choisie (`Sans titre.py`), extraite par create-note.
+  code: '.js',
 };
 
 // Contenu initial d'un fichier fraîchement créé, selon son `kind` — gabarit
@@ -146,6 +155,12 @@ function defaultContentForKind(kind: VaultEntryKind, safeName: string): string {
     // intégré plus tard (scaffolding seulement cette session, voir
     // ExcalidrawEditor.tsx).
     return JSON.stringify({ type: 'excalidraw', version: 2, elements: [], appState: {} }, null, 2);
+  }
+  if (kind === 'code') {
+    // Un fichier code naît VIDE (comme dans VS Code) : pas de gabarit — le
+    // contenu dépend entièrement du langage, et un fichier vide est valide
+    // dans tous.
+    return '';
   }
   return `---\ntitle: ${safeName}\ncreated: ${new Date().toISOString()}\n---\n\n`;
 }
@@ -550,11 +565,26 @@ export function registerVaultHandlers(getWindow: GetWindow): void {
       const parentFull = parentRelPath ? resolveInVault(vaultPath, parentRelPath) : vaultPath;
 
       const safeKind: VaultEntryKind = kind && kind in KIND_TO_EXTENSION ? (kind as VaultEntryKind) : 'markdown';
-      const extension = KIND_TO_EXTENSION[safeKind];
       const safeName = name && name.trim().length > 0 ? name.trim() : 'Sans titre';
-      const fileName = findAvailableName(parentFull, safeName, extension);
+      // Pour le CODE, l'extension vient du NOM fourni (`Sans titre.py`) —
+      // chaque langage a la sienne ; elle est reprise telle quelle si
+      // reconnue (lib/codeLanguages.ts), sinon retenue par défaut .js. Pour
+      // les autres kinds, l'extension est fixe (KIND_TO_EXTENSION).
+      let extension: string;
+      let baseName: string;
+      if (safeKind === 'code') {
+        const fromName = (safeName.match(/\.[^.]+$/)?.[0] ?? '').toLowerCase();
+        extension = isCodeFile(`x${fromName}`) ? fromName : KIND_TO_EXTENSION.code;
+        baseName = fromName ? safeName.slice(0, safeName.length - fromName.length) : safeName;
+        if (!baseName.trim()) baseName = 'Sans titre';
+      } else {
+        extension = KIND_TO_EXTENSION[safeKind];
+        baseName = safeName;
+      }
+      const safeNameForFile = baseName;
+      const fileName = findAvailableName(parentFull, safeNameForFile, extension);
       const fullPath = path.join(parentFull, fileName);
-      await fs.writeFile(fullPath, defaultContentForKind(safeKind, safeName), 'utf8');
+      await fs.writeFile(fullPath, defaultContentForKind(safeKind, safeNameForFile), 'utf8');
       const stat = await fs.stat(fullPath);
 
       return {

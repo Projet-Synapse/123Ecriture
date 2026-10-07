@@ -3,6 +3,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import { StorageAccessFramework } from 'expo-file-system/legacy';
 
 import { parseFrontmatter } from '../frontmatter';
+import { CODE_FILE_EXTENSIONS } from '../codeLanguages';
 import { getActiveVaultRootUri } from './nativeVaultsAdapter';
 
 // Implémentation native (Android) de VaultBridge, sur le Storage Access
@@ -180,11 +181,22 @@ function extensionKind(name: string): VaultEntryKind | null {
   if (lower.endsWith('.canvas')) return 'canvas';
   if (lower.endsWith('.chart')) return 'chart';
   if (lower.endsWith('.excalidraw')) return 'excalidraw';
+  // Fichiers code (.py/.ts/.js/…) — même liste que le desktop/web (source
+  // de vérité unique : lib/codeLanguages.ts).
+  if (CODE_FILE_EXTENSIONS.some((extension) => lower.endsWith(extension))) return 'code';
   return null;
 }
 
 // Extensions de CONTENU reconnues (même liste que createNote plus bas).
-const KNOWN_CONTENT_EXTS = ['.mdx', '.md', '.canvas', '.chart', '.excalidraw', '.base'];
+const KNOWN_CONTENT_EXTS = [
+  '.mdx',
+  '.md',
+  '.canvas',
+  '.chart',
+  '.excalidraw',
+  '.base',
+  ...CODE_FILE_EXTENSIONS,
+];
 
 // Nom SANS extension de contenu — même convention que le desktop
 // (apps/desktop/electron/vault.ts : `name: entry.name.slice(0,
@@ -449,6 +461,10 @@ const EXTENSION_FOR_KIND: Record<VaultEntryKind, string> = {
   canvas: '.canvas',
   chart: '.chart',
   excalidraw: '.excalidraw',
+  // Extension de RETENU — le flux normal fournit le nom AVEC l'extension
+  // choisie (`Sans titre.py`, reconnue via KNOWN_CONTENT_EXTS ci-dessus),
+  // port du handler desktop (vault.ts create-note).
+  code: '.js',
 };
 
 // ⚠️ Toutes ces extensions sont inconnues d'Android (sauf à demander le
@@ -459,6 +475,7 @@ const MIME_FOR_KIND: Record<VaultEntryKind, string> = {
   canvas: 'application/octet-stream',
   chart: 'application/octet-stream',
   excalidraw: 'application/octet-stream',
+  code: 'application/octet-stream',
 };
 
 // Même règle de limite de mot que TAG_PATTERN dans
@@ -473,6 +490,7 @@ function defaultContentForKind(kind: VaultEntryKind, title: string): string {
   if (kind === 'markdown') return `---\ntitle: ${title}\ncreated: ${new Date().toISOString()}\n---\n\n`;
   if (kind === 'canvas') return JSON.stringify({ nodes: [], edges: [] }, null, 2);
   if (kind === 'excalidraw') return JSON.stringify({ type: 'excalidraw', elements: [], appState: {} }, null, 2);
+  if (kind === 'code') return ''; // fichier code vide, comme VS Code
   return JSON.stringify({ columns: [], rows: [], chart: null }, null, 2);
 }
 

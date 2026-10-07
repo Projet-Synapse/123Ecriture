@@ -80,6 +80,9 @@ export function NoteIconByKind({ kind, size = 16, theme }: { kind: VaultEntryKin
       return <FileIcon size={size} color="#9ece6a" />;
     case 'excalidraw':
       return <FileIcon size={size} color="#e0af68" />;
+    case 'code':
+      // Fichiers de programmation (.py/.ts/.js/…) — cyan-vert, même motif.
+      return <FileIcon size={size} color="#4fd6be" />;
     default:
       return <FileIcon size={size} color="#7aa2f7" />;
   }
