@@ -8,7 +8,7 @@
 // leurs équivalents côté renderer (mêmes noms de champs) puisqu'elles
 // traversent le pont IPC telles quelles (voir preload.ts).
 
-export type VaultEntryKind = 'markdown' | 'canvas' | 'chart' | 'excalidraw';
+export type VaultEntryKind = 'markdown' | 'canvas' | 'chart' | 'excalidraw' | 'code';
 
 export interface VaultNoteNode {
   type: 'note';

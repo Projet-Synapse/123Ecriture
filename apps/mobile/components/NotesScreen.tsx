@@ -37,6 +37,7 @@ import { useVaults } from '../lib/sync/VaultsContext';
 import { usePreferences } from '../preferences/PreferencesContext';
 import type { NotesActions } from './AppShell';
 import { CanvasEditor } from './CanvasEditor';
+import { CodeEditor } from './CodeEditor';
 import { ChartEditor } from './ChartEditor';
 import { EditorToolbar } from './EditorToolbar';
 import { EditPathDialog } from './EditPathDialog';
@@ -344,7 +345,12 @@ export function NotesScreen({
   // Déclaré ICI (avant openNote qui l'appelle au flush de changement de
   // note) : react-hooks exige que le hook précède sa capture.
   const materializeTimestamps = useCallback(
-    async (relPath: string, text: string): Promise<string> => {
+    // kind passé par chaque appelant (kind de la note SAUVEGARDÉE, qui peut
+    // différer de la note active pendant un flush) : la matérialisation est
+    // MARKDOWN-ONLY — sur un fichier code, elle insèrerait un frontmatter
+    // YAML inventé dans un .py (fichier corrompu).
+    async (relPath: string, text: string, kind?: VaultEntryKind): Promise<string> => {
+      if (kind && kind !== 'markdown') return text;
       if (!vault?.getTimestamps) return text;
       try {
         const { data, body } = parseFrontmatter(text);
@@ -633,7 +639,7 @@ export function NotesScreen({
           clearTimeout(saveTimer.current);
           saveTimer.current = null;
           const leftNote = activeNoteRef.current;
-          void materializeTimestamps(leftNote.relPath, contentRef.current)
+          void materializeTimestamps(leftNote.relPath, contentRef.current, leftNote.kind)
             .then((finalText) => vault.writeNote(leftNote.relPath, finalText))
             .catch((error) => {
               console.error('[vault] échec de la sauvegarde différée au changement de note :', error);
@@ -777,7 +783,10 @@ export function NotesScreen({
   // dossier), l'emplacement est résolu depuis Paramètres → Gestion des
   // fichiers et des liens → "Emplacement par défaut des nouvelles notes".
   const handleCreateNote = useCallback(
-    async (parentRelPath?: string, kind?: VaultEntryKind) => {
+    // `name` : nom EXPLICITE avec extension, utilisé par les fichiers code
+    // (`Sans titre.py` — l'extension choisie dans le menu langage) ; les
+    // autres kinds gardent « Sans titre » + leur extension fixe.
+    async (parentRelPath?: string, kind?: VaultEntryKind, name?: string) => {
       if (!vault) return;
       const resolvedParent =
         parentRelPath ??
@@ -789,7 +798,7 @@ export function NotesScreen({
             ? preferences.newNoteCustomFolder || undefined
             : undefined);
       try {
-        const entry = await vault.createNote('Sans titre', resolvedParent, kind);
+        const entry = await vault.createNote(name ?? 'Sans titre', resolvedParent, kind);
         await refreshTree();
         await openNote({ type: 'note', ...entry });
       } catch (error) {
@@ -1160,12 +1169,41 @@ export function NotesScreen({
 
   const showContextMenuFor = useCallback(
     (node: VaultTreeNode | null) => {
+      // « Nouveau fichier de code » : deuxième menu pour choisir le LANGAGE
+      // (l'extension est ce qui détermine coloration + soulignements — voir
+      // lib/codeLanguages.ts). Le nom devient `Sans titre.<ext>`, modifiable
+      // ensuite par renommage inline comme pour toutes les notes.
+      const createCodeFile = (parentRelPath: string | undefined) => {
+        const languageChoices: { id: string; label: string }[] = [
+          { id: '.py', label: 'Python (.py)' },
+          { id: '.js', label: 'JavaScript (.js)' },
+          { id: '.ts', label: 'TypeScript (.ts)' },
+          { id: '.tsx', label: 'React/TypeScript (.tsx)' },
+          { id: '.html', label: 'HTML (.html)' },
+          { id: '.css', label: 'CSS (.css)' },
+          { id: '.json', label: 'JSON (.json)' },
+          { id: '.sql', label: 'SQL (.sql)' },
+          { id: '.sh', label: 'Script shell (.sh)' },
+          { id: '.java', label: 'Java (.java)' },
+          { id: '.cs', label: 'C# (.cs)' },
+          { id: '.cpp', label: 'C++ (.cpp)' },
+          { id: '.go', label: 'Go (.go)' },
+          { id: '.rs', label: 'Rust (.rs)' },
+          { id: '.php', label: 'PHP (.php)' },
+          { id: '.rb', label: 'Ruby (.rb)' },
+          { id: '.yaml', label: 'YAML (.yaml)' },
+        ];
+        void presentMenu('Quel langage ?', languageChoices).then((choice) => {
+          if (choice) void handleCreateNote(parentRelPath, 'code', `Sans titre${choice}`);
+        });
+      };
       const items = !node
         ? [
             { id: 'new-note', label: 'Nouvelle note' },
             { id: 'new-canvas', label: 'Nouveau canvas' },
             { id: 'new-chart', label: 'Nouveau graphique' },
             { id: 'new-excalidraw', label: 'Nouveau excalidraw' },
+            { id: 'new-code', label: 'Nouveau fichier de code…' },
             { id: 'new-folder', label: 'Nouveau dossier' },
           ]
         : node.type === 'folder'
@@ -1174,6 +1212,7 @@ export function NotesScreen({
               { id: 'new-canvas-here', label: 'Nouveau canvas ici' },
               { id: 'new-chart-here', label: 'Nouveau graphique ici' },
               { id: 'new-excalidraw-here', label: 'Nouveau excalidraw ici' },
+              { id: 'new-code-here', label: 'Nouveau fichier de code ici…' },
               { id: 'new-folder-here', label: 'Nouveau dossier ici' },
               { id: 'rename', label: 'Renommer' },
               { id: 'move', label: 'Déplacer vers…' },
@@ -1199,11 +1238,13 @@ export function NotesScreen({
         if (choice === 'new-canvas') void handleCreateNote(undefined, 'canvas');
         if (choice === 'new-chart') void handleCreateNote(undefined, 'chart');
         if (choice === 'new-excalidraw') void handleCreateNote(undefined, 'excalidraw');
+        if (choice === 'new-code') createCodeFile(undefined);
         if (choice === 'new-folder') void handleCreateFolder();
         if (node && choice === 'new-note-here') void handleCreateNote(node.relPath);
         if (node && choice === 'new-canvas-here') void handleCreateNote(node.relPath, 'canvas');
         if (node && choice === 'new-chart-here') void handleCreateNote(node.relPath, 'chart');
         if (node && choice === 'new-excalidraw-here') void handleCreateNote(node.relPath, 'excalidraw');
+        if (node && choice === 'new-code-here') createCodeFile(node.relPath);
         if (node && choice === 'new-folder-here') void handleCreateFolder(node.relPath);
         if (node && choice === 'rename') startRename(node);
         if (node && choice === 'move') startMove(node);
@@ -1234,26 +1275,13 @@ export function NotesScreen({
   // quel que soit l'état de l'arbre. Le nœud est reconstruit depuis
   // activeNote (même forme que `{ type: 'note', ...activeNote }` du
   // renommage par clic titre).
-  // « 📋 Insérer un modèle » (v0.4.44, demande Templates) — liste les notes
-  // des dossiers MODÈLES/TEMPLATES du coffre ; le choix insère le contenu
-  // du modèle au curseur (via ActionMenu, natif ET desktop).
-  const [templateMenu, setTemplateMenu] = useState<{ id: string; label: string }[] | null>(null);
-  const showTemplateMenu = useCallback(() => {
-    const notes = listTemplateNotes(tree);
-    if (!activeNote) return;
-    if (notes.length === 0) {
-      setWikilinkNotice('Aucun modèle dans le coffre — place-les dans un dossier MODÈLES ou TEMPLATES.');
-      return;
-    }
-    void presentMenu(
-      'Insérer un modèle',
-      notes.map((note) => ({ id: note.relPath, label: note.name })),
-    );
-  }, [tree, activeNote, presentMenu]);
-
+  // (DÉPLACÉ plus bas, après handleChangeContent dont il dépend — déclaré
+  // const plus bas dans le composant, l'utiliser avant sa déclaration
+  // relevait à la fois du TDZ et de la règle react-hooks du compilateur.)
   // Insertion du CONTENU d'un modèle au curseur (le frontmatter du modèle
   // est retiré — il n'a pas de sens dans la note cible). Nécessite
-  // l'EditorView (Source/Intermédiaire).
+  // l'EditorView (Source/Intermédiaire). Déclarée AVANT showTemplateMenu,
+  // qui l'appelle au choix du menu.
   const insertTemplateById = useCallback(
     async (relPath: string) => {
       if (!vault || !activeNote) return;
@@ -1280,42 +1308,30 @@ export function NotesScreen({
     [vault, activeNote],
   );
 
-  const showEditorActionsMenu = useCallback(() => {
+  // « 📋 Insérer un modèle » (v0.4.44, demande Templates) — liste les notes
+  // des dossiers MODÈLES/TEMPLATES du coffre ; le choix insère le contenu
+  // du modèle au curseur (via ActionMenu, natif ET desktop). L'insertion
+  // (insertTemplateById, ci-dessus) est branchée sur le choix du menu —
+  // elle était déclarée mais JAMAIS appelée (le menu s'affichait, choisir
+  // un modèle ne faisait rien) : fin de branchement + fix lint.
+  const showTemplateMenu = useCallback(() => {
+    const notes = listTemplateNotes(tree);
     if (!activeNote) return;
-    const node: VaultTreeNode = { type: 'note', ...activeNote };
-    void presentMenu(node.name, [
-      { id: 'rename', label: 'Renommer' },
-      { id: 'move', label: 'Déplacer vers…' },
-      { id: 'edit-path', label: 'Modifier le chemin' },
-      { id: 'duplicate', label: 'Dupliquer' },
-      { id: 'lint-note', label: '✨ Formater la note' },
-      {
-        id: 'toggle-favorite',
-        label: preferences.favoriteRelPaths.includes(node.relPath)
-          ? 'Retirer des favoris'
-          : 'Ajouter aux favoris',
-      },
-      { id: 'delete', label: 'Supprimer' },
-    ]).then((choice) => {
-      if (choice === 'rename') startRename(node);
-      if (choice === 'move') startMove(node);
-      if (choice === 'edit-path') startEditPath(node);
-      if (choice === 'duplicate') void handleDuplicateNode(node);
-      if (choice === 'lint-note') handleChangeContent(lintMarkdown(contentRef.current));
-      if (choice === 'toggle-favorite') void toggleFavorite(node.relPath);
-      if (choice === 'delete') void handleDeleteNode(node);
+    if (notes.length === 0) {
+      setWikilinkNotice('Aucun modèle dans le coffre — place-les dans un dossier MODÈLES ou TEMPLATES.');
+      return;
+    }
+    void presentMenu(
+      'Insérer un modèle',
+      notes.map((note) => ({ id: note.relPath, label: note.name })),
+    ).then((choice) => {
+      if (choice) void insertTemplateById(choice);
     });
-  }, [
-    presentMenu,
-    activeNote,
-    preferences.favoriteRelPaths,
-    startRename,
-    startMove,
-    startEditPath,
-    handleDuplicateNode,
-    toggleFavorite,
-    handleDeleteNode,
-  ]);
+  }, [tree, activeNote, presentMenu, insertTemplateById]);
+
+  // (DÉPLACÉ plus bas, après handleChangeContent dont il dépend — déclaré
+  // const plus bas dans le composant, l'utiliser avant sa déclaration
+  // relevait à la fois du TDZ et de la règle react-hooks du compilateur.)
 
   // Un seul écouteur "contextmenu" délégué sur tout le conteneur de la
   // liste, plutôt qu'un handler par ligne : chaque ligne de VaultTreeView
@@ -1573,7 +1589,7 @@ export function NotesScreen({
             // Texte lu au MOMENT de l'exécution (pas au schedule) : une
             // frappe arrivée entre les deux doit être incluse — sinon la
             // sauvegarde écrasait le disque avec une version périmée.
-            const finalText = await materializeTimestamps(activeNote.relPath, contentRef.current);
+            const finalText = await materializeTimestamps(activeNote.relPath, contentRef.current, activeNote.kind);
             // PAS de setContent(finalText) : réinjecter le texte matérialisé
             // dans l'éditeur le remplaçait ENTIÈREMENT côté CodeMirror
             // (mode Source : value=content) — si l'utilisatrice reprenait
@@ -1600,10 +1616,61 @@ export function NotesScreen({
     [vault, activeNote, materializeTimestamps],
   );
 
-  const handleChangeContent = (text: string) => {
-    setContent(text);
-    scheduleSave();
-  };
+  // useCallback (pas une simple flèche) : dépendre de showEditorActionsMenu
+  // ci-dessous — une fonction recréée à chaque rendu aurait fait tourner ce
+  // callback à chaque frappe (react-hooks/exhaustive-deps).
+  const handleChangeContent = useCallback(
+    (text: string) => {
+      setContent(text);
+      scheduleSave();
+    },
+    [scheduleSave],
+  );
+
+  // Menu « ⋯ » de l'en-tête de l'éditeur (bouton rendu plus bas) — mêmes
+  // actions que le clic droit sur la ligne de la note dans l'arbre
+  // (showContextMenuFor), mais accessibles sans aller la retrouver dans
+  // l'explorateur. ICI (et pas plus haut) car il appelle handleChangeContent
+  // (« ✨ Formater la note ») — déclaré const plus haut dans le composant,
+  // l'utiliser avant sa déclaration relevait à la fois du TDZ et de la
+  // règle react-hooks du compilateur.
+  const showEditorActionsMenu = useCallback(() => {
+    if (!activeNote) return;
+    const node: VaultTreeNode = { type: 'note', ...activeNote };
+    void presentMenu(node.name, [
+      { id: 'rename', label: 'Renommer' },
+      { id: 'move', label: 'Déplacer vers…' },
+      { id: 'edit-path', label: 'Modifier le chemin' },
+      { id: 'duplicate', label: 'Dupliquer' },
+      { id: 'lint-note', label: '✨ Formater la note' },
+      {
+        id: 'toggle-favorite',
+        label: preferences.favoriteRelPaths.includes(node.relPath)
+          ? 'Retirer des favoris'
+          : 'Ajouter aux favoris',
+      },
+      { id: 'delete', label: 'Supprimer' },
+    ]).then((choice) => {
+      if (choice === 'rename') startRename(node);
+      if (choice === 'move') startMove(node);
+      if (choice === 'edit-path') startEditPath(node);
+      if (choice === 'duplicate') void handleDuplicateNode(node);
+      if (choice === 'lint-note') handleChangeContent(lintMarkdown(contentRef.current));
+      if (choice === 'toggle-favorite') void toggleFavorite(node.relPath);
+      if (choice === 'delete') void handleDeleteNode(node);
+    });
+  }, [
+    presentMenu,
+    activeNote,
+    preferences.favoriteRelPaths,
+    startRename,
+    startMove,
+    startEditPath,
+    handleDuplicateNode,
+    toggleFavorite,
+    handleDeleteNode,
+    handleChangeContent,
+  ]);
 
 
   // Sauvegarde immédiate (Ctrl/Cmd+S) : court-circuite le debounce de
@@ -1621,7 +1688,7 @@ export function NotesScreen({
         // réinjecter le texte matérialisé dans l'éditeur (remplacement
         // intégral CodeMirror = curseur déplacé, frappes écrasées).
         if (activeNoteRef.current?.relPath !== activeNote.relPath) return;
-        const finalText = await materializeTimestamps(activeNote.relPath, contentRef.current);
+        const finalText = await materializeTimestamps(activeNote.relPath, contentRef.current, activeNote.kind);
         await vault.writeNote(activeNote.relPath, finalText);
         setStatus('saved');
         await refreshTree();
@@ -2438,6 +2505,28 @@ export function NotesScreen({
                       <ExcalidrawEditor relPath={activeNote.relPath} />
                     )}
                   </View>
+                ) : activeNote.kind === 'code' ? (
+                  // Fichier de programmation (.py/.ts/.js/…) — CodeEditor
+                  // (coloration syntaxique + soulignements d'erreurs/
+                  // avertissements, voir lib/codeLanguages.ts/codeLint.ts).
+                  // PC/web uniquement : CodeMirror est un composant web,
+                  // comme MdxEditor (le natif garde son message dédié).
+                  <View style={styles.editorBody}>
+                    {isNativeNotes ? (
+                      <NativeFileTypeUnavailable color={theme.textMuted} />
+                    ) : (
+                      <CodeEditor
+                        value={content}
+                        onChange={handleChangeContent}
+                        fileName={activeNote.name}
+                        theme={theme}
+                        fontSize={Math.min(preferences.editorFontSize, 16)}
+                        onReady={(ref) => {
+                          viewRef.current = ref.view ?? null;
+                        }}
+                      />
+                    )}
+                  </View>
                 ) : (
                   <>
                     {preferences.editorInlineTitle &&
@@ -2755,11 +2844,14 @@ export function NotesScreen({
                       // Plan de la note (v0.4.44) : titres cliquables = saut
                       // dans l'éditeur (Source/Intermédiaire via l'EditorView ;
                       // en Aperçu ou en WebView native, la liste reste
-                      // consultable sans saut).
+                      // consultable sans saut). canJump reflète la condition
+                      // « un éditeur CodeMirror est monté » SANS lire le ref
+                      // pendant le rendu (interdit par react-hooks/refs) :
+                      // l'éditeur est monté ssi mode non-lecture côté web.
                       <OutlinePanel
                         body={bodyOnly}
                         theme={theme}
-                        canJump={Boolean(viewRef.current)}
+                        canJump={!isNativeNotes && effectiveViewMode !== 'reading'}
                         onJump={(offset) => {
                           const view = viewRef.current;
                           if (!view) return;
