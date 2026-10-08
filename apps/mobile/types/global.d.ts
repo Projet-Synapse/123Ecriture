@@ -77,6 +77,9 @@ declare global {
     setOpenTabs: (relPaths: string[]) => Promise<void>;
     ensureDailyNote: (dateIso: string) => Promise<VaultEntry>;
     reorder: (parentRelPath: string | undefined, orderedNames: string[]) => Promise<VaultTreeNode[]>;
+    // Rescan SAF complet du coffre — natif uniquement (optionnel : le pont
+    // Electron relit le disque à chaque listTree, pas besoin).
+    rescan?: () => Promise<void>;
     importAttachment: () => Promise<{ relPath: string; name: string } | null>;
     readAttachmentDataUrl: (relPath: string) => Promise<string>;
     // Voir "Dupliquer" dans le menu contextuel de NotesScreen.tsx — copie

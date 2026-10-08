@@ -555,6 +555,16 @@ export const nativeVaultAdapter: VaultBridge = {
   // Délègue au coffre actif (voir nativeVaultsAdapter.ts) — même relation
   // que côté Electron, où vault:choose-folder appelle en interne
   // vaults.pickAndAddExistingVault().
+  // Rescan COMPLET du coffre (v0.4.47, demande : « les fichiers ajoutés
+  // depuis l'explorateur de fichiers ne sont pas remarqués ») — invalide
+  // l'arbre mémoire, repeuple l'index par un parcours SAF complet puis
+  // persiste. Coûteux (~1 requête SAF par entrée) : à déclencher au retour
+  // au premier plan ou via le bouton Actualiser, pas à chaque frappe.
+  rescan: async (): Promise<void> => {
+    cachedTree = null;
+    await refreshIndex();
+  },
+
   chooseFolder: async () => {
     const uri = await getActiveVaultRootUri();
     return uri;
