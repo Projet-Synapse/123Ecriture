@@ -24,6 +24,7 @@
 
 import { parseFrontmatter } from '../frontmatter';
 import { matchesEmbedTarget } from '../embedResolution';
+import { CODE_FILE_EXTENSIONS, isCodeFile } from '../codeLanguages';
 import {
   type FsaDirectoryHandleLike,
   type FsaFileHandleLike,
@@ -67,6 +68,7 @@ const EXTENSION_TO_KIND: Record<string, VaultEntryKind> = {
   '.canvas': 'canvas',
   '.chart': 'chart',
   '.excalidraw': 'excalidraw',
+  ...Object.fromEntries(CODE_FILE_EXTENSIONS.map((extension) => [extension, 'code' as const])),
 };
 
 const KIND_TO_EXTENSION: Record<VaultEntryKind, string> = {
@@ -74,6 +76,10 @@ const KIND_TO_EXTENSION: Record<VaultEntryKind, string> = {
   canvas: '.canvas',
   chart: '.chart',
   excalidraw: '.excalidraw',
+  // Extension de RETENU pour un fichier code créé sans extension dans son
+  // nom — le flux normal fournit le nom AVEC l'extension choisie (port du
+  // handler desktop, voir vault.ts create-note).
+  code: '.js',
 };
 
 const MIME_BY_EXTENSION: Record<string, string> = {
@@ -159,6 +165,10 @@ function defaultContentForKind(kind: VaultEntryKind, safeName: string): string {
   }
   if (kind === 'excalidraw') {
     return JSON.stringify({ type: 'excalidraw', version: 2, elements: [], appState: {} }, null, 2);
+  }
+  if (kind === 'code') {
+    // Port du desktop : un fichier code naît VIDE (comme dans VS Code).
+    return '';
   }
   return `---\ntitle: ${safeName}\ncreated: ${new Date().toISOString()}\n---\n\n`;
 }
@@ -355,11 +365,23 @@ export const webVaultAdapter = {
     const parent = parentRelPath ? await getDirByRelPath(root, parentRelPath, true) : root;
 
     const safeKind = kind && kind in KIND_TO_EXTENSION ? kind : 'markdown';
-    const extension = KIND_TO_EXTENSION[safeKind];
+    // Port du handler desktop : pour le CODE, l'extension vient du NOM
+    // (`Sans titre.py`), reprise si reconnue sinon .js par défaut.
     const safeName = name && name.trim().length > 0 ? name.trim() : 'Sans titre';
-    const fileName = await findAvailableName(parent, safeName, extension);
+    let extension: string;
+    let baseName: string;
+    if (safeKind === 'code') {
+      const fromName = (safeName.match(/\.[^.]+$/)?.[0] ?? '').toLowerCase();
+      extension = isCodeFile(`x${fromName}`) ? fromName : KIND_TO_EXTENSION.code;
+      baseName = fromName ? safeName.slice(0, safeName.length - fromName.length) : safeName;
+      if (!baseName.trim()) baseName = 'Sans titre';
+    } else {
+      extension = KIND_TO_EXTENSION[safeKind];
+      baseName = safeName;
+    }
+    const fileName = await findAvailableName(parent, baseName, extension);
     const relPath = parentRelPath ? `${parentRelPath}/${fileName}` : fileName;
-    await writeFileText(root, relPath, defaultContentForKind(safeKind, safeName));
+    await writeFileText(root, relPath, defaultContentForKind(safeKind, baseName));
 
     return {
       relPath,

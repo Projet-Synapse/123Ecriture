@@ -13,6 +13,7 @@ export const SEARCH_RESULT_ICON: Record<SearchResultKind, string> = {
   canvas: '🎨',
   chart: '📊',
   excalidraw: '🖍️',
+  code: '💻',
   folder: '📁',
   attachment: '📎',
   task: '✅',
@@ -38,6 +39,7 @@ export function isSearchResultOpenable(kind: SearchResultKind): boolean {
     kind === 'canvas' ||
     kind === 'chart' ||
     kind === 'excalidraw' ||
+    kind === 'code' ||
     kind === 'task' ||
     kind === 'calendar-event'
   );
@@ -102,6 +104,7 @@ export function openSearchResult(result: SearchResult, handlers: SearchResultOpe
     case 'canvas':
     case 'chart':
     case 'excalidraw':
+    case 'code':
       handlers.openNote(result.relPath);
       return;
     case 'task':

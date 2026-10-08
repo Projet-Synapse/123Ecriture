@@ -23,7 +23,9 @@ import type { Theme } from '../theme';
 // iOS/Enter : sans effet sur Windows (l'autocorrect système n'y existe pas),
 // d'où un retrait inconditionnel. Le plugin repasse à chaque création de
 // view (remontage du composant), donc le strip reste en place.
-const enableOsEmojiInsertion = ViewPlugin.fromClass(
+// EXPORTÉ : réutilisé tel quel par CodeEditor.tsx (le bug Chromium ne
+// connaît pas le type de fichier).
+export const enableOsEmojiInsertion = ViewPlugin.fromClass(
   class {
     constructor(view: EditorView) {
       view.contentDOM.removeAttribute('autocorrect');
