@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
+  AppState,
   GestureResponderEvent,
   Platform,
   Pressable,
@@ -431,6 +432,17 @@ export function NotesScreen({
     if (!vault) return;
     setTree(await vault.listTree());
   }, [vault]);
+
+  // PC : l'arbre est RELU quand la fenêtre reprend le focus — des fichiers
+  // ajoutés depuis l'explorateur Windows pendant que l'app était en
+  // arrière-plan apparaissent au retour (walkTree relit le disque à chaque
+  // appel, pas de cache). Natif : voir rescanVault (parcours SAF).
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const onFocus = () => void refreshTree();
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [vault, refreshTree]);
 
   useEffect(() => {
     if (!vault || !vaultPath) return;
@@ -904,6 +916,39 @@ export function NotesScreen({
     // active change VRAIMENT.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeNote?.relPath]);
+
+  // Fraîcheur de l'arborescence (v0.4.47, demande : « les fichiers ajoutés
+  // depuis l'explorateur de fichiers ne sont pas remarqués ») :
+  // - PC : l'arbre est relu au retour de focus de la fenêtre ;
+  // - Android : retour au premier plan OU bouton Actualiser = rescan SAF
+  //   complet en arrière-plan (~1 requête par entrée), l'arbre se met à
+  //   jour quand il arrive sans geler l'interface.
+  const [rescanEnCours, setRescanEnCours] = useState(false);
+  const rescanVault = useCallback(async () => {
+    if (Platform.OS === 'web') {
+      await refreshTree();
+      return;
+    }
+    const rescan = (vault as typeof vault & { rescan?: () => Promise<void> }).rescan;
+    if (!rescan) return;
+    setRescanEnCours(true);
+    try {
+      await rescan.call(vault);
+      await refreshTree();
+    } catch (error) {
+      console.error('[vault] échec du rescan :', error);
+    } finally {
+      setRescanEnCours(false);
+    }
+  }, [vault, refreshTree]);
+
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active' && !rescanEnCours) void rescanVault();
+    });
+    return () => subscription.remove();
+  }, [rescanVault, rescanEnCours]);
 
   const handleCreateFolder = useCallback(
     async (parentRelPath?: string) => {
@@ -2144,6 +2189,16 @@ export function NotesScreen({
                 <Text style={{ color: theme.text }}>⇅</Text>
               </Pressable>
               <Pressable
+                onPress={() => void rescanVault()}
+                disabled={rescanEnCours}
+                accessibilityLabel="Actualiser l'arborescence du coffre"
+                style={[styles.searchButton, rescanEnCours && { opacity: 0.5 }, { borderColor: theme.border }]}
+              >
+                <Text style={{ color: rescanEnCours ? theme.accent : theme.text }}>
+                  {rescanEnCours ? '…' : '🔄'}
+                </Text>
+              </Pressable>
+              <Pressable
                 onPress={() => void toggleExplorerViewMode()}
                 style={[
                   styles.searchButton,
@@ -2163,6 +2218,11 @@ export function NotesScreen({
             éléments sélectionnés (voir //9, `handleRowPress`) : 1 seul élément
             n'a pas besoin d'un bandeau dédié, le menu contextuel classique
             suffit déjà pour agir dessus seul. */}
+        {rescanEnCours && (
+          <Text style={{ color: theme.textMuted, fontSize: 11, paddingHorizontal: 12 }}>
+            Actualisation du coffre en arrière-plan…
+          </Text>
+        )}
         {selectedRelPaths.size >= 2 && (
           <View style={[styles.bulkBar, { borderColor: theme.border, backgroundColor: theme.surface }]}>
             <Text style={[styles.bulkBarText, { color: theme.text }]}>
