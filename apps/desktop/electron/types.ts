@@ -102,6 +102,12 @@ export interface TaskList {
   id: string;
   name: string;
   createdAt: string;
+  // Navigateur hiérarchique (v0.4.48) : un item est soit une LISTE de
+  // tâches, soit un DOSSIER de listes (isFolder) ; folderId = null à la
+  // racine. order = position manuelle dans son scope (glisser-déposer).
+  isFolder?: boolean;
+  folderId?: string | null;
+  order?: number;
 }
 
 export interface TaskListsData {
