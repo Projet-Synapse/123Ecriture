@@ -627,15 +627,27 @@ declare global {
     id: string;
     name: string;
     createdAt: string;
+    // Navigateur hiérarchique (v0.4.48, miroir manuel de
+    // apps/desktop/electron/types.ts) : isFolder = DOSSIER de listes ;
+    // folderId = null à la racine ; order = position manuelle dans son
+    // scope (glisser-déposer, persistée dans tasklists.json).
+    isFolder?: boolean;
+    folderId?: string | null;
+    order?: number;
   }
 
   interface TaskListsBridge {
     list: () => Promise<TaskList[]>;
     getActive: () => Promise<string | null>;
-    create: (name: string) => Promise<TaskList[]>;
+    create: (name: string, isFolder?: boolean) => Promise<TaskList[]>;
     rename: (id: string, name: string) => Promise<TaskList[]>;
     remove: (id: string) => Promise<TaskList[]>;
     switch: (id: string) => Promise<TaskList[]>;
+    // Déplace une liste/dossier dans un dossier (null = racine). Refuse les
+    // cycles (un dossier dans lui-même ou ses descendants).
+    moveList: (id: string, folderId: string | null) => Promise<TaskList[]>;
+    // Persiste l'ordre manuel (glisser-déposer) : ordre final par item.
+    setOrder: (entries: { id: string; order: number }[]) => Promise<TaskList[]>;
     onChanged: (callback: (lists: TaskList[]) => void) => () => void;
   }
 

@@ -177,10 +177,12 @@ contextBridge.exposeInMainWorld('search', {
 contextBridge.exposeInMainWorld('taskLists', {
   list: () => ipcRenderer.invoke('tasklists:list'),
   getActive: () => ipcRenderer.invoke('tasklists:get-active'),
-  create: (name: string) => ipcRenderer.invoke('tasklists:create', name),
+  create: (name: string, isFolder?: boolean) => ipcRenderer.invoke('tasklists:create', name, isFolder),
   rename: (id: string, name: string) => ipcRenderer.invoke('tasklists:rename', id, name),
   remove: (id: string) => ipcRenderer.invoke('tasklists:remove', id),
   switch: (id: string) => ipcRenderer.invoke('tasklists:switch', id),
+  moveList: (id: string, folderId: string | null) => ipcRenderer.invoke('tasklists:move-list', id, folderId),
+  setOrder: (entries: { id: string; order: number }[]) => ipcRenderer.invoke('tasklists:set-order', entries),
   onChanged: (callback: (lists: unknown) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, lists: unknown) => callback(lists);
     ipcRenderer.on('tasklists:changed', handler);

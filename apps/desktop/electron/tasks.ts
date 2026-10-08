@@ -165,16 +165,67 @@ export function registerTasksHandlers(getWindow: GetWindow): void {
     return getActiveListId(vaultPath);
   });
 
-  ipcMain.handle('tasklists:create', (_event, name: string) => {
+  ipcMain.handle('tasklists:create', (_event, name: string, isFolder?: boolean) => {
     const vaultPath = getVaultPath();
     if (!vaultPath) throw new Error('Aucun vault sélectionné');
     const trimmed = (name ?? '').trim();
     if (!trimmed) throw new Error('Le nom de la liste ne peut pas être vide.');
 
     const data = migrateTaskLists(vaultPath);
-    const list: TaskList = { id: crypto.randomUUID(), name: trimmed, createdAt: new Date().toISOString() };
+    const nextOrder = Math.max(-1, ...data.lists.map((l) => l.order ?? 0)) + 1;
+    const list: TaskList = {
+      id: crypto.randomUUID(),
+      name: trimmed,
+      createdAt: new Date().toISOString(),
+      // Dossier de listes (v0.4.48) — pas de tâches, pas de liste « active ».
+      ...(isFolder ? { isFolder: true } : {}),
+      order: nextOrder,
+    };
     data.lists.push(list);
-    data.activeListId = list.id;
+    if (!isFolder) data.activeListId = list.id;
+    writeTaskLists(vaultPath, data);
+    broadcastTaskListsChanged(getWindow, vaultPath);
+    return data.lists;
+  });
+
+  // Déplace une liste/DOSSIER dans un dossier (folderId null = racine).
+  // Un dossier ne peut pas être déplacé dans lui-même ni dans ses
+  // descendants (même garde que vault:move — l'arbre bouclerait) ; l'item
+  // atterrit en fin de son nouveau scope (l'ordre fin se règle au
+  // glisser-déposer, tasklists:set-order).
+  ipcMain.handle('tasklists:move-list', (_event, id: string, folderId: string | null) => {
+    const vaultPath = getVaultPath();
+    if (!vaultPath) throw new Error('Aucun vault sélectionné');
+
+    const data = migrateTaskLists(vaultPath);
+    const item = findListOrThrow(data.lists, id);
+    const target = folderId ? findListOrThrow(data.lists, folderId) : null;
+    if (target && !target.isFolder) throw new Error('La destination doit être un dossier.');
+
+    let cursor: TaskList | null = target;
+    while (cursor) {
+      if (cursor.id === id) throw new Error('Impossible de déplacer un dossier dans lui-même.');
+      cursor = cursor.folderId ? (data.lists.find((l) => l.id === cursor?.folderId) ?? null) : null;
+    }
+
+    item.folderId = folderId ?? null;
+    item.order = Math.max(-1, ...data.lists.filter((l) => l.id !== id && l.folderId === folderId).map((l) => l.order ?? 0)) + 1;
+    writeTaskLists(vaultPath, data);
+    broadcastTaskListsChanged(getWindow, vaultPath);
+    return data.lists;
+  });
+
+  // Persiste l'ordre manuel (glisser-déposer dans le navigateur) : la liste
+  // reçue est l'ordre FINAL des items touchés — on n'écrit que ceux fournis.
+  ipcMain.handle('tasklists:set-order', (_event, entries: { id: string; order: number }[]) => {
+    const vaultPath = getVaultPath();
+    if (!vaultPath) throw new Error('Aucun vault sélectionné');
+
+    const data = migrateTaskLists(vaultPath);
+    for (const { id, order } of entries ?? []) {
+      const item = data.lists.find((l) => l.id === id);
+      if (item) item.order = order;
+    }
     writeTaskLists(vaultPath, data);
     broadcastTaskListsChanged(getWindow, vaultPath);
     return data.lists;
@@ -200,14 +251,29 @@ export function registerTasksHandlers(getWindow: GetWindow): void {
   // c'était la dernière liste, le coffre se retrouve sans liste active ;
   // l'écran Tâches propose alors d'en créer une nouvelle (même traitement
   // que "0 coffre" côté Paramètres).
+  // Pour un DOSSIER : suppression NON destructive — ses listes et
+  // sous-dossiers remontent au parent (sinon on détruirait du travail
+  // d'organisation d'un seul clic).
   ipcMain.handle('tasklists:remove', (_event, id: string) => {
     const vaultPath = getVaultPath();
     if (!vaultPath) throw new Error('Aucun vault sélectionné');
 
     const data = migrateTaskLists(vaultPath);
+    const removed = findListOrThrow(data.lists, id);
+    if (removed.isFolder) {
+      for (const item of data.lists) {
+        if (item.folderId === id) item.folderId = removed.folderId ?? null;
+      }
+      data.lists = data.lists.filter((l) => l.id !== id);
+      writeTaskLists(vaultPath, data);
+      broadcastTaskListsChanged(getWindow, vaultPath);
+      return data.lists;
+    }
+
     data.lists = data.lists.filter((l) => l.id !== id);
     if (data.activeListId === id) {
-      data.activeListId = data.lists[0]?.id ?? null;
+      const firstList = data.lists.find((l) => !l.isFolder);
+      data.activeListId = firstList?.id ?? null;
     }
     writeTaskLists(vaultPath, data);
 

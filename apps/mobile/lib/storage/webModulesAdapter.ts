@@ -147,15 +147,23 @@ export const webTaskListsAdapter = {
     return (await migrateTaskLists(configDir)).activeListId;
   },
 
-  create: async (name: string): Promise<TaskList[]> => {
+  create: async (name: string, isFolder?: boolean): Promise<TaskList[]> => {
     const configDir = await requireConfigDir();
     const trimmed = (name ?? '').trim();
     if (!trimmed) throw new Error('Le nom de la liste ne peut pas être vide.');
 
     const data = await migrateTaskLists(configDir);
-    const list: TaskList = { id: randomUUID(), name: trimmed, createdAt: new Date().toISOString() };
+    const nextOrder = Math.max(-1, ...data.lists.map((entry) => entry.order ?? 0)) + 1;
+    const list: TaskList = {
+      id: randomUUID(),
+      name: trimmed,
+      createdAt: new Date().toISOString(),
+      // Dossier de listes (port du handler desktop, v0.4.48).
+      ...(isFolder ? { isFolder: true } : {}),
+      order: nextOrder,
+    };
     data.lists.push(list);
-    data.activeListId = list.id;
+    if (!isFolder) data.activeListId = list.id;
     await writeJson(configDir, 'tasklists.json', data);
     return data.lists;
   },
@@ -175,12 +183,24 @@ export const webTaskListsAdapter = {
   // desktop ; contrairement aux notes/dossiers, jamais supprimés
   // silencieusement). Dernière liste supprimée = aucun liste active,
   // l'écran Tâches propose d'en créer une nouvelle.
+  // Pour un DOSSIER : suppression NON destructive — les listes et
+  // sous-dossiers remontent au parent (port du handler desktop).
   remove: async (id: string): Promise<TaskList[]> => {
     const configDir = await requireConfigDir();
     const data = await migrateTaskLists(configDir);
+    const removed = findListOrThrow(data.lists, id);
+    if (removed.isFolder) {
+      for (const item of data.lists) {
+        if (item.folderId === id) item.folderId = removed.folderId ?? null;
+      }
+      data.lists = data.lists.filter((list) => list.id !== id);
+      await writeJson(configDir, 'tasklists.json', data);
+      return data.lists;
+    }
     data.lists = data.lists.filter((list) => list.id !== id);
     if (data.activeListId === id) {
-      data.activeListId = data.lists[0]?.id ?? null;
+      const firstList = data.lists.find((list) => !list.isFolder);
+      data.activeListId = firstList?.id ?? null;
     }
     await writeJson(configDir, 'tasklists.json', data);
     await writeTasks(configDir, (await readTasks(configDir)).filter((task) => task.listId !== id));
@@ -192,6 +212,40 @@ export const webTaskListsAdapter = {
     const data = await migrateTaskLists(configDir);
     findListOrThrow(data.lists, id);
     data.activeListId = id;
+    await writeJson(configDir, 'tasklists.json', data);
+    return data.lists;
+  },
+
+  // Déplace une liste/dossier dans un dossier (port du handler desktop,
+  // garde anti-cycles incluse) — atterrit en fin de son nouveau scope.
+  moveList: async (id: string, folderId: string | null): Promise<TaskList[]> => {
+    const configDir = await requireConfigDir();
+    const data = await migrateTaskLists(configDir);
+    const item = findListOrThrow(data.lists, id);
+    const target = folderId ? findListOrThrow(data.lists, folderId) : null;
+    if (target && !target.isFolder) throw new Error('La destination doit être un dossier.');
+
+    let cursor: TaskList | null = target;
+    while (cursor) {
+      if (cursor.id === id) throw new Error('Impossible de déplacer un dossier dans lui-même.');
+      cursor = cursor.folderId ? (data.lists.find((entry) => entry.id === cursor?.folderId) ?? null) : null;
+    }
+
+    item.folderId = folderId ?? null;
+    item.order =
+      Math.max(-1, ...data.lists.filter((entry) => entry.id !== id && entry.folderId === folderId).map((entry) => entry.order ?? 0)) + 1;
+    await writeJson(configDir, 'tasklists.json', data);
+    return data.lists;
+  },
+
+  // Persiste l'ordre manuel (glisser-déposer) — port du handler desktop.
+  setOrder: async (entries: { id: string; order: number }[]): Promise<TaskList[]> => {
+    const configDir = await requireConfigDir();
+    const data = await migrateTaskLists(configDir);
+    for (const { id, order } of entries ?? []) {
+      const item = data.lists.find((entry) => entry.id === id);
+      if (item) item.order = order;
+    }
     await writeJson(configDir, 'tasklists.json', data);
     return data.lists;
   },
