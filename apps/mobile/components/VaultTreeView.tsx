@@ -41,7 +41,7 @@ export const DraggablePressable = Pressable as unknown as ComponentType<
 //
 // v0.4.50 (demande : des dossiers qui fassent plus « boutons rétractables »,
 // à la Obsidian) :
-// - Chaque ligne est une PILULE arrondie — les dossiers portent une bordure
+// - Chaque ligne est une pilule arrondie — les dossiers portent une bordure
 //   et un fond teinté accent, les notes un fond plus léger : le dossier
 //   déplié se lit comme le CONTENEUR visuel de ses enfants, qui
 //   s'imbriquent en retrait sous lui (fin des rails verticaux style VS
@@ -53,6 +53,11 @@ export const DraggablePressable = Pressable as unknown as ComponentType<
 //   visée via cet attribut. Passer `onContextMenu` directement à Pressable
 //   ne fonctionnait pas de façon fiable — la délégation sur un seul
 //   écouteur est bien plus robuste.
+//
+// v0.4.51 (retour sur la capture Obsidian réelle) : l'effet conteneur bordé
+// est réservé aux DOSSIERS DE PREMIER NIVEAU ; tout ce qui est imbriqué est
+// une ligne continue (aucune séparation verticale) sous des RAILS
+// d'arborescence restaurés (un trait par ancêtre, style VS Code).
 
 export type RenameState = {
   relPath: string;
@@ -139,7 +144,7 @@ function VaultTreeViewImpl({
         return (
           <Fragment key={node.relPath}>
             {insertionEdge === 'above' && (
-              <View style={[styles.insertionLine, { paddingLeft: 8 + depth * 14 }]}>
+              <View style={[styles.insertionLine, { paddingLeft: 12 + depth * 16 }]}>
                 <View style={[styles.insertionLineBar, { backgroundColor: theme.accent }]} />
               </View>
             )}
@@ -168,24 +173,34 @@ function VaultTreeViewImpl({
               dataSet={{ relpath: node.relPath }}
               style={[
                 styles.row,
-                // Pilules (v0.4.50) : le dossier est le bouton-conteneur
-                // (bordure + fond teinté), la note une pilule plus légère.
-                // Les états ci-dessous (active, sélection, drop) passent
-                // APRÈS pour gagner sur le fond des pilules.
-                isFolder
+                // Conteneur visuel (v0.4.51, capture Obsidian à l'appui) :
+                // l'effet « bouton rétractable » bordé est réservé aux
+                // DOSSIERS DE PREMIER NIVEAU. Tout ce qui est imbriqué est
+                // une ligne continue (aucune séparation verticale) sous des
+                // RAILS d'arborescence (rendus ci-dessous, restaurés de la
+                // v0.4.36). Les états actif/sélection/drop restent prioritaires.
+                depth === 0 && isFolder
                   ? [styles.folderRow, { borderColor: theme.border, backgroundColor: `${theme.accent}14` }]
-                  : [styles.noteRow, { backgroundColor: `${theme.accent}0A` }],
+                  : null,
                 isActiveNote && { backgroundColor: `${theme.accent}22` },
                 isFolderActive && { backgroundColor: `${theme.accent}22` },
                 !isRenaming && dragEnabled && styles.rowDraggable,
                 isDragging && styles.rowDragging,
                 isDropInsideTarget && { backgroundColor: `${theme.accent}33`, borderRadius: 6 },
                 isSelected && { backgroundColor: `${theme.accent}33` },
-                // Indentation PAR retrait (plus de rails verticaux) —
-                // chaque niveau décale la pilule de 14 px.
-                { paddingLeft: 8 + depth * 14 },
               ]}
             >
+              {/* RAILS VERTICAUX (v0.4.51, restaurés de la v0.4.36) — un par
+                  ancêtre, uniquement pour les niveaux IMBRIQUÉS : chaque trait
+                  fait TOUTE la hauteur de la ligne (alignSelf:'stretch'),
+                  empilés ils forment une ligne continue — la hiérarchie se
+                  lit aux traits, pas aux séparations. Hauteur de ligne FIXE
+                  (v0.4.37) : sans elle, les rails seraient hachurés. */}
+              {Array.from({ length: depth }).map((_, i) => (
+                <View key={i} style={styles.indentGuideCell}>
+                  <View style={[styles.indentGuideLine, { backgroundColor: theme.border, opacity: 0.55 }]} />
+                </View>
+              ))}
 
               {isFolder ? (
                 // Chevron de repli/dépli — CIBLE EXCLUSIVE du repli (le
@@ -242,7 +257,7 @@ function VaultTreeViewImpl({
               )}
             </DraggablePressable>
             {insertionEdge === 'below' && (
-              <View style={[styles.insertionLine, { paddingLeft: 8 + depth * 14 }]}>
+              <View style={[styles.insertionLine, { paddingLeft: 12 + depth * 16 }]}>
                 <View style={[styles.insertionLineBar, { backgroundColor: theme.accent }]} />
               </View>
             )}
@@ -302,31 +317,20 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    // Indentation par RETRAIT (v0.4.50) : la profondeur est portée par un
-    // paddingLeft calculé au rendu (8 + depth * 14) — plus de rails
-    // verticaux, donc plus besoin de hauteur fixe pour les faire se
-    // toucher (c'était la contrainte de la v0.4.37).
-    paddingRight: 10,
+    // HAUTEUR FIXE + AUCUNE marge verticale (v0.4.51, demande : « pas de
+    // séparations blanches entre chaque fichier ») : les lignes se touchent,
+    // les rails d'arborescence (un par ancêtre, voir indentGuideCell)
+    // forment des traits continus de haut en bas.
+    height: 32,
+    paddingLeft: 4,
+    paddingRight: 12,
   },
-  // Pilule DOSSIER (v0.4.50) — le « bouton rétractable »-conteneur :
-  // bordure + fond teinté accent (couleurs passées au rendu pour suivre
-  // le thème), padding vertical pour une cible tactile confortable.
+  // Conteneur DOSSIER DE PREMIER NIVEAU uniquement (v0.4.51) : bordure +
+  // fond teinté accent (couleurs passées au rendu pour suivre le thème).
+  // Les dossiers imbriqués et les notes sont des lignes nues sous rails.
   folderRow: {
-    borderRadius: 9,
     borderWidth: 1,
-    minHeight: 30,
-    paddingVertical: 4,
-    marginTop: 2,
-    marginBottom: 2,
-  },
-  // Pilule NOTE (v0.4.50) — plus discrète que le dossier (fond léger sans
-  // bordure) ; les états actif/sélection la teintent par-dessus.
-  noteRow: {
-    borderRadius: 8,
-    minHeight: 28,
-    paddingVertical: 3,
-    marginTop: 1,
-    marginBottom: 1,
+    borderRadius: 9,
   },
   // Boîte du chevron — largeur fixe pour aligner icônes et noms des
   // dossiers ET des notes sur la même colonne.
@@ -334,6 +338,18 @@ const styles = StyleSheet.create({
     width: 14,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  // Rails d'arborescence : une cellule de 16 px par niveau d'ancêtre,
+  // le trait centré couvre TOUTE la hauteur de la ligne (alignSelf
+  // 'stretch' + flex 1) — empilés sur N lignes, les traits sont continus.
+  indentGuideCell: {
+    width: 16,
+    alignSelf: 'stretch',
+    alignItems: 'center',
+  },
+  indentGuideLine: {
+    width: 1,
+    flex: 1,
   },
   rowDragging: {
     opacity: 0.4,
