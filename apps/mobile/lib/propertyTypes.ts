@@ -14,6 +14,8 @@ export const TYPE_LABELS: Record<PropertyType, string> = {
   datetime: 'Date et heure',
   path: 'Chemin',
   options: 'Options',
+  'multi-options': 'Options multiples',
+  bubbles: 'Bulles',
 };
 
 // Icône affichée devant chaque propriété (voir la capture de référence
@@ -27,6 +29,8 @@ export const TYPE_ICONS: Record<PropertyType, string> = {
   datetime: '🕐',
   path: '📁',
   options: '🔘',
+  'multi-options': '⧉',
+  bubbles: '🏷️',
 };
 
 export const TYPE_ORDER: PropertyType[] = [
@@ -38,12 +42,14 @@ export const TYPE_ORDER: PropertyType[] = [
   'datetime',
   'path',
   'options',
+  'multi-options',
+  'bubbles',
 ];
 
 export function defaultValueForType(type: PropertyType): unknown {
   if (type === 'checkbox') return false;
   if (type === 'number') return 0;
-  if (type === 'list') return [];
+  if (type === 'list' || type === 'multi-options' || type === 'bubbles') return [];
   return '';
 }
 
@@ -76,7 +82,9 @@ export function makePropertyDefinition(
 }
 
 export function formatValueForInput(type: PropertyType, value: unknown): string {
-  if (type === 'list') return Array.isArray(value) ? value.join(', ') : String(value ?? '');
+  if (type === 'list' || type === 'multi-options' || type === 'bubbles') {
+    return Array.isArray(value) ? value.join(', ') : String(value ?? '');
+  }
   if (value === null || value === undefined) return '';
   return String(value);
 }
@@ -86,7 +94,7 @@ export function parseInputForType(type: PropertyType, text: string): unknown {
     const parsed = Number(text.trim());
     return Number.isFinite(parsed) ? parsed : 0;
   }
-  if (type === 'list') {
+  if (type === 'list' || type === 'multi-options' || type === 'bubbles') {
     return text
       .split(',')
       .map((item) => item.trim())
@@ -94,3 +102,9 @@ export function parseInputForType(type: PropertyType, text: string): unknown {
   }
   return text;
 }
+
+// Propriétés BUILT-IN rendues en bulles (v0.4.50, demande : « les tags et
+// les aliases, par exemple, sont des propriétés à bulles ») — quand le
+// scan du coffre découvre ces clés, elles reçoivent ce type même si leur
+// valeur (un tableau) aurait été devinée 'list'.
+export const BUBBLE_PROPERTY_NAMES = new Set(['tags', 'tag', 'aliases', 'alias']);

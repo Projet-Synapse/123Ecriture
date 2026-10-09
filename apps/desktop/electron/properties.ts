@@ -54,7 +54,17 @@ const PROPERTY_TYPES: PropertyType[] = [
   'datetime',
   'path',
   'options',
+  // v0.4.50 : 'multi-options' (plusieurs choix parmi une liste) et
+  // 'bubbles' (liste de valeurs rendue en bulles ajoutables/supprimables —
+  // tags, aliases…). Voir apps/mobile/lib/propertyTypes.ts (libellés,
+  // icônes) et PropertyValueField.tsx (widgets).
+  'multi-options',
+  'bubbles',
 ];
+
+// Propriétés BUILT-IN rendues en bulles (v0.4.50) — noms en minuscules,
+// la casse réelle est normalisée à la lecture du schéma.
+const BUBBLE_PROPERTY_NAMES = ['tags', 'tag', 'aliases', 'alias'];
 
 function getVaultPath(): string | null {
   return vaults.getActiveVaultPath();
@@ -66,7 +76,15 @@ function getPropertiesFilePath(vaultPath: string): string {
 
 function readProperties(vaultPath: string): PropertyDefinition[] {
   try {
-    return JSON.parse(fsSync.readFileSync(getPropertiesFilePath(vaultPath), 'utf8')) as PropertyDefinition[];
+    const parsed = JSON.parse(fsSync.readFileSync(getPropertiesFilePath(vaultPath), 'utf8')) as PropertyDefinition[];
+    // Migration paresseuse (v0.4.50) : tags/aliases déjà enregistrées en
+    // 'list' par un scan antérieur passent en 'bubbles' à la lecture — sans
+    // réécrire le fichier tant qu'aucune autre modification n'a lieu.
+    return parsed.map((def) =>
+      BUBBLE_PROPERTY_NAMES.includes(def.name.toLowerCase()) && def.type === 'list'
+        ? { ...def, type: 'bubbles' }
+        : def,
+    );
   } catch {
     return [];
   }

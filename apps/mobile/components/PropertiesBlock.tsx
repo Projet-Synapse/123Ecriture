@@ -121,7 +121,7 @@ export function PropertiesBlock({ theme, activeNote, content, onChangeContent, t
             available={availableToAdd}
             onAdd={addValue}
             onCreateNew={async (name, type) => {
-              await create(name, type, type === 'options' ? [] : undefined);
+              await create(name, type, type === 'options' || type === 'multi-options' ? [] : undefined);
               addValue(makePropertyDefinition(`new-${name}`, name, type));
             }}
             theme={theme}

@@ -24,6 +24,12 @@ const DEFAULT_OPEN_MODE_OPTIONS: { value: DefaultOpenMode; label: string }[] = [
   { value: 'specific', label: 'Fichier spécifique' },
 ];
 
+const EXPLORER_EXPAND_MODE_OPTIONS: { value: ExplorerExpandMode; label: string }[] = [
+  { value: 'last', label: 'Derniers ouverts' },
+  { value: 'all', label: 'Tous ouverts' },
+  { value: 'none', label: 'Tous fermés' },
+];
+
 // Section "Gestion des fichiers et des liens" — dossier des pièces
 // jointes, emplacement par défaut des nouvelles notes, création
 // automatique de note cible pour un wikilink. Toujours disponible (ces
@@ -34,7 +40,9 @@ const DEFAULT_OPEN_MODE_OPTIONS: { value: DefaultOpenMode; label: string }[] = [
 // //2. Nouvelles notes — emplacement par défaut (+ dossier personnalisé).
 // //3. Wikilinks — création automatique de la note cible.
 // //4. Ordre des fichiers dans l'explorateur.
-// //5. Fichier ouvert par défaut (dernier ouvert / nouvelle note /
+// //5. Ouverture des dossiers de l'explorateur au chargement (v0.4.50) —
+//      préférence explorerExpandMode, appliquée par NotesScreen.tsx.
+// //6. Fichier ouvert par défaut (dernier ouvert / nouvelle note /
 //      spécifique) — voir NotesScreen.tsx pour l'effet d'ouverture et le
 //      défilement automatique de l'explorateur vers la note active.
 
@@ -123,6 +131,7 @@ export function FilesLinksSection() {
     setNewNoteCustomFolder,
     setAutoCreateWikilinkTarget,
     setFileSortMode,
+    setExplorerExpandMode,
     setDefaultOpenMode,
   } = usePreferences();
 
@@ -239,7 +248,33 @@ export function FilesLinksSection() {
         mémorisé même si tu reviens plus tard sur ce mode.
       </Text>
 
-      {/* //5. Fichier ouvert par défaut */}
+      {/* //5. Ouverture des dossiers au chargement du coffre (v0.4.50) */}
+      <Text style={[s.label, { color: theme.textMuted }]}>Ouverture des dossiers de l’explorateur</Text>
+      <View style={s.row}>
+        {EXPLORER_EXPAND_MODE_OPTIONS.map((option) => {
+          const isActive = preferences.explorerExpandMode === option.value;
+          return (
+            <Pressable
+              key={option.value}
+              onPress={() => void setExplorerExpandMode(option.value)}
+              style={[
+                s.modeButton,
+                { borderColor: theme.border },
+                isActive && { backgroundColor: theme.accent, borderColor: theme.accent },
+              ]}
+            >
+              <Text style={{ color: isActive ? '#fff' : theme.text }}>{option.label}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
+      <Text style={[s.hint, { color: theme.textMuted }]}>
+        État des dossiers quand un coffre est chargé (au lancement ou au changement de coffre). « Derniers
+        ouverts » restaure l’arborescence telle que laissée ; « Tous ouverts » déplie tout ; « Tous fermés » la
+        démarre entièrement repliée. S’applique aussi aussitôt le choix changé.
+      </Text>
+
+      {/* //6. Fichier ouvert par défaut */}
       <Text style={[s.label, { color: theme.textMuted }]}>Fichier ouvert par défaut</Text>
       <View style={s.row}>
         {DEFAULT_OPEN_MODE_OPTIONS.map((option) => {

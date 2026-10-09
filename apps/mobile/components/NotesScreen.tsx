@@ -25,6 +25,7 @@ import type { FormattingResult, Selection } from '../lib/mdxFormatting';
 import { NOTES_TOOLBAR_ACTIONS, type ToolbarAction } from '../lib/notesToolbarActions';
 import { openSearchResult } from '../lib/searchResults';
 import { useResizablePanel } from '../lib/useResizablePanel';
+import { collectFolderRelPaths } from '../lib/treeExpansion';
 import {
   findNodeByPath,
   flattenNotes,
@@ -199,6 +200,14 @@ export function NotesScreen({
   const { vaults, switchVault, activeVaultPath: vaultPath } = useVaults();
 
   const [tree, setTree] = useState<VaultTreeNode[]>([]);
+  // Miroir de l'arbre pour les effets qui doivent le lire SANS se
+  // redéclencher à chaque rafraîchissement (voir l'effet du mode
+  // d'ouverture des dossiers, plus bas — re-replier ce que l'utilisatrice
+  // a ouvert depuis serait une régression).
+  const treeRef = useRef<VaultTreeNode[]>([]);
+  useEffect(() => {
+    treeRef.current = tree;
+  }, [tree]);
   const [activeNote, setActiveNote] = useState<VaultEntry | null>(null);
   // APERÇU DE DOSSIER (v0.4.36, style Make.md) : quand un dossier est
   // cliqué dans l'explorateur, son chemin est mémorisé ici et la zone
@@ -221,7 +230,14 @@ export function NotesScreen({
   // retrouver l'arborescence telle qu'elle a été laissée au redémarrage ou
   // au changement de coffre. Chargé après la première lecture de l'arbre ;
   // les chemins obsolètes (dossier renommé/supprimé depuis) sont ignorés.
+  // v0.4.50 : l'état INITIAL dépend de la préférence `explorerExpandMode`
+  // (Paramètres → Gestion des fichiers) — 'last' (défaut historique,
+  // replis persistés), 'all' (tout déplié), 'none' (tout replié).
   const [collapsedPaths, setCollapsedPaths] = useState<Set<string>>(new Set());
+  // Miroir du mode dans une ref : l'effet de chargement de l'arbre (deps
+  // [vault, vaultPath]) le lit sans s'abonner à la préférence — la
+  // réaction aux changements à chaud vit dans l'effet dédié plus bas.
+  const expandModeRef = useRef<ExplorerExpandMode>(preferences.explorerExpandMode);
   // Onglets de notes ouverts (//11) — liste de relPaths, l'ordre du tableau
   // EST l'ordre des onglets, persisté PAR COFFRE dans .123ecriture/state.json
   // (voir vault:get/set-open-tabs) pour retrouver les onglets au
@@ -273,10 +289,11 @@ export function NotesScreen({
   const { width: windowWidth } = useWindowDimensions();
   const explorerPanel = useResizablePanel('explorer', { min: 180, max: 480, edge: 1 });
   // Largeur RÉELLE de l'explorateur (la même que le style du panneau plus
-  // bas) — pilote l'empilement de l'en-tête (voir listHeaderActionsStacked).
+  // bas) — pilote l'entassement des icônes de l'en-tête.
   const explorerWidth = Math.min(explorerPanel.width, windowWidth * 0.6);
-  // Sous ~280 dp, la ligne « bouton + 3 icônes » ne tient plus (sur un
-  // téléphone l'explorateur fait ~162 dp) : en-tête sur deux rangées.
+  // Sous ~280 dp, la rangée de 5 icônes (créer, recherche, tri, actualiser,
+  // tags) ne tient pas à 34 dp fixes (sur un téléphone l'explorateur fait
+  // ~162 dp) : elles se partagent la largeur (searchButtonFlex).
   const explorerHeaderStacked = explorerWidth < 280;
   const rightPanelWidth = useResizablePanel('rightPanel', {
     min: 220,
@@ -480,26 +497,42 @@ export function NotesScreen({
       } catch (error) {
         console.error('[vault] échec du chargement de l’arborescence :', error);
       }
-      // Repli persisté du coffre — APRES refreshTree pour ne pas s'afficher
-      // avant que l'arbre existe. Fusion "protectrice" : les dossiers
-      // ancêtres de la note déjà active restent dépliés, sans quoi un
-      // chargement qui résout après une ouverture de note (fichier ouvert
-      // par défaut, Calendrier...) refermerait le dossier qu'on vient
-      // d'ouvrir — l'effet de révélation ne se rejoue pas sur un simple
-      // changement de collapsedPaths.
+      // État d'ouverture des dossiers — APRES refreshTree pour ne pas
+      // s'afficher avant que l'arbre existe. Trois modes (préférence
+      // `explorerExpandMode`, Paramètres → Gestion des fichiers) :
+      // - 'all' : arbre entièrement déplié (aucun repli) ;
+      // - 'none' : arbre entièrement replié (tous les dossiers), SAUF les
+      //   ancêtres de la note déjà active — même protection que 'last',
+      //   sans quoi un fichier ouvert par défaut démarrerait masqué ;
+      // - 'last' (défaut) : replis persistés PAR COFFRE dans
+      //   .123ecriture/state.json. Fusion "protectrice" : les dossiers
+      //   ancêtres de la note active restent dépliés, sans quoi un
+      //   chargement qui résout après une ouverture de note refermerait
+      //   le dossier qu'on vient d'ouvrir — l'effet de révélation ne se
+      //   rejoue pas sur un simple changement de collapsedPaths.
       try {
-        const persisted = vault.getCollapsedPaths ? await vault.getCollapsedPaths() : [];
-        // activeNoteRef lu AVANT l'updater (pas dedans) : un updater peut
-        // être rejoué pendant le rendu (StrictMode), et la règle
-        // react-hooks/refs refuse toute lecture de ref à ce moment-là.
-        const activeRelPath = activeNoteRef.current?.relPath ?? null;
-        setCollapsedPaths((prev) => {
-          const next = new Set(persisted);
-          if (activeRelPath) getAncestorRelPaths(activeRelPath).forEach((a) => next.delete(a));
-          // Garde aussi les replis faits à chaud pendant le chargement.
-          prev.forEach((p) => next.add(p));
-          return next;
-        });
+        const mode = expandModeRef.current;
+        if (mode === 'all') {
+          setCollapsedPaths(new Set());
+        } else if (mode === 'none') {
+          // activeNoteRef lu AVANT l'updater (pas dedans) : un updater peut
+          // être rejoué pendant le rendu (StrictMode), et la règle
+          // react-hooks/refs refuse toute lecture de ref à ce moment-là.
+          const activeRelPath = activeNoteRef.current?.relPath ?? null;
+          const folded = new Set(collectFolderRelPaths(freshTree));
+          if (activeRelPath) getAncestorRelPaths(activeRelPath).forEach((a) => folded.delete(a));
+          setCollapsedPaths(folded);
+        } else {
+          const persisted = vault.getCollapsedPaths ? await vault.getCollapsedPaths() : [];
+          const activeRelPath = activeNoteRef.current?.relPath ?? null;
+          setCollapsedPaths((prev) => {
+            const next = new Set(persisted);
+            if (activeRelPath) getAncestorRelPaths(activeRelPath).forEach((a) => next.delete(a));
+            // Garde aussi les replis faits à chaud pendant le chargement.
+            prev.forEach((p) => next.add(p));
+            return next;
+          });
+        }
       } catch (error) {
         console.error('[vault] échec du chargement des dossiers repliés :', error);
       }
@@ -527,6 +560,40 @@ export function NotesScreen({
     // recharger l'arborescence ET restaurer l'état d'UI du coffre.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [vault, vaultPath]);
+
+  // Changement à chaud du mode d'ouverture des dossiers (Paramètres →
+  // Gestion des fichiers) — applique le nouvel état à l'arbre AFFICHÉ
+  // sans attendre un changement de coffre. `tree` n'est PAS une dépendance
+  // (lecture via treeRef) : un simple rafraîchissement de l'arbre ne doit
+  // pas re-replier ce qui a été ouvert depuis.
+  const explorerExpandMode = preferences.explorerExpandMode;
+  useEffect(() => {
+    expandModeRef.current = explorerExpandMode;
+    void (async () => {
+      // Un tick hors du passage synchrone de l'effet : les mises à jour
+      // d'état ne doivent pas arriver en rafale pendant le rendu en cours
+      // (règle react-hooks set-state-in-effect).
+      await Promise.resolve();
+      if (explorerExpandMode === 'all') {
+        setCollapsedPaths(new Set());
+        return;
+      }
+      if (explorerExpandMode === 'none') {
+        const folded = new Set(collectFolderRelPaths(treeRef.current));
+        const activeRelPath = activeNoteRef.current?.relPath ?? null;
+        if (activeRelPath) getAncestorRelPaths(activeRelPath).forEach((a) => folded.delete(a));
+        setCollapsedPaths(folded);
+        return;
+      }
+      // 'last' : relit l'état persisté du coffre actif.
+      try {
+        const persisted = vault?.getCollapsedPaths ? await vault.getCollapsedPaths() : [];
+        setCollapsedPaths(new Set(persisted));
+      } catch (error) {
+        console.error('[vault] échec de la relecture des dossiers repliés :', error);
+      }
+    })();
+  }, [explorerExpandMode, vault]);
 
   // (Ctrl/Cmd+K — palette de commandes/recherche globale — vit dans
   // AppShell.tsx, UN seul écouteur pour toute l'app : cet écran n'en a
@@ -2220,27 +2287,23 @@ export function NotesScreen({
           <Text style={[styles.vaultPath, { color: theme.textMuted }]} numberOfLines={1}>
             {vaultPath}
           </Text>
-          {/* Panneau étroit (téléphone : la moitié de 360 dp ≈ 162 dp) :
-              le bouton flex et les 3 boutons fixes de 34 dp ne tiennent pas
-              sur une seule ligne — le libellé « + Nouvelle note »
-              s'empilait une lettre par ligne (vécu A13, 2026-10-03). Sous
-              ~280 dp, deux rangées : bouton pleine largeur puis icônes. */}
-          <View style={[styles.listHeaderActions, explorerHeaderStacked && styles.listHeaderActionsStacked]}>
-            <Pressable
-              onPress={() => void handleCreateNote()}
-              style={[
-                styles.newButton,
-                !explorerHeaderStacked && styles.newButtonFlex,
-                { backgroundColor: theme.accent },
-              ]}
-            >
-              <Text style={styles.buttonText}>+ Nouvelle note</Text>
-            </Pressable>
-            {/* Groupe d'icônes isolé dans un sous-View : à l'étroit, il
-                passe sous le bouton et ses icônes se partagent la ligne
-                (flex:1) au lieu de débordrent. Sur desktop (>280 dp), ce
-                sous-View est transparent pour le rendu historique. */}
+          {/* Bouton « + » (v0.4.50, demande : remplacer le large « + Nouvelle
+              note » par une icône à côté des autres) — il ouvre le MÊME menu
+              de création que le clic droit dans le vide de l'explorateur
+              (showContextMenuFor(null)) : nouvelle note, dossier, canvas,
+              graphique, excalidraw, fichier de code (choix du langage).
+              Menu natif Electron sur desktop, carte tactile ActionMenu sur
+              Android — un seul branchement, presentMenu. À l'étroit, les
+              icônes se partagent la ligne (searchButtonFlex). */}
+          <View style={styles.listHeaderActions}>
             <View style={styles.listHeaderIcons}>
+              <Pressable
+                onPress={() => showContextMenuFor(null)}
+                accessibilityLabel="Créer (note, dossier, canvas…)"
+                style={[styles.searchButton, explorerHeaderStacked && styles.searchButtonFlex, { borderColor: theme.border }]}
+              >
+                <Text style={{ color: theme.text }}>+</Text>
+              </Pressable>
               <Pressable
                 onPress={() => setSearchOpen(true)}
                 style={[styles.searchButton, explorerHeaderStacked && styles.searchButtonFlex, { borderColor: theme.border }]}
@@ -3190,26 +3253,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
   },
-  // Panneau étroit (téléphone) : le bouton et le groupe d'icônes
-  // s'empilent — colonne étirée au lieu d'une ligne qui écrase le bouton.
-  listHeaderActionsStacked: {
-    flexDirection: 'column',
-    alignItems: 'stretch',
-  },
-  // Groupe des 3 icônes (recherche / tri / tags) : ligne transparente sur
-  // desktop, deuxième rangée du bouton « + Nouvelle note » à l'étroit.
+  // Groupe des icônes de l'en-tête de l'explorateur (créer / recherche /
+  // tri / actualiser / tags).
   listHeaderIcons: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-  },
-  newButton: {
-    paddingVertical: 8,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  newButtonFlex: {
-    flex: 1,
   },
   searchButton: {
     width: 34,

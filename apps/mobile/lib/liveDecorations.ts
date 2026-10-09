@@ -311,3 +311,68 @@ export function findLiveMatches(text: string): LiveMatch[] {
   matches.sort((a, b) => a.from - b.from);
   return matches;
 }
+
+// //8. 📊 TABLES (v0.4.50)
+// ////////////////////////////////////////////////////////////////////////
+
+export type TableBlock = {
+  /** Décalage absolu du DÉBUT de la première ligne du tableau. */
+  from: number;
+  /** Décalage absolu de la FIN de la dernière ligne (juste avant le \n). */
+  to: number;
+  /** Texte brut du tableau, lignes jointes par \n — le widget de rendu le
+   * consomme tel quel (et sert de clé d'égalité au mémo CodeMirror). */
+  source: string;
+};
+
+// Ligne de séparation GFM : `| --- | :---: | ...` — tirets/ deux-points et
+// barres uniquement (au moins un tiret), espaces tolérés.
+function isTableDelimiterLine(line: string): boolean {
+  const trimmed = line.trim();
+  if (!trimmed.includes('-')) return false;
+  const withoutEdges = trimmed.replace(/^\|/, '').replace(/\|$/, '');
+  if (withoutEdges.trim() === '') return false;
+  return withoutEdges.split('|').every((cell) => /^\s*:?-{3,}:?\s*$/.test(cell));
+}
+
+function lineContainsPipe(line: string): boolean {
+  return line.includes('|');
+}
+
+// Détecte les tableaux GFM complets (en-tête + ligne de séparation + rangées)
+// dans le texte : un tableau = suite de lignes consécutives contenant une
+// barre, dont la DEUXIÈME est une ligne de séparation. Les blocs sans
+// séparateur (une liste de barres quelconque) ne sont PAS des tableaux —
+// ils restent en texte brut. Renvoie des plages en décalabs absolus, triées,
+// sans chevauchement (un bloc commence après la fin du précédent).
+export function findTableBlocks(text: string): TableBlock[] {
+  const lines = text.split('\n');
+  const blocks: TableBlock[] = [];
+  let offset = 0;
+  let index = 0;
+  while (index < lines.length) {
+    const line = lines[index];
+    if (
+      lineContainsPipe(line) &&
+      index + 1 < lines.length &&
+      lineContainsPipe(lines[index + 1]) &&
+      isTableDelimiterLine(lines[index + 1])
+    ) {
+      // Début de tableau : consomme les lignes tant qu'elles contiennent une
+      // barre (l'en-tête, le séparateur, puis les rangées).
+      let endIndex = index;
+      while (endIndex + 1 < lines.length && lineContainsPipe(lines[endIndex + 1])) {
+        endIndex += 1;
+      }
+      const from = offset;
+      const to = offset + lines.slice(index, endIndex + 1).join('\n').length;
+      blocks.push({ from, to, source: lines.slice(index, endIndex + 1).join('\n') });
+      index = endIndex + 1;
+      offset = to + 1; // +1 pour le \n qui clôt la dernière ligne du bloc
+      continue;
+    }
+    index += 1;
+    offset += line.length + 1; // +1 pour le \n
+  }
+  return blocks;
+}

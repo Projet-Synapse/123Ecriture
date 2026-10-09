@@ -45,6 +45,10 @@ export const DEFAULT_PREFERENCES: Preferences = {
   newNoteLocation: 'vaultRoot',
   newNoteCustomFolder: '',
   fileSortMode: 'alphabetical',
+  // Explorateur : 'last' (défaut historique) restaure les dossiers repliés
+  // persistés par coffre ; 'all' / 'none' déplient/replient tout au
+  // chargement — voir NotesScreen.tsx pour l'application.
+  explorerExpandMode: 'last',
   // Écran Tâches : tri par échéance + masquage des terminées, persistés
   // (voir TasksScreen.tsx — c'étaient des états de session avant cette
   // préférence, une utilisatrice qui trie toujours par échéance ne devait
@@ -111,6 +115,7 @@ type PreferencesContextValue = {
   setNewNoteLocation: (location: NewNoteLocation) => Promise<void>;
   setNewNoteCustomFolder: (folder: string) => Promise<void>;
   setFileSortMode: (mode: FileSortMode) => Promise<void>;
+  setExplorerExpandMode: (mode: ExplorerExpandMode) => Promise<void>;
   setTasksSortByDueDate: (value: boolean) => Promise<void>;
   setTasksHideCompleted: (value: boolean) => Promise<void>;
   setDefaultOpenMode: (mode: DefaultOpenMode) => Promise<void>;
@@ -319,6 +324,10 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     [persist],
   );
   const setFileSortMode = useCallback((mode: FileSortMode) => persist({ fileSortMode: mode }), [persist]);
+  const setExplorerExpandMode = useCallback(
+    (mode: ExplorerExpandMode) => persist({ explorerExpandMode: mode }),
+    [persist],
+  );
   const setTasksSortByDueDate = useCallback(
     (value: boolean) => persist({ tasksSortByDueDate: value }),
     [persist],
@@ -494,6 +503,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       setNewNoteLocation,
       setNewNoteCustomFolder,
       setFileSortMode,
+      setExplorerExpandMode,
       setTasksSortByDueDate,
       setTasksHideCompleted,
       setDefaultOpenMode,
@@ -535,6 +545,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       setNewNoteLocation,
       setNewNoteCustomFolder,
       setFileSortMode,
+      setExplorerExpandMode,
       setTasksSortByDueDate,
       setTasksHideCompleted,
       setDefaultOpenMode,

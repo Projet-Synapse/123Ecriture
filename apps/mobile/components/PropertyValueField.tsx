@@ -25,6 +25,9 @@ type Props = {
 export function PropertyValueField({ def, value, onChange, theme, tree }: Props) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [filter, setFilter] = useState('');
+  // Brouillon du champ d'ajout des bulles (type 'bubbles') — commit à la
+  // touche Entrée (onSubmitEditing), comme l'ajout de tags façon Obsidian.
+  const [bubbleDraft, setBubbleDraft] = useState('');
   // Calculé pour tous les types (pas seulement 'path') afin de garder un
   // nombre de hooks constant d'un rendu à l'autre — un `useMemo` posé après
   // un `return` conditionnel enfreindrait les Rules of Hooks dès qu'une
@@ -96,6 +99,101 @@ export function PropertyValueField({ def, value, onChange, theme, tree }: Props)
             </View>
           </View>
         )}
+      </View>
+    );
+  }
+
+  if (def.type === 'multi-options') {
+    // Comme 'options' mais PLUSIEURS choix : chaque ligne bascule son
+    // appartenance au tableau de valeurs (☑/☐), la liste reste ouverte pour
+    // cumuler les sélections — fermeture explicite via « ✓ Fermer ».
+    const options = def.options ?? [];
+    const selected: string[] = Array.isArray(value) ? value.map(String) : [];
+    return (
+      <View style={styles.pickerWrap}>
+        <Pressable
+          onPress={() => setPickerOpen((v) => !v)}
+          style={[styles.pathButton, { borderColor: theme.border }]}
+        >
+          <Text style={{ color: selected.length ? theme.text : theme.textMuted, fontSize: 12 }} numberOfLines={1}>
+            {selected.length ? selected.join(', ') : 'Choisir des options…'}
+          </Text>
+        </Pressable>
+        {pickerOpen && (
+          <View style={[styles.popover, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+            <View style={styles.popoverList}>
+              {options.map((option) => (
+                <Pressable
+                  key={option}
+                  onPress={() => {
+                    onChange(
+                      selected.includes(option)
+                        ? selected.filter((item) => item !== option)
+                        : [...selected, option],
+                    );
+                  }}
+                  style={styles.popoverRow}
+                >
+                  <Text style={{ color: theme.text, fontSize: 12 }}>
+                    {selected.includes(option) ? '☑' : '☐'} {option}
+                  </Text>
+                </Pressable>
+              ))}
+              {options.length === 0 && (
+                <Text style={[styles.muted, { color: theme.textMuted }]}>
+                  Aucune option configurée (Paramètres → Gestion des propriétés).
+                </Text>
+              )}
+            </View>
+            <Pressable
+              onPress={() => setPickerOpen(false)}
+              style={[styles.popoverRow, { borderTopWidth: 1, borderTopColor: theme.border }]}
+            >
+              <Text style={{ color: theme.textMuted, fontSize: 12 }}>✓ Fermer</Text>
+            </Pressable>
+          </View>
+        )}
+      </View>
+    );
+  }
+
+  if (def.type === 'bubbles') {
+    // Bulles (v0.4.50) : chaque valeur est une pilule supprimable d'un clic,
+    // le champ « + Ajouter » en empile de nouvelles (Entrée) — le rendu des
+    // tags/aliases, façon Obsidian.
+    const items: string[] = Array.isArray(value) ? value.map(String) : [];
+    const commitDraft = () => {
+      const trimmed = bubbleDraft.trim();
+      if (trimmed && !items.includes(trimmed)) onChange([...items, trimmed]);
+      setBubbleDraft('');
+    };
+    return (
+      <View style={[styles.bubblesWrap, { borderColor: theme.border }]}>
+        {items.length > 0 && (
+          <View style={styles.bubblesRow}>
+            {items.map((item) => (
+              <Pressable
+                key={item}
+                onPress={() => onChange(items.filter((v) => v !== item))}
+                style={[styles.bubble, { backgroundColor: `${theme.accent}1a`, borderColor: `${theme.accent}55` }]}
+                accessibilityLabel={`Retirer ${item}`}
+              >
+                <Text style={{ color: theme.accent, fontSize: 11 }}>
+                  {item} ✕
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        )}
+        <TextInput
+          value={bubbleDraft}
+          onChangeText={setBubbleDraft}
+          onSubmitEditing={commitDraft}
+          onBlur={bubbleDraft.trim() ? commitDraft : undefined}
+          placeholder="+ Ajouter…"
+          placeholderTextColor={theme.textMuted}
+          style={{ color: theme.text, fontSize: 12, paddingVertical: 2, flex: 1, minWidth: 90 }}
+        />
       </View>
     );
   }
@@ -224,5 +322,25 @@ const styles = StyleSheet.create({
   muted: {
     fontSize: 11,
     padding: 6,
+  },
+  // Bulles (v0.4.50) : conteneur bordé léger, pilules enroulables.
+  bubblesWrap: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: 6,
+    paddingVertical: 3,
+    paddingHorizontal: 6,
+    gap: 3,
+  },
+  bubblesRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 4,
+  },
+  bubble: {
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingVertical: 2,
+    paddingHorizontal: 8,
   },
 });

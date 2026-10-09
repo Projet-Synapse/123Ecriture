@@ -133,7 +133,19 @@ export interface CalendarEventInput {
   notes?: string;
 }
 
-export type PropertyType = 'text' | 'list' | 'number' | 'checkbox' | 'date' | 'datetime' | 'path' | 'options';
+// v0.4.50 : 'multi-options' (plusieurs choix) et 'bubbles' (valeurs en
+// bulles) — miroir manuel de types/global.d.ts côté renderer (CLAUDE.md).
+export type PropertyType =
+  | 'text'
+  | 'list'
+  | 'number'
+  | 'checkbox'
+  | 'date'
+  | 'datetime'
+  | 'path'
+  | 'options'
+  | 'multi-options'
+  | 'bubbles';
 
 export interface PropertyDefinition {
   id: string;
