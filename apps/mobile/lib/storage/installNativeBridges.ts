@@ -4,6 +4,7 @@ import { nativeVaultAdapter } from './nativeVaultAdapter';
 import { nativeVaultsAdapter } from './nativeVaultsAdapter';
 import { nativeSyncAdapter } from './nativeSyncAdapter';
 import { nativePreferencesAdapter } from './nativePreferencesAdapter';
+import { nativeTaskListsBridge, nativeTasksBridge } from './nativeTasksAdapter';
 import { installNativeAuthBridge } from './nativeAuthBridge';
 
 // Point d'entrée unique qui pose `window.vault`/`window.vaults`/`window.sync`
@@ -43,5 +44,10 @@ export function installNativeBridges(): void {
   // panneaux…) — avant ce pont, tout se réinitialisait à chaque relance
   // (voir nativePreferencesAdapter.ts).
   window.preferences = nativePreferencesAdapter;
+  // Tâches PAR COFFRE (v0.4.50) — avant ce pont, l'écran Tâches était
+  // inerte sur Android et rien de créé ne persistait (voir
+  // nativeTasksAdapter.ts).
+  window.tasks = nativeTasksBridge;
+  window.taskLists = nativeTaskListsBridge;
   installNativeAuthBridge();
 }

@@ -1,4 +1,4 @@
-import { inferPropertyType, makePropertyDefinition } from './propertyTypes';
+import { BUBBLE_PROPERTY_NAMES, inferPropertyType, makePropertyDefinition } from './propertyTypes';
 
 // Fusion du scan de propriétés (auto-enregistrement des clés de frontmatter,
 // voir properties:scan-vault côté desktop et PropertiesBridge.scanVault côté
@@ -60,9 +60,13 @@ export function createPropertyScanMerger(
         const canonical = lowerToCanonicalName.get(lower);
         if (canonical === undefined) {
           lowerToCanonicalName.set(lower, key);
-          toCreate.push(
-            makePropertyDefinition(newId(), key, inferPropertyType(value), now()),
-          );
+          // tags/aliases (v0.4.50) : type 'bubbles' même si la valeur est un
+          // tableau (qui aurait été deviné 'list') — voir propertyTypes.ts.
+          const type =
+            BUBBLE_PROPERTY_NAMES.has(lower) && Array.isArray(value)
+              ? 'bubbles'
+              : inferPropertyType(value);
+          toCreate.push(makePropertyDefinition(newId(), key, type, now()));
           usage[key] = (usage[key] ?? 0) + 1;
         } else {
           usage[canonical] = (usage[canonical] ?? 0) + 1;

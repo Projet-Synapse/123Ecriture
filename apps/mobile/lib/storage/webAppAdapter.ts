@@ -56,6 +56,7 @@ const DEFAULT_PREFERENCES: Preferences = {
   newNoteLocation: 'vaultRoot',
   newNoteCustomFolder: '',
   fileSortMode: 'alphabetical',
+  explorerExpandMode: 'last',
   tasksSortByDueDate: false,
   tasksHideCompleted: false,
   defaultOpenMode: 'lastOpened',

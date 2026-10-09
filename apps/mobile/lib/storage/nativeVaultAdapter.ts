@@ -551,6 +551,57 @@ async function ensureSafDir(parentRelPath: string): Promise<string> {
 // //5. 🔌 IMPLÉMENTATION DE VaultBridge
 // ////////////////////////////////////////////////////////////////////////
 
+// État d'UI du coffre actif (.123ecriture/state.json) — même fichier et
+// même schéma que côté Electron (vault.ts) : lastOpenedRelPath,
+// collapsedRelPaths, openTabRelPaths. Read-modify-write champ par champ
+// pour que trois auteurs indépendants ne s'écrasent pas mutuellement.
+type NativeVaultState = {
+  lastOpenedRelPath?: string | null;
+  collapsedRelPaths?: string[];
+  openTabRelPaths?: string[];
+};
+
+async function readVaultStateFile(): Promise<NativeVaultState> {
+  try {
+    const parsed: unknown = JSON.parse(await nativeVaultAdapter.readNote('.123ecriture/state.json'));
+    return parsed && typeof parsed === 'object' ? (parsed as NativeVaultState) : {};
+  } catch {
+    // Absent (coffre neuf) ou coffre inactif : état vide.
+    return {};
+  }
+}
+
+async function patchVaultState(patch: NativeVaultState): Promise<void> {
+  const next = { ...(await readVaultStateFile()), ...patch };
+  await nativeVaultAdapter.writeNote('.123ecriture/state.json', JSON.stringify(next, null, 2));
+}
+
+// Anciens fichiers GLOBAUX du documentDirectory (avant la refonte par
+// coffre) —lus en MIGRATION seulement, jamais réécrits.
+async function readLegacyStringFile(name: string): Promise<string | null> {
+  try {
+    const path = `${FileSystem.documentDirectory}${name}`;
+    const info = await FileSystem.getInfoAsync(path);
+    if (!info.exists) return null;
+    const value = await FileSystem.readAsStringAsync(path);
+    return value || null;
+  } catch {
+    return null;
+  }
+}
+
+async function readLegacyJsonArrayFile(name: string): Promise<string[]> {
+  try {
+    const path = `${FileSystem.documentDirectory}${name}`;
+    const info = await FileSystem.getInfoAsync(path);
+    if (!info.exists) return [];
+    const parsed: unknown = JSON.parse(await FileSystem.readAsStringAsync(path));
+    return Array.isArray(parsed) ? parsed.filter((p): p is string => typeof p === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
 export const nativeVaultAdapter: VaultBridge = {
   // Délègue au coffre actif (voir nativeVaultsAdapter.ts) — même relation
   // que côté Electron, où vault:choose-folder appelle en interne
@@ -834,66 +885,49 @@ export const nativeVaultAdapter: VaultBridge = {
       );
     }),
 
+  // État d'UI PAR COFFRE (v0.4.50, correctif « enregistrement par vault ») :
+  // dernier fichier ouvert, dossiers repliés et onglets ouverts vivent dans
+  // le MÊME fichier que côté Electron (.123ecriture/state.json,
+  // read-modify-write champ par champ). Avant cette refonte, ces trois
+  // états vivaient dans des fichiers GLOBAUX du documentDirectory : la
+  // dernière note ouverte, les replis et les onglets d'un coffre débordaient
+  // sur les autres. Les anciens fichiers restent la source de MIGRATION
+  // (lus une fois si la clé manque encore dans state.json).
   getLastOpened: async () => {
-    try {
-      const path = `${FileSystem.documentDirectory}123ecriture-last-opened.txt`;
-      const info = await FileSystem.getInfoAsync(path);
-      if (!info.exists) return null;
-      const value = await FileSystem.readAsStringAsync(path);
-      return value || null;
-    } catch {
-      return null;
-    }
+    const state = await readVaultStateFile();
+    if (state.lastOpenedRelPath !== undefined) return state.lastOpenedRelPath ?? null;
+    return readLegacyStringFile('123ecriture-last-opened.txt');
   },
 
   setLastOpened: async (relPath) => {
-    const path = `${FileSystem.documentDirectory}123ecriture-last-opened.txt`;
-    await FileSystem.writeAsStringAsync(path, relPath ?? '');
+    await patchVaultState({ lastOpenedRelPath: relPath });
   },
 
-  // Dossiers repliés de l'explorateur — même persistance documentDirectory
-  // que last-opened ci-dessus (un fichier dédié, tableau JSON), même
-  // best-effort que côté Electron (vault.ts/state.json) : une lecture ou
-  // écriture qui échoue dégrade le repli, jamais les données.
+  // Dossiers repliés de l'explorateur — best-effort comme côté Electron
+  // (vault.ts/state.json) : une lecture ou écriture qui échoue dégrade le
+  // repli, jamais les données.
   getCollapsedPaths: async () => {
-    try {
-      const path = `${FileSystem.documentDirectory}123ecriture-collapsed.json`;
-      const info = await FileSystem.getInfoAsync(path);
-      if (!info.exists) return [];
-      const raw = await FileSystem.readAsStringAsync(path);
-      const parsed: unknown = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed.filter((p): p is string => typeof p === 'string') : [];
-    } catch {
-      return [];
-    }
+    const state = await readVaultStateFile();
+    if (state.collapsedRelPaths !== undefined) return state.collapsedRelPaths;
+    return readLegacyJsonArrayFile('123ecriture-collapsed.json');
   },
 
   setCollapsedPaths: async (relPaths) => {
-    const path = `${FileSystem.documentDirectory}123ecriture-collapsed.json`;
-    await FileSystem.writeAsStringAsync(path, JSON.stringify(relPaths));
+    await patchVaultState({ collapsedRelPaths: relPaths });
   },
 
-  // Onglets de notes ouverts — même persistance documentDirectory dédiée
-  // que collapsed-paths ci-dessus, alignée sur vault:get/set-open-tabs
+  // Onglets de notes ouverts — aligné sur vault:get/set-open-tabs
   // (Electron, state.json) : NotesScreen.tsx dégrade gracieusement quand
   // le bridge est absent, mais l'adaptateur natif POURVUT les méthodes
   // pour rester conforme à VaultBridge.
   getOpenTabs: async () => {
-    try {
-      const path = `${FileSystem.documentDirectory}123ecriture-open-tabs.json`;
-      const info = await FileSystem.getInfoAsync(path);
-      if (!info.exists) return [];
-      const raw = await FileSystem.readAsStringAsync(path);
-      const parsed: unknown = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed.filter((p): p is string => typeof p === 'string') : [];
-    } catch {
-      return [];
-    }
+    const state = await readVaultStateFile();
+    if (state.openTabRelPaths !== undefined) return state.openTabRelPaths;
+    return readLegacyJsonArrayFile('123ecriture-open-tabs.json');
   },
 
   setOpenTabs: async (relPaths) => {
-    const path = `${FileSystem.documentDirectory}123ecriture-open-tabs.json`;
-    await FileSystem.writeAsStringAsync(path, JSON.stringify(relPaths));
+    await patchVaultState({ openTabRelPaths: relPaths });
   },
 
   // "Note du jour" (Calendrier) — voir CalendarScreen.tsx. Réutilise

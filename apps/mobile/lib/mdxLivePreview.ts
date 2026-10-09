@@ -1,7 +1,8 @@
 import { Decoration, type DecorationSet, EditorView, ViewPlugin, type ViewUpdate, WidgetType } from '@codemirror/view';
+import { EditorState, StateField } from '@codemirror/state';
 
 import { isImageEmbedTarget } from './embedResolution';
-import { findBold, findItalic, findLiveMatches, type LiveMatch, type TokenType } from './liveDecorations';
+import { findBold, findItalic, findLiveMatches, findTableBlocks, type LiveMatch, type TokenType } from './liveDecorations';
 
 // Le vrai Live Preview inline (mode "Intermédiaire", voir components/
 // MdxEditor.tsx) : un `ViewPlugin` CodeMirror qui décore le document selon
@@ -159,6 +160,85 @@ class EmbedImageWidget extends WidgetType {
   }
 }
 
+// Tableau GFM rendu EN VRAI dans le flux (v0.4.50, demande : « les tables
+// apparaissent bien dans le mode intermédiaire comme avec le mode aperçu »).
+// Comme chez Obsidian : le tableau rendu remplace le texte brut TANT QUE la
+// sélection est hors du bloc — dès qu'on clique dedans, le texte brut
+// revient pour éditer les cellules (voir buildDecorations). C'est un widget
+// BLOC (Decoration.replace({ block: true })) : seule forme autorisée par
+// CodeMirror pour remplacer plusieurs lignes d'un coup.
+class TableWidget extends WidgetType {
+  constructor(
+    private readonly source: string,
+    private readonly colors: LivePreviewColors,
+  ) {
+    super();
+  }
+
+  eq(other: TableWidget): boolean {
+    return other.source === this.source;
+  }
+
+  toDOM(): HTMLElement {
+    const wrap = document.createElement('span');
+    wrap.style.display = 'block';
+    wrap.style.overflowX = 'auto';
+    wrap.style.padding = '2px 0';
+
+    const lines = this.source.split('\n');
+    const splitRow = (line: string): string[] =>
+      line
+        .trim()
+        .replace(/^\|/, '')
+        .replace(/\|$/, '')
+        .split('|')
+        .map((cell) => cell.trim());
+
+    const table = document.createElement('table');
+    table.style.borderCollapse = 'collapse';
+    table.style.margin = '4px 0';
+
+    const cellStyle = (cell: HTMLTableCellElement, isHeader: boolean) => {
+      cell.style.border = `1px solid ${this.colors.border}`;
+      cell.style.padding = '3px 8px';
+      if (isHeader) {
+        cell.style.fontWeight = '700';
+        cell.style.backgroundColor = `${this.colors.accent}14`;
+      }
+    };
+
+    const buildRow = (line: string, tag: 'th' | 'td', isHeader: boolean): HTMLTableRowElement => {
+      const tr = document.createElement('tr');
+      for (const content of splitRow(line)) {
+        const cell = document.createElement(tag);
+        cell.textContent = content;
+        cellStyle(cell, isHeader);
+        tr.appendChild(cell);
+      }
+      return tr;
+    };
+
+    // Lignes 0/1 : en-tête + séparateur (garantis par findTableBlocks) ;
+    // au-delà : les rangées. Le séparateur n'est jamais rendu.
+    if (lines.length >= 2) {
+      table.appendChild(buildRow(lines[0], 'th', true));
+      for (let i = 2; i < lines.length; i += 1) {
+        table.appendChild(buildRow(lines[i], 'td', false));
+      }
+    } else {
+      // Garde défensive (findTableBlocks n'émet jamais ce cas) : texte brut.
+      wrap.textContent = this.source;
+      return wrap;
+    }
+    wrap.appendChild(table);
+    return wrap;
+  }
+
+  ignoreEvent(): boolean {
+    return false;
+  }
+}
+
 // Révélation STRICTEMENT intérieure (comme Obsidian) : le texte brut ne
 // réapparaît que si la sélection chevauche l'intérieur de la syntaxe — le
 // curseur collé à l'EXTÉRIEUR (juste avant le premier marqueur ou juste
@@ -235,7 +315,21 @@ function buildDecorations(view: EditorView, colors: LivePreviewColors, callbacks
   const matches: LiveMatch[] = findLiveMatches(text);
   const ranges: DecorationRange[] = [];
 
+  // Tableaux GFM (v0.4.50) : les blocs SANS sélection dedans sont remplacés
+  // par une table rendue — mais CodeMirror INTERDIT les décorations bloc
+  // depuis un plugin (« Block decorations may not be specified via plugins »,
+  // vécu au premier essai) : elles passent donc par le StateField
+  // tableDecorationsField plus bas. Ici on se contente d'ÉCARTER les
+  // correspondances de mise en forme qui tombent dans un bloc rendu (elles
+  // décoreraient du texte masqué, et des decorations qui se chevauchent avec
+  // un replace font planter l'éditeur). Curseur dans le tableau : texte brut
+  // révélé, les correspondances internes redeviennent actives comme partout.
+  const renderedTables = findRenderedTables(view.state);
+  const insideRenderedTable = (from: number, to: number): boolean =>
+    renderedTables.some((block) => from < block.to && to > block.from);
+
   for (const match of matches) {
+    if (insideRenderedTable(match.from, match.to)) continue;
     const active = selectionTouches(view, match.from, match.to);
 
     if (match.kind === 'mark') {
@@ -286,6 +380,37 @@ function buildDecorations(view: EditorView, colors: LivePreviewColors, callbacks
   );
 }
 
+// //6. 📊 TABLES — décorations BLOC via StateField (v0.4.50)
+// ////////////////////////////////////////////////////////////////////////
+
+// Les replace BLOC (qui couvrent plusieurs lignes — notre table rendue) sont
+// interdits depuis un ViewPlugin (« Block decorations may not be specified
+// via plugins », plantage constaté au premier essai) : ils vivent dans un
+// StateField, seule source autorisée. Recalculé quand le document OU la
+// sélection change — c'est la sélection qui décide de la révélation (curseur
+// dans le tableau = texte brut, comme Obsidian).
+function computeTableDecorations(state: EditorState, colors: LivePreviewColors): DecorationSet {
+  // Même garde-fou que buildDecorations : au-delà du seuil, texte brut.
+  if (state.doc.length > MAX_LIVE_PREVIEW_CHARS) return Decoration.none;
+  const rendered = findRenderedTables(state);
+  if (rendered.length === 0) return Decoration.none;
+  return Decoration.set(
+    rendered.map((block) =>
+      Decoration.replace({ widget: new TableWidget(block.source, colors), block: true }).range(block.from, block.to),
+    ),
+    true,
+  );
+}
+
+// Version partagée avec buildDecorations : les blocs rendus par le champ
+// (et seulement eux) voient leurs correspondances inline écartées.
+function findRenderedTables(state: EditorState): { from: number; to: number; source: string }[] {
+  if (state.doc.length > MAX_LIVE_PREVIEW_CHARS) return [];
+  return findTableBlocks(state.doc.toString()).filter((block) =>
+    state.selection.ranges.every((range) => !(range.from < block.to && range.to > block.from)),
+  );
+}
+
 export function createLivePreviewExtension(
   colors: LivePreviewColors,
   callbacks: LivePreviewCallbacks,
@@ -296,20 +421,33 @@ export function createLivePreviewExtension(
   },
 ) {
   const colorize = options?.colorize === true;
-  return ViewPlugin.fromClass(
-    class {
-      decorations: DecorationSet;
+  // Les DEUX extensions (champ des tables + plugin des décorations inline)
+  // doivent vivre dans l'éditeur : renvoi en tableau, CodeMirror aplati.
+  // Le champ se crée PAR INSTANCE (couleurs du thème en closure) — un
+  // StateField est un singleton par jeu d'extensions, pas global au process.
+  const tableField = StateField.define<DecorationSet>({
+    create: (state) => computeTableDecorations(state, colors),
+    update: (value, tr) =>
+      tr.docChanged || tr.selection ? computeTableDecorations(tr.state, colors) : value,
+    provide: (field) => EditorView.decorations.from(field),
+  });
+  return [
+    tableField,
+    ViewPlugin.fromClass(
+      class {
+        decorations: DecorationSet;
 
-      constructor(view: EditorView) {
-        this.decorations = buildDecorations(view, colors, callbacks, colorize);
-      }
-
-      update(update: ViewUpdate) {
-        if (update.docChanged || update.selectionSet || update.viewportChanged) {
-          this.decorations = buildDecorations(update.view, colors, callbacks, colorize);
+        constructor(view: EditorView) {
+          this.decorations = buildDecorations(view, colors, callbacks, colorize);
         }
-      }
-    },
-    { decorations: (instance) => instance.decorations },
-  );
+
+        update(update: ViewUpdate) {
+          if (update.docChanged || update.selectionSet || update.viewportChanged) {
+            this.decorations = buildDecorations(update.view, colors, callbacks, colorize);
+          }
+        }
+      },
+      { decorations: (instance) => instance.decorations },
+    ),
+  ];
 }

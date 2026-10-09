@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { findLiveMatches, type HeadingMatch, type MarkMatch, type TokenMatch } from './liveDecorations';
+import { findLiveMatches, findTableBlocks, type HeadingMatch, type MarkMatch, type TokenMatch } from './liveDecorations';
 
 describe('findLiveMatches — gras/italique', () => {
   it('repère un **gras**', () => {
@@ -161,5 +161,33 @@ describe('findLiveMatches — chevauchements', () => {
   it('des correspondances simplement adjacentes sont toutes conservées', () => {
     const matches = findLiveMatches('**a** puis [[b]] puis #tag');
     expect(matches).toHaveLength(3);
+  });
+});
+
+describe('findTableBlocks — tableaux GFM (v0.4.50)', () => {
+  it('détecte un tableau complet avec ses décalages absolus', () => {
+    const text = 'Intro.\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n\nSuite.';
+    const blocks = findTableBlocks(text);
+    expect(blocks).toHaveLength(1);
+    expect(text.slice(blocks[0].from, blocks[0].to)).toBe('| A | B |\n| --- | --- |\n| 1 | 2 |');
+    expect(blocks[0].source).toBe('| A | B |\n| --- | --- |\n| 1 | 2 |');
+  });
+
+  it('ignore une suite de barres sans ligne de séparation', () => {
+    const text = '| juste | du texte |\n| avec des barres |';
+    expect(findTableBlocks(text)).toHaveLength(0);
+  });
+
+  it('détecte deux tableaux séparés par du texte', () => {
+    const text = '| A |\n| --- |\n| 1 |\n\nmilieu\n\n| B |\n| --- |\n| 2 |';
+    const blocks = findTableBlocks(text);
+    expect(blocks).toHaveLength(2);
+    expect(blocks[0].source).toContain('| A |');
+    expect(blocks[1].source).toContain('| B |');
+  });
+
+  it('accepte un alignement `:---:` dans le séparateur', () => {
+    const text = '| A | B |\n| :--- | ---: |\n| 1 | 2 |';
+    expect(findTableBlocks(text)).toHaveLength(1);
   });
 });

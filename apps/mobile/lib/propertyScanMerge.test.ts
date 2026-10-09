@@ -24,7 +24,8 @@ describe('createPropertyScanMerger', () => {
     merger.absorbNoteFrontmatter(parseFrontmatter('---\ntags:\n  - un\n  - deux\nscore: 3\npublié: true\nlieu: Paris\n---').data);
 
     expect(merger.toCreate.map((d) => [d.name, d.type])).toEqual([
-      ['tags', 'list'],
+      // v0.4.50 : tags (valeur tableau) devient 'bubbles' au lieu de 'list'.
+      ['tags', 'bubbles'],
       ['score', 'number'],
       ['publié', 'checkbox'],
       ['lieu', 'text'],

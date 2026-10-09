@@ -221,7 +221,7 @@ export function PropertiesManagementSection() {
                 <Text style={{ color: theme.textMuted }}>🗑️</Text>
               </Pressable>
             </View>
-            {def.type === 'options' && (
+            {(def.type === 'options' || def.type === 'multi-options') && (
               <View style={styles.optionsEditRow}>
                 <Text style={[styles.optionsHint, { color: theme.textMuted }]}>
                   Options (séparées par des virgules) :

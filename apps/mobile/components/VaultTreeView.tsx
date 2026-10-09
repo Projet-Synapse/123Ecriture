@@ -27,16 +27,11 @@ export const DraggablePressable = Pressable as unknown as ComponentType<
 // pour ne pas éparpiller la logique métier vault entre deux fichiers.
 //
 // //1. DraggablePressable — échappatoire de typage pour `draggable`.
-// //2. Props/rendu — une ligne par nœud (chevron, icône SVG, nom+extension,
-//      RAILS VERTICAUX CONTINUS), récursif sur les enfants d'un dossier.
+// //2. Props/rendu — une ligne par nœud (chevron, icône SVG, nom+extension),
+//      récursif sur les enfants d'un dossier.
 // //3. Styles.
 //
 // v0.4.36 (demandes de l'utilisatrice) :
-// - Lignes d'arborescence RÉELLES : un rail vertical continu par ancêtre
-//   (style VS Code/IDE) — les traits s'étendent sur TOUTE la hauteur de la
-//   ligne (`alignSelf:'stretch'`), empilés ils forment une ligne continue.
-//   Le dernier rail d'une ligne s'arrête au niveau de l'icône (trait coudé
-//   implicite par la connexion visuelle).
 // - Icônes VECTORIELLES (react-native-svg) : dossier ouvert ou FERMÉ selon
 //   l'état de repli, chevron de repli, types de fichiers différenciés par
 //   couleur. Fini les emojis.
@@ -44,13 +39,20 @@ export const DraggablePressable = Pressable as unknown as ComponentType<
 // - Les DOSSIERS sont sélectionnables (clic = ouvre l'aperçu du contenu
 //   dans l'éditeur, style Make.md d'Obsidian ; le chevron replie/déplie).
 //
-// Le clic droit n'est PAS géré ici : chaque ligne porte juste un
-// `dataSet={{ relpath: ... }}` (converti en attribut data-relpath par
-// react-native-web), et c'est NotesScreen qui écoute un seul événement
-// "contextmenu" délégué sur tout le conteneur puis retrouve la ligne visée
-// via cet attribut. Passer `onContextMenu` directement à Pressable ne
-// fonctionnait pas de façon fiable — la délégation sur un seul écouteur
-// est bien plus robuste.
+// v0.4.50 (demande : des dossiers qui fassent plus « boutons rétractables »,
+// à la Obsidian) :
+// - Chaque ligne est une PILULE arrondie — les dossiers portent une bordure
+//   et un fond teinté accent, les notes un fond plus léger : le dossier
+//   déplié se lit comme le CONTENEUR visuel de ses enfants, qui
+//   s'imbriquent en retrait sous lui (fin des rails verticaux style VS
+//   Code, l'indentation suffit à porter la hiérarchie).
+// - Le clic droit n'est PAS géré ici : chaque ligne porte juste un
+//   `dataSet={{ relpath: ... }}` (converti en attribut data-relpath par
+//   react-native-web), et c'est NotesScreen qui écoute un seul événement
+//   "contextmenu" délégué sur tout le conteneur puis retrouve la ligne
+//   visée via cet attribut. Passer `onContextMenu` directement à Pressable
+//   ne fonctionnait pas de façon fiable — la délégation sur un seul
+//   écouteur est bien plus robuste.
 
 export type RenameState = {
   relPath: string;
@@ -137,7 +139,7 @@ function VaultTreeViewImpl({
         return (
           <Fragment key={node.relPath}>
             {insertionEdge === 'above' && (
-              <View style={[styles.insertionLine, { paddingLeft: 12 + depth * 16 }]}>
+              <View style={[styles.insertionLine, { paddingLeft: 8 + depth * 14 }]}>
                 <View style={[styles.insertionLineBar, { backgroundColor: theme.accent }]} />
               </View>
             )}
@@ -166,23 +168,24 @@ function VaultTreeViewImpl({
               dataSet={{ relpath: node.relPath }}
               style={[
                 styles.row,
+                // Pilules (v0.4.50) : le dossier est le bouton-conteneur
+                // (bordure + fond teinté), la note une pilule plus légère.
+                // Les états ci-dessous (active, sélection, drop) passent
+                // APRÈS pour gagner sur le fond des pilules.
+                isFolder
+                  ? [styles.folderRow, { borderColor: theme.border, backgroundColor: `${theme.accent}14` }]
+                  : [styles.noteRow, { backgroundColor: `${theme.accent}0A` }],
                 isActiveNote && { backgroundColor: `${theme.accent}22` },
                 isFolderActive && { backgroundColor: `${theme.accent}22` },
                 !isRenaming && dragEnabled && styles.rowDraggable,
                 isDragging && styles.rowDragging,
                 isDropInsideTarget && { backgroundColor: `${theme.accent}33`, borderRadius: 6 },
                 isSelected && { backgroundColor: `${theme.accent}33` },
+                // Indentation PAR retrait (plus de rails verticaux) —
+                // chaque niveau décale la pilule de 14 px.
+                { paddingLeft: 8 + depth * 14 },
               ]}
             >
-              {/* RAILS VERTICAUX CONTINUS (v0.4.36) — un par ancêtre : chaque
-                  trait fait TOUTE la hauteur de la ligne, empilés ils
-                  forment une ligne continue de haut en bas de l'arbre.
-                  Style VS Code. */}
-              {Array.from({ length: depth }).map((_, i) => (
-                <View key={i} style={styles.indentGuideCell}>
-                  <View style={[styles.indentGuideLine, { backgroundColor: theme.border, opacity: 0.55 }]} />
-                </View>
-              ))}
 
               {isFolder ? (
                 // Chevron de repli/dépli — CIBLE EXCLUSIVE du repli (le
@@ -239,7 +242,7 @@ function VaultTreeViewImpl({
               )}
             </DraggablePressable>
             {insertionEdge === 'below' && (
-              <View style={[styles.insertionLine, { paddingLeft: 12 + depth * 16 }]}>
+              <View style={[styles.insertionLine, { paddingLeft: 8 + depth * 14 }]}>
                 <View style={[styles.insertionLineBar, { backgroundColor: theme.accent }]} />
               </View>
             )}
@@ -299,13 +302,31 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    // HAUTEUR FIXE (v0.4.37) : sans paddingVertical, les rails
-    // d'indentation (alignSelf:'stretch') couvrent toute la hauteur et
-    // les lignes adjacentes forment une colonne CONTINUE — le padding
-    // créait des trous « ----- » entre chaque rangée.
-    height: 32,
-    paddingLeft: 4,
-    paddingRight: 12,
+    // Indentation par RETRAIT (v0.4.50) : la profondeur est portée par un
+    // paddingLeft calculé au rendu (8 + depth * 14) — plus de rails
+    // verticaux, donc plus besoin de hauteur fixe pour les faire se
+    // toucher (c'était la contrainte de la v0.4.37).
+    paddingRight: 10,
+  },
+  // Pilule DOSSIER (v0.4.50) — le « bouton rétractable »-conteneur :
+  // bordure + fond teinté accent (couleurs passées au rendu pour suivre
+  // le thème), padding vertical pour une cible tactile confortable.
+  folderRow: {
+    borderRadius: 9,
+    borderWidth: 1,
+    minHeight: 30,
+    paddingVertical: 4,
+    marginTop: 2,
+    marginBottom: 2,
+  },
+  // Pilule NOTE (v0.4.50) — plus discrète que le dossier (fond léger sans
+  // bordure) ; les états actif/sélection la teintent par-dessus.
+  noteRow: {
+    borderRadius: 8,
+    minHeight: 28,
+    paddingVertical: 3,
+    marginTop: 1,
+    marginBottom: 1,
   },
   // Boîte du chevron — largeur fixe pour aligner icônes et noms des
   // dossiers ET des notes sur la même colonne.
@@ -313,18 +334,6 @@ const styles = StyleSheet.create({
     width: 14,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  // Largeur 16 = pas d'indentation historique — le rail est centré dedans.
-  // alignSelf:'stretch' + flex:1 : le trait fait TOUTE la hauteur de la
-  // ligne, empilé sur N lignes il forme un rail CONTINU (v0.4.36).
-  indentGuideCell: {
-    width: 16,
-    alignSelf: 'stretch',
-    alignItems: 'center',
-  },
-  indentGuideLine: {
-    width: 1,
-    flex: 1,
   },
   rowDragging: {
     opacity: 0.4,

@@ -209,7 +209,20 @@ declare global {
   // Schéma global de propriétés typées (voir PropertiesPanel.tsx) — ne
   // porte que la DÉFINITION (nom + type) ; les valeurs vivent dans le
   // frontmatter YAML de chaque note (voir lib/frontmatter.ts).
-  type PropertyType = 'text' | 'list' | 'number' | 'checkbox' | 'date' | 'datetime' | 'path' | 'options';
+  type PropertyType =
+    | 'text'
+    | 'list'
+    | 'number'
+    | 'checkbox'
+    | 'date'
+    | 'datetime'
+    | 'path'
+    | 'options'
+    // v0.4.50 : 'multi-options' = comme 'options' mais PLUSIEURS choix
+    // possibles (valeur = tableau) ; 'bubbles' = liste de valeurs rendue en
+    // bulles ajoutables/supprimables (tags, aliases…).
+    | 'multi-options'
+    | 'bubbles';
 
   interface PropertyDefinition {
     id: string;
@@ -490,6 +503,12 @@ declare global {
   // `defaultOpenSpecificPath` ci-dessous.
   type DefaultOpenMode = 'lastOpened' | 'newNote' | 'specific';
 
+  // État d'ouverture des dossiers de l'explorateur au chargement d'un coffre
+  // (Paramètres → Gestion des fichiers et des liens) : 'last' restaure les
+  // replis persistés (.123ecriture/state.json — comportement historique),
+  // 'all' déplie toute l'arborescence, 'none' la démarre entièrement repliée.
+  type ExplorerExpandMode = 'last' | 'all' | 'none';
+
   interface Preferences {
     themeMode: ThemeMode;
     accentColor: string;
@@ -503,6 +522,10 @@ declare global {
     newNoteLocation: NewNoteLocation;
     newNoteCustomFolder: string;
     fileSortMode: FileSortMode;
+    // Ouverture des dossiers de l'explorateur au chargement du coffre —
+    // voir ExplorerExpandMode ci-dessus et NotesScreen.tsx pour l'application
+    // (au chargement ET à chaud quand le réglage change).
+    explorerExpandMode: ExplorerExpandMode;
     // Écran Tâches : tri par échéance et masquage des terminées — mémorisés
     // d'une session à l'autre (ce sont des préférences de lecture stables,
     // comme fileSortMode pour les fichiers, pas des besoins d'une session).
