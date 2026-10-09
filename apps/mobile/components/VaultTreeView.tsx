@@ -260,7 +260,7 @@ function VaultTreeViewImpl({
                   <View style={[styles.insertionLineBar, { backgroundColor: theme.accent }]} />
                 </View>
               )}
-              <View style={[styles.topContainer, { borderColor: theme.border, backgroundColor: `${theme.accent}0D` }]}>
+              <View style={[styles.topContainer, { borderColor: theme.border, backgroundColor: `${theme.accent}1A` }]}>
                 {row}
                 {isFolder && !isCollapsed && (
                   <VaultTreeViewImpl
