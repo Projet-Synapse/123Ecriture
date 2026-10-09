@@ -141,6 +141,155 @@ function VaultTreeViewImpl({
         const isFolderActive = isFolder && node.relPath === activeFolderRelPath;
         const isActiveNote = !isFolder && node.relPath === activeRelPath;
 
+        // Ligne elle-même — commune aux deux habillages (conteneur ou plat).
+        const row = (
+          <DraggablePressable
+            onLongPress={onNodeLongPress ? () => onNodeLongPress(node) : undefined}
+            onPress={(event) => {
+              // `nativeEvent` est ici la vraie MouseEvent du clic (voir le
+              // commentaire de la prop `onOpenNote` ci-dessous).
+              const native = event.nativeEvent as unknown as {
+                ctrlKey?: boolean;
+                metaKey?: boolean;
+                shiftKey?: boolean;
+              };
+              if (isFolder) {
+                // v0.4.36 : le clic sur un dossier ouvre l'APERÇU de son
+                // contenu (Make.md) — le repli/dépli passe par le CHEVRON.
+                onOpenFolder(node);
+                return;
+              }
+              onOpenNote(node, {
+                ctrlKey: native.ctrlKey === true,
+                metaKey: native.metaKey === true,
+                shiftKey: native.shiftKey === true,
+              });
+            }}
+            dataSet={{ relpath: node.relPath }}
+            style={[
+              styles.row,
+              isActiveNote && { backgroundColor: `${theme.accent}22` },
+              isFolderActive && { backgroundColor: `${theme.accent}22` },
+              !isRenaming && dragEnabled && styles.rowDraggable,
+              isDragging && styles.rowDragging,
+              isDropInsideTarget && { backgroundColor: `${theme.accent}33`, borderRadius: 6 },
+              isSelected && { backgroundColor: `${theme.accent}33` },
+            ]}
+          >
+            {/* RAILS VERTICAUX (v0.4.51, restaurés de la v0.4.36) — un par
+                ancêtre : chaque trait fait TOUTE la hauteur de la ligne
+                (alignSelf:'stretch'), empilés ils forment une ligne continue
+                — la hiérarchie se lit aux traits, pas aux séparations.
+                Hauteur de ligne FIXE (v0.4.37) : sans elle, les rails
+                seraient hachurés. */}
+            {Array.from({ length: depth }).map((_, i) => (
+              <View key={i} style={styles.indentGuideCell}>
+                <View style={[styles.indentGuideLine, { backgroundColor: theme.border, opacity: 0.55 }]} />
+              </View>
+            ))}
+
+            {isFolder ? (
+              // Chevron de repli/dépli — CIBLE EXCLUSIVE du repli (le
+              // corps du dossier ouvre l'aperçu).
+              <Pressable
+                onPress={() => onToggleCollapse(node.relPath)}
+                hitSlop={6}
+                style={styles.chevronBox}
+              >
+                <ChevronIcon size={11} color={theme.textMuted} expanded={!isCollapsed} />
+              </Pressable>
+            ) : (
+              <View style={styles.chevronBox} />
+            )}
+
+            {/* Icône VECTORIELLE : dossier ouvert/fermé selon le repli,
+                sinon le type du fichier (couleur par kind). */}
+            {isFolder ? (
+              isCollapsed ? (
+                <FolderClosedIcon size={16} />
+              ) : (
+                <FolderOpenIcon size={16} />
+              )
+            ) : (
+              <NoteIconByKind kind={node.kind} size={15} />
+            )}
+
+            {isRenaming ? (
+              // Champ MIROIR de l'édition de titre : SANS autoFocus ni
+              // onBlur-auto-submit — le titre inline (ou l'endroit d'où
+              // vient le renommage) garde le focus. Deux champs autoFocus
+              // montés ensemble se volaient le focus en boucle : chaque
+              // blur déclenchait onSubmit → le champ se refermait
+              // aussitôt (mobile ET desktop, vécu 2026-10-02) et
+              // l'ancien code ajoutait un « 2 » au nom à chaque blur.
+              <TextInput
+                value={rename.value}
+                onChangeText={rename.onChangeValue}
+                onSubmitEditing={rename.onSubmit}
+                onKeyPress={(event) => {
+                  if (event.nativeEvent.key === 'Escape') rename.onCancel();
+                }}
+                style={[styles.renameInput, { color: theme.text, borderColor: theme.accent }]}
+              />
+            ) : (
+              <Text style={{ color: theme.text }} numberOfLines={1}>
+                {node.name}
+                {/* EXTENSION du fichier (v0.4.36) : .mdx, .canvas… —
+                    affichée à la fin du nom, plus discrete. */}
+                {!isFolder && (
+                  <Text style={{ color: theme.textMuted, fontSize: 11 }}>{extensionOf(node)}</Text>
+                )}
+              </Text>
+            )}
+          </DraggablePressable>
+        );
+
+        // v0.4.52 (capture Obsidian à l'appui) : DOSSIER DE PREMIER NIVEAU =
+        // CONTENEUR. L'en-tête ET tout son sous-arbre déplié vivent dans UN
+        // bloc bordé arrondi au fond teinté — l'effet « bouton rétractable »
+        // s'étend à ce que le dossier CONTIENT. Replié, le conteneur ne
+        // montre que l'en-tête et prend l'allure d'une pilule. Les dossiers
+        // IMBRIQUÉS ne créent jamais de sous-conteneur : leurs lignes
+        // vivent sur le fond du bloc parent, sous les rails. Les états
+        // actif/sélection/drop restent prioritaires sur le fond du bloc.
+        if (depth === 0 && isFolder) {
+          return (
+            <Fragment key={node.relPath}>
+              {insertionEdge === 'above' && (
+                <View style={styles.insertionLine}>
+                  <View style={[styles.insertionLineBar, { backgroundColor: theme.accent }]} />
+                </View>
+              )}
+              <View style={[styles.topContainer, { borderColor: theme.border, backgroundColor: `${theme.accent}0D` }]}>
+                {row}
+                {isFolder && !isCollapsed && (
+                  <VaultTreeViewImpl
+                    nodes={node.children}
+                    depth={depth + 1}
+                    theme={theme}
+                    activeRelPath={activeRelPath}
+                    activeFolderRelPath={activeFolderRelPath}
+                    collapsedPaths={collapsedPaths}
+                    onToggleCollapse={onToggleCollapse}
+                    onOpenFolder={onOpenFolder}
+                    onOpenNote={onOpenNote}
+                    rename={rename}
+                    selectedRelPaths={selectedRelPaths}
+                    draggingRelPath={draggingRelPath}
+                    dragOverInsertion={dragOverInsertion}
+                    dragEnabled={dragEnabled}
+                  />
+                )}
+              </View>
+              {insertionEdge === 'below' && (
+                <View style={styles.insertionLine}>
+                  <View style={[styles.insertionLineBar, { backgroundColor: theme.accent }]} />
+                </View>
+              )}
+            </Fragment>
+          );
+        }
+
         return (
           <Fragment key={node.relPath}>
             {insertionEdge === 'above' && (
@@ -148,114 +297,7 @@ function VaultTreeViewImpl({
                 <View style={[styles.insertionLineBar, { backgroundColor: theme.accent }]} />
               </View>
             )}
-            <DraggablePressable
-              onLongPress={onNodeLongPress ? () => onNodeLongPress(node) : undefined}
-              onPress={(event) => {
-                // `nativeEvent` est ici la vraie MouseEvent du clic (voir le
-                // commentaire de la prop `onOpenNote` ci-dessous).
-                const native = event.nativeEvent as unknown as {
-                  ctrlKey?: boolean;
-                  metaKey?: boolean;
-                  shiftKey?: boolean;
-                };
-                if (isFolder) {
-                  // v0.4.36 : le clic sur un dossier ouvre l'APERÇU de son
-                  // contenu (Make.md) — le repli/dépli passe par le CHEVRON.
-                  onOpenFolder(node);
-                  return;
-                }
-                onOpenNote(node, {
-                  ctrlKey: native.ctrlKey === true,
-                  metaKey: native.metaKey === true,
-                  shiftKey: native.shiftKey === true,
-                });
-              }}
-              dataSet={{ relpath: node.relPath }}
-              style={[
-                styles.row,
-                // Conteneur visuel (v0.4.51, capture Obsidian à l'appui) :
-                // l'effet « bouton rétractable » bordé est réservé aux
-                // DOSSIERS DE PREMIER NIVEAU. Tout ce qui est imbriqué est
-                // une ligne continue (aucune séparation verticale) sous des
-                // RAILS d'arborescence (rendus ci-dessous, restaurés de la
-                // v0.4.36). Les états actif/sélection/drop restent prioritaires.
-                depth === 0 && isFolder
-                  ? [styles.folderRow, { borderColor: theme.border, backgroundColor: `${theme.accent}14` }]
-                  : null,
-                isActiveNote && { backgroundColor: `${theme.accent}22` },
-                isFolderActive && { backgroundColor: `${theme.accent}22` },
-                !isRenaming && dragEnabled && styles.rowDraggable,
-                isDragging && styles.rowDragging,
-                isDropInsideTarget && { backgroundColor: `${theme.accent}33`, borderRadius: 6 },
-                isSelected && { backgroundColor: `${theme.accent}33` },
-              ]}
-            >
-              {/* RAILS VERTICAUX (v0.4.51, restaurés de la v0.4.36) — un par
-                  ancêtre, uniquement pour les niveaux IMBRIQUÉS : chaque trait
-                  fait TOUTE la hauteur de la ligne (alignSelf:'stretch'),
-                  empilés ils forment une ligne continue — la hiérarchie se
-                  lit aux traits, pas aux séparations. Hauteur de ligne FIXE
-                  (v0.4.37) : sans elle, les rails seraient hachurés. */}
-              {Array.from({ length: depth }).map((_, i) => (
-                <View key={i} style={styles.indentGuideCell}>
-                  <View style={[styles.indentGuideLine, { backgroundColor: theme.border, opacity: 0.55 }]} />
-                </View>
-              ))}
-
-              {isFolder ? (
-                // Chevron de repli/dépli — CIBLE EXCLUSIVE du repli (le
-                // corps du dossier ouvre l'aperçu).
-                <Pressable
-                  onPress={() => onToggleCollapse(node.relPath)}
-                  hitSlop={6}
-                  style={styles.chevronBox}
-                >
-                  <ChevronIcon size={11} color={theme.textMuted} expanded={!isCollapsed} />
-                </Pressable>
-              ) : (
-                <View style={styles.chevronBox} />
-              )}
-
-              {/* Icône VECTORIELLE : dossier ouvert/fermé selon le repli,
-                  sinon le type du fichier (couleur par kind). */}
-              {isFolder ? (
-                isCollapsed ? (
-                  <FolderClosedIcon size={16} />
-                ) : (
-                  <FolderOpenIcon size={16} />
-                )
-              ) : (
-                <NoteIconByKind kind={node.kind} size={15} />
-              )}
-
-              {isRenaming ? (
-                // Champ MIROIR de l'édition de titre : SANS autoFocus ni
-                // onBlur-auto-submit — le titre inline (ou l'endroit d'où
-                // vient le renommage) garde le focus. Deux champs autoFocus
-                // montés ensemble se volaient le focus en boucle : chaque
-                // blur déclenchait onSubmit → le champ se refermait
-                // aussitôt (mobile ET desktop, vécu 2026-10-02) et
-                // l'ancien code ajoutait un « 2 » au nom à chaque blur.
-                <TextInput
-                  value={rename.value}
-                  onChangeText={rename.onChangeValue}
-                  onSubmitEditing={rename.onSubmit}
-                  onKeyPress={(event) => {
-                    if (event.nativeEvent.key === 'Escape') rename.onCancel();
-                  }}
-                  style={[styles.renameInput, { color: theme.text, borderColor: theme.accent }]}
-                />
-              ) : (
-                <Text style={{ color: theme.text }} numberOfLines={1}>
-                  {node.name}
-                  {/* EXTENSION du fichier (v0.4.36) : .mdx, .canvas… —
-                      affichée à la fin du nom, plus discrete. */}
-                  {!isFolder && (
-                    <Text style={{ color: theme.textMuted, fontSize: 11 }}>{extensionOf(node)}</Text>
-                  )}
-                </Text>
-              )}
-            </DraggablePressable>
+            {row}
             {insertionEdge === 'below' && (
               <View style={[styles.insertionLine, { paddingLeft: 12 + depth * 16 }]}>
                 <View style={[styles.insertionLineBar, { backgroundColor: theme.accent }]} />
@@ -325,12 +367,17 @@ const styles = StyleSheet.create({
     paddingLeft: 4,
     paddingRight: 12,
   },
-  // Conteneur DOSSIER DE PREMIER NIVEAU uniquement (v0.4.51) : bordure +
-  // fond teinté accent (couleurs passées au rendu pour suivre le thème).
-  // Les dossiers imbriqués et les notes sont des lignes nues sous rails.
-  folderRow: {
+  // Conteneur DOSSIER DE PREMIER NIVEAU (v0.4.52) : bordure arrondie qui
+  // englobe l'en-tête ET tout le sous-arbre déplié (fond teinté accent
+  // passé au rendu). Replié = pilule (le conteneur ne montre que
+  // l'en-tête). `overflow hidden` : les lignes enfants sont coupées
+  // proprement aux coins arrondis.
+  topContainer: {
     borderWidth: 1,
-    borderRadius: 9,
+    borderRadius: 10,
+    marginHorizontal: 3,
+    marginBottom: 4,
+    overflow: 'hidden',
   },
   // Boîte du chevron — largeur fixe pour aligner icônes et noms des
   // dossiers ET des notes sur la même colonne.
