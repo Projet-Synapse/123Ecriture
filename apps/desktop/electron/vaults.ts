@@ -183,7 +183,29 @@ export function createVault(parentDir: string, name: string, vaultName?: string)
   return vault;
 }
 
+// Verrou ANTI-BASCULE (v0.4.54 — cause racine du mélange de coffres) :
+// pendant un cycle de synchro, le bucket distant est figé au démarrage mais
+// chaque opération locale relit le coffre ACTIF — une bascule en cours de
+// cycle empairait donc les fichiers locaux du nouveau coffre avec le bucket
+// de l'ancien. TTL 10 min : un renderer qui planterait en plein cycle
+// (verrou jamais relâché) ne bloque pas l'app pour toujours.
+let syncLockUntil = 0;
+const SYNC_LOCK_TTL_MS = 10 * 60 * 1000;
+
+export function setSyncLock(active: boolean): void {
+  syncLockUntil = active ? Date.now() + SYNC_LOCK_TTL_MS : 0;
+}
+
+export function isSyncLocked(): boolean {
+  return Date.now() < syncLockUntil;
+}
+
 export function switchVault(id: string): VaultRegistryEntry[] {
+  if (isSyncLocked()) {
+    throw new Error(
+      'Impossible de changer de coffre pendant une synchronisation — réessaie dans un instant (quelques secondes).',
+    );
+  }
   const config = migrateLegacyConfig();
   const vaultList = config.vaults ?? [];
   findVaultOrThrow(vaultList, id);
