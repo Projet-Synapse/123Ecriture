@@ -95,7 +95,13 @@ async function walkAndHash(dir: string, vaultRoot: string, out: HashedNote[]): P
     if (entry.isFile() && (isAppearanceFile || EXTENSION_TO_KIND[path.extname(entry.name)])) {
       try {
         const stat = await fs.stat(fullPath);
-        const relPath = path.relative(vaultRoot, fullPath);
+        // v0.4.54 — normalisation POSIX OBLIGATOIRE : sur Windows,
+        // path.relative produit des `\`, et un relPath backslashed créait
+        // des DOUBLES entrées dans le cloud (jamais matchées par les lignes
+        // à slashes) — cassant les tombestones : toute suppression locale
+        // était annoncée mais jamais envoyée, et le fichier ressuscitait au
+        // cycle suivant (vécu : 1577 doublons + résurrections en boucle).
+        const relPath = path.relative(vaultRoot, fullPath).split(path.sep).join('/');
         const cached = hashCache.get(relPath);
         if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
           nextCache.set(relPath, cached);
@@ -157,6 +163,12 @@ function stopActiveWatcher(): void {
 
 export function registerSyncHandlers(getWindow?: () => BrowserWindow | null): void {
   watcherGetWindow = getWindow ?? null;
+  // Verrou anti-bascule (v0.4.54) : posé par le renderer au début de CHAQUE
+  // cycle (et retiré à la fin) — pendant le cycle, vaults:switch est refusé.
+  ipcMain.handle('sync:set-vault-lock', (_event, active: unknown) => {
+    vaults.setSyncLock(Boolean(active));
+    return vaults.isSyncLocked();
+  });
   ipcMain.handle('sync:hash-vault', async () => {
     const vaultPath = vaults.getActiveVaultPath();
     if (!vaultPath) return [];

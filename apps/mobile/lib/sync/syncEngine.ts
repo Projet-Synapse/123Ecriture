@@ -60,7 +60,15 @@ async function loadSyncState(): Promise<SyncState> {
   try {
     const raw = await vault.readNote(SYNC_STATE_REL_PATH);
     const parsed = JSON.parse(raw) as Partial<SyncState>;
-    return { files: parsed.files ?? {} };
+    // v0.4.54 : jette les clés backslashed (résidus du bug de séparateurs
+    // desktop — elles ne matcheront plus jamais les chemins normalisés et
+    // ne doivent plus générer de tombestones fantômes).
+    const files: Record<string, string> = {};
+    for (const [relPath, hash] of Object.entries(parsed.files ?? {})) {
+      if (relPath.includes('\\')) continue;
+      files[relPath] = hash;
+    }
+    return { files };
   } catch {
     // Absent à la première synchro du coffre — repart à vide.
     return { files: {} };
@@ -382,6 +390,9 @@ async function fetchRemoteFiles(remoteVaultId: string): Promise<RemoteVaultFile[
     // racine (Android refuse les `\` dans les noms) et aucun chemin ne
     // correspondait entre le hash local et les lignes distantes.
     relPath: (row.rel_path as string).replace(/\\/g, '/'),
+    // v0.4.54 : forme BRUTE conservée pour la purge des jumeaux backslashed
+    // (la mise à jour doit viser la clé exacte en base, pas la normalisée).
+    rawRelPath: row.rel_path as string,
     contentHash: row.content_hash as string,
     sizeBytes: row.size_bytes as number,
     updatedAt: row.updated_at as string,
@@ -443,10 +454,14 @@ async function downloadRemoteText(remoteVaultId: string, relPath: string, object
 
 async function pushFile(remoteVaultId: string, ownerId: string, note: LocalHashedNote): Promise<void> {
   const { supabase: client, vault } = requireBridges();
-  const content = await vault.readNote(note.relPath);
+  // v0.4.54 : défense en profondeur — quel que soit le pont, le chemin
+  // poussé au cloud est TOUJOURS en slashes POSIX (un backslashed créait
+  // un doublon cloud jamais matché, cassant tombestones et pulls).
+  const relPath = note.relPath.split('\\').join('/');
+  const content = await vault.readNote(relPath);
   const { error: uploadError } = await client.storage
     .from(VAULT_FILES_BUCKET)
-    .upload(storageObjectPath(remoteVaultId, note.relPath), content, {
+    .upload(storageObjectPath(remoteVaultId, relPath), content, {
       upsert: true,
       contentType: 'text/plain;charset=UTF-8',
     });
@@ -459,10 +474,10 @@ async function pushFile(remoteVaultId: string, ownerId: string, note: LocalHashe
       {
         vault_id: remoteVaultId,
         owner_id: ownerId,
-        rel_path: note.relPath,
+        rel_path: relPath,
         content_hash: note.contentHash,
         size_bytes: note.sizeBytes,
-        storage_object_path: storageObjectPath(remoteVaultId, note.relPath),
+        storage_object_path: storageObjectPath(remoteVaultId, relPath),
         updated_at: new Date(note.modifiedAt).toISOString(),
         deleted: false,
       },
@@ -474,7 +489,7 @@ async function pushFile(remoteVaultId: string, ownerId: string, note: LocalHashe
   // côtés servira de référentiel au prochain conflit (fusion à trois voix
   // diff-match-patch). Best-effort : une base manquante fait retomber le
   // conflit sur le comportement gagnant/perdant archivé.
-  await saveSyncBase(note.relPath, content);
+  await saveSyncBase(relPath, content);
 }
 
 async function pullFile(remoteVaultId: string, relPath: string, objectPath?: string): Promise<void> {
@@ -685,6 +700,16 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   }
   const remoteVaultId = activeEntry.remoteVaultId;
 
+  // Verrou ANTI-BASCULE (v0.4.54 — cause racine du mélange de coffres) :
+  // le bucket distant est capturé ICI, mais chaque opération locale
+  // (hachage, lecture, écriture, suppression) relit le coffre ACTIF au
+  // moment de son IPC. Si le coffre actif change pendant le cycle, le
+  // contenu de A partait dans le bucket de B et le cloud de A s'écrivait
+  // sur le disque de B — c'est exactement le mélange vécu. Pendant le
+  // cycle, `vaults:switch` est donc REFUSÉ par le main process (TTL de
+  // 10 min : un crash du renderer ne bloque pas l'app pour toujours).
+  await bridges.sync.setVaultLock?.(true);
+
   // Le journal PROGRESSIF (demande utilisateur : raconter comme Obsidian
   // Sync — « connexion au serveur », « upload en cours », « upload terminé »)
   // : la connexion s'écrit immédiatement, les étapes au fil de l'eau. SI le
@@ -695,11 +720,18 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   const journalStartLength = await journalLength();
   await appendJournalEntries(journal);
 
-  const [localFiles, remoteFiles, syncState] = await Promise.all([
-    bridges.sync.hashVaultTree(),
+  const [remoteFiles, syncState] = await Promise.all([
     fetchRemoteFiles(remoteVaultId),
     loadSyncState(),
   ]);
+  // v0.4.54 : défense en profondeur — les relPaths locaux sont ramenés en
+  // slashes POSIX quel que soit le pont (le scan desktop produisait des `\`
+  // sur Windows : 1577 doublons cloud, tombestones jamais envoyées,
+  // résurrections en boucle — voir le fix à la source dans sync.ts).
+  const localFiles = (await bridges.sync.hashVaultTree()).map((note) => ({
+    ...note,
+    relPath: note.relPath.split('\\').join('/'),
+  }));
   const localByPath = new Map(localFiles.map((note) => [note.relPath, note]));
   const localPaths = new Set(localFiles.map((note) => note.relPath));
 
@@ -711,12 +743,38 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   // (upsert deleted:false), le ressuscitant à jamais.
   const activeRemoteFiles = remoteFiles.filter((file) => !file.deleted);
   const remoteByPath = new Map(activeRemoteFiles.map((file) => [file.relPath, file]));
-
-  // 1) Supprimés LOCALEMENT depuis le dernier cycle -> tombestones distantes.
-  const locallyDeleted = computeLocalDeletions(syncState.files, localPaths);
   const tombstonedPaths = new Set(
     remoteFiles.filter((file) => file.deleted).map((file) => file.relPath),
   );
+
+  // 1bis) PURGE DES JUMEAUX BACKSLASHED (v0.4.54) : Windows ne peut pas
+  // créer de fichier dont le nom contient `\` — toute ligne distante ACTIVE
+  // avec `\` dans son rel_path est donc un résidu du bug de séparateurs
+  // (avant normalisation) : elle est tombestonnée à jamais, quel que soit
+  // son contenu. Sans cette purge, ces lignes restaient actives dans le
+  // cloud et le diff les re-téléchargeait — la résurrection en boucle vécue
+  // sur les coffres contaminés.
+  for (const file of activeRemoteFiles) {
+    if (!file.rawRelPath?.includes('\\')) continue;
+    try {
+      const { error } = await bridges.supabase
+        .schema(APP_SCHEMA)
+        .from(VAULT_FILES_TABLE)
+        .update({ deleted: true, updated_at: new Date().toISOString() })
+        .eq('vault_id', remoteVaultId)
+        .eq('rel_path', file.rawRelPath);
+      if (error) throw error;
+      tombstonedPaths.add(file.relPath);
+      summary.deleted += 1;
+      journal.push(makeJournalEntry('delete', { path: file.relPath, detail: 'jumeau backslashed purgé' }));
+    } catch (error) {
+      console.error('[sync] échec de la purge backslashed :', error);
+      journal.push(makeJournalEntry('error', { path: file.relPath, detail: `purge backslashed : ${errorMessage(error)}` }));
+    }
+  }
+
+  // 1) Supprimés LOCALEMENT depuis le dernier cycle -> tombestones distantes.
+  const locallyDeleted = computeLocalDeletions(syncState.files, localPaths);
   for (const relPath of locallyDeleted) {
     try {
       if (remoteByPath.has(relPath)) {
@@ -910,5 +968,6 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
     await truncateJournalEntries(journalStartLength);
   }
 
+  await bridges.sync.setVaultLock?.(false);
   return summary;
 }

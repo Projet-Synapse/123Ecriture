@@ -23,6 +23,9 @@ export type RemoteVaultFile = {
   // rejetés par Storage, voir storageKeys.ts). Optionnel : les lignes
   // anciennes peuvent l'omettre, le moteur recalcule alors.
   storageObjectPath?: string;
+  // v0.4.54 : rel_path BRUT tel qu'en base (peut contenir des `\` — résidus
+  // du bug de séparateurs desktop à purger). `relPath`, lui, est normalisé.
+  rawRelPath?: string;
 };
 
 export type SyncDecisionKind = 'push' | 'pull' | 'noop' | 'conflict-push-wins' | 'conflict-pull-wins';

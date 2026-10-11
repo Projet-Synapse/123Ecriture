@@ -643,12 +643,18 @@ export const nativeVaultAdapter: VaultBridge = {
   },
 
   readNote: async (relPath) => {
+    // Garde anti-mélange (v0.4.54) : si le coffre actif a changé depuis le
+    // dernier index, on l'invalide AVANT de résoudre — sinon les relPath
+    // continuaient de pointer vers l'ANCIEN coffre jusqu'au prochain
+    // listTree (code mort récemment branché).
+    invalidateIndexIfRootChanged(await getActiveVaultRootUri().catch(() => null));
     const { uri, isDirectory } = resolveIndexed(relPath);
     if (isDirectory) throw new Error(`« ${relPath} » est un dossier, pas une note.`);
     return readSafFileText(uri);
   },
 
   writeNote: async (relPath, content) => {
+    invalidateIndexIfRootChanged(await getActiveVaultRootUri().catch(() => null));
     const cached = pathIndex.get(relPath);
     if (cached) {
       if (cached.isDirectory) throw new Error(`« ${relPath} » est un dossier, pas une note.`);

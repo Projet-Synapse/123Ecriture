@@ -172,6 +172,11 @@ declare global {
 
   interface SyncBridge {
     hashVaultTree: () => Promise<HashedNote[]>;
+    // Verrou anti-bascule (v0.4.54) : posé par le moteur au début de chaque
+    // cycle, retiré à la fin — pendant le cycle, changer de coffre actif
+    // est refusé (desktop ; les autres plateformes l'omettent et
+    // dégradent).
+    setVaultLock?: (active: boolean) => Promise<boolean>;
     // Synchro continue (v0.4.20, desktop) : surveillance du coffre actif et
     // notification de chaque modification de contenu — optionnels, les
     // autres plateformes dégradent vers le cycle minute.
