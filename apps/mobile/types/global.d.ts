@@ -462,6 +462,9 @@ declare global {
     getAutoUpdate: () => Promise<boolean>;
     setAutoUpdate: (enabled: boolean) => Promise<boolean>;
     download: () => Promise<{ ok: boolean; error?: string }>;
+    // Bouton de secours (v0.4.55) : ouvre la page des releases dans le
+    // navigateur quand le flux automatique échoue.
+    openReleasesPage?: () => Promise<boolean>;
     onStatusChange: (callback: (status: UpdaterStatus) => void) => () => void;
   }
 

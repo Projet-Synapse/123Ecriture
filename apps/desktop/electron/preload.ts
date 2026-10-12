@@ -74,6 +74,9 @@ contextBridge.exposeInMainWorld('updater', {
   getAutoUpdate: () => ipcRenderer.invoke('updater:get-auto'),
   setAutoUpdate: (enabled: boolean) => ipcRenderer.invoke('updater:set-auto', enabled),
   download: () => ipcRenderer.invoke('updater:download'),
+  // Bouton de secours (v0.4.55) : ouvre la page des releases dans le
+  // navigateur quand le flux automatique échoue (réseau instable).
+  openReleasesPage: () => ipcRenderer.invoke('updater:open-releases-page'),
   onStatusChange: (callback: (status: unknown) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, status: unknown) => callback(status);
     ipcRenderer.on('updater:status', handler);

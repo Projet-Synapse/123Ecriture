@@ -1,10 +1,12 @@
-import { app, ipcMain, type BrowserWindow } from 'electron';
+import { app, ipcMain, shell, type BrowserWindow } from 'electron';
 import { autoUpdater } from 'electron-updater';
 
 import { readConfig, writeConfig } from './config';
 import type { UpdaterStatus } from './types';
 
 type GetWindow = () => BrowserWindow | null;
+
+const RELEASES_PAGE_URL = 'https://github.com/Projet-Synapse/123Ecriture/releases/latest';
 
 // Traqueur de mise à jour piloté depuis l'UI (écran Paramètres), plutôt que
 // la notification OS silencieuse utilisée jusque-là. L'option « mise à jour
@@ -49,6 +51,28 @@ let currentStatus: UpdaterStatus = { state: 'idle' };
 // marchent dessus.
 let checkInProgress = false;
 
+// v0.4.55 — erreurs réseau TRADUITES : la connexion de l'utilisatrice coupe
+// les gros transferts vers GitHub (SSL/reset vécus), et l'UI affichait le
+// code brut de Chromium, incompréhensible. On reconnaît les motifs connus
+// et on renvoie un message actionnable ; le détail technique reste en
+// seconde ligne pour le débogage.
+function translateUpdaterError(raw: string): string {
+  const detail = raw.replace(/^Error: /, '');
+  if (/ERR_SSL_PROTOCOL_ERROR|ERR_CONNECTION_RESET|ERR_NETWORK_CHANGED|ERR_CONNECTION_ABORTED/i.test(detail)) {
+    return `Connexion instable vers GitHub (transfert coupé). Réessaie dans un instant — ou télécharge l'installeur manuellement via le bouton ci-dessous. (${detail})`;
+  }
+  if (/ERR_INTERNET_DISCONNECTED|ENOTFOUND|EAI_AGAIN/i.test(detail)) {
+    return `Pas d'accès à Internet (ou DNS indisponible). Vérifie la connexion puis réessaie. (${detail})`;
+  }
+  if (/ERR_TIMED_OUT|ETIMEDOUT/i.test(detail)) {
+    return `Délai dépassé — le réseau répond trop lentement. Réessaie plus tard. (${detail})`;
+  }
+  if (/404|release.*not found|ENOTFOUND.*api\.github/i.test(detail)) {
+    return 'Aucune release publiée pour l’instant.';
+  }
+  return raw;
+}
+
 function broadcastStatus(getWindow: GetWindow, status: UpdaterStatus): void {
   currentStatus = status;
   const win = getWindow();
@@ -67,11 +91,20 @@ async function performCheck(getWindow: GetWindow): Promise<void> {
     // l'UI. (Le listener 'error' ci-dessous couvre déjà la plupart des
     // échecs, mais checkForUpdates() peut aussi rejeter directement selon
     // la nature de l'erreur.)
-    broadcastStatus(getWindow, { state: 'error', message: String(error) });
+    broadcastStatus(getWindow, { state: 'error', message: translateUpdaterError(String(error)) });
   } finally {
     checkInProgress = false;
   }
 }
+
+// v0.4.55 — relances AUTOMATIQUES de la vérification au démarrage : le
+// réseau de l'utilisatrice coupe les connexions vers GitHub de façon
+// passagère, la première vérification échouait donc souvent alors qu'un
+// nouvel essai trente secondes plus tard réussit. Deux relances maximum
+// (30 s puis 90 s), uniquement pour la vérification de démarrage — les
+// vérifications manuelles (« Réessayer ») restent immédiates.
+const STARTUP_RETRIES_MS = [30_000, 90_000];
+const startupRetryTimers: NodeJS.Timeout[] = [];
 
 export function registerUpdaterHandlers(getWindow: GetWindow): void {
   autoUpdater.on('checking-for-update', () => {
@@ -97,7 +130,7 @@ export function registerUpdaterHandlers(getWindow: GetWindow): void {
     broadcastStatus(getWindow, { state: 'ready', version: info.version });
   });
   autoUpdater.on('error', (error) => {
-    broadcastStatus(getWindow, { state: 'error', message: String(error) });
+    broadcastStatus(getWindow, { state: 'error', message: translateUpdaterError(String(error)) });
   });
 
   ipcMain.handle('updater:get-version', () => app.getVersion());
@@ -110,6 +143,13 @@ export function registerUpdaterHandlers(getWindow: GetWindow): void {
     applyAutoFlags();
     return autoUpdateEnabled;
   });
+  // Bouton de secours (v0.4.55) : quand le flux automatique échoue, ouvrir
+  // la page des releases dans le navigateur — l'installeur s'y télécharge
+  // manuellement, sans dépendre de la pile réseau d'Electron.
+  ipcMain.handle('updater:open-releases-page', async () => {
+    await shell.openExternal(RELEASES_PAGE_URL);
+    return true;
+  });
 
   // Mode manuel uniquement (en auto, electron-updater télécharge tout seul).
   ipcMain.handle('updater:download', async () => {
@@ -117,7 +157,7 @@ export function registerUpdaterHandlers(getWindow: GetWindow): void {
       await autoUpdater.downloadUpdate();
       return { ok: true };
     } catch (error) {
-      broadcastStatus(getWindow, { state: 'error', message: String(error) });
+      broadcastStatus(getWindow, { state: 'error', message: translateUpdaterError(String(error)) });
       return { ok: false, error: String(error) };
     }
   });
@@ -138,4 +178,13 @@ export function registerUpdaterHandlers(getWindow: GetWindow): void {
 
 export function checkOnStartup(getWindow: GetWindow): void {
   void performCheck(getWindow);
+  for (const delayMs of STARTUP_RETRIES_MS) {
+    const timer = setTimeout(() => {
+      // On ne relance QUE si le dernier état est une erreur (un succès, une
+      // version disponible ou un téléchargement en cours ne doivent pas
+      // être perturbés par une re-vérification).
+      if (currentStatus.state === 'error') void performCheck(getWindow);
+    }, delayMs);
+    startupRetryTimers.push(timer);
+  }
 }

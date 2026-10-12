@@ -6,21 +6,29 @@ import {
   NOTES_TOOLBAR_DESCRIPTIONS,
   NOTES_TOOLBAR_SHORTCUT_LABELS,
 } from '../../lib/notesToolbarActions';
-import { fetchLatestRelease, openReleasePage, type LatestRelease } from '../../lib/updaterAndroid';
+import {
+  fetchLatestRelease,
+  installedAppVersion,
+  isNewerVersion,
+  openUrl,
+  type LatestRelease,
+} from '../../lib/updaterAndroid';
 import { usePreferences } from '../../preferences/PreferencesContext';
 import { SettingsToggle } from './SettingsToggle';
 import { settingsStyles as s } from './settingsStyles';
 
 // Carte de mise à jour NATIVE (Android) — vérifie la dernière release
-// GitHub publiée et ouvre sa page de téléchargement (voir
-// lib/updaterAndroid.ts). Volontairement simple : pas de comparaison de
-// version embarquée (le numéro de version de l'APK est géré à la main) —
-// l'utilisatrice voit la dernière version publiée et décide.
+// GitHub publiée, la compare à la version INSTALLÉE (Platform.constants,
+// v0.4.55) et propose le lien direct de l'APK ou la page de téléchargement
+// (voir lib/updaterAndroid.ts). Volontairement simple : pas de
+// téléchargement in-app — le flux navigateur est le plus fiable.
 function MobileUpdateCard() {
   const { theme } = usePreferences();
   const [checking, setChecking] = useState(false);
   const [latest, setLatest] = useState<LatestRelease | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const installed = installedAppVersion();
+  const aJour = latest !== null && installed !== null && !isNewerVersion(latest.version, installed);
 
   const handleCheck = useCallback(async () => {
     setChecking(true);
@@ -37,24 +45,38 @@ function MobileUpdateCard() {
   return (
     <View style={[s.card, { backgroundColor: theme.surface, borderColor: theme.border }]}>
       <Text style={[s.cardTitle, { color: theme.text }]}>Mises à jour</Text>
+      {installed && <Text style={[s.cardValue, { color: theme.textMuted }]}>Version installée : {installed}</Text>}
       <Pressable onPress={() => void handleCheck()} style={[s.button, { backgroundColor: theme.accent }]} disabled={checking}>
         <Text style={s.buttonText}>{checking ? 'Vérification…' : 'Vérifier les mises à jour'}</Text>
       </Pressable>
       {error ? <Text style={{ color: theme.danger }}>⚠️ {error}</Text> : null}
       {latest ? (
         <>
-          <Text style={[s.cardValue, { color: theme.textMuted }]}>
-            Dernière version publiée : {latest.version}
-            {latest.publishedAt ? ` (${new Date(latest.publishedAt).toLocaleDateString('fr-FR')})` : ''}
-          </Text>
-          <Pressable
-            onPress={() => openReleasePage(latest.url)}
-            style={[s.button, { backgroundColor: theme.accent }]}
-          >
-            <Text style={s.buttonText}>Ouvrir la page de téléchargement</Text>
-          </Pressable>
+          {aJour ? (
+            <Text style={{ color: theme.textMuted }}>✅ À jour (dernière publiée : v{latest.version}).</Text>
+          ) : (
+            <>
+              <Text style={{ color: theme.text }}>⬆️ Nouvelle version disponible : v{latest.version}</Text>
+              {(() => {
+                const apkUrl = latest.apkUrl;
+                return apkUrl ? (
+                  <Pressable onPress={() => openUrl(apkUrl)} style={[s.button, { backgroundColor: theme.accent }]}>
+                    <Text style={s.buttonText}>Télécharger l’APK directement</Text>
+                  </Pressable>
+                ) : null;
+              })()}
+            </>
+          )}
+          {!aJour || !latest.apkUrl ? (
+            <Pressable
+              onPress={() => openUrl(latest.url)}
+              style={[s.button, { borderColor: theme.border }]}
+            >
+              <Text style={{ color: theme.text }}>Ouvrir la page de téléchargement</Text>
+            </Pressable>
+          ) : null}
           <Text style={{ color: theme.textMuted, fontSize: 12 }}>
-            {"Télécharge l'APK depuis la page, puis ouvre-le pour installer la mise à jour."}
+            {"Télécharge l'APK, puis ouvre-le (depuis les notifications) pour installer la mise à jour."}
           </Text>
         </>
       ) : null}
@@ -251,10 +273,21 @@ export function AboutSection() {
 
         {status.state === 'error' && (
           <>
+            {/* v0.4.55 : le message est traduit côté main (updater.ts) et un
+                bouton de secours ouvre la page des releases dans le
+                navigateur — plus jamais de code brut Chromium à l'écran. */}
             <Text style={{ color: theme.danger }}>⚠️ {status.message}</Text>
             <Pressable onPress={() => void handleCheckForUpdates()} style={[s.button, { backgroundColor: theme.accent }]}>
               <Text style={s.buttonText}>Réessayer</Text>
             </Pressable>
+            {updater.openReleasesPage && (
+              <Pressable
+                onPress={() => void updater.openReleasesPage?.()}
+                style={[s.button, { borderColor: theme.border }]}
+              >
+                <Text style={{ color: theme.text }}>Ouvrir la page des téléchargements</Text>
+              </Pressable>
+            )}
           </>
         )}
       </View>
