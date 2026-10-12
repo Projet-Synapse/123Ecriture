@@ -376,15 +376,38 @@ async function heartbeatDevice(remoteVaultId: string, ownerId: string): Promise<
   }
 }
 
+// v0.4.55 — PAGINATION OBLIGATOIRE : l'API REST de Supabase plafonne toute
+// réponse à 1000 lignes. Sur les gros coffres (EPANOUISSEMENT : 1600+ lignes
+// vault_files), la liste distante était TRANCHÉE — les fichiers au-delà du
+// plafond disparaissaient de `remoteByPath` à CHAQUE cycle, le diff les
+// croyait nouveaux et les repoussait in finitum (« bloquage » : 572 fichiers
+// re-poussés à chaque cycle, jamais convergés). On boucle par pages de 1000
+// (ordre stable par rel_path) jusqu'à une page incomplète, avec un signal
+// d'abandon pour ne jamais rester suspendu sur une connexion muette.
+const REMOTE_FILES_PAGE_SIZE = 1000;
+const REMOTE_FETCH_TIMEOUT_MS = 60_000;
+
 async function fetchRemoteFiles(remoteVaultId: string): Promise<RemoteVaultFile[]> {
   const { supabase: client } = requireBridges();
-  const { data, error } = await client
-    .schema(APP_SCHEMA)
-    .from(VAULT_FILES_TABLE)
-    .select('rel_path, content_hash, size_bytes, updated_at, deleted, storage_object_path')
-    .eq('vault_id', remoteVaultId);
-  if (error) throw error;
-  return (data ?? []).map((row) => ({
+  const rows: Record<string, unknown>[] = [];
+  let from = 0;
+  // Boucle bornée par sécurité (coffres XXL) : 200 pages × 1000 = 200k lignes.
+  for (let page = 0; page < 200; page += 1) {
+    const { data, error } = await client
+      .schema(APP_SCHEMA)
+      .from(VAULT_FILES_TABLE)
+      .select('rel_path, content_hash, size_bytes, updated_at, deleted, storage_object_path')
+      .eq('vault_id', remoteVaultId)
+      .order('rel_path', { ascending: true })
+      .range(from, from + REMOTE_FILES_PAGE_SIZE - 1)
+      .abortSignal(AbortSignal.timeout(REMOTE_FETCH_TIMEOUT_MS));
+    if (error) throw error;
+    const pageRows = data ?? [];
+    rows.push(...pageRows);
+    if (pageRows.length < REMOTE_FILES_PAGE_SIZE) break;
+    from += REMOTE_FILES_PAGE_SIZE;
+  }
+  return rows.map((row) => ({
     // Le desktop Windows pousse des relPaths à séparateurs `\` — normalisés
     // en `/` ici, sinon le pull aplatissait les sous-dossiers en fichiers à
     // racine (Android refuse les `\` dans les noms) et aucun chemin ne
@@ -754,22 +777,34 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   // son contenu. Sans cette purge, ces lignes restaient actives dans le
   // cloud et le diff les re-téléchargeait — la résurrection en boucle vécue
   // sur les coffres contaminés.
-  for (const file of activeRemoteFiles) {
-    if (!file.rawRelPath?.includes('\\')) continue;
+  // v0.4.55 : PAR LOTS (.in() par 100, délai d'attente 30 s) — la version
+  // par ligne (791 requêtes séquentielles) suspendait le cycle entier sur
+  // une connexion lente, en gardant l'UI sur « Synchronisation… ».
+  const backslashedRawPaths = activeRemoteFiles
+    .filter((file) => (file.rawRelPath ?? '').includes('\\'))
+    .map((file) => file.rawRelPath as string);
+  for (let i = 0; i < backslashedRawPaths.length; i += 100) {
+    const chunk = backslashedRawPaths.slice(i, i + 100);
     try {
       const { error } = await bridges.supabase
         .schema(APP_SCHEMA)
         .from(VAULT_FILES_TABLE)
         .update({ deleted: true, updated_at: new Date().toISOString() })
-        .eq('vault_id', remoteVaultId)
-        .eq('rel_path', file.rawRelPath);
+        .in('rel_path', chunk)
+        .abortSignal(AbortSignal.timeout(30_000));
       if (error) throw error;
-      tombstonedPaths.add(file.relPath);
-      summary.deleted += 1;
-      journal.push(makeJournalEntry('delete', { path: file.relPath, detail: 'jumeau backslashed purgé' }));
+      chunk
+        .map((raw) => raw.replace(/\\/g, '/'))
+        .forEach((normalized) => tombstonedPaths.add(normalized));
+      summary.deleted += chunk.length;
+      journal.push(
+        makeJournalEntry('delete', { detail: `purge backslashed : ${chunk.length} ligne(s)` }),
+      );
     } catch (error) {
       console.error('[sync] échec de la purge backslashed :', error);
-      journal.push(makeJournalEntry('error', { path: file.relPath, detail: `purge backslashed : ${errorMessage(error)}` }));
+      journal.push(
+        makeJournalEntry('error', { detail: `purge backslashed : ${errorMessage(error)}` }),
+      );
     }
   }
 
