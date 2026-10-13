@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { Component, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { useVaults } from '../lib/sync/VaultsContext';
@@ -14,6 +14,24 @@ import { usePreferences } from '../preferences/PreferencesContext';
 import { ConfirmDialog } from './ConfirmDialog';
 import { DraftTextField } from './DraftTextField';
 import { errorMessage } from '../lib/errorMessage';
+
+// v0.4.60-DIAG : frontière d'erreur temporaire — localise le crash Android
+// « undefined is not a function » en affichant le message + la section à
+// l'écran (le stack release est anonyme, illisible). À RETIRER après diag.
+class TasksDiagBoundary extends Component<{ label: string; children: ReactNode }, { error: Error | null }> {
+  state = { error: null as Error | null };
+  static getDerivedStateFromError(error: Error) { return { error }; }
+  render() {
+    if (this.state.error) {
+      return (
+        <Text style={{ color: '#ff5252', padding: 10 }}>
+          [tasks-diag:{this.props.label}] {String(this.state.error?.message ?? this.state.error)}
+        </Text>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 // Écran Tâches — module de productivité (voir docs/ARCHITECTURE.md §8).
 // Stocké dans le vault (.123ecriture/tasks.json + tasklists.json, voir
@@ -1122,8 +1140,13 @@ export function TasksScreen({
     });
   };
 
+  // v0.4.60-DIAG : frontières d'erreur par section — localise le crash
+  // Android « undefined is not a function » en affichant le message + la
+  // section à l'écran (le stack release est anonyme, illisible). À
+  // RETIRER après diagnostic.
   return (
     <View style={[styles.container, styles.navigatorScreen]}>
+      <TasksDiagBoundary label="en-tête">
       {/* En-tête : titre + créations (menu « + » : liste/dossier) + filtre +
           préférences de lecture (tri échéance / masquage des terminées —
           persistées, appliquées à TOUTES les listes du navigateur). */}
@@ -1182,7 +1205,8 @@ export function TasksScreen({
       />
       {listActionError && <Text style={[styles.error, { color: theme.danger }]}>⚠️ {listActionError}</Text>}
       {taskActionError && <Text style={[styles.error, { color: theme.danger }]}>⚠️ {taskActionError}</Text>}
-
+      </TasksDiagBoundary>
+      <TasksDiagBoundary label="navigateur">
       {/* Navigateur — PLEIN ESPACE, collé à la barre latérale principale
           (l'ancien conteneur le centrait avec maxWidth 560 : grand vide
           rapporté). Chaque DOSSIER se replie ; chaque LISTE affiche ses
@@ -1230,6 +1254,7 @@ export function TasksScreen({
           )}
         </View>
       </ScrollView>
+      </TasksDiagBoundary>
 
       {/* Confirmation de suppression de LISTE (panier jetable — les tâches
           partent avec) ; un DOSSIER ne passe pas ici : sa suppression est
