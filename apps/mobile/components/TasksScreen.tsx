@@ -1,5 +1,5 @@
 import { Component, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { useVaults } from '../lib/sync/VaultsContext';
 import {
@@ -525,7 +525,11 @@ export function TasksScreen({
   // y déplace l'item, un dépôt SUR une liste réordonne avant elle.
   const navigatorRef = useRef<View>(null);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
+  // v0.4.61 — garde WEB obligatoire : ce code manipule le DOM (drag & drop
+  // HTML5) qui n'existe pas en natif — sur Android, l'effet plantait
+  // (« undefined is not a function » à l'ouverture de Tâches, vécu).
   useEffect(() => {
+    if (Platform.OS !== 'web') return;
     const container = navigatorRef.current as unknown as HTMLElement | null;
     if (!container) return;
 
@@ -578,8 +582,10 @@ export function TasksScreen({
 
   // Pose l'attribut HTML `draggable` réel sur chaque ligne — react-native-
   // web ne transmet pas `draggable` via les props (voir NotesScreen.tsx,
-  // même contournement documenté).
+  // même contournement documenté). WEB uniquement (v0.4.61) : sur natif,
+  // querySelectorAll n'existe pas sur les refs — crash à l'ouverture.
   useEffect(() => {
+    if (Platform.OS !== 'web') return;
     const container = navigatorRef.current as unknown as HTMLElement | null;
     if (!container) return;
     container.querySelectorAll<HTMLElement>('[data-tl-id]').forEach((row) => {
