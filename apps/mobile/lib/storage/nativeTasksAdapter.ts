@@ -77,7 +77,15 @@ function migrateLists(data: NativeTaskListsData | null): NativeTaskListsData {
 const listListeners = new Set<(lists: TaskList[]) => void>();
 
 async function readListsData(): Promise<NativeTaskListsData> {
-  return migrateLists((await readJson(LISTS_PATH)) as NativeTaskListsData | null);
+  const data = migrateLists((await readJson(LISTS_PATH)) as NativeTaskListsData | null);
+  // v0.4.62 — CORRECTION du bug « Liste introuvable » sur Android : la liste
+  // par défaut fraîchement migrée est PERSISTÉE immédiatement, sinon chaque
+  // appel régénérait un identifiant différent et `tasks:add` /
+  // `tasklists:switch` échouaient (« Liste introuvable » — l'identifiant
+  // affiché à l'écran n'existait plus à l'appel suivant). Desktop fait la
+  // même écriture dans migrateTaskLists (tasks.ts).
+  await nativeVaultAdapter.writeNote(LISTS_PATH, JSON.stringify(data, null, 2));
+  return data;
 }
 
 async function writeListsData(data: NativeTaskListsData): Promise<NativeTaskListsData> {
