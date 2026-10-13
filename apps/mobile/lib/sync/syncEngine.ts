@@ -403,14 +403,18 @@ async function fetchRemoteFiles(remoteVaultId: string): Promise<RemoteVaultFile[
   let from = 0;
   // Boucle bornée par sécurité (coffres XXL) : 200 pages × 1000 = 200k lignes.
   for (let page = 0; page < 200; page += 1) {
-    const { data, error } = await client
+    let query = client
       .schema(APP_SCHEMA)
       .from(VAULT_FILES_TABLE)
       .select('rel_path, content_hash, size_bytes, updated_at, deleted, storage_object_path')
       .eq('vault_id', remoteVaultId)
       .order('rel_path', { ascending: true })
-      .range(from, from + REMOTE_FILES_PAGE_SIZE - 1)
-      .abortSignal(abortAfter(REMOTE_FETCH_TIMEOUT_MS));
+      .range(from, from + REMOTE_FILES_PAGE_SIZE - 1);
+    // Le typage Supabase refuse `undefined` dans abortSignal : le signal n'est
+    // ajouté QUE s'il existe (Hermes/Android n'a pas AbortSignal.timeout).
+    const signal = abortAfter(REMOTE_FETCH_TIMEOUT_MS);
+    if (signal) query = query.abortSignal(signal);
+    const { data, error } = await query;
     if (error) throw error;
     const pageRows = data ?? [];
     rows.push(...pageRows);
@@ -796,12 +800,14 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   for (let i = 0; i < backslashedRawPaths.length; i += 100) {
     const chunk = backslashedRawPaths.slice(i, i + 100);
     try {
-      const { error } = await bridges.supabase
+      let update = bridges.supabase
         .schema(APP_SCHEMA)
         .from(VAULT_FILES_TABLE)
         .update({ deleted: true, updated_at: new Date().toISOString() })
-        .in('rel_path', chunk)
-        .abortSignal(abortAfter(30_000));
+        .in('rel_path', chunk);
+      const signal = abortAfter(30_000);
+      if (signal) update = update.abortSignal(signal);
+      const { error } = await update;
       if (error) throw error;
       chunk
         .map((raw) => raw.replace(/\\/g, '/'))
