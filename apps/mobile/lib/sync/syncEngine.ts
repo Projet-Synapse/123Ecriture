@@ -55,6 +55,16 @@ const SYNC_STATE_REL_PATH = '.123ecriture/sync-state.json';
 
 type SyncState = { files: Record<string, string> };
 
+// v0.4.58 — Hermes (Android) n'expose PAS `AbortSignal.timeout` (méthode
+// statique du DOM) : l'appeler levait « undefined is not a function » et
+// faisait échouer CHAQUE cycle de synchro sur Android. Helper qui renvoie
+// le signal quand il existe, sinon undefined (pas d'abandon — le délai
+// d'attente strict reste un chantier pour une polyfill dédiée).
+function abortAfter(ms: number): AbortSignal | undefined {
+  const ctor = globalThis.AbortSignal as { timeout?: (ms: number) => AbortSignal } | undefined;
+  return typeof ctor?.timeout === 'function' ? ctor.timeout(ms) : undefined;
+}
+
 async function loadSyncState(): Promise<SyncState> {
   const { vault } = requireBridges();
   try {
@@ -400,7 +410,7 @@ async function fetchRemoteFiles(remoteVaultId: string): Promise<RemoteVaultFile[
       .eq('vault_id', remoteVaultId)
       .order('rel_path', { ascending: true })
       .range(from, from + REMOTE_FILES_PAGE_SIZE - 1)
-      .abortSignal(AbortSignal.timeout(REMOTE_FETCH_TIMEOUT_MS));
+      .abortSignal(abortAfter(REMOTE_FETCH_TIMEOUT_MS));
     if (error) throw error;
     const pageRows = data ?? [];
     rows.push(...pageRows);
@@ -791,7 +801,7 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
         .from(VAULT_FILES_TABLE)
         .update({ deleted: true, updated_at: new Date().toISOString() })
         .in('rel_path', chunk)
-        .abortSignal(AbortSignal.timeout(30_000));
+        .abortSignal(abortAfter(30_000));
       if (error) throw error;
       chunk
         .map((raw) => raw.replace(/\\/g, '/'))

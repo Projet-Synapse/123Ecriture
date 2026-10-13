@@ -117,3 +117,10 @@ Opt-in, manual, desktop-only so far. Auth (`apps/desktop/electron/auth.ts` + `ap
 `.github/workflows/release.yml` triggers only on a pushed `v*` tag — never on a plain commit/branch push. It builds Windows/Linux/macOS via `electron-builder --publish always`, drafts a GitHub Release with the installers attached, then (as of 2026-08-19, explicit user decision) a final `publish-release` job **auto-publishes it** (`gh release edit --draft=false`) once all 3 builds succeed AND the 3 installers (`.exe`/`.dmg`/`.AppImage`) are confirmed attached — if any is missing, publishing is skipped and the draft is left for inspection instead. There is no human review step between "build succeeded" and "shipped": `electron-updater` (`apps/desktop/electron/updater.ts`, `autoDownload`/`autoInstallOnAppQuit`) only sees published releases, so publishing = immediate rollout to every existing install. **Always bump the version and smoke-test before tagging** — pushing the tag is the real point of no return now, not a later manual "Publish" click.
 
 **Known trap**: `electron-builder` resolves which release to publish to from the `version` field in `apps/desktop/package.json`, *not* from the git tag name. If you push a tag without bumping both `apps/desktop/package.json` and `apps/mobile/package.json` to match, the build silently skips uploading all installer assets (logs show `skipped publishing ... reason=existing type not compatible`) — the `publish-release` job's asset check catches this and refuses to publish, but the underlying mismatch still needs fixing (bump both `package.json` versions in the same commit that gets tagged, keep them equal, and use a version that hasn't already been tagged).
+
+## Releases — penser AUSSI à app.json (mobile)
+
+Lors d'une release : bumper la version dans les DEUX `package.json` **ET dans
+`apps/mobile/app.json`** (`expo.version`) — c'est ce champ qui devient le
+`versionName` de l'APK Android. Historique : les APK affichaient « 0.3.0 »
+pendant des mois parce que seul package.json était bumpé (corrigé en v0.4.58).
