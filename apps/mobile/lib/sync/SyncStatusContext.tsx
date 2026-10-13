@@ -58,10 +58,21 @@ type SyncStatusContextValue = {
 
 const SyncStatusReactContext = createContext<SyncStatusContextValue | null>(null);
 
-// Délai avant le PREMIER cycle auto au lancement de l'app — laisse le temps
-// au reste de l'app (vault actif, session Supabase) de finir de se charger
-// sans faire concurrence au démarrage perçu par l'utilisatrice.
-const AUTO_SYNC_STARTUP_DELAY_MS = 5000;
+// Délai avant le PREMIER cycle auto au lancement de l'app. v0.4.57 (demande
+// utilisateur, observation d'Obsidian) : le démarrage est 100 % LOCAL — le
+// coffre affiché vient du chemin de l'appareil, sans rien attendre du cloud.
+// La vérification des changements n'arrive qu'UNE MINUTE après : plus de
+// sollicitation externe au lancement, plus de lenteur ou d'erreur de sync
+// perçue à l'ouverture.
+const AUTO_SYNC_STARTUP_DELAY_MS = 60_000;
+
+// v0.4.57 — WATCHDOG ANTI-BLOCAGE : un cycle suspendu (connexion morte sans
+// timeout, vécu) ne rendait jamais la main — statut « Synchronisation… »
+// figé et changement de coffre bloqué jusqu'au redémarrage. Au-delà de ce
+// délai, le cycle est DÉCLARÉ ÉCHOUÉ (statut erreur + déblocage) ; s'il
+// finit par aboutir en arrière-plan, ses mises à jour sont ignorées
+// (génération invalide). Aligné sur le TTL du verrou main (vaults.ts).
+const SYNC_CYCLE_TIMEOUT_MS = 10 * 60 * 1000;
 
 // v0.4.29 : canal broadcast de propagation temps réel + marqueur de session.
 // Volontairement au niveau du MODULE (pas des refs React) : une seule
@@ -98,6 +109,12 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
   // capturé à la dernière fermeture de useCallback.
   const syncingRef = useRef(false);
 
+  // v0.4.57 : génération du cycle EN COURS (incrémentée à chaque démarrage
+  // et par le watchdog lorsqu'il révoque un cycle suspendu) — les mises à
+  // jour d'un cycle révoqué sont ignorées au lieu d'écraser l'état d'un
+  // cycle plus récent.
+  const cycleGenerationRef = useRef(0);
+
   // Même exigence de fraîcheur pour userId/remoteVaultId : un appelant peut
   // détenir une version ANTÉRIEURE de `runSync` (closure créée avant que le
   // coffre actif change) — cas réel v0.4.10 : « Connecter sur cet appareil »
@@ -122,12 +139,28 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
     const { userId: currentUserId, remoteVaultId: currentRemoteVaultId } = latestRef.current;
     if (!currentUserId || !currentRemoteVaultId || syncingRef.current) return;
     syncingRef.current = true;
+    // v0.4.57 — génération de cycle + watchdog : un cycle suspendu (réseau
+    // mort sans timeout) est révoqué après SYNC_CYCLE_TIMEOUT_MS — statut
+    // erreur, déblocage du changement de coffre et de la synchro ; s'il
+    // aboutit finalement en arrière-plan, ses mises à jour sont ignorées.
+    const generation = ++cycleGenerationRef.current;
+    const watchdog = setTimeout(() => {
+      if (!syncingRef.current || cycleGenerationRef.current !== generation) return;
+      cycleGenerationRef.current += 1;
+      setStatus('error');
+      setLastError('Synchro interrompue : délai de 10 minutes dépassé (réseau coupé ?). Réessayez — un nouveau cycle repartira proprement.');
+      syncingRef.current = false;
+      void window.sync?.watchResume?.().catch(() => undefined);
+    }, SYNC_CYCLE_TIMEOUT_MS);
     // La surveillance du dossier se tait pendant le cycle : les écritures
     // du pull ne doivent pas redéclencher une synchro (boucle).
     await window.sync?.watchPause?.().catch(() => undefined);
     setStatus('syncing');
     try {
       const summary = await runSyncEngine(currentUserId, triggerRef.current);
+      // Cycle révoqué par le watchdog (suspendu puis remplacé) : ne touche
+      // à aucun état — un cycle PLUS RÉCENT est peut-être déjà en cours.
+      if (cycleGenerationRef.current !== generation) return;
       setLastSummary(summary);
       if (summary.errors.length > 0) {
         setStatus('error');
@@ -161,6 +194,7 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
         });
       }
     } catch (error) {
+      if (cycleGenerationRef.current !== generation) return;
       console.error('[sync] échec de la synchronisation :', error);
       const message = errorMessage(error);
       setStatus('error');
@@ -168,8 +202,13 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
       setLastError(message);
       setLastResultSummary(message);
     } finally {
-      await window.sync?.watchResume?.().catch(() => undefined);
-      syncingRef.current = false;
+      clearTimeout(watchdog);
+      // Génération courante uniquement : un cycle révoqué par le watchdog ne
+      // doit pas libérer le verrou d'un cycle PLUS RÉCENT qui aurait démarré.
+      if (cycleGenerationRef.current === generation) {
+        await window.sync?.watchResume?.().catch(() => undefined);
+        syncingRef.current = false;
+      }
     }
     // reloadVaultAppearance est stable (useCallback [] côté Preferences),
     // la dépendance ne recrée jamais runSync — elle satisfait juste le lint.
