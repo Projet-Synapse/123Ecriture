@@ -539,6 +539,12 @@ declare global {
     // comme fileSortMode pour les fichiers, pas des besoins d'une session).
     tasksSortByDueDate: boolean;
     tasksHideCompleted: boolean;
+    // Notifications mobiles (mobile natif uniquement — voir
+    // lib/taskNotifications.ts et settings/NotificationsSection.tsx) :
+    // rappel local le jour de l'échéance d'une tâche non terminée, à
+    // l'heure configurée. `tasksNotifyTime` est « HH:MM ».
+    tasksNotifyEnabled: boolean;
+    tasksNotifyTime: string;
     defaultOpenMode: DefaultOpenMode;
     // relPath du fichier à ouvrir quand defaultOpenMode==='specific' — '' si
     // aucun choisi (repli silencieux sur l'écran "Sélectionne ou crée une

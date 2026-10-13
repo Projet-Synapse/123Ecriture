@@ -55,6 +55,11 @@ export const DEFAULT_PREFERENCES: Preferences = {
   // pas le refaire à chaque lancement).
   tasksSortByDueDate: false,
   tasksHideCompleted: false,
+  // Notifications mobiles (rappels d'échéance des tâches) — désactivées par
+  // défaut : la demande de permission système ne doit jamais surprendre,
+  // c'est un réglage explicite (settings/NotificationsSection.tsx).
+  tasksNotifyEnabled: false,
+  tasksNotifyTime: '09:00',
   defaultOpenMode: 'lastOpened',
   defaultOpenSpecificPath: '',
   editorFontSize: 15,
@@ -118,6 +123,8 @@ type PreferencesContextValue = {
   setExplorerExpandMode: (mode: ExplorerExpandMode) => Promise<void>;
   setTasksSortByDueDate: (value: boolean) => Promise<void>;
   setTasksHideCompleted: (value: boolean) => Promise<void>;
+  setTasksNotifyEnabled: (value: boolean) => Promise<void>;
+  setTasksNotifyTime: (value: string) => Promise<void>;
   setDefaultOpenMode: (mode: DefaultOpenMode) => Promise<void>;
   setDefaultOpenSpecificPath: (relPath: string) => Promise<void>;
   setEditorFontSize: (size: number) => Promise<void>;
@@ -336,6 +343,12 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     (value: boolean) => persist({ tasksHideCompleted: value }),
     [persist],
   );
+  const setTasksNotifyEnabled = useCallback(
+    (value: boolean) => persist({ tasksNotifyEnabled: value }),
+    [persist],
+  );
+  // L'heure arrive déjà validée (« HH:MM ») par la section Réglages.
+  const setTasksNotifyTime = useCallback((value: string) => persist({ tasksNotifyTime: value }), [persist]);
   // Paramètres → Gestion des fichiers et des liens → "Fichier ouvert par
   // défaut" (voir NotesScreen.tsx, effet d'ouverture au démarrage) : quel
   // fichier ouvrir à chaque lancement de l'app / changement de coffre.
@@ -506,6 +519,8 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       setExplorerExpandMode,
       setTasksSortByDueDate,
       setTasksHideCompleted,
+      setTasksNotifyEnabled,
+      setTasksNotifyTime,
       setDefaultOpenMode,
       setDefaultOpenSpecificPath,
       setEditorFontSize,
@@ -548,6 +563,8 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       setExplorerExpandMode,
       setTasksSortByDueDate,
       setTasksHideCompleted,
+      setTasksNotifyEnabled,
+      setTasksNotifyTime,
       setDefaultOpenMode,
       setDefaultOpenSpecificPath,
       setEditorFontSize,

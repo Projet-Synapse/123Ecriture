@@ -6,6 +6,7 @@ import { AboutSection } from './settings/AboutSection';
 import { AccountSyncSection } from './settings/AccountSyncSection';
 import { EditorSection } from './settings/EditorSection';
 import { FilesLinksSection } from './settings/FilesLinksSection';
+import { NotificationsSection } from './settings/NotificationsSection';
 import { PersonalizationCard } from './PersonalizationCard';
 import { PrivacyDataSection } from './settings/PrivacyDataSection';
 import { PropertiesManagementSection } from './settings/PropertiesManagementSection';
@@ -23,7 +24,16 @@ import { TrashSection } from './settings/TrashSection';
 // que celui de AppShell.
 const SETTINGS_WIDE_BREAKPOINT = 900;
 
-type SettingsSectionId = 'personalization' | 'account' | 'journal' | 'files' | 'editor' | 'properties' | 'privacy' | 'about';
+type SettingsSectionId =
+  | 'personalization'
+  | 'account'
+  | 'journal'
+  | 'files'
+  | 'editor'
+  | 'properties'
+  | 'notifications'
+  | 'privacy'
+  | 'about';
 
 type SettingsSectionDef = {
   id: SettingsSectionId;
@@ -38,6 +48,7 @@ const SETTINGS_SECTIONS: SettingsSectionDef[] = [
   { id: 'files', label: 'Gestion des fichiers et des liens', icon: '🗂️' },
   { id: 'editor', label: 'Éditeur', icon: '✍️' },
   { id: 'properties', label: 'Gestion des propriétés', icon: '🏷️' },
+  { id: 'notifications', label: 'Notifications', icon: '🔔' },
   { id: 'privacy', label: 'Confidentialité et données', icon: '🔒' },
   { id: 'about', label: 'À propos', icon: 'ℹ️' },
 ];
@@ -61,6 +72,8 @@ function renderSection(id: SettingsSectionId) {
       return <EditorSection />;
     case 'properties':
       return <PropertiesManagementSection />;
+    case 'notifications':
+      return <NotificationsSection />;
     case 'privacy':
       return <PrivacyDataSection />;
     case 'about':

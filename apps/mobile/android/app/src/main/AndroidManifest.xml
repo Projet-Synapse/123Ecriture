@@ -1,5 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
   <uses-permission android:name="android.permission.INTERNET"/>
+  <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
   <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" tools:replace="android:maxSdkVersion"/>
   <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
   <uses-permission android:name="android.permission.VIBRATE"/>
@@ -21,12 +22,6 @@
         <action android:name="android.intent.action.MAIN"/>
         <category android:name="android.intent.category.LAUNCHER"/>
       </intent-filter>
-      <!-- Retour OAuth Google : le navigateur système redirige vers
-           app123ecriture://auth-callback (redirectTo du signInWithOAuth,
-           voir AuthContext.tsx / nativeAuthBridge.ts) — ce filtre rouvre
-           l'app avec l'URL du callback. singleTask + BROWSABLE : le lien
-           arrive dans l'instance existante (Linking 'url') ou lance l'app
-           à froid (Linking.getInitialURL). -->
       <intent-filter>
         <action android:name="android.intent.action.VIEW"/>
         <category android:name="android.intent.category.DEFAULT"/>

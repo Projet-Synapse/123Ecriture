@@ -10,6 +10,7 @@ import {
   normalizeDueDateInput,
 } from '../lib/taskDueDates';
 import { orderAfterDrop, pendingTaskCount, sortNavigatorItems } from '../lib/tasksNavigator';
+import { getNotificationsPermission, syncTaskDueNotifications } from '../lib/taskNotifications';
 import { usePreferences } from '../preferences/PreferencesContext';
 import { ConfirmDialog } from './ConfirmDialog';
 import { DraftTextField } from './DraftTextField';
@@ -69,7 +70,7 @@ export function TasksScreen({
   pendingNewTaskToken = 0,
   onConsumedPendingNewTask,
 }: Props = {}) {
-  const { theme, preferences, setTasksSortByDueDate, setTasksHideCompleted } = usePreferences();
+  const { theme, preferences, setTasksSortByDueDate, setTasksHideCompleted, setTasksNotifyEnabled } = usePreferences();
   const vault = typeof window !== 'undefined' ? window.vault : undefined;
   const tasksBridge = typeof window !== 'undefined' ? window.tasks : undefined;
   const taskListsBridge = typeof window !== 'undefined' ? window.taskLists : undefined;
@@ -120,6 +121,17 @@ export function TasksScreen({
     if (!tasksBridge) return;
     setTasks(await tasksBridge.list());
   }, [tasksBridge]);
+
+  // Rappels d'échéance (mobile natif) — replanifiés à CHAQUE changement des
+  // tâches ou du réglage : la projection notifications suit toujours le
+  // fichier .123ecriture/tasks.json (voir lib/taskNotifications.ts). Sur
+  // web : no-op volontaire (les notifications ne sont que natives).
+  const tasksNotifyEnabled = preferences.tasksNotifyEnabled;
+  const tasksNotifyTime = preferences.tasksNotifyTime;
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    void syncTaskDueNotifications(tasks, tasksNotifyEnabled, tasksNotifyTime).catch(() => undefined);
+  }, [tasks, tasksNotifyEnabled, tasksNotifyTime]);
 
   useEffect(() => {
     if (!vault || !vaultPath || !taskListsBridge) return;
@@ -1197,6 +1209,33 @@ export function TasksScreen({
             >
               <Text style={{ color: hideCompleted ? theme.accent : theme.textMuted, fontSize: 11 }}>
                 {hideCompleted ? '✓ Terminées masquées' : 'Masquer les terminées'}
+              </Text>
+            </Pressable>
+          )}
+          {/* Rappels d'échéance (mobile natif uniquement) — accès rapide au
+              réglage ; l'heure et la permission système se règlent dans
+              Paramètres → Notifications (settings/NotificationsSection). */}
+          {Platform.OS !== 'web' && (
+            <Pressable
+              onPress={() => {
+                const next = !tasksNotifyEnabled;
+                if (next) {
+                  void getNotificationsPermission().then((granted) => {
+                    if (!granted) {
+                      setTaskActionError('Notifications refusées — activez-les dans Paramètres → Notifications.');
+                      return;
+                    }
+                    void setTasksNotifyEnabled(true);
+                  });
+                  return;
+                }
+                void setTasksNotifyEnabled(false);
+              }}
+              accessibilityLabel={tasksNotifyEnabled ? 'Désactiver les rappels' : 'Activer les rappels'}
+              style={[styles.headerChip, { borderColor: theme.border }, tasksNotifyEnabled && { borderColor: theme.accent }]}
+            >
+              <Text style={{ color: tasksNotifyEnabled ? theme.accent : theme.textMuted, fontSize: 11 }}>
+                {tasksNotifyEnabled ? '🔔 Rappels activés' : '🔔 Rappels'}
               </Text>
             </Pressable>
           )}

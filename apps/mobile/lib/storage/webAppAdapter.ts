@@ -59,6 +59,8 @@ const DEFAULT_PREFERENCES: Preferences = {
   explorerExpandMode: 'last',
   tasksSortByDueDate: false,
   tasksHideCompleted: false,
+  tasksNotifyEnabled: false,
+  tasksNotifyTime: '09:00',
   defaultOpenMode: 'lastOpened',
   defaultOpenSpecificPath: '',
   editorFontSize: 15,
