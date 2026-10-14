@@ -34,6 +34,68 @@ class TasksDiagBoundary extends Component<{ label: string; children: ReactNode }
   }
 }
 
+// v0.4.64-DIAG : bloc temporaire de diagnostic du round-trip SAF du coffre
+// (le bug « Liste introuvable » : tâche ajoutée en mémoire mais disparue au
+// relancement — hypothèse docs/vault-incidents.md §4.2). Teste en direct sur
+// le coffre ACTIF : lecture du tasklists.json réel, écriture d'un fichier
+// test, relecture, présence dans l'index. À RETIRER après diagnostic.
+function TasksDiagCell() {
+  const vault = typeof window !== 'undefined' ? window.vault : undefined;
+  const [lines, setLines] = useState<string[]>(['…']);
+  useEffect(() => {
+    void (async () => {
+      const out: string[] = [];
+      if (!vault?.readNote || !vault?.writeNote) {
+        setLines(['diag: pont vault absent']);
+        return;
+      }
+      try {
+        const raw = await vault.readNote('.123ecriture/tasklists.json');
+        out.push(`1.read tasklists: ${raw ? `${raw.length} octets` : 'null'}`);
+      } catch (e) {
+        out.push(`1.read tasklists: ERR ${String(e instanceof Error ? e.message : e).slice(0, 60)}`);
+      }
+      const stamp = String(Date.now());
+      try {
+        await vault.writeNote('.123ecriture/diag-write.json', `{"diag":"${stamp}"}`);
+        out.push('2.write diag: OK');
+      } catch (e) {
+        out.push(`2.write diag: ERR ${String(e instanceof Error ? e.message : e).slice(0, 60)}`);
+      }
+      try {
+        const back = await vault.readNote('.123ecriture/diag-write.json');
+        out.push(`3.readback diag: ${back === `{"diag":"${stamp}"}` ? 'ROUNDTRIP OK' : back ? `DIFF ${back.slice(0, 30)}` : 'null'}`);
+      } catch (e) {
+        out.push(`3.readback diag: ERR ${String(e instanceof Error ? e.message : e).slice(0, 60)}`);
+      }
+      try {
+        const tree = await vault.listTree();
+        const names: string[] = [];
+        const walk = (nodes: { relPath: string; children?: unknown }[]) => {
+          for (const n of nodes) {
+            if (n.relPath.startsWith('.123ecriture/')) names.push(n.relPath);
+            if (Array.isArray(n.children)) walk(n.children as { relPath: string; children?: unknown }[]);
+          }
+        };
+        walk(tree as { relPath: string; children?: unknown }[]);
+        out.push(`4.index .123ecriture: ${names.length ? names.filter((n) => n.includes('json')).join(', ').slice(0, 90) : '(rien d\'indexé)'}`);
+      } catch (e) {
+        out.push(`4.index: ERR ${String(e instanceof Error ? e.message : e).slice(0, 60)}`);
+      }
+      setLines(out);
+    })();
+  }, [vault]);
+  return (
+    <View style={{ margin: 8, padding: 8, borderWidth: 1, borderColor: '#ff5252', borderRadius: 6 }}>
+      {lines.map((l, i) => (
+        <Text key={i} style={{ color: '#ffd54f', fontSize: 11 }}>
+          {l}
+        </Text>
+      ))}
+    </View>
+  );
+}
+
 // Écran Tâches — module de productivité (voir docs/ARCHITECTURE.md §8).
 // Stocké dans le vault (.123ecriture/tasks.json + tasklists.json, voir
 // apps/desktop/electron/tasks.ts) — chaque coffre a son propre jeu de
@@ -1241,6 +1303,7 @@ export function TasksScreen({
           )}
         </View>
       </View>
+      <TasksDiagCell />
       <TextInput
         value={filterDraft}
         onChangeText={setFilterDraft}
