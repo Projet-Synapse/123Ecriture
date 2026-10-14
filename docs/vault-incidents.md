@@ -74,10 +74,13 @@
 | 6.8 | `app.json` doit rester du JSON STRICT (pas de commentaires) : `app.config.js` le lit à chaque commande expo | Pas de notes dans app.json — documenter ici ou dans le code. |
 | 6.9 | CMake 3.22.1 (défaut AGP) boucle `build.ninja still dirty after 100 tries` sur expo-modules-core (réécriture à l'identique à chaque reconfigure — vérifié : contenu stable, mtime change) | Clone local : forcer `cmake.version = '3.31.5'` (bloc subprojects dans android/build.gradle du clone) + purger les `.cxx`. La CI Linux n'a pas ce problème. |
 | 6.10 | Signature APK : `android/app/debug.keystore` est COMMITÉ → APK CI et APK local partagent la signature → `adb install -r` sans désinstallation | Si `INSTALL_FAILED_UPDATE_INCOMPATIBLE` un jour : le keystore a changé — désinstaller (perte session/registre, PAS des données du coffre). |
+| 6.11 | **Le téléphone (Samsung A13) est 32 BITS** (`ro.product.cpu.abilist` = armeabi-v7a,armeabi — PAS d'arm64) | Un APK arm64-only ne s'installe pas (`INSTALL_FAILED_NO_MATCHING_ABIS`) : il faut armeabi-v7a (ou les deux). |
+| 6.12 | La boucle ninja 6.9 touche l'ABI armeabi-v7a RÉCURRENTEMENT (arm64 compile, v7a re-boucle à chaque invocation gradle — build8/build10 : l'ABI re-boucle même après stabilisation manuelle du `.cxx`) | En pratique : **pas de build APK local fiable pour ce téléphone** → passer par la CI (workflow_dispatch après patch 2.5) et récupérer l'artefact « 123Ecriture-apk ». Environnement build local : JDK 17 + SDK + NDK + CMake 3.31.5 dans `~/.zcode/tools`, clone court `C:\123src`. |
+| 6.13 | Le bundle JS de l'APK embarque les `EXPO_PUBLIC_*` (inline Metro) : vérifiable par `unzip -p app-release.apk assets/index.android.bundle \| grep supabase` | Test rapide d'un APK avant installation (évite d'installer un APK muet sur Supabase). |
 
-## 7. État courant (dernière mise à jour : 2026-10-14)
+## 7. État courant (dernière mise à jour : 2026-10-14, soir)
 
-1. **Vaults distants** : cause prouvée (2.1), patch workflow prêt à appliquer ; APK 0.4.63 local avec Supabase en cours de build pour valider sur le téléphone.
-2. **Ajout de tâche** : à re-tester sur 0.4.63 (lignes 4.4–4.5) ; si échec → afficher l'erreur SAF à l'écran (4.2).
-3. **Notifications d'échéance** : implémentées (expo-notifications, pill 🔔 + section Paramètres) — à tester sur le téléphone.
-4. **Workflow CI** : patch `build-android-apk.yml` à appliquer par l'utilisatrice (jeton sans scope workflow).
+1. **Vaults distants** : cause prouvée (2.1) ; APK 0.4.63 construit en local avec Supabase mais **non installable sur ce téléphone** (arm64-only, cf. 6.11/6.12) → passer par la CI : patch workflow (2.5) par l'utilisatrice, puis déclenchement `workflow_dispatch` et récupération de l'artefact « 123Ecriture-apk ».
+2. **Ajout de tâche** : à re-tester sur l'APK 0.4.63 CI (lignes 4.4–4.5) ; si échec → afficher l'erreur SAF à l'écran (4.2).
+3. **Notifications d'échéance** : implémentées (expo-notifications, pill 🔔 + section Paramètres, commit 0ca7009) — à tester sur le téléphone via l'APK CI.
+4. **Workflow CI** : patch `build-android-apk.yml` à appliquer par l'utilisatrice (jeton sans scope workflow) — c'est la BLOCANTE unique pour tout le reste.
