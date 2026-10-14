@@ -77,10 +77,17 @@ export function TrashSection() {
   if (typeof window !== 'undefined' && !window.vault?.listTrash) return null;
 
   const restore = async (item: TrashItem) => {
-    if (!auth.user?.id || !remoteVaultId) return;
+    const ownerId = auth.user?.id;
+    if (!ownerId || !remoteVaultId) return;
     setBusy(true);
     try {
-      await restoreFromTrash(item.relPath, remoteVaultId, auth.user.id);
+      // EXCLUSIF : entre le déplacement local et la suppression de la
+      // tombestone distante, un cycle auto déclenché par le déplacement
+      // pouvait repousser la tombestone et ANNULER la restauration en
+      // transparence (vécu 14/10/2026 : « tout se synchronise avant que le
+      // fichier soit posé, et rien ne se restaure réellement »). Un SEUL
+      // cycle part ensuite, sur l'état final cohérent.
+      await syncStatus.runSyncExclusive(() => restoreFromTrash(item.relPath, remoteVaultId, ownerId));
       await syncStatus.runSync();
       await refresh();
     } catch (error) {
@@ -93,7 +100,9 @@ export function TrashSection() {
   const destroy = async (item: TrashItem) => {
     setBusy(true);
     try {
-      await window.vault?.delete(item.relPath, { permanent: true, silent: true });
+      await syncStatus.runSyncExclusive(async () => {
+        await window.vault?.delete(item.relPath, { permanent: true, silent: true });
+      });
       await syncStatus.runSync();
       await refresh();
     } catch (error) {
@@ -106,9 +115,11 @@ export function TrashSection() {
   const emptyAll = async () => {
     setBusy(true);
     try {
-      for (const item of items ?? []) {
-        await window.vault?.delete(item.relPath, { permanent: true, silent: true });
-      }
+      await syncStatus.runSyncExclusive(async () => {
+        for (const item of items ?? []) {
+          await window.vault?.delete(item.relPath, { permanent: true, silent: true });
+        }
+      });
       await syncStatus.runSync();
       await refresh();
     } finally {
@@ -124,6 +135,12 @@ export function TrashSection() {
         autres appareils : une suppression faite sur un PC y apparaît partout. « Supprimer définitivement » est
         irréversible.
       </Text>
+      {!canRestore && items !== null && items.length > 0 && (
+        <Text style={[s.hint, { color: theme.textMuted }]}>
+          Restaurer nécessite d’être connecté·e à ton compte et que le coffre soit relié au cloud — le bouton
+          apparaît grisé tant que ce n’est pas le cas.
+        </Text>
+      )}
 
       {items === null ? (
         <ActivityIndicator color={theme.accent} />
@@ -149,11 +166,20 @@ export function TrashSection() {
                 <Pressable
                   disabled={busy || !canRestore}
                   onPress={() => void restore(item)}
-                  style={[s.modeButton, { borderColor: theme.border, opacity: !canRestore ? 0.4 : 1 }]}
+                  hitSlop={6}
+                  style={[
+                    s.modeButton,
+                    { borderColor: theme.border, paddingVertical: 10, opacity: !canRestore ? 0.4 : 1 },
+                  ]}
                 >
                   <Text style={{ color: theme.text }}>↩︎ Restaurer</Text>
                 </Pressable>
-                <Pressable disabled={busy} onPress={() => void destroy(item)} style={[s.modeButton, { borderColor: theme.danger }]}>
+                <Pressable
+                  disabled={busy}
+                  onPress={() => void destroy(item)}
+                  hitSlop={6}
+                  style={[s.modeButton, { borderColor: theme.danger, paddingVertical: 10 }]}
+                >
                   <Text style={{ color: theme.danger }}>Définitif</Text>
                 </Pressable>
               </View>
