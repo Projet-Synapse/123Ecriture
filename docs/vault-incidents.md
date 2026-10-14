@@ -53,34 +53,45 @@
 | 4.4 | Le tap adb sur « Ajouter » n'a pas atteint le bouton (test 00:28–00:30 : aucune tâche ajoutée, AUCUNE erreur affichée, aucun log possible en release) | 🔲 À TESTER | L'erreur aurait dû s'afficher (setAddError → visible à l'écran) ; rien vu. Soit le tap a raté, soit le handler est sorti tôt (bridge null ?). À refaire sur 0.4.63. |
 | 4.5 | L'utilisatrice sur 0.4.62 : « plus d'erreurs JavaScript » | 🔲 À CONFIRMER en test réel | Le crash 3.x est réglé ; l'AJOUT réel d'une tâche reste à valider sur 0.4.63 (via les taps adb, puis persistance après relance de l'app). |
 
-## 5. Historique connexe (résolu avant ce journal)
+## 5. Corbeille : « tout se synchronise avant que le fichier soit posé, rien ne se restaure réellement »
+
+**Versions : ~v0.4.62 — FIXÉ le 14/10/2026 au soir (commit e901d48)**
+
+| # | Hypothèse | Statut | Preuve / Fix |
+|---|-----------|--------|--------------|
+| 5.1 | **Course sync/restauration** : le déplacement local (`.trash/x` → chemin d'origine, `vault:set-path`) déclenchait un cycle auto (surveillance du dossier, ~2 s) PENDANT que `restoreFromTrash` continuait (suppression de la tombestone distante, repousse du contenu) — le cycle concurrent pouvait repousser la tombestone du chemin d'origine APRÈS la repousse → le cloud re-supprimait le fichier restauré, le pull suivant le retirait localement | ✅ PROUVÉE (par lecture du code + ordre des déclencheurs) | `TrashSection.restore` → `restoreFromTrash` puis `runSync()` ; or les déclencheurs auto (watch 2 s, broadcast 3 s, focus) appelaient le même `runSync` sans coordination. FIX : `SyncStatusContext.runSyncExclusive(fn)` — attend le cycle en cours, gèle TOUS les déclencheurs pendant `fn` (Restaurer/Défini­tif/Vider y passent), puis un SEUL cycle part sur l'état final cohérent. |
+| 5.2 | Le `runSync()` explicite de la corbeille pouvait être un NO-OP silencieux (guard `syncingRef` : un cycle en cours bloque tout nouveau cycle) | ✅ PROUVÉE (même cause que 5.1) | Couvert par le même fix. |
+| 5.3 | « Bouton Restaurer difficilement cliquable » : le bouton était DÉSACTIVÉ + grisé (opacity 0.4) sans aucune explication quand non connecté·e ou coffre non relié (`canRestore`) — et zone de clic petite | ✅ PROUVÉE (UX) | Explication affichée sous le titre quand `!canRestore`, boutons élargis (paddingVertical 10 + hitSlop 6). NOTE : sur le TÉLÉPHONE actuel (APK sans Supabase, cf. §2), la restauration est impossible jusqu'à l'APK 0.4.63. |
+| 5.4 | `vault:set-path` (PC) échouait silencieusement (le déplacement ne se fait pas) | ❌ DÉMENTIE | `fs.rename` avec erreurs explicites (`existe déjà`, `Élément introuvable`) remontées en Alert à l'écran — le déplacement est réel sur PC. |
+
+## 6. Historique connexe (résolu avant ce journal)
 
 - **v0.4.41-fix4** : `writeNote` SAF refusait l'écriture des fichiers absents de l'index (chaque pull échouait) → création parents + réutilisation d'URI existante (anti-doublon « appearance (1).json »).
 - **v0.4.50** : les tâches ne persistaient pas du tout sur Android (aucun pont natif) → pont `nativeTasksAdapter`.
 - **v0.4.57** : démarrage sync différé (60 s) + watchdog de cycle — l'ouverture reste 100 % locale.
 - **v0.4.62** : crash 3.x réglé ; bug 4 partiellement (voir lignes 4.1–4.5).
 
-## 6. Limites de diagnostic connues (à lire AVANT d'investiguer le téléphone)
+## 7. Limites de diagnostic connues (à lire AVANT d'investiguer le téléphone)
 
 | # | Fait | Conséquence |
 |---|------|-------------|
-| 6.1 | APK release : `console.*` est désactivé (aucun log ReactNativeJS dans logcat — vérifié 2026-10-14, pid vivant, logcat vide) | Toute investigation téléphone doit passer par un AFFICHAGE À L'ÉCRAN (frontières d'erreur, bandeaux) ou un build local debug. |
-| 6.2 | Samsung A13 multi-utilisateurs (user 0 + Secure Folder user 150) : `pm list packages` crashe sur user 150 | Toujours passer `--user 0`. |
-| 6.3 | `adb push` vers `/data/local/tmp` échoue silencieusement (fichier absent) | Installer les APK par `adb install -r`, jamais par push manuel. |
-| 6.4 | PC Windows : `pnpm typecheck` racine (turbo) → EPERM spawn | Lancer tsc/eslint/vitest PAR PAQUET, puis `git commit --no-verify` après vérification manuelle équivalente. |
-| 6.5 | PC Windows : build natif Android impossible depuis le workspace (MAX_PATH 260 + dossiers `.pnpm` longs : codegen C++ échoue ; junction résolue par gradle, ça ne suffit pas) | Cloner le dépôt dans un chemin court PHYSIQUE (ex. `C:\123src`), `pnpm install`, copier `apps/mobile/.env.local`, build là-bas. |
-| 6.6 | Environnement build local : JDK 17 + SDK Android (cmdline-tools) installés dans `~/.zcode/tools/` (pas d'admin : LongPathsEnabled=0) | Exporter `JAVA_HOME` et `ANDROID_HOME` avant tout gradlew. NDK 27.1.12297006 requis ; le réinstaller si `source.properties` manquant. |
-| 6.7 | `expo prebuild` régénère `android/` et écrase les modifications manuelles du manifest | Toute config native (scheme OAuth, permissions) doit vivre dans `app.json` (le scheme `app123ecriture` y est depuis v0.4.63 — le filtre OAuth disparaissait sinon). |
-| 6.8 | `app.json` doit rester du JSON STRICT (pas de commentaires) : `app.config.js` le lit à chaque commande expo | Pas de notes dans app.json — documenter ici ou dans le code. |
-| 6.9 | CMake 3.22.1 (défaut AGP) boucle `build.ninja still dirty after 100 tries` sur expo-modules-core (réécriture à l'identique à chaque reconfigure — vérifié : contenu stable, mtime change) | Clone local : forcer `cmake.version = '3.31.5'` (bloc subprojects dans android/build.gradle du clone) + purger les `.cxx`. La CI Linux n'a pas ce problème. |
-| 6.10 | Signature APK : `android/app/debug.keystore` est COMMITÉ → APK CI et APK local partagent la signature → `adb install -r` sans désinstallation | Si `INSTALL_FAILED_UPDATE_INCOMPATIBLE` un jour : le keystore a changé — désinstaller (perte session/registre, PAS des données du coffre). |
-| 6.11 | **Le téléphone (Samsung A13) est 32 BITS** (`ro.product.cpu.abilist` = armeabi-v7a,armeabi — PAS d'arm64) | Un APK arm64-only ne s'installe pas (`INSTALL_FAILED_NO_MATCHING_ABIS`) : il faut armeabi-v7a (ou les deux). |
-| 6.12 | La boucle ninja 6.9 touche l'ABI armeabi-v7a RÉCURRENTEMENT (arm64 compile, v7a re-boucle à chaque invocation gradle — build8/build10 : l'ABI re-boucle même après stabilisation manuelle du `.cxx`) | En pratique : **pas de build APK local fiable pour ce téléphone** → passer par la CI (workflow_dispatch après patch 2.5) et récupérer l'artefact « 123Ecriture-apk ». Environnement build local : JDK 17 + SDK + NDK + CMake 3.31.5 dans `~/.zcode/tools`, clone court `C:\123src`. |
-| 6.13 | Le bundle JS de l'APK embarque les `EXPO_PUBLIC_*` (inline Metro) : vérifiable par `unzip -p app-release.apk assets/index.android.bundle \| grep supabase` | Test rapide d'un APK avant installation (évite d'installer un APK muet sur Supabase). |
+| 7.1 | APK release : `console.*` est désactivé (aucun log ReactNativeJS dans logcat — vérifié 2026-10-14, pid vivant, logcat vide) | Toute investigation téléphone doit passer par un AFFICHAGE À L'ÉCRAN (frontières d'erreur, bandeaux) ou un build local debug. |
+| 7.2 | Samsung A13 multi-utilisateurs (user 0 + Secure Folder user 150) : `pm list packages` crashe sur user 150 | Toujours passer `--user 0`. |
+| 7.3 | `adb push` vers `/data/local/tmp` échoue silencieusement (fichier absent) | Installer les APK par `adb install -r`, jamais par push manuel. |
+| 7.4 | PC Windows : `pnpm typecheck` racine (turbo) → EPERM spawn | Lancer tsc/eslint/vitest PAR PAQUET, puis `git commit --no-verify` après vérification manuelle équivalente. |
+| 7.5 | PC Windows : build natif Android impossible depuis le workspace (MAX_PATH 260 + dossiers `.pnpm` longs : codegen C++ échoue ; junction résolue par gradle, ça ne suffit pas) | Cloner le dépôt dans un chemin court PHYSIQUE (ex. `C:\123src`), `pnpm install`, copier `apps/mobile/.env.local`, build là-bas. |
+| 7.6 | Environnement build local : JDK 17 + SDK Android (cmdline-tools) installés dans `~/.zcode/tools/` (pas d'admin : LongPathsEnabled=0) | Exporter `JAVA_HOME` et `ANDROID_HOME` avant tout gradlew. NDK 27.1.12297006 requis ; le réinstaller si `source.properties` manquant. |
+| 7.7 | `expo prebuild` régénère `android/` et écrase les modifications manuelles du manifest | Toute config native (scheme OAuth, permissions) doit vivre dans `app.json` (le scheme `app123ecriture` y est depuis v0.4.63 — le filtre OAuth disparaissait sinon). |
+| 7.8 | `app.json` doit rester du JSON STRICT (pas de commentaires) : `app.config.js` le lit à chaque commande expo | Pas de notes dans app.json — documenter ici ou dans le code. |
+| 7.9 | CMake 3.22.1 (défaut AGP) boucle `build.ninja still dirty after 100 tries` sur expo-modules-core (réécriture à l'identique à chaque reconfigure — vérifié : contenu stable, mtime change) | Clone local : forcer `cmake.version = '3.31.5'` (bloc subprojects dans android/build.gradle du clone) + purger les `.cxx`. La CI Linux n'a pas ce problème. |
+| 7.10 | Signature APK : `android/app/debug.keystore` est COMMITÉ → APK CI et APK local partagent la signature → `adb install -r` sans désinstallation | Si `INSTALL_FAILED_UPDATE_INCOMPATIBLE` un jour : le keystore a changé — désinstaller (perte session/registre, PAS des données du coffre). |
+| 7.11 | **Le téléphone (Samsung A13) est 32 BITS** (`ro.product.cpu.abilist` = armeabi-v7a,armeabi — PAS d'arm64) | Un APK arm64-only ne s'installe pas (`INSTALL_FAILED_NO_MATCHING_ABIS`) : il faut armeabi-v7a (ou les deux). |
+| 7.12 | La boucle ninja 6.9 touche l'ABI armeabi-v7a RÉCURRENTEMENT (arm64 compile, v7a re-boucle à chaque invocation gradle — build8/build10 : l'ABI re-boucle même après stabilisation manuelle du `.cxx`) | En pratique : **pas de build APK local fiable pour ce téléphone** → passer par la CI (workflow_dispatch après patch 2.5) et récupérer l'artefact « 123Ecriture-apk ». Environnement build local : JDK 17 + SDK + NDK + CMake 3.31.5 dans `~/.zcode/tools`, clone court `C:\123src`. |
+| 7.13 | Le bundle JS de l'APK embarque les `EXPO_PUBLIC_*` (inline Metro) : vérifiable par `unzip -p app-release.apk assets/index.android.bundle \| grep supabase` | Test rapide d'un APK avant installation (évite d'installer un APK muet sur Supabase). |
 
-## 7. État courant (dernière mise à jour : 2026-10-14, soir)
+## 8. État courant (dernière mise à jour : 2026-10-15)
 
-1. **Vaults distants** : cause prouvée (2.1) ; APK 0.4.63 construit en local avec Supabase mais **non installable sur ce téléphone** (arm64-only, cf. 6.11/6.12) → passer par la CI : patch workflow (2.5) par l'utilisatrice, puis déclenchement `workflow_dispatch` et récupération de l'artefact « 123Ecriture-apk ».
-2. **Ajout de tâche** : à re-tester sur l'APK 0.4.63 CI (lignes 4.4–4.5) ; si échec → afficher l'erreur SAF à l'écran (4.2).
-3. **Notifications d'échéance** : implémentées (expo-notifications, pill 🔔 + section Paramètres, commit 0ca7009) — à tester sur le téléphone via l'APK CI.
-4. **Workflow CI** : patch `build-android-apk.yml` à appliquer par l'utilisatrice (jeton sans scope workflow) — c'est la BLOCANTE unique pour tout le reste.
+1. **Vaults distants** : cause prouvée (2.1) ; patch workflow (2.5) à appliquer par l'utilisatrice, puis déclenchement `workflow_dispatch` et récupération de l'artefact « 123Ecriture-apk » pour le téléphone.
+2. **Corbeille** : course sync/restauration FIXÉE (e901d48, §5) — à re-tester en conditions réelles (restaurer quelques fichiers, vérifier qu'ils restent en place après 2 cycles).
+3. **Notifications d'échéance** : implémentées (commit 0ca7009) — à tester via l'APK 0.4.63.
+4. **Ajout de tâche Android** : à re-tester sur l'APK 0.4.63 CI (§4).
