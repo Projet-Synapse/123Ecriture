@@ -54,6 +54,17 @@ type SyncStatusContextValue = {
   // déjà en cours (protège aussi bien un double-clic que le chevauchement
   // manuel/auto).
   runSync: (trigger?: string) => Promise<void>;
+  // Exécute `fn` HORS de tout cycle : attend la fin du cycle en cours
+  // s'il y en a un, puis interdit tout nouveau cycle automatique
+  // (surveillance du dossier, broadcast temps réel, focus) jusqu'à ce que
+  // `fn` soit terminée. Pour les opérations multi-étapes dont les étapes
+  // intermédiaires ne doivent JAMAIS être synchronisées en l'état
+  // (restauration de corbeille : entre le déplacement local et la
+  // suppression de la tombestone distante, un cycle concurrent pouvait
+  // repousser la tombestone et ANNULER la restauration — vécu 14/10/2026).
+  // L'appelant enchaîne ensuite un runSync() explicite pour tout pousser
+  // d'un coup, dans un état final cohérent.
+  runSyncExclusive: <T>(fn: () => Promise<T>) => Promise<T>;
 };
 
 const SyncStatusReactContext = createContext<SyncStatusContextValue | null>(null);
@@ -115,6 +126,16 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
   // cycle plus récent.
   const cycleGenerationRef = useRef(0);
 
+  // Promise du cycle en cours (null sinon) — runSyncExclusive l'attend
+  // avant de commencer une opération critique, au lieu de polluer.
+  const currentCycleRef = useRef<Promise<void> | null>(null);
+
+  // True pendant une opération EXCLUSIVE (runSyncExclusive) : tous les
+  // déclencheurs automatiques de runSync (dossier, broadcast, focus,
+  // démarrage) deviennent des no-ops — les étapes intermédiaires de
+  // l'opération ne doivent pas être synchronisées en l'état.
+  const syncPausedRef = useRef(false);
+
   // Même exigence de fraîcheur pour userId/remoteVaultId : un appelant peut
   // détenir une version ANTÉRIEURE de `runSync` (closure créée avant que le
   // coffre actif change) — cas réel v0.4.10 : « Connecter sur cet appareil »
@@ -135,6 +156,10 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
   // périmé pendant une bascule était la source de la contamination croisée.
   const triggerRef = useRef<string>('automatique');
   const runSync = useCallback(async (trigger?: string) => {
+    // Opération exclusive en cours (restauration de corbeille…) : les
+    // déclencheurs auto ET manuels passent leur chemin — l'appelant
+    // exclusif lancera lui-même le cycle final, sur l'état cohérent.
+    if (syncPausedRef.current) return;
     if (trigger) triggerRef.current = trigger;
     const { userId: currentUserId, remoteVaultId: currentRemoteVaultId } = latestRef.current;
     if (!currentUserId || !currentRemoteVaultId || syncingRef.current) return;
@@ -143,7 +168,10 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
     // mort sans timeout) est révoqué après SYNC_CYCLE_TIMEOUT_MS — statut
     // erreur, déblocage du changement de coffre et de la synchro ; s'il
     // aboutit finalement en arrière-plan, ses mises à jour sont ignorées.
+    // Le corps du cycle est isolé dans une promise tracée par
+    // currentCycleRef : runSyncExclusive peut attendre SA fin exacte.
     const generation = ++cycleGenerationRef.current;
+    const cycle = (async () => {
     const watchdog = setTimeout(() => {
       if (!syncingRef.current || cycleGenerationRef.current !== generation) return;
       cycleGenerationRef.current += 1;
@@ -210,9 +238,32 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
         syncingRef.current = false;
       }
     }
+    })();
+    currentCycleRef.current = cycle;
+    try {
+      await cycle;
+    } finally {
+      if (currentCycleRef.current === cycle) currentCycleRef.current = null;
+    }
     // reloadVaultAppearance est stable (useCallback [] côté Preferences),
     // la dépendance ne recrée jamais runSync — elle satisfait juste le lint.
   }, [reloadVaultAppearance]);
+
+  // Exécution HORS cycle (voir le contrat dans SyncStatusContextValue) :
+  // attend le cycle éventuellement en cours, gèle tous les déclencheurs de
+  // runSync pendant `fn`, puis rend la main — l'appelant enchaîne un
+  // runSync() explicite sur l'état final cohérent.
+  const runSyncExclusive = useCallback(async <T,>(fn: () => Promise<T>): Promise<T> => {
+    while (currentCycleRef.current) {
+      await currentCycleRef.current;
+    }
+    syncPausedRef.current = true;
+    try {
+      return await fn();
+    } finally {
+      syncPausedRef.current = false;
+    }
+  }, []);
 
   // Synchro automatique (Paramètres → Compte et synchronisation → "Synchro-
   // niser automatiquement") : STRICTEMENT rien si la préférence est fausse
@@ -321,8 +372,9 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
       lastError,
       cloudSyncConfigured,
       runSync,
+      runSyncExclusive,
     }),
-    [status, lastSyncedAt, lastResultSummary, lastConflicts, lastSummary, lastError, cloudSyncConfigured, runSync],
+    [status, lastSyncedAt, lastResultSummary, lastConflicts, lastSummary, lastError, cloudSyncConfigured, runSync, runSyncExclusive],
   );
 
   return <SyncStatusReactContext.Provider value={value}>{children}</SyncStatusReactContext.Provider>;
