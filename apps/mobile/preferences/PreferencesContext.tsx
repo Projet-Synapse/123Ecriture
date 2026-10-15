@@ -149,6 +149,10 @@ type PreferencesContextValue = {
   // d'afficher/masquer les actions correspondantes, même logique de
   // dégradation que le reste des préférences.
   resetPreferences: () => void;
+  // Relecture du fichier .123ecriture/preferences.json du coffre actif —
+  // appelé après un cycle de sync qui a rapatrié des fichiers (les
+  // préférences par coffre sont synchronisées depuis la v0.4.65).
+  reloadVaultPreferences: () => void;
   getConfigPath: (() => Promise<string>) | undefined;
   revealConfigFolder: (() => Promise<void>) | undefined;
   // `false` tant que le premier `bridge.get()` n'a pas résolu (true
@@ -165,6 +169,26 @@ type PreferencesContextValue = {
 };
 
 const PreferencesReactContext = createContext<PreferencesContextValue | null>(null);
+
+// Fusion d'une configuration stockée (locale ou fichier du coffre) avec les
+// défauts — partagée par le chargement local (bridge.get) et le chargement
+// du fichier .123ecriture/preferences.json (v0.4.65) pour des règles
+// identiques.
+function mergeStoredPreferences(stored: Partial<Preferences> | null | undefined): Preferences {
+  const merged: Preferences = { ...DEFAULT_PREFERENCES, ...(stored && typeof stored === 'object' ? stored : {}) };
+  // Voir notesToolbarActions.ts : convertit un ordre enregistré avant
+  // l'éclatement du groupe "H" (id 'heading-group') vers les 6 niveaux
+  // individuels, sans quoi ce bouton disparaîtrait de la barre pour une
+  // utilisatrice ayant déjà personnalisé son ordre.
+  merged.notesToolbarOrder = normalizeNotesToolbarOrder(merged.notesToolbarOrder);
+  // Groupes v0.4.43 : si la préférence n'existe pas encore sur disque,
+  // migration depuis l'ancien ordre plat (respect des masqués/groupes
+  // d'alors) ; sinon simple complétion des boutons nouveaux.
+  merged.notesToolbarGroups = stored?.notesToolbarGroups
+    ? normalizeNotesToolbarGroups(stored.notesToolbarGroups)
+    : migrateNotesToolbarGroups(stored?.notesToolbarOrder);
+  return merged;
+}
 
 export function PreferencesProvider({ children }: { children: ReactNode }) {
   const systemScheme = useColorScheme();
@@ -224,35 +248,73 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     void bridge
       .get()
       .then((stored) => {
-        const merged = { ...DEFAULT_PREFERENCES, ...stored };
-        // Voir notesToolbarActions.ts : convertit un ordre enregistré avant
-        // l'éclatement du groupe "H" (id 'heading-group') vers les 6
-        // niveaux individuels, sans quoi ce bouton disparaîtrait de la
-        // barre pour une utilisatrice ayant déjà personnalisé son ordre.
-        merged.notesToolbarOrder = normalizeNotesToolbarOrder(merged.notesToolbarOrder);
-        // Groupes v0.4.43 : si la préférence n'existe pas encore sur disque,
-        // migration depuis l'ancien ordre plat (respect des masqués/groupes
-        // d'alors) ; sinon simple complétion des boutons nouveaux.
-        merged.notesToolbarGroups = stored?.notesToolbarGroups
-          ? normalizeNotesToolbarGroups(stored.notesToolbarGroups)
-          : migrateNotesToolbarGroups(stored?.notesToolbarOrder);
-        setPreferences(merged);
+        setPreferences(mergeStoredPreferences(stored));
       })
       .catch((error) => console.error('[preferences] échec du chargement :', error))
       .finally(() => setPreferencesLoaded(true));
   }, [bridge]);
 
-  // Renvoie une Promise qui se résout une fois l'écriture DISQUE (pas
-  // seulement l'état React local) effectivement terminée — nécessaire pour
-  // les appelants qui doivent enchaîner une action qui dépend de cette
-  // préférence déjà persistée côté main process (ex. NotesScreen.tsx,
-  // `handleDrop` : `vault:reorder` relit `fileSortMode` depuis le disque à
-  // CHAQUE appel, donc appeler `setFileSortMode('manual')` sans attendre
-  // la fin réelle de l'écriture avant de réordonner crée une course où le
-  // réordonnancement se fait encore lire en mode 'alphabetical' — l'ordre
-  // glissé-déposé semble alors "revenir à sa place" puisque `vault:reorder`
-  // l'ignore silencieusement dans ce mode). Sans pont (web/mobile), résout
-  // immédiatement : rien à attendre, l'état local suffit.
+  // v0.4.65 — PRÉFÉRENCES PAR COFFRE : le fichier
+  // .123ecriture/preferences.json du coffre actif (synchronisé) PREVAUT sur
+  // le stockage local une fois le coffre ouvert, et est rechargé à chaque
+  // changement de coffre (chaque coffre a ses réglages — modèle validé par
+  // l'utilisatrice) et après chaque cycle de sync qui a rapatrié des
+  // fichiers (reloadVaultPreferences, appelé par SyncStatusContext).
+  // `vaultPrefsSyncAllowed` verrouille la RÉPLICATION (l'effet qui réécrit
+  // les préférences vers le coffre) tant que la première lecture du fichier
+  // du coffre n'a pas eu lieu : sans lui, le démarrage écrirait le contenu
+  // LOCAL par-dessus le fichier du coffre avant de l'avoir lu.
+  const [vaultPrefsTick, setVaultPrefsTick] = useState(0);
+  const [vaultPrefsSyncAllowed, setVaultPrefsSyncAllowed] = useState(false);
+  const reloadVaultPreferences = useCallback(() => setVaultPrefsTick((tick) => tick + 1), []);
+  useEffect(() => {
+    if (!preferencesLoaded || !activeVault) return;
+    const vault = typeof window !== 'undefined' ? window.vault : undefined;
+    if (!vault?.readNote) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const raw = await vault.readNote('.123ecriture/preferences.json');
+        if (cancelled) return;
+        const stored = JSON.parse(raw) as Partial<Preferences>;
+        if (stored && typeof stored === 'object') {
+          const merged = mergeStoredPreferences(stored);
+          setPreferences(merged);
+        }
+      } catch {
+        // Fichier absent (première utilisation du coffre) ou coffre
+        // inaccessible : les préférences locales restent appliquées.
+      } finally {
+        if (!cancelled) setVaultPrefsSyncAllowed(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // Seul l'IDENTIFIANT compte (même convention que l'apparence ci-dessus).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeVault?.id, preferencesLoaded, vaultPrefsTick]);
+
+  // v0.4.65 — DOUBLE PERSISTENCE : en plus du stockage local historique
+  // (config desktop / stockage privé mobile), les préférences sont
+  // RÉPLIQUÉES dans le coffre actif (.123ecriture/preferences.json,
+  // synchronisé — cf. SYNCED_META_FILES) : la personnalisation « fait
+  // partie du vault » et suit l'utilisatrice d'un appareil à l'autre
+  // (demande 15/10/2026). La réplication passe par un EFFET (l'état React
+  // est alors toujours le plus frais — pas de ref à réaligner) et ne
+  // démarre qu'une fois le fichier du coffre lu (vaultPrefsSyncAllowed) :
+  // sinon le démarrage écrirait le contenu local par-dessus celui du
+  // coffre avant de l'avoir lu. Le local reste la source au démarrage (le
+  // coffre s'ouvre après) et le filet si le coffre est inaccessible.
+  useEffect(() => {
+    if (!preferencesLoaded || !vaultPrefsSyncAllowed) return;
+    const vault = typeof window !== 'undefined' ? window.vault : undefined;
+    if (!vault?.writeNote) return;
+    void vault
+      .writeNote('.123ecriture/preferences.json', JSON.stringify(preferences, null, 2))
+      .catch((error) => console.error('[preferences] échec d’écriture dans le coffre :', error));
+  }, [preferences, preferencesLoaded, vaultPrefsSyncAllowed]);
+
   const persist = useCallback(
     (partial: Partial<Preferences>): Promise<void> => {
       setPreferences((prev) => ({ ...prev, ...partial }));
@@ -400,6 +462,8 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
   const setAutoSyncEnabled = useCallback((value: boolean) => persist({ autoSyncEnabled: value }), [persist]);
 
   const resetPreferences = useCallback(() => {
+    // La réplication par effet réécrira les défauts dans le coffre (et le
+    // bridge.reset effacera le stockage local).
     setPreferences(DEFAULT_PREFERENCES);
     if (bridge) {
       bridge.reset().catch((error) => console.error('[preferences] échec de la réinitialisation :', error));
@@ -532,6 +596,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       toggleFavorite,
       setAutoSyncEnabled,
       resetPreferences,
+      reloadVaultPreferences,
       getConfigPath,
       revealConfigFolder,
     }),
@@ -576,6 +641,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       toggleFavorite,
       setAutoSyncEnabled,
       resetPreferences,
+      reloadVaultPreferences,
       getConfigPath,
       revealConfigFolder,
     ],

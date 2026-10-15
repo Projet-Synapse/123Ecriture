@@ -682,6 +682,17 @@ async function attemptConflictMerge(
   }
   const merged = tryThreeWayMerge(base, local, remote);
   if (merged.kind !== 'merged') return false;
+  // Garde JSON (v0.4.65) : les métadonnées synchronisées sont du JSON
+  // (tasks/tasklists/preferences) — une fusion par caractères peut produire
+  // du texte inanalysable. Si le résultat ne se parse pas, on retombe sur
+  // le comportement gagnant/perdant plutôt que d'écrire un fichier cassé.
+  if (relPath.toLowerCase().endsWith('.json')) {
+    try {
+      JSON.parse(merged.text);
+    } catch {
+      return false;
+    }
+  }
 
   const { vault, sync } = requireBridges();
   await vault.writeNote(relPath, merged.text);

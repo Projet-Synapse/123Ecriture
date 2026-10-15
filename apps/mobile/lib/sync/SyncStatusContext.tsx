@@ -101,7 +101,7 @@ function summarizeSuccess(summary: SyncSummary): string {
 export function SyncStatusProvider({ children }: { children: ReactNode }) {
   const auth = useAuth();
   const { activeVault } = useVaults();
-  const { preferences, reloadVaultAppearance } = usePreferences();
+  const { preferences, reloadVaultAppearance, reloadVaultPreferences } = usePreferences();
 
   const [status, setStatus] = useState<SyncStatus>('idle');
   const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(null);
@@ -203,8 +203,12 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
       }
       // L'apparence PAR COFFRE est synchronisee (v0.4.42) : un cycle qui a
       // rapatrie des fichiers a pu la mettre a jour — le theme suit sans
-      // attendre un changement de coffre.
-      if (summary.pulled > 0) reloadVaultAppearance();
+      // attendre un changement de coffre. Les PRÉFÉRENCES PAR COFFRE aussi
+      // (v0.4.65 : .123ecriture/preferences.json).
+      if (summary.pulled > 0) {
+        reloadVaultAppearance();
+        reloadVaultPreferences();
+      }
       // v0.4.29 : annoncer aux autres appareils du compte qu'un cycle a
       // change le cloud — ils lanceront un cycle ~3 s plus tard au lieu
       // d'attendre le leur (propagation quasi instantanee, broadcast
@@ -245,9 +249,10 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
     } finally {
       if (currentCycleRef.current === cycle) currentCycleRef.current = null;
     }
-    // reloadVaultAppearance est stable (useCallback [] côté Preferences),
-    // la dépendance ne recrée jamais runSync — elle satisfait juste le lint.
-  }, [reloadVaultAppearance]);
+    // reloadVaultAppearance/reloadVaultPreferences sont stables (useCallback
+    // [] côté Preferences), la dépendance ne recrée jamais runSync — elle
+    // satisfait juste le lint.
+  }, [reloadVaultAppearance, reloadVaultPreferences]);
 
   // Exécution HORS cycle (voir le contrat dans SyncStatusContextValue) :
   // attend le cycle éventuellement en cours, gèle tous les déclencheurs de

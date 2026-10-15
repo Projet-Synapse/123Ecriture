@@ -74,7 +74,11 @@ async function loadDirtyQueue(): Promise<DirtyItem[]> {
 }
 
 function markVaultFileDirty(relPath: string): void {
-  if (relPath.startsWith('.123ecriture/')) return;
+  // Les métadonnées .123ecriture/** restent hors hachage SAUF la liste
+  // synchronisée (tasks/tasklists/preferences/appearance, cf.
+  // nativeSyncAdapter.SYNCED_META_FILES) — leur modification doit bien
+  // déclencher le re-hachage incrémental du prochain cycle.
+  if (relPath.startsWith('.123ecriture/') && !SYNCED_META_FILES.includes(relPath)) return;
   void (async () => {
     const root = await getActiveVaultRootUri();
     if (!root) return;
@@ -129,6 +133,32 @@ export function getVaultIndexKeys(): string[] {
 export function getVaultIndexEntry(relPath: string): IndexEntry | undefined {
   return pathIndex.get(relPath);
 }
+
+// Chemins métadonnées du coffre : indexés et lus/écrits via readNote/
+// writeNote mais jamais rendus dans l'arbre visible ni hachés pour la sync
+// (même liste que isHiddenRoot de buildTreeFromIndex — à maintenir ensemble).
+function isMetaRelPath(relPath: string): boolean {
+  return (
+    relPath === '.123ecriture' ||
+    relPath.startsWith('.123ecriture/') ||
+    relPath === '.trash' ||
+    relPath.startsWith('.trash/')
+  );
+}
+
+// Métadonnées .123ecriture/** qui voyagent AVEC le coffre (liste blanche en
+// POSIX — le reste du sous-arbre reste local) : apparence par coffre
+// (v0.4.42), tâches/listes et préférences d'UI par coffre (v0.4.65 —
+// « tâches enregistrées et synchronisées dans leur vault respectif »).
+// Consommateurs : markVaultFileDirty ci-dessous, nativeSyncAdapter
+// (hashableRelPath) et côté desktop SYNCED_META_FILES de
+// apps/desktop/electron/sync.ts — À MAINTENIR ENSEMBLE.
+export const SYNCED_META_FILES = [
+  '.123ecriture/appearance.json',
+  '.123ecriture/tasks.json',
+  '.123ecriture/tasklists.json',
+  '.123ecriture/preferences.json',
+];
 
 function resolveIndexed(relPath: string): IndexEntry {
   const entry = pathIndex.get(relPath);
@@ -648,6 +678,27 @@ export const nativeVaultAdapter: VaultBridge = {
     // continuaient de pointer vers l'ANCIEN coffre jusqu'au prochain
     // listTree (code mort récemment branché).
     invalidateIndexIfRootChanged(await getActiveVaultRootUri().catch(() => null));
+    // Métadonnées absentes de l'index : le DISQUE gagne toujours. Un fichier
+    // `.123ecriture/**` créé dans une session antérieure peut manquer à
+    // l'index persisté (v0.4.65 : l'index n'était jamais persisté pour elles
+    // — les tâches « disparaissaient » au relancement, vécu A13 15/10/2026,
+    // docs/vault-incidents.md §4.2). On le cherche DIRECTEMENT dans son
+    // dossier SAF et on l'ajoute à l'index au passage ; erreur réelle sinon.
+    if (isMetaRelPath(relPath) && !pathIndex.get(relPath)) {
+      const parentRelPath = relPath.includes('/') ? relPath.slice(0, relPath.lastIndexOf('/')) : '';
+      const name = relPath.slice(relPath.lastIndexOf('/') + 1);
+      try {
+        const parentUri = await ensureSafDir(parentRelPath);
+        const children = await StorageAccessFramework.readDirectoryAsync(parentUri);
+        const uri = children.find((child) => nameFromSafUri(child) === name);
+        if (uri) {
+          pathIndex.set(relPath, { uri, isDirectory: false });
+          scheduleIndexPersist();
+        }
+      } catch {
+        // Pas le droit / introuvable : l'erreur classique ci-dessous parle.
+      }
+    }
     const { uri, isDirectory } = resolveIndexed(relPath);
     if (isDirectory) throw new Error(`« ${relPath} » est un dossier, pas une note.`);
     return readSafFileText(uri);
@@ -661,8 +712,13 @@ export const nativeVaultAdapter: VaultBridge = {
       await writeSafFileText(cached.uri, content);
       // Les metadonnees de synchro s'ecrivent a CHAQUE cycle : les exclure
       // de l'invalidation evite de relancer un parcours d'une minute juste
-      // apres (l'arbre VISIBLE n'a pas change).
-      if (!relPath.startsWith('.123ecriture/')) invalidateTree();
+      // apres (l'arbre VISIBLE n'a pas change). MAIS leur entree d'index
+      // doit etre PERSISTEE immediatement : aucune autre ecriture ne
+      // persiste l'index pour elles, et une app fermee avant le prochain
+      // parcours perdait la trace du fichier (taches disparues au
+      // relancement, v0.4.65).
+      if (relPath.startsWith('.123ecriture/')) await persistIndex();
+      else invalidateTree();
       markVaultFileDirty(relPath);
       return;
     }
@@ -694,7 +750,11 @@ export const nativeVaultAdapter: VaultBridge = {
     }
     await writeSafFileText(uri, content);
     pathIndex.set(relPath, { uri, isDirectory: false });
-    if (!relPath.startsWith('.123ecriture/')) invalidateTree();
+    // Même règle que la branche « cached » ci-dessus : une métadonnée
+    // `.123ecriture/**` fraîchement créée doit laisser une trace d'index
+    // PERSISTEE immédiatement (aucun autre parcours ne la connaît).
+    if (relPath.startsWith('.123ecriture/')) await persistIndex();
+    else invalidateTree();
     markVaultFileDirty(relPath);
   },
 

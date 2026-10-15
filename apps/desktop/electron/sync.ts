@@ -47,6 +47,19 @@ async function hashFileContent(fullPath: string): Promise<string> {
 let hashCacheVaultPath: string | null = null;
 const hashCache = new Map<string, { mtimeMs: number; size: number; hash: string }>();
 
+// Métadonnées .123ecriture/** qui VONTAGEnt avec le coffre (liste blanche en
+// POSIX — le reste du sous-arbre reste local) : apparence par coffre
+// (v0.4.42), tâches et listes (v0.4.65 : « tâches enregistrées et
+// synchronisées dans leur vault respectif »), préférences d'UI par coffre
+// (v0.4.65). Même liste côté mobile : nativeSyncAdapter.hashableRelPath —
+// À MAINTENIR ENSEMBLE.
+const SYNCED_META_FILES = [
+  '.123ecriture/appearance.json',
+  '.123ecriture/tasks.json',
+  '.123ecriture/tasklists.json',
+  '.123ecriture/preferences.json',
+];
+
 function resetHashCache(vaultPath: string): void {
   if (hashCacheVaultPath !== vaultPath) {
     hashCache.clear();
@@ -81,18 +94,21 @@ async function walkAndHash(dir: string, vaultRoot: string, out: HashedNote[]): P
     // corbeille de conflits…) — SAUF `.trash`, la corbeille du coffre,
     // volontairement SYNCHRONISÉE (v0.4.26 : elle est partagée entre tous
     // les appareils du compte, chaque suppression y atterrit partout).
-    // Apparence PAR COFFRE (v0.4.42) : .123ecriture/appearance.json voyage
-    // avec le coffre — le thème réglé sur un appareil se retrouve sur tous.
-    const appearanceRelPath = path.relative(vaultRoot, fullPath);
-    const isAppearanceFile = appearanceRelPath === '.123ecriture' + path.sep + 'appearance.json';
+    // Métadonnées SYNCHRONISÉES (liste blanche, en POSIX) :
+    // - .123ecriture/appearance.json — apparence par coffre (v0.4.42) ;
+    // - tasks/tasklists (v0.4.65, demande : « tâches enregistrées et
+    //   synchronisées dans leur vault respectif ») ;
+    // - preferences (v0.4.65 : personnalisation de l'UI par coffre).
+    const relPathPosix = relSegments.join('/');
+    const isSyncedMetaFile = SYNCED_META_FILES.includes(relPathPosix);
     if (
-      !isAppearanceFile &&
+      !isSyncedMetaFile &&
       relSegments[0] !== '.trash' &&
       relSegments.some((segment) => segment.startsWith('.'))
     ) {
       continue;
     }
-    if (entry.isFile() && (isAppearanceFile || EXTENSION_TO_KIND[path.extname(entry.name)])) {
+    if (entry.isFile() && (isSyncedMetaFile || EXTENSION_TO_KIND[path.extname(entry.name)])) {
       try {
         const stat = await fs.stat(fullPath);
         // v0.4.54 — normalisation POSIX OBLIGATOIRE : sur Windows,

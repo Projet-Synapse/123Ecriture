@@ -6,6 +6,7 @@ import {
   getVaultIndexEntry,
   getVaultIndexKeys,
   nativeVaultAdapter,
+  SYNCED_META_FILES,
   takeDirtyPathsForRoot,
 } from './nativeVaultAdapter';
 import { sha256Hex, utf8Bytes } from '../sync/nativeSha256';
@@ -65,12 +66,12 @@ async function saveBaseline(rootUri: string, entries: BaselineEntries): Promise<
 }
 
 // Quels relPaths appartiennent à l'arbre synchronisé — mêmes règles que
-// walkAndHash desktop (segments cachés exclus, .trash excepté), plus
-// l'APPARENCE PAR COFFRE : .123ecriture/appearance.json voyage avec le
-// coffre pour que le thème réglé sur un appareil se retrouve sur tous
-// (demande 2026-10-02).
+// walkAndHash desktop (segments cachés exclus, .trash excepté), plus les
+// MÉTADONNÉES SYNCHRONISÉES (SYNCED_META_FILES, importée de
+// nativeVaultAdapter : apparence, tâches/listes, préférences — cf. la
+// définition pour l'historique).
 function hashableRelPath(relPath: string): boolean {
-  if (relPath === '.123ecriture/appearance.json') return true;
+  if (SYNCED_META_FILES.includes(relPath)) return true;
   const segments = relPath.split('/');
   if (segments[0] !== '.trash' && segments.some((segment) => segment.startsWith('.'))) return false;
   const name = segments[segments.length - 1].toLowerCase();
