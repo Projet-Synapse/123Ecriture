@@ -91,8 +91,9 @@
 | 7.12 | La boucle ninja 6.9 touche l'ABI armeabi-v7a RÉCURRENTEMENT (arm64 compile, v7a re-boucle à chaque invocation gradle — build8/build10 : l'ABI re-boucle même après stabilisation manuelle du `.cxx`) | En pratique : **pas de build APK local fiable pour ce téléphone** → passer par la CI (workflow_dispatch après patch 2.5) et récupérer l'artefact « 123Ecriture-apk ». Environnement build local : JDK 17 + SDK + NDK + CMake 3.31.5 dans `~/.zcode/tools`, clone court `C:\123src`. |
 | 7.13 | Le bundle JS de l'APK embarque les `EXPO_PUBLIC_*` (inline Metro) : vérifiable par `unzip -p app-release.apk assets/index.android.bundle \| grep supabase` | Test rapide d'un APK avant installation (évite d'installer un APK muet sur Supabase). |
 
-## 8. État courant (dernière mise à jour : 2026-10-16, soir)
+## 8. État courant (dernière mise à jour : 2026-10-17)
 
-1. **WORLDBUILDING restauré** (§9) : coffre PC actif à 251 fichiers, cloud convergé à 225 vivants propres, PERSONNAGES de retour. À faire par l'utilisatrice : sur le TÉLÉPHONE, retirer le coffre WORLDBUILDING puis « Connecter sur cet appareil… » pour un pull propre du cloud restauré (l'app téléphone doit rester fermée jusque-là).
-2. **Tâches + préférences par coffre** : livré en v0.4.65 (b327e64) — à valider sur le téléphone (APK à installer, fichier prêt dans le workspace).
-3. **PC** : 0.4.60 fonctionnelle sur le Bureau (raccourci recréé) ; le tag v0.4.65 déclenchera l'auto-update vers la version complète.
+1. **WORLDBUILDING restauré** (§9) : coffre PC actif ~246 fichiers, cloud 225 vivants propres, PERSONNAGES de retour. À faire par l'utilisatrice sur le TÉLÉPHONE : retirer le coffre WORLDBUILDING local puis « Connecter sur cet appareil… » (pull propre du cloud restauré).
+2. **v0.4.66 en build** (635d73d) : pièces jointes synchronisées (binaire), garde anti-suppression massive, corbeille renforcée, « Joindre » sur Android, synchro APRÈS l'action (gel généralisé). Install sur le téléphone dès la sortie du build.
+3. **À surveiller** : purge backslashed instrumentée (2 chemins d'exemple au journal) — si les mêmes chemins re-reviennent, un ré-upserteur existe à identifier.
+4. **Tag v0.4.66** à pousser après validation téléphone → installateurs desktop complets (auto-update 0.4.60 → 0.4.66).
