@@ -91,10 +91,8 @@
 | 7.12 | La boucle ninja 6.9 touche l'ABI armeabi-v7a RÉCURRENTEMENT (arm64 compile, v7a re-boucle à chaque invocation gradle — build8/build10 : l'ABI re-boucle même après stabilisation manuelle du `.cxx`) | En pratique : **pas de build APK local fiable pour ce téléphone** → passer par la CI (workflow_dispatch après patch 2.5) et récupérer l'artefact « 123Ecriture-apk ». Environnement build local : JDK 17 + SDK + NDK + CMake 3.31.5 dans `~/.zcode/tools`, clone court `C:\123src`. |
 | 7.13 | Le bundle JS de l'APK embarque les `EXPO_PUBLIC_*` (inline Metro) : vérifiable par `unzip -p app-release.apk assets/index.android.bundle \| grep supabase` | Test rapide d'un APK avant installation (évite d'installer un APK muet sur Supabase). |
 
-## 8. État courant (dernière mise à jour : 2026-10-16)
+## 8. État courant (dernière mise à jour : 2026-10-16, soir)
 
-1. **Vaults distants** : RÉSOLU — patch workflow appliqué (2.5, c28b749), APK 0.4.63/64 avec Supabase installé, l'utilisatrice reconnectée (les Redirect URLs du dashboard Supabase étaient VIDES — ajoutées via l'API Management `uri_allow_list`, deep link app123ecriture://auth-callback autorisé).
-2. **Corbeille** : FIXÉE (e901d48, §5) — à re-tester sur PC après la v0.4.65.
-3. **Tâches** : fix de persistance + SYNCHRONISATION dans le vault (tasks/tasklists dans SYNCED_META_FILES) livrés en v0.4.65 (b327e64) — à valider sur le téléphone (ajout → relance → tâche toujours là ; puis modification sur PC → sync → visible sur téléphone).
-4. **Préférences PAR COFFRE** (demande 15/10) : .123ecriture/preferences.json, répliqué par effet, prioritaire sur le local, synchronisé (v0.4.65) — à valider (changer un réglage sur le PC → sync → retrouvé sur le téléphone).
-5. **Release** : tag v0.4.65 à pousser après validation téléphone → installateurs desktop complets (l'auto-update 0.4.60→0.4.65 réparera le PC) + APK joint.
+1. **WORLDBUILDING restauré** (§9) : coffre PC actif à 251 fichiers, cloud convergé à 225 vivants propres, PERSONNAGES de retour. À faire par l'utilisatrice : sur le TÉLÉPHONE, retirer le coffre WORLDBUILDING puis « Connecter sur cet appareil… » pour un pull propre du cloud restauré (l'app téléphone doit rester fermée jusque-là).
+2. **Tâches + préférences par coffre** : livré en v0.4.65 (b327e64) — à valider sur le téléphone (APK à installer, fichier prêt dans le workspace).
+3. **PC** : 0.4.60 fonctionnelle sur le Bureau (raccourci recréé) ; le tag v0.4.65 déclenchera l'auto-update vers la version complète.
