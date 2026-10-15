@@ -35,6 +35,7 @@ import {
   getParentRelPath,
 } from '../lib/vaultTree';
 import { countCharacters, countWords } from '../lib/wordCount';
+import { useSyncStatus } from '../lib/sync/SyncStatusContext';
 import { useVaults } from '../lib/sync/VaultsContext';
 import { usePreferences } from '../preferences/PreferencesContext';
 import type { NotesActions } from './AppShell';
@@ -174,6 +175,11 @@ export function NotesScreen({
 }: Props = {}) {
   const { preferences, preferencesLoaded, theme, setFileSortMode, toggleFavorite } = usePreferences();
   const vault = typeof window !== 'undefined' ? window.vault : undefined;
+  // Gel des cycles de synchronisation pendant les actions structurantes
+  // (suppression, renommage, déplacement) : un cycle partant au milieu
+  // d'une action créait l'effet « il ne se passe rien » (vécu 17/10 —
+  // la synchro doit passer APRÈS l'action, jamais pendant).
+  const syncStatus = useSyncStatus();
   const contextMenuBridge = typeof window !== 'undefined' ? window.contextMenu : undefined;
   // Menu contextuel unifié : pont Electron desktop (`contextMenuBridge.show`,
   // menu natif du clic droit) OU carte tactile `ActionMenu` sur natif —
@@ -1156,7 +1162,7 @@ export function NotesScreen({
     async (node: VaultTreeNode) => {
       if (!vault) return;
       try {
-        const { deleted } = await vault.delete(node.relPath);
+        const { deleted } = await syncStatus.runSyncExclusive(() => vault.delete(node.relPath));
         if (!deleted) return; // annulé dans la boîte de confirmation
         updateOpenTabsAfterPathChange(node.relPath, null);
         setActiveNote((current) => {
@@ -1210,7 +1216,7 @@ export function NotesScreen({
       if (!vault || !editingPathNode) return;
       const node = editingPathNode;
       try {
-        const result = await vault.setPath(node.relPath, newRelPath);
+        const result = await syncStatus.runSyncExclusive(() => vault.setPath(node.relPath, newRelPath));
         // Fermé seulement en cas de SUCCÈS — en cas d'erreur (collision,
         // chemin invalide...), la boîte reste ouverte avec le message pour
         // que l'utilisatrice puisse corriger sans tout retaper.

@@ -60,6 +60,17 @@ const SYNCED_META_FILES = [
   '.123ecriture/preferences.json',
 ];
 
+// Pièces jointes SYNCHRONISÉES (v0.4.66, demande : « gestion des fichiers
+// joints ») : images, documents et audio voyageant avec le coffre, SANS
+// limite de taille (choix de l'utilisatrice ; alerte au-delà de 25 Mo au
+// push). Même liste côté mobile : SYNC_ATTACHMENT_EXTENSIONS de
+// nativeSyncAdapter.ts — À MAINTENIR ENSEMBLE.
+const SYNC_ATTACHMENT_EXTENSIONS = [
+  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.heic',
+  '.pdf', '.txt', '.csv',
+  '.mp3', '.wav', '.ogg', '.m4a', '.mp4', '.webm',
+];
+
 function resetHashCache(vaultPath: string): void {
   if (hashCacheVaultPath !== vaultPath) {
     hashCache.clear();
@@ -101,14 +112,20 @@ async function walkAndHash(dir: string, vaultRoot: string, out: HashedNote[]): P
     // - preferences (v0.4.65 : personnalisation de l'UI par coffre).
     const relPathPosix = relSegments.join('/');
     const isSyncedMetaFile = SYNCED_META_FILES.includes(relPathPosix);
+    const extension = path.extname(entry.name).toLowerCase();
+    const isAttachmentFile = SYNC_ATTACHMENT_EXTENSIONS.includes(extension);
     if (
       !isSyncedMetaFile &&
+      !isAttachmentFile &&
       relSegments[0] !== '.trash' &&
       relSegments.some((segment) => segment.startsWith('.'))
     ) {
       continue;
     }
-    if (entry.isFile() && (isSyncedMetaFile || EXTENSION_TO_KIND[path.extname(entry.name)])) {
+    // Pièces jointes : synchronisées SANS limite de taille (choix de
+    // l'utilisatrice) — l'alerte « fichier volumineux » se produit au push
+    // (syncEngine, seuil MAX_ATTACHMENT_ALERT_BYTES).
+    if (entry.isFile() && (isSyncedMetaFile || isAttachmentFile || EXTENSION_TO_KIND[path.extname(entry.name)])) {
       try {
         const stat = await fs.stat(fullPath);
         // v0.4.54 — normalisation POSIX OBLIGATOIRE : sur Windows,

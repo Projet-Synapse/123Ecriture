@@ -524,6 +524,23 @@ export function registerVaultHandlers(getWindow: GetWindow): void {
     return fs.readFile(resolveInVault(vaultPath, relPath), 'utf8');
   });
 
+  // v0.4.66 — PIÈCES JOINTES SYNCHRONISÉES : lecture/écriture BINAIRE
+  // (base64) pour les fichiers non-texte (images, PDF, audio…) — le moteur
+  // de synchro les utilise pour les push/pull des pièces jointes.
+  ipcMain.handle('vault:read-note-binary', async (_event, relPath: string) => {
+    const vaultPath = getVaultPath();
+    if (!vaultPath) throw new Error('Aucun vault sélectionné');
+    return (await fs.readFile(resolveInVault(vaultPath, relPath))).toString('base64');
+  });
+
+  ipcMain.handle('vault:write-note-binary', async (_event, relPath: string, base64: string) => {
+    const vaultPath = getVaultPath();
+    if (!vaultPath) throw new Error('Aucun vault sélectionné');
+    const fullPath = resolveInVault(vaultPath, relPath);
+    await fs.mkdir(path.dirname(fullPath), { recursive: true });
+    await fs.writeFile(fullPath, Buffer.from(base64, 'base64'));
+  });
+
   // Dates du fichier (matérialisation de created/modified dans le
   // frontmatter à la sauvegarde, voir NotesScreen.tsx) — birthtime peut
   // valoir 0 sur certains systèmes de fichiers/réseaux : repli sur mtime

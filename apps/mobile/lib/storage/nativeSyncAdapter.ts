@@ -6,6 +6,7 @@ import {
   getVaultIndexEntry,
   getVaultIndexKeys,
   nativeVaultAdapter,
+  SYNC_ATTACHMENT_EXTENSIONS,
   SYNCED_META_FILES,
   takeDirtyPathsForRoot,
 } from './nativeVaultAdapter';
@@ -75,7 +76,35 @@ function hashableRelPath(relPath: string): boolean {
   const segments = relPath.split('/');
   if (segments[0] !== '.trash' && segments.some((segment) => segment.startsWith('.'))) return false;
   const name = segments[segments.length - 1].toLowerCase();
+  // Pièces jointes synchronisées (v0.4.66) : images/PDF/audio — la taille
+  // par fichier est plafonnée côté desktop (25 Mo) ; le mobile hache ce que
+  // son index connaît.
+  if (SYNC_ATTACHMENT_EXTENSIONS.some((ext) => name.endsWith(ext))) return true;
   return SYNC_EXTENSIONS.some((ext) => name.endsWith(ext));
+}
+
+// Décodage base64 → octets (pur JS : Hermes n'a pas `atob` garanti) —
+// utilisé par le hachage des pièces jointes binaires.
+function base64ToBytes(base64: string): Uint8Array {
+  const table = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  const clean = base64.replace(/[^A-Za-z0-9+/=]/g, '');
+  const padding = clean.endsWith('==') ? 2 : clean.endsWith('=') ? 1 : 0;
+  const bytes = new Uint8Array(Math.floor(clean.length / 4) * 3);
+  let out = 0;
+  let buffer = 0;
+  let bits = 0;
+  for (let i = 0; i < clean.length; i += 1) {
+    const value = table.indexOf(clean[i]);
+    if (value === -1) continue;
+    buffer = (buffer << 6) | value;
+    bits += 6;
+    if (bits >= 8) {
+      bits -= 8;
+      if (out < bytes.length) bytes[out] = (buffer >> bits) & 0xff;
+      out += 1;
+    }
+  }
+  return bytes.subarray(0, Math.floor(clean.length / 4) * 3 - padding);
 }
 
 export const nativeSyncAdapter = {
@@ -108,8 +137,19 @@ export const nativeSyncAdapter = {
         continue;
       }
       try {
-        const content = await nativeVaultAdapter.readNote(relPath);
-        const bytes = utf8Bytes(content);
+        let bytes: number[] | Uint8Array;
+        if (SYNC_ATTACHMENT_EXTENSIONS.some((ext) => relPath.toLowerCase().endsWith(ext))) {
+          // Binaire (image/PDF/audio…) : hachage sur les OCTETS décodés du
+          // base64 — le fichier lu « en texte » donnerait un hash différent
+          // du hachage desktop (octets bruts) et des faux conflits.
+          const base64 = await FileSystem.readAsStringAsync(entry.uri, {
+            encoding: FileSystem.EncodingType.Base64,
+          });
+          bytes = base64ToBytes(base64);
+        } else {
+          const content = await nativeVaultAdapter.readNote(relPath);
+          bytes = utf8Bytes(content);
+        }
         entries[relPath] = { hash: sha256Hex(bytes), size: bytes.length };
       } catch {
         delete entries[relPath]; // fichier illisible entre-temps : hors arbre

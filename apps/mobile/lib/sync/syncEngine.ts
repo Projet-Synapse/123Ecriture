@@ -24,6 +24,8 @@ import {
 } from './journal';
 import { tryThreeWayMerge } from './merge';
 import { vaultStorageObjectKey } from './storageKeys';
+// Liste des pièces jointes synchronisées (source unique : nativeVaultAdapter).
+import { SYNC_ATTACHMENT_EXTENSIONS } from '../storage/nativeVaultAdapter';
 // randomUUID portable — crypto.randomUUID n'existe pas sous Hermes natif
 // (le helper web tombe sur Math.random), voir lib/storage/webUuid.ts.
 import { randomUUID as uuid } from '../storage/webUuid';
@@ -456,6 +458,109 @@ async function blobToText(data: Blob): Promise<string> {
   });
 }
 
+// ---- PIÈCES JOINTES BINAIRES (v0.4.66 — « gestion des fichiers joints »)
+// Images/PDF/audio : transport en base64 via les ponts binaires ; la liste
+// des extensions est SYNC_ATTACHMENT_EXTENSIONS (nativeVaultAdapter).
+const MAX_ATTACHMENT_ALERT_BYTES = 25 * 1024 * 1024;
+
+// Gardes anti-suppression massive : un cycle bloqué pose le drapeau du coffre
+// ; le cycle suivant lancé VOLONTAirement confirme (et retire le drapeau).
+// Session-only : redémarrer l'app réarme la protection.
+const massiveDeleteConfirmed = new Set<string>();
+
+function isBinaryAttachmentRelPath(relPath: string): boolean {
+  const lower = relPath.toLowerCase();
+  return SYNC_ATTACHMENT_EXTENSIONS.some((ext) => lower.endsWith(ext));
+}
+
+function mimeForAttachment(relPath: string): string {
+  const ext = relPath.toLowerCase().slice(relPath.lastIndexOf('.'));
+  const table: Record<string, string> = {
+    '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+    '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml',
+    '.heic': 'image/heic', '.pdf': 'application/pdf', '.txt': 'text/plain',
+    '.csv': 'text/csv', '.mp3': 'audio/mpeg', '.wav': 'audio/wav',
+    '.ogg': 'audio/ogg', '.m4a': 'audio/mp4', '.mp4': 'video/mp4',
+    '.webm': 'video/webm',
+  };
+  return table[ext] ?? 'application/octet-stream';
+}
+
+function base64ToUint8Array(base64: string): Uint8Array {
+  if (typeof atob === 'function') {
+    const binary = atob(base64);
+    return Uint8Array.from(binary, (ch) => ch.charCodeAt(0));
+  }
+  // Hermes sans atob : décodeur manuel
+  const table = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  const clean = base64.replace(/[^A-Za-z0-9+/=]/g, '');
+  const padding = clean.endsWith('==') ? 2 : clean.endsWith('=') ? 1 : 0;
+  const bytes = new Uint8Array(Math.floor(clean.length / 4) * 3);
+  let out = 0;
+  let buffer = 0;
+  let bits = 0;
+  for (let i = 0; i < clean.length; i += 1) {
+    const value = table.indexOf(clean[i]);
+    if (value === -1) continue;
+    buffer = (buffer << 6) | value;
+    bits += 6;
+    if (bits >= 8) {
+      bits -= 8;
+      if (out < bytes.length) bytes[out] = (buffer >> bits) & 0xff;
+      out += 1;
+    }
+  }
+  return bytes.subarray(0, Math.floor(clean.length / 4) * 3 - padding);
+}
+
+async function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = String(reader.result);
+      resolve(dataUrl.slice(dataUrl.indexOf(',') + 1));
+    };
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+}
+
+// Téléchargement BINAIRE : comme downloadRemoteText, le natif passe par un
+// fichier de cache (zéro tampon Java) et lit en base64 ; le web télécharge
+// le blob et le convertit.
+async function downloadRemoteBinary(
+  remoteVaultId: string,
+  relPath: string,
+  objectPath?: string,
+): Promise<string> {
+  const { supabase: client } = requireBridges();
+  const key = objectPath ?? storageObjectPath(remoteVaultId, relPath);
+  if (Platform.OS !== 'web') {
+    const { data: sessionData } = await client.auth.getSession();
+    const token = sessionData.session?.access_token;
+    if (!token) throw new Error('Session absente — reconnecte-toi pour télécharger les fichiers.');
+    const tmpPath = `${FileSystem.cacheDirectory}sync-dl-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    try {
+      const result = await FileSystem.downloadAsync(
+        `${SUPABASE_URL}/storage/v1/object/${VAULT_FILES_BUCKET}/${key}`,
+        tmpPath,
+        { headers: { Authorization: `Bearer ${token}`, apikey: SUPABASE_ANON_KEY } },
+      );
+      if (result.status >= 400) {
+        throw new Error(`Téléchargement de la pièce jointe impossible (HTTP ${result.status}).`);
+      }
+      return await FileSystem.readAsStringAsync(tmpPath, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+    } finally {
+      await FileSystem.deleteAsync(tmpPath, { idempotent: true }).catch(() => undefined);
+    }
+  }
+  const { data, error } = await client.storage.from(VAULT_FILES_BUCKET).download(key);
+  if (error) throw error;
+  return blobToBase64(data);
+}
+
 async function downloadRemoteText(remoteVaultId: string, relPath: string, objectPath?: string): Promise<string> {
   const { supabase: client } = requireBridges();
   const key = objectPath ?? storageObjectPath(remoteVaultId, relPath);
@@ -489,18 +594,35 @@ async function downloadRemoteText(remoteVaultId: string, relPath: string, object
   return blobToText(data);
 }
 
-async function pushFile(remoteVaultId: string, ownerId: string, note: LocalHashedNote): Promise<void> {
+async function pushFile(
+  remoteVaultId: string,
+  ownerId: string,
+  note: LocalHashedNote,
+  journal: SyncJournalEntry[] = [],
+): Promise<void> {
   const { supabase: client, vault } = requireBridges();
   // v0.4.54 : défense en profondeur — quel que soit le pont, le chemin
   // poussé au cloud est TOUJOURS en slashes POSIX (un backslashed créait
   // un doublon cloud jamais matché, cassant tombestones et pulls).
   const relPath = note.relPath.split('\\').join('/');
-  const content = await vault.readNote(relPath);
+  let uploadBody: string | Uint8Array;
+  let uploadContentType: string;
+  if (isBinaryAttachmentRelPath(relPath)) {
+    if (!vault.readNoteBinary) {
+      throw new Error('Les pièces jointes ne sont pas prises en charge par cet appareil.');
+    }
+    const base64 = await vault.readNoteBinary(relPath);
+    uploadBody = base64ToUint8Array(base64);
+    uploadContentType = mimeForAttachment(relPath);
+  } else {
+    uploadBody = await vault.readNote(relPath);
+    uploadContentType = 'text/plain;charset=UTF-8';
+  }
   const { error: uploadError } = await client.storage
     .from(VAULT_FILES_BUCKET)
-    .upload(storageObjectPath(remoteVaultId, relPath), content, {
+    .upload(storageObjectPath(remoteVaultId, relPath), uploadBody, {
       upsert: true,
-      contentType: 'text/plain;charset=UTF-8',
+      contentType: uploadContentType,
     });
   if (uploadError) throw uploadError;
 
@@ -522,15 +644,39 @@ async function pushFile(remoteVaultId: string, ownerId: string, note: LocalHashe
     );
   if (upsertError) throw upsertError;
 
+  // Alerte VOLUMINEUX (v0.4.66 — choix de l'utilisatrice : sans limite de
+  // taille, mais signalée au-delà de 25 Mo dans le journal de synchro).
+  if (isBinaryAttachmentRelPath(relPath) && note.sizeBytes > MAX_ATTACHMENT_ALERT_BYTES) {
+    journal.push(
+      makeJournalEntry('push', {
+        path: relPath,
+        detail: `⚠️ fichier volumineux synchronisé : ${(note.sizeBytes / (1024 * 1024)).toFixed(1)} Mo`,
+      }),
+    );
+  }
+
   // Base de fusion (v0.4.29) : la version qui vient d'être acceptée des deux
   // côtés servira de référentiel au prochain conflit (fusion à trois voix
   // diff-match-patch). Best-effort : une base manquante fait retomber le
   // conflit sur le comportement gagnant/perdant archivé.
-  await saveSyncBase(relPath, content);
+  if (typeof uploadBody === 'string') {
+    await saveSyncBase(relPath, uploadBody);
+  }
 }
 
 async function pullFile(remoteVaultId: string, relPath: string, objectPath?: string): Promise<void> {
   const { vault } = requireBridges();
+  // Pièces jointes BINAIRES (v0.4.66) : transport base64 via les ponts
+  // readNoteBinary/writeNoteBinary ; pas de base de fusion (jamais de
+  // fusion binaire — les conflits retombent sur gagnant/perdant).
+  if (isBinaryAttachmentRelPath(relPath)) {
+    if (!vault.writeNoteBinary) {
+      throw new Error('Les pièces jointes ne sont pas prises en charge par cet appareil.');
+    }
+    const base64 = await downloadRemoteBinary(remoteVaultId, relPath, objectPath);
+    await vault.writeNoteBinary(relPath, base64);
+    return;
+  }
   const content = await downloadRemoteText(remoteVaultId, relPath, objectPath);
   await vault.writeNote(relPath, content);
   await saveSyncBase(relPath, content);
@@ -669,6 +815,7 @@ async function attemptConflictMerge(
   remoteObjectPath: string | undefined,
   journal: SyncJournalEntry[],
 ): Promise<boolean> {
+  if (isBinaryAttachmentRelPath(relPath)) return false; // jamais de fusion binaire
   const base = await loadSyncBase(relPath);
   if (base === null) return false;
   let local: string;
@@ -699,7 +846,7 @@ async function attemptConflictMerge(
   const tree = await sync.hashVaultTree();
   const note = tree.find((n) => n.relPath === relPath);
   if (!note) return false;
-  await pushFile(remoteVaultId, ownerId, note);
+  await pushFile(remoteVaultId, ownerId, note, journal);
   journal.push(
     makeJournalEntry('conflict', {
       path: relPath,
@@ -825,7 +972,7 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
         .forEach((normalized) => tombstonedPaths.add(normalized));
       summary.deleted += chunk.length;
       journal.push(
-        makeJournalEntry('delete', { detail: `purge backslashed : ${chunk.length} ligne(s)` }),
+        makeJournalEntry('delete', { detail: `purge backslashed : ${chunk.length} ligne(s) — ex. ${chunk.slice(0, 2).join(' | ').slice(0, 140)}` }),
       );
     } catch (error) {
       console.error('[sync] échec de la purge backslashed :', error);
@@ -836,25 +983,41 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   }
 
   // 1) Supprimés LOCALEMENT depuis le dernier cycle -> tombestones distantes.
+  // GARDE ANTI-SUPPRESSION MASSIVE (v0.4.66) : un appareil dont le contenu
+  // local est incomplet (pull partiel, coffre fraîchement reconnecté, panne
+  // de disque) déclare « supprimés » TOUS les fichiers qu'il n'a pas — et
+  // vide le cloud ET les autres appareils (vécu WORLDBUILDING 15/10/2026 :
+  // 2000 fichiers). Au-delà du seuil, les tombestones sont BLOQUÉES ; un
+  // second cycle lancé VOLONTAirement les confirme (flag session, oublié au
+  // redémarrage de l'app — la protection revient toute seule).
   const locallyDeleted = computeLocalDeletions(syncState.files, localPaths);
-  for (const relPath of locallyDeleted) {
-    try {
-      if (remoteByPath.has(relPath)) {
-        const { error } = await bridges.supabase
-          .schema(APP_SCHEMA)
-          .from(VAULT_FILES_TABLE)
-          .update({ deleted: true, updated_at: new Date().toISOString() })
-          .eq('vault_id', remoteVaultId)
-          .eq('rel_path', relPath);
-        if (error) throw error;
+  const massiveThreshold = Math.max(10, Math.ceil(localFiles.length * 0.3));
+  if (locallyDeleted.length > massiveThreshold && !massiveDeleteConfirmed.has(remoteVaultId)) {
+    massiveDeleteConfirmed.add(remoteVaultId);
+    const message = `${locallyDeleted.length} fichier(s) manquent localement (coffre : ${localFiles.length} fichiers) — suppressions BLOQUÉES par le garde anti-suppression. Si cette suppression massive est VOLONTAIRE, relancez « Synchroniser » une fois pour la confirmer ; sinon, vos fichiers seront restaurés par la synchronisation.`;
+    summary.errors.push(message);
+    journal.push(makeJournalEntry('error', { detail: message }));
+  } else {
+    if (massiveDeleteConfirmed.has(remoteVaultId)) massiveDeleteConfirmed.delete(remoteVaultId);
+    for (const relPath of locallyDeleted) {
+      try {
+        if (remoteByPath.has(relPath)) {
+          const { error } = await bridges.supabase
+            .schema(APP_SCHEMA)
+            .from(VAULT_FILES_TABLE)
+            .update({ deleted: true, updated_at: new Date().toISOString() })
+            .eq('vault_id', remoteVaultId)
+            .eq('rel_path', relPath);
+          if (error) throw error;
+        }
+        tombstonedPaths.add(relPath);
+        summary.deleted += 1;
+        journal.push(makeJournalEntry('delete', { path: relPath, detail: 'suppression locale propagée' }));
+      } catch (error) {
+        console.error(`[sync] échec de la tombestone ${relPath} :`, error);
+        summary.errors.push(`${relPath} (suppression) : ${errorMessage(error)}`);
+        journal.push(makeJournalEntry('error', { path: relPath, detail: `suppression locale : ${errorMessage(error)}` }));
       }
-      tombstonedPaths.add(relPath);
-      summary.deleted += 1;
-      journal.push(makeJournalEntry('delete', { path: relPath, detail: 'suppression locale propagée' }));
-    } catch (error) {
-      console.error(`[sync] échec de la tombestone ${relPath} :`, error);
-      summary.errors.push(`${relPath} (suppression) : ${errorMessage(error)}`);
-      journal.push(makeJournalEntry('error', { path: relPath, detail: `suppression locale : ${errorMessage(error)}` }));
     }
   }
 
@@ -916,7 +1079,7 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
         case 'push': {
           const note = localByPath.get(decision.relPath);
           if (!note) break;
-          await pushFile(remoteVaultId, ownerId, note);
+          await pushFile(remoteVaultId, ownerId, note, journal);
           summary.pushed += 1;
           journal.push(makeJournalEntry('push', { path: decision.relPath }));
           break;
@@ -950,7 +1113,7 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
             remoteByPath.get(decision.relPath)?.storageObjectPath,
           );
           await backupLosingSide(decision.relPath, losingRemoteContent);
-          await pushFile(remoteVaultId, ownerId, note);
+          await pushFile(remoteVaultId, ownerId, note, journal);
           summary.pushed += 1;
           summary.conflicts += 1;
           journal.push(makeJournalEntry('conflict', { path: decision.relPath, detail: 'version locale conservée, distante archivée' }));

@@ -36,6 +36,13 @@ declare global {
     listTree: () => Promise<VaultTreeNode[]>;
     readNote: (relPath: string) => Promise<string>;
     writeNote: (relPath: string, content: string) => Promise<void>;
+    // v0.4.66 — PIÈCES JOINTES SYNCHRONISÉES : lecture/écriture BINAIRE
+    // (base64) pour les fichiers non-texte (images, PDF, audio…) — le moteur
+    // de synchro les utilise pour les push/pull des pièces jointes
+    // (SYNC_ATTACHMENT_EXTENSIONS). Optionnels : leur absence (web) fait
+    // passer ces fichiers en « non synchronisés sur cet appareil ».
+    readNoteBinary?: (relPath: string) => Promise<string>;
+    writeNoteBinary?: (relPath: string, base64: string) => Promise<void>;
     createNote: (name: string, parentRelPath?: string, kind?: VaultEntryKind) => Promise<VaultEntry>;
     createFolder: (name: string, parentRelPath?: string) => Promise<VaultFolderEntry>;
     rename: (relPath: string, newName: string) => Promise<{ relPath: string; name: string }>;

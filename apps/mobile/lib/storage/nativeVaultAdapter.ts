@@ -1,4 +1,5 @@
 import { Alert } from 'react-native';
+import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import { StorageAccessFramework } from 'expo-file-system/legacy';
 
@@ -158,6 +159,17 @@ export const SYNCED_META_FILES = [
   '.123ecriture/tasks.json',
   '.123ecriture/tasklists.json',
   '.123ecriture/preferences.json',
+];
+
+// Pièces jointes SYNCHRONISÉES (v0.4.66 — « gestion des fichiers joints ») :
+// images, documents et audio voyageant avec le coffre. Même liste côté
+// desktop : SYNC_ATTACHMENT_EXTENSIONS de apps/desktop/electron/sync.ts —
+// À MAINTENIR ENSEMBLE. (La limite de taille par fichier est appliquée au
+// hachage desktop ; le mobile hache ce que l'index connaît.)
+export const SYNC_ATTACHMENT_EXTENSIONS = [
+  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.heic',
+  '.pdf', '.txt', '.csv',
+  '.mp3', '.wav', '.ogg', '.m4a', '.mp4', '.webm',
 ];
 
 function resolveIndexed(relPath: string): IndexEntry {
@@ -632,6 +644,39 @@ async function readLegacyJsonArrayFile(name: string): Promise<string[]> {
   }
 }
 
+// Écriture BINAIRE (base64) : même routing index/SAF que writeNote —
+// partagé entre le pont (sync des pièces jointes) et importAttachment.
+async function writeNoteBinaryInternal(relPath: string, base64: string): Promise<void> {
+  invalidateIndexIfRootChanged(await getActiveVaultRootUri().catch(() => null));
+  const cached = pathIndex.get(relPath);
+  if (cached) {
+    if (cached.isDirectory) throw new Error(`« ${relPath} » est un dossier, pas une note.`);
+    await FileSystem.writeAsStringAsync(cached.uri, base64, { encoding: FileSystem.EncodingType.Base64 });
+    if (relPath.startsWith('.123ecriture/')) await persistIndex();
+    else invalidateTree();
+    markVaultFileDirty(relPath);
+    return;
+  }
+  const parentRelPath = relPath.includes('/') ? relPath.slice(0, relPath.lastIndexOf('/')) : '';
+  const parentUri = await ensureSafDir(parentRelPath);
+  const name = relPath.slice(relPath.lastIndexOf('/') + 1);
+  let uri: string | null = null;
+  try {
+    const children = await StorageAccessFramework.readDirectoryAsync(parentUri);
+    uri = children.find((child) => nameFromSafUri(child) === name) ?? null;
+  } catch {
+    uri = null;
+  }
+  if (!uri) {
+    uri = await StorageAccessFramework.createFileAsync(parentUri, name, mimeForName(name));
+  }
+  await FileSystem.writeAsStringAsync(uri, base64, { encoding: FileSystem.EncodingType.Base64 });
+  pathIndex.set(relPath, { uri, isDirectory: false });
+  if (relPath.startsWith('.123ecriture/')) await persistIndex();
+  else invalidateTree();
+  markVaultFileDirty(relPath);
+}
+
 export const nativeVaultAdapter: VaultBridge = {
   // Délègue au coffre actif (voir nativeVaultsAdapter.ts) — même relation
   // que côté Electron, où vault:choose-folder appelle en interne
@@ -757,6 +802,30 @@ export const nativeVaultAdapter: VaultBridge = {
     else invalidateTree();
     markVaultFileDirty(relPath);
   },
+
+  readNoteBinary: async (relPath) => {
+    invalidateIndexIfRootChanged(await getActiveVaultRootUri().catch(() => null));
+    if (isMetaRelPath(relPath) && !pathIndex.get(relPath)) {
+      const parentRelPath = relPath.includes('/') ? relPath.slice(0, relPath.lastIndexOf('/')) : '';
+      const name = relPath.slice(relPath.lastIndexOf('/') + 1);
+      try {
+        const parentUri = await ensureSafDir(parentRelPath);
+        const children = await StorageAccessFramework.readDirectoryAsync(parentUri);
+        const uri = children.find((child) => nameFromSafUri(child) === name);
+        if (uri) {
+          pathIndex.set(relPath, { uri, isDirectory: false });
+          scheduleIndexPersist();
+        }
+      } catch {
+        // Pas le droit / introuvable : l'erreur classique ci-dessous parle.
+      }
+    }
+    const { uri, isDirectory } = resolveIndexed(relPath);
+    if (isDirectory) throw new Error(`« ${relPath} » est un dossier, pas une note.`);
+    return FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
+  },
+
+  writeNoteBinary: writeNoteBinaryInternal,
 
   createNote: async (name, parentRelPath, kind = 'markdown') => {
     const parentUri = await resolveParentUri(parentRelPath);
@@ -1027,9 +1096,46 @@ export const nativeVaultAdapter: VaultBridge = {
   // que bâclé. Retourne `null`, exactement le même contrat qu'un choix
   // annulé côté Electron (voir NotesScreen.tsx, handleInsertAttachment gère
   // déjà ce cas sans erreur).
+  // v0.4.66 — « 📎 Joindre un fichier » sur MOBILE (avant : non implémenté —
+  // le bouton était inopérant sur Android) : DocumentPicker système, copie du
+  // fichier dans `<attachmentsFolder>/` du coffre actif (via les ponts
+  // binaires — images/PDF/audio voyagent avec la sync), même contrat de
+  // retour que le desktop ({relPath, name} pour l'embed `![[nom]]`).
   importAttachment: async () => {
-    console.warn('[nativeVaultAdapter] importAttachment pas encore implémenté sur Android.');
-    return null;
+    const result = await DocumentPicker.getDocumentAsync({ copyToCacheDirectory: true });
+    if (result.canceled) return null;
+    const asset = result.assets?.[0];
+    if (!asset) return null;
+
+    // Dossier cible : préférence attachmentsFolder (défaut 'attachments').
+    let folder = 'attachments';
+    try {
+      const prefs = (await window.preferences?.get()) as Partial<Preferences> | null;
+      if (prefs?.attachmentsFolder && typeof prefs.attachmentsFolder === 'string') {
+        folder = prefs.attachmentsFolder;
+      }
+    } catch {
+      // Préférences indisponibles : le dossier par défaut convient.
+    }
+
+    const extension = asset.name.includes('.') ? asset.name.slice(asset.name.lastIndexOf('.')) : '';
+    const stem = extension ? asset.name.slice(0, asset.name.length - extension.length) : asset.name;
+    let name = asset.name;
+    let relPath = folder ? `${folder}/${name}` : name;
+    // SAF ne sait pas écraser : suffixe (2), (3)… si le nom est déjà pris
+    // (même règle que createNote côté desktop).
+    let counter = 2;
+    while (pathIndex.has(relPath)) {
+      name = `${stem} (${counter})${extension}`;
+      relPath = folder ? `${folder}/${name}` : name;
+      counter += 1;
+    }
+
+    const base64 = await FileSystem.readAsStringAsync(asset.uri, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
+    await writeNoteBinaryInternal(relPath, base64);
+    return { relPath, name };
   },
 
   readAttachmentDataUrl: async (relPath) => {

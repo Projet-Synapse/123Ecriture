@@ -44,6 +44,7 @@ export function TrashSection() {
   const [items, setItems] = useState<TrashItem[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [confirmEmpty, setConfirmEmpty] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(100);
 
   const remoteVaultId = activeVault?.cloudLinked ? activeVault.remoteVaultId : null;
   const canRestore = Boolean(auth.user?.id && remoteVaultId);
@@ -112,6 +113,27 @@ export function TrashSection() {
     }
   };
 
+  const restoreAll = async () => {
+    const ownerId = auth.user?.id;
+    if (!ownerId || !remoteVaultId || !items?.length) return;
+    setBusy(true);
+    try {
+      // UNE seule opération exclusive pour TOUTES les restaurations, puis un
+      // seul cycle (même logique que restore, cf. v0.4.65).
+      await syncStatus.runSyncExclusive(async () => {
+        for (const item of items) {
+          await restoreFromTrash(item.relPath, remoteVaultId, ownerId);
+        }
+      });
+      await syncStatus.runSync();
+      await refresh();
+    } catch (error) {
+      Alert.alert('Restauration impossible', String(error instanceof Error ? error.message : error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const emptyAll = async () => {
     setBusy(true);
     try {
@@ -148,7 +170,7 @@ export function TrashSection() {
         <Text style={[s.hint, { color: theme.textMuted }]}>La corbeille est vide.</Text>
       ) : (
         <View style={{ gap: 6 }}>
-          {(items ?? []).slice(0, 50).map((item) => {
+          {(items ?? []).slice(0, visibleCount).map((item) => {
             const displayPath = item.relPath.slice('.trash/'.length);
             return (
               <View
@@ -185,8 +207,22 @@ export function TrashSection() {
               </View>
             );
           })}
-          {items.length > 50 && (
-            <Text style={[s.hint, { color: theme.textMuted }]}>+ {items.length - 50} autre(s) fichier(s)…</Text>
+          {items.length > visibleCount && (
+            <Pressable
+              onPress={() => setVisibleCount((count) => count + 100)}
+              style={[s.modeButton, { borderColor: theme.border, alignSelf: 'flex-start' }]}
+            >
+              <Text style={{ color: theme.text }}>Afficher 100 entrées de plus ({items.length - visibleCount} restantes)</Text>
+            </Pressable>
+          )}
+          {canRestore && items.length > 0 && (
+            <Pressable
+              disabled={busy}
+              onPress={() => void restoreAll()}
+              style={[s.modeButton, { borderColor: theme.accent, alignSelf: 'flex-start', paddingVertical: 10 }]}
+            >
+              <Text style={{ color: theme.accent }}>↩︎ Tout restaurer ({items.length} fichier(s))</Text>
+            </Pressable>
           )}
           <Pressable
             disabled={busy}
@@ -202,11 +238,12 @@ export function TrashSection() {
         <ConfirmDialog
           theme={theme}
           title="Vider la corbeille ?"
-          message={`Ces ${items?.length ?? 0} fichier(s) seront définitivement détruits sur TOUT tes appareils. Cette action est irréversible.`}
+          message={`Ces ${items?.length ?? 0} fichier(s) seront définitivement détruits sur TOUT tes appareils — les versions en corbeille ne pourront plus être récupérées. Tape « VIDER » pour confirmer.`}
           confirmLabel="Vider définitivement"
           onConfirm={() => emptyAll()}
           onCancel={() => setConfirmEmpty(false)}
           onSettled={() => setConfirmEmpty(false)}
+          requireText="VIDER"
         />
       )}
     </View>

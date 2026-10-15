@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import type { Theme } from '../theme';
 
@@ -18,6 +18,10 @@ type Props = {
   onConfirm: () => Promise<void> | void;
   onCancel: () => void;
   onSettled?: () => void;
+  // v0.4.66 : si renseigné, la confirmation exige de TAPER ce mot exact
+  // (vidage de corbeille et autres destructions de masse — le clic sur le
+  // bouton reste possible mais ne fait rien tant que le texte ne matche pas).
+  requireText?: string;
 };
 
 export function ConfirmDialog({
@@ -28,8 +32,11 @@ export function ConfirmDialog({
   onConfirm,
   onCancel,
   onSettled,
+  requireText,
 }: Props) {
   const [busy, setBusy] = useState(false);
+  const [confirmDraft, setConfirmDraft] = useState('');
+  const textMissing = Boolean(requireText) && confirmDraft.trim().toUpperCase() !== (requireText ?? '').toUpperCase();
 
   const handleConfirm = async () => {
     if (busy) return;
@@ -47,6 +54,17 @@ export function ConfirmDialog({
         <Pressable style={[styles.dialog, { backgroundColor: theme.surface }]} onPress={(e) => e.stopPropagation()}>
           <Text style={[styles.title, { color: theme.text }]}>{title}</Text>
           <Text style={[styles.message, { color: theme.textMuted }]}>{message}</Text>
+          {requireText && (
+            <TextInput
+              value={confirmDraft}
+              onChangeText={setConfirmDraft}
+              placeholder={requireText}
+              placeholderTextColor={theme.textMuted}
+              autoCapitalize="characters"
+              autoCorrect={false}
+              style={[styles.input, { color: theme.text, borderColor: theme.border }]}
+            />
+          )}
           <View style={styles.actionsRow}>
             {busy ? (
               <ActivityIndicator size="small" color={theme.accent} />
@@ -56,8 +74,14 @@ export function ConfirmDialog({
                   <Text style={{ color: theme.textMuted }}>Annuler</Text>
                 </Pressable>
                 <Pressable
-                  onPress={() => void handleConfirm()}
-                  style={[styles.confirmButton, { backgroundColor: theme.danger }]}
+                  onPress={() => {
+                    if (textMissing) return;
+                    void handleConfirm();
+                  }}
+                  style={[
+                    styles.confirmButton,
+                    { backgroundColor: theme.danger, opacity: textMissing ? 0.4 : 1 },
+                  ]}
                   accessibilityLabel={confirmLabel}
                 >
                   <Text style={styles.confirmButtonText}>{confirmLabel}</Text>
@@ -111,5 +135,12 @@ const styles = StyleSheet.create({
   confirmButtonText: {
     color: '#fff',
     fontWeight: '600',
+  },
+  input: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    fontSize: 13,
   },
 });

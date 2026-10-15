@@ -15,6 +15,10 @@ contextBridge.exposeInMainWorld('vault', {
   listTree: () => ipcRenderer.invoke('vault:list-tree'),
   readNote: (relPath: string) => ipcRenderer.invoke('vault:read-note', relPath),
   writeNote: (relPath: string, content: string) => ipcRenderer.invoke('vault:write-note', relPath, content),
+  // v0.4.66 — pièces jointes synchronisées (transport binaire base64).
+  readNoteBinary: (relPath: string) => ipcRenderer.invoke('vault:read-note-binary', relPath),
+  writeNoteBinary: (relPath: string, base64: string) =>
+    ipcRenderer.invoke('vault:write-note-binary', relPath, base64),
   createNote: (name: string, parentRelPath?: string, kind?: VaultEntryKind) =>
     ipcRenderer.invoke('vault:create-note', name, parentRelPath, kind),
   createFolder: (name: string, parentRelPath?: string) =>
