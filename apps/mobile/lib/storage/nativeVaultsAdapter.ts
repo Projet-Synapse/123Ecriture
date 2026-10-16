@@ -14,6 +14,24 @@ import {
 // Sélecteur de dossier système (voir requestAndRegisterVault ci-dessous).
 const { StorageAccessFramework } = FileSystem;
 
+// v0.4.67 — DÉCONNEXION SUR MOBILE : vide le CONTENU du coffre (tous les
+// enfants SAF, récursivement) avant que VaultsContext ne retire le coffre du
+// registre. Avant cette implémentation, « Déconnecter… » levait
+// « Déconnexion indisponible sur cette plateforme » sur Android —
+// impossible de réinitialiser un coffre pollué (vécu WORLDBUILDING 17/10).
+// Le dossier racine lui-même est conservé (permission SAF persistante).
+async function viderContenuCoffre(rootUri: string): Promise<void> {
+  let enfants: string[] = [];
+  try {
+    enfants = await StorageAccessFramework.readDirectoryAsync(rootUri);
+  } catch {
+    return; // coffre déjà illisible/vide : rien à faire
+  }
+  for (const enfant of enfants) {
+    await FileSystem.deleteAsync(enfant, { idempotent: true }).catch(() => undefined);
+  }
+}
+
 // Fichier d'identité d'appareil (voir deviceInfo ci-dessous) — même stockage
 // privé que le registre des coffres (documentDirectory), mécanisme identique
 // à nativeVaultRegistry.ts.
@@ -62,6 +80,12 @@ function decodeFolderNameFromUri(uri: string): string {
 }
 
 export const nativeVaultsAdapter: VaultsBridge = {
+  clearVaultContent: async (id: string): Promise<void> => {
+    const registry = await readRegistry();
+    const entry = registry.vaults.find((v) => v.id === id);
+    if (!entry) return;
+    await viderContenuCoffre(entry.path);
+  },
   list: async () => (await readRegistry()).vaults,
 
   getActive: async () => (await readRegistry()).activeVaultId,
