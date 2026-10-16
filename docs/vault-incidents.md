@@ -91,9 +91,10 @@
 | 7.12 | La boucle ninja 6.9 touche l'ABI armeabi-v7a RÉCURRENTEMENT (arm64 compile, v7a re-boucle à chaque invocation gradle — build8/build10 : l'ABI re-boucle même après stabilisation manuelle du `.cxx`) | En pratique : **pas de build APK local fiable pour ce téléphone** → passer par la CI (workflow_dispatch après patch 2.5) et récupérer l'artefact « 123Ecriture-apk ». Environnement build local : JDK 17 + SDK + NDK + CMake 3.31.5 dans `~/.zcode/tools`, clone court `C:\123src`. |
 | 7.13 | Le bundle JS de l'APK embarque les `EXPO_PUBLIC_*` (inline Metro) : vérifiable par `unzip -p app-release.apk assets/index.android.bundle \| grep supabase` | Test rapide d'un APK avant installation (évite d'installer un APK muet sur Supabase). |
 
-## 8. État courant (dernière mise à jour : 2026-10-17)
+## 8. État courant (dernière mise à jour : 2026-10-17, midi)
 
-1. **WORLDBUILDING restauré** (§9) : coffre PC actif ~246 fichiers, cloud 225 vivants propres, PERSONNAGES de retour. À faire par l'utilisatrice sur le TÉLÉPHONE : retirer le coffre WORLDBUILDING local puis « Connecter sur cet appareil… » (pull propre du cloud restauré).
-2. **v0.4.66 en build** (635d73d) : pièces jointes synchronisées (binaire), garde anti-suppression massive, corbeille renforcée, « Joindre » sur Android, synchro APRÈS l'action (gel généralisé). Install sur le téléphone dès la sortie du build.
-3. **À surveiller** : purge backslashed instrumentée (2 chemins d'exemple au journal) — si les mêmes chemins re-reviennent, un ré-upserteur existe à identifier.
-4. **Tag v0.4.66** à pousser après validation téléphone → installateurs desktop complets (auto-update 0.4.60 → 0.4.66).
+1. **Anti-contamination v0.4.67** (44c5081) : les chemins à backslash ne sont plus hachés/poussés/pullés/affichés (triple garde). Le cloud est resté sain (238 vivants propres, PERSONNAGES 74) — la contamination vue par l'utilisatrice était son contenu LOCAL de téléphone (fichiers plats hérités des pulls du mélange).
+2. **v0.4.68** (ec360a0) : « Déconnecter… » fonctionne sur Android (clearVaultContent implémenté sur le pont mobile — vidage récursif SAF + retrait du registre). AVANT, le bouton levait « Déconnexion indisponible sur cette plateforme » : impossible de réinitialiser un coffre pollué.
+3. **Reste à faire sur le téléphone (utilisatrice)** : retirer le coffre WORLDBUILDING local (✕) puis « Connecter sur cet appareil… » (nouveau dossier) → pull propre du cloud sain. Ensuite : thème (appearance.json arrive au pull), tâches (sync v0.4.65/66 des deux côtés).
+4. **PC** : 0.4.60 sur le Bureau — le tag v0.4.68 déclenchera l'auto-update vers la version complète (sync des tâches, corbeille réparée, tout).
+5. **Purge backslashed instrumentée** : 2 chemins d'exemple au journal à chaque purge — à surveiller.
