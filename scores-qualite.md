@@ -16,6 +16,8 @@ la journée a révélé et corrigé 8 crashes/bugs distincts côté SAF/Hermes.
 ## Tâches
 
 ### ♻ Ergonomie
+- [ ] Ne JAMAIS synchroniser un fichier ouvert à l'écran : différer son (ou tout le) cycle après fermeture/changement de fichier — vécu 17/10 : « conflit à chaque frappe » pendant l'édition, demande explicite de l'utilisatrice (+1)
+- [ ] Observabilité croisée des appareils : ajouter la version d'app + le résumé du dernier cycle (envoyés/reçus/supprimés/conflits/erreurs) de CHAQUE appareil sur la carte « Appareils connectés » (vault_devices, heartbeat existe) — demande 17/10 « donner des yeux au vault » (+1)
 - [ ] Système de mise à jour automatique sur Android (équivalent de l'updater desktop — expo-updates ou vérification GitHub Releases) — demande 2026-10-03 (+1) — 0.4.69 ajoute la carte « Version installée » + lien APK (À propos), l'installation reste manuelle
 - [ ] Rendre visibles les échecs aujourd'hui silencieux des actions Tâches : journaliser les erreurs de lecture/écriture dans le journal de synchronisation (repéré 17/10 : un ajout invisible à cause de §8 ne disait RIEN) (+1)
 - [ ] Vue Graphique : largeur de la barre latérale réglable (elle masque tout sur téléphone) — demande 2026-10-03 (+1)
