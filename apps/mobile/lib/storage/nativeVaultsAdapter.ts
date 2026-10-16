@@ -51,7 +51,7 @@ const DEVICE_INFO_PATH = `${FileSystem.documentDirectory}123ecriture-device.json
 // `addExisting` — l'utilisatrice choisit/crée le dossier depuis le
 // sélecteur système lui-même (bouton "Nouveau dossier" qu'Android propose
 // déjà dans ce sélecteur), puis on l'enregistre sous le nom donné.
-async function requestAndRegisterVault(name: string): Promise<VaultRegistryEntry[]> {
+export async function requestAndRegisterVault(name: string): Promise<VaultRegistryEntry[]> {
   const permission = await StorageAccessFramework.requestDirectoryPermissionsAsync();
   if (!permission.granted) {
     // Annulé par l'utilisatrice — pas une erreur, juste rien à faire (même
@@ -91,6 +91,9 @@ export const nativeVaultsAdapter: VaultsBridge = {
   getActive: async () => (await readRegistry()).activeVaultId,
 
   addExisting: () => requestAndRegisterVault('Nouveau coffre'),
+  // v0.4.68 : variante exportée pour les ponts qui doivent CRÉER un coffre
+  // quand aucun n'existe (chooseFolder du pont vault sur l'écran Tâches sans
+  // vault — le bouton était inopérant, vécu 17/10).
 
   // SAF ne permet pas de créer un sous-dossier à l'endroit choisi : le
   // dossier est choisi/créé depuis le sélecteur système lui-même, puis

@@ -5,7 +5,8 @@ import { StorageAccessFramework } from 'expo-file-system/legacy';
 
 import { parseFrontmatter } from '../frontmatter';
 import { CODE_FILE_EXTENSIONS } from '../codeLanguages';
-import { getActiveVaultRootUri } from './nativeVaultsAdapter';
+import { getActiveVaultRootUri, requestAndRegisterVault } from './nativeVaultsAdapter';
+import { vaultStorageObjectKey } from '../sync/storageKeys';
 
 // Implémentation native (Android) de VaultBridge, sur le Storage Access
 // Framework (SAF) — voir docs/ARCHITECTURE.md §5, "écart pragmatique"
@@ -387,15 +388,26 @@ async function refreshIndex(): Promise<VaultTreeNode[]> {
 // supprime hors de l'app donnera une URI morte qui echouera per-file
 // (gere) et sera purge au prochain parcours complet.
 type PersistedIndex = { rootUri: string | null; entries: Record<string, { u: string; d: boolean }> };
-const INDEX_PATH = `${FileSystem.documentDirectory}vault-index.json`;
+
+// v0.4.69 — UN FICHIER D'INDEX PAR COFFRE (avant : un seul vault-index.json
+// écrasé à chaque changement de coffre → au retour sur un coffre, l'index
+// était invalide et le PARCOURS SAF COMPLET de ~1 minute repartait —
+// « le vault prend du temps à charger », vécu A13 17-18/10). La clé du nom
+// de fichier est le rootUri (base64url, même motif que les clés Storage).
+function indexFilePath(rootUri: string): string {
+  return `${FileSystem.documentDirectory}vault-index-${vaultStorageObjectKey(rootUri)}.json`;
+}
+
 let indexPersistTimer: ReturnType<typeof setTimeout> | null = null;
 
 async function persistIndex(): Promise<void> {
+  if (!indexedRootUri) return;
   const entries: PersistedIndex['entries'] = {};
   for (const [relPath, entry] of pathIndex) entries[relPath] = { u: entry.uri, d: entry.isDirectory };
   const payload: PersistedIndex = { rootUri: indexedRootUri, entries };
+  const chemin = indexFilePath(indexedRootUri);
   try {
-    await FileSystem.writeAsStringAsync(INDEX_PATH, JSON.stringify(payload));
+    await FileSystem.writeAsStringAsync(chemin, JSON.stringify(payload));
   } catch {
     // Cache : un echec degrade la prochaine ouverture (parcours complet).
   }
@@ -409,8 +421,9 @@ function scheduleIndexPersist(): void {
 // Tente de restaurer l'index du coffre depuis le disque. Retourne true si
 // l'index correspond bien a CE coffre (rootUri identique).
 async function loadPersistedIndex(rootUri: string): Promise<boolean> {
+  const chemin = indexFilePath(rootUri);
   try {
-    const raw = await FileSystem.readAsStringAsync(INDEX_PATH);
+    const raw = await FileSystem.readAsStringAsync(chemin);
     const parsed = JSON.parse(raw) as PersistedIndex;
     if (parsed.rootUri !== rootUri || !parsed.entries) return false;
     pathIndex = new Map();
@@ -703,7 +716,14 @@ export const nativeVaultAdapter: VaultBridge = {
 
   chooseFolder: async () => {
     const uri = await getActiveVaultRootUri();
-    return uri;
+    if (uri) return uri;
+    // AUCUN coffre actif (premier lancement, coffres retirés) : ouvrir le
+    // sélecteur SAF et ENREGISTRER un coffre — sinon le bouton « Choisir un
+    // dossier » de l'écran Tâches ne faisait RIEN (vécu 17/10 : sans vault
+    // actif, plus rien ne marche — tâches, suppression, tout dépend du
+    // coffre). Le coffre fraîchement ajouté devient actif.
+    const liste = await requestAndRegisterVault('Nouveau coffre');
+    return liste.length > 0 ? liste[liste.length - 1].path : null;
   },
 
   getCurrentPath: () => getActiveVaultRootUri(),

@@ -185,8 +185,17 @@ export function AboutSection() {
   );
 
   if (!updater) {
+    const installedVersion = installedAppVersion();
     return (
       <>
+        {/* v0.4.69 : la version est TOUJOURS affichée en premier (demande :
+            « ne pas pouvoir voir la version de mon appli dans À propos »). */}
+        <View style={[s.card, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+          <Text style={[s.cardTitle, { color: theme.text }]}>Version installée</Text>
+          <Text style={[s.cardValue, { color: theme.textMuted }]}>
+            123Ecriture {installedVersion ? `v${installedVersion}` : '(version inconnue)'}
+          </Text>
+        </View>
         {shortcuts}
         {/* NATIF (Android) : vérification des releases GitHub + ouverture
             de la page de téléchargement de l'APK (voir lib/updaterAndroid.ts).
@@ -204,6 +213,12 @@ export function AboutSection() {
 
   return (
     <>
+      <View style={[s.card, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+        <Text style={[s.cardTitle, { color: theme.text }]}>Version installée</Text>
+        <Text style={[s.cardValue, { color: theme.textMuted }]}>
+          123Ecriture {version ? `v${version}` : (installedAppVersion() ? `v${installedAppVersion()}` : '…')}
+        </Text>
+      </View>
       {shortcuts}
       <View style={[s.card, { backgroundColor: theme.surface, borderColor: theme.border }]}>
         <Text style={[s.cardTitle, { color: theme.text }]}>Mises à jour</Text>
