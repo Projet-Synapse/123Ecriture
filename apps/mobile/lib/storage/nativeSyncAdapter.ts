@@ -73,6 +73,13 @@ async function saveBaseline(rootUri: string, entries: BaselineEntries): Promise<
 // définition pour l'historique).
 function hashableRelPath(relPath: string): boolean {
   if (SYNCED_META_FILES.includes(relPath)) return true;
+  // ANTI-CONTAMINATION (v0.4.67) : un nom contenant un `\` est un FICHIER
+  // PLAT créé par un ancien pull d'une ligne backslashed du mélange (le `\`
+  // est légal dans un nom Android, pas dans un vrai arbre) — le pousser
+  // re-imbriquerait la contamination dans le cloud (vécu WORLDBUILDING
+  // 16-17/10 : dossiers « PROGRAMMATION » fantômes). Jamais hachés, jamais
+  // poussés ; ils restent locaux jusqu'à purge manuelle.
+  if (relPath.includes('\\')) return false;
   const segments = relPath.split('/');
   if (segments[0] !== '.trash' && segments.some((segment) => segment.startsWith('.'))) return false;
   const name = segments[segments.length - 1].toLowerCase();

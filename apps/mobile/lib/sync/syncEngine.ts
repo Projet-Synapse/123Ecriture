@@ -1085,6 +1085,17 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
           break;
         }
         case 'pull':
+          // ANTI-CONTAMINATION (v0.4.67) : un chemin contenant un `\` est un
+          // résidu backslashed du mélange — le créer créerait un FICHIER PLAT
+          // au nom impossible (légal sur Android, pas sur le fs desktop) qui
+          // re-contaminerait le cloud à son tour. La purge les tombestone
+          // déjà au début du cycle ; ici on refuse par double sécurité.
+          if (decision.relPath.includes('\\')) {
+            journal.push(
+              makeJournalEntry('error', { path: decision.relPath, detail: 'pull bloqué : chemin contaminé (backslash)' }),
+            );
+            break;
+          }
           await pullFile(remoteVaultId, decision.relPath, remoteByPath.get(decision.relPath)?.storageObjectPath);
           summary.pulled += 1;
           journal.push(makeJournalEntry('pull', { path: decision.relPath }));

@@ -329,6 +329,10 @@ async function walkSafChildren(childUris: string[], parentRelPath: string, depth
       relPath === '.trash' ||
       relPath.startsWith('.trash/');
     if (name.startsWith('.') && !isMeta) continue; // masque les cachés, comme walkTree côté Electron
+    // ANTI-CONTAMINATION (v0.4.67) : les noms contenant un backslash sont des
+    // fichiers plats issus d'anciens pulls de lignes backslashed — indexés
+    // mais jamais affichés (voir buildTreeFromIndex, même règle).
+    if (name.includes('\\') && !isMeta) continue;
     let grandChildren: string[] | null = null;
     try {
       grandChildren = await StorageAccessFramework.readDirectoryAsync(uri);
@@ -462,8 +466,14 @@ function buildTreeFromIndex(): VaultTreeNode[] {
   };
   // Les dossiers d'abord (y compris VIDES — ils émergent ici, pas des
   // parents de fichiers), puis les fichiers.
+  // ANTI-CONTAMINATION (v0.4.67) : les noms contenant un `\` sont des
+  // fichiers plats issus d'anciens pulls de lignes backslashed (résidus du
+  // mélange) — indexés pour le hachage mais JAMAIS affichés dans l'arbre
+  // (l'utilisatrice les voyait comme des dossiers « PROGRAMMATION »
+  // fantômes). Leur purge = retirer le coffre local sur l'appareil.
+  const contaminé = (relPath: string): boolean => relPath.includes('\\');
   for (const [relPath, entry] of pathIndex) {
-    if (!entry.isDirectory) continue;
+    if (!entry.isDirectory || contaminé(relPath)) continue;
     const slash = relPath.lastIndexOf('/');
     builderFor(slash >= 0 ? relPath.slice(0, slash) : '', isHiddenRoot(relPath));
   }
