@@ -16,7 +16,8 @@ la journée a révélé et corrigé 8 crashes/bugs distincts côté SAF/Hermes.
 ## Tâches
 
 ### ♻ Ergonomie
-- [ ] Système de mise à jour automatique sur Android (équivalent de l'updater desktop — expo-updates ou vérification GitHub Releases) — demande 2026-10-03 (+1)
+- [ ] Système de mise à jour automatique sur Android (équivalent de l'updater desktop — expo-updates ou vérification GitHub Releases) — demande 2026-10-03 (+1) — 0.4.69 ajoute la carte « Version installée » + lien APK (À propos), l'installation reste manuelle
+- [ ] Rendre visibles les échecs aujourd'hui silencieux des actions Tâches : journaliser les erreurs de lecture/écriture dans le journal de synchronisation (repéré 17/10 : un ajout invisible à cause de §8 ne disait RIEN) (+1)
 - [ ] Vue Graphique : largeur de la barre latérale réglable (elle masque tout sur téléphone) — demande 2026-10-03 (+1)
 - [ ] Mode Intermédiaire fidèle sur Android : WebView embarquant l'éditeur web CodeMirror (pont contenu/sauvegarde/thème/clavier tactile) — demande explicite 2026-10-02, validé « phasé » par l'utilisatrice (+1)
 - [ ] État de chargement explicite pendant le parcours SAF de l'arborescence (~1 min sur un grand coffre, UI figée aujourd'hui) (+1)
@@ -25,6 +26,7 @@ la journée a révélé et corrigé 8 crashes/bugs distincts côté SAF/Hermes.
 
 ### 👍 Stabilité
 - [ ] Tester sur appareil réel toute nouvelle fonction SAF avant merge (règle de process — les crashes du 02/10 venaient tous de là) (+1)
+- [ ] Test unitaire de writeSafTruncationSafe (simuler un document qui ne se tronque pas et vérifier la réparation supprimer+recréer) (+1)
 - [ ] Survivre à l'échec d'un fichier isolé pendant un pull sans compter sur le try/catch appelant (+1)
 - [ ] Session Supabase : baser le stockage natif sur un stockage chiffré (expo-secure-store) plutôt qu'un JSON en clair (+1)
 
@@ -33,6 +35,7 @@ la journée a révélé et corrigé 8 crashes/bugs distincts côté SAF/Hermes.
 
 ### 🗂 Organisation
 - [ ] Factoriser le parcours SAF dupliqué (nativeVaultAdapter.walkSafChildren vs nativeSyncAdapter.walkAndHash) (+1)
+- [ ] Purger les résidus du coffre du téléphone après re-connexion validée : `.trash (N)`, `conflits (N)`, `tasks.json.corrupt-*`, `diag-write.json` (repérés 17/10 via adb) (+1)
 - [ ] Fusionner le clone de build C:\b et le workspace (risque de divergence de sources) (+1)
 - [ ] Committer les correctifs Android 2026-10-02 (18+ fichiers en attente) (+1)
 
@@ -46,3 +49,6 @@ la journée a révélé et corrigé 8 crashes/bugs distincts côté SAF/Hermes.
   natifs corrigés : window.addEventListener, addEventListener DOM des effets,
   Blob.text(), OOM expo/fetch, getInfoAsync SAF, chemins Windows `\`,
   MIME/extension Android, chevron SVG transform).
+- 2026-10-17 : nuit — cause racine « JSON cassé en boucle » prouvée (écriture
+  SAF sans troncature, docs/vault-incidents.md §8) + fix v0.4.70 ; tâches
+  ajoutées (journalisation erreurs, test troncature, purge résidus coffre).
