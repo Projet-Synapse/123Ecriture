@@ -29,11 +29,28 @@ function newId(): string {
 }
 
 async function readJson(relPath: string): Promise<unknown> {
+  let brut: string;
   try {
-    return JSON.parse(await nativeVaultAdapter.readNote(relPath));
+    brut = await nativeVaultAdapter.readNote(relPath);
   } catch {
     // Fichier absent (coffre neuf, premières tâches) ou coffre inactif :
     // état vide, même sémantique que le try/catch de readTasks côté desktop.
+    return null;
+  }
+  try {
+    return JSON.parse(brut);
+  } catch {
+    // v0.4.69 — ANTI-PERTE : le fichier existe mais son JSON est cassé
+    // (écriture partielle SAF, vécu). On le SAUVEGARDE tel quel dans le
+    // coffre (jamais de perte silencieuse) et on repart à zéro : l'état
+    // vide est réécrit au prochain write, la copie reste récupérable.
+    const sauvegarde = `${relPath}.corrupt-${Date.now()}`;
+    try {
+      await nativeVaultAdapter.writeNote(sauvegarde, brut);
+      console.error(`[tasks] ${relPath} : JSON cassé — contenu sauvegardé dans ${sauvegarde}`);
+    } catch {
+      console.error(`[tasks] ${relPath} : JSON cassé ET sauvegarde impossible`);
+    }
     return null;
   }
 }

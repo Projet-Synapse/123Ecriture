@@ -819,9 +819,20 @@ export function TasksScreen({
   };
 
   const renderTask = (task: Task) => {
-    const isExpanded = expandedTaskId === task.id;
-    const doneSubtasks = task.subtasks.filter((s) => s.done).length;
-    const dueBadge = dueDateBadge(task);
+    // GARDE DÉFENSIVE (v0.4.69 — le crash « undefined is not a function »
+    // du rendu de tâche) : une tâche arrivant d'un fichier ou d'une version
+    // sans ces champs ne doit JAMAIS faire crasher l'écran entier. Les
+    // défauts reprennent ceux de normalizeTask des ponts.
+    const safeTask: Task = {
+      ...task,
+      description: task.description ?? '',
+      subtasks: Array.isArray(task.subtasks) ? task.subtasks : [],
+      attachments: Array.isArray(task.attachments) ? task.attachments : [],
+      dueDate: task.dueDate ?? null,
+    };
+    const isExpanded = expandedTaskId === safeTask.id;
+    const doneSubtasks = safeTask.subtasks.filter((s) => s.done).length;
+    const dueBadge = dueDateBadge(safeTask);
 
     return (
       <View key={task.id} style={[styles.taskCard, { borderColor: theme.border }]}>
@@ -851,9 +862,9 @@ export function TasksScreen({
               {dueBadge.label}
             </Text>
           )}
-          {task.subtasks.length > 0 && (
+          {safeTask.subtasks.length > 0 && (
             <Text style={[styles.subtaskBadge, { color: theme.textMuted, borderColor: theme.border }]}>
-              {doneSubtasks}/{task.subtasks.length}
+              {doneSubtasks}/{safeTask.subtasks.length}
             </Text>
           )}
           <Pressable
@@ -873,14 +884,14 @@ export function TasksScreen({
             description », en gris discret. Cocher ici coche pour de bon
             (même pont que la fiche dépliée) ; l'édition complète passe par
             le chevron. Masqué en fiche dépliée pour ne pas tout doubler. */}
-        {!isExpanded && (task.description?.trim() || task.subtasks.length > 0) && (
+        {!isExpanded && (safeTask.description?.trim() || safeTask.subtasks.length > 0) && (
           <View style={styles.taskPreview}>
-            {task.description?.trim() ? (
+            {safeTask.description?.trim() ? (
               <Text style={[styles.previewDescription, { color: theme.textMuted }]} numberOfLines={2}>
-                {task.description}
+                {safeTask.description}
               </Text>
             ) : null}
-            {task.subtasks.map((subtask) => (
+            {safeTask.subtasks.map((subtask) => (
               <Pressable
                 key={subtask.id}
                 style={styles.previewSubtaskRow}
@@ -917,7 +928,7 @@ export function TasksScreen({
           <View style={[styles.taskDetails, { borderColor: theme.border }]}>
             <Text style={[styles.detailLabel, { color: theme.textMuted }]}>Description</Text>
             <DraftTextField
-              initialValue={task.description}
+              initialValue={safeTask.description}
               onCommit={(text) => void handleChangeDescription(task.id, text)}
               placeholder="Ajouter une description…"
               multiline
@@ -927,7 +938,7 @@ export function TasksScreen({
 
             <Text style={[styles.detailLabel, { color: theme.textMuted }]}>Échéance</Text>
             <DraftTextField
-              initialValue={task.dueDate ?? ''}
+              initialValue={safeTask.dueDate ?? ''}
               onCommit={(raw) => handleChangeDueDate(task.id, raw)}
               placeholder="AAAA-MM-JJ ou JJ/MM/AAAA — vider pour retirer"
               theme={theme}
@@ -959,7 +970,7 @@ export function TasksScreen({
               >
                 <Text style={[styles.dueQuickChipText, { color: theme.textMuted }]}>+7 j</Text>
               </Pressable>
-              {task.dueDate && (
+              {safeTask.dueDate && (
                 <Pressable
                   onPress={() => handleChangeDueDate(task.id, '')}
                   style={[styles.dueQuickChip, { borderColor: theme.border }]}
@@ -990,7 +1001,7 @@ export function TasksScreen({
             )}
 
             <Text style={[styles.detailLabel, { color: theme.textMuted }]}>Sous-étapes</Text>
-            {task.subtasks.map((subtask) => (
+            {safeTask.subtasks.map((subtask) => (
               <View key={subtask.id} style={styles.subtaskRow}>
                 <Pressable
                   onPress={() => void handleToggleSubtask(task.id, subtask.id)}
@@ -1035,7 +1046,7 @@ export function TasksScreen({
             </View>
 
             <Text style={[styles.detailLabel, { color: theme.textMuted }]}>Pièces jointes</Text>
-            {task.attachments.map((attachment) => (
+            {safeTask.attachments.map((attachment) => (
               <View key={attachment.relPath} style={styles.attachmentChip}>
                 <Text style={[styles.attachmentName, { color: theme.text }]} numberOfLines={1}>
                   📎 {attachment.name}
