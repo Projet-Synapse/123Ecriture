@@ -3,8 +3,11 @@ import { ActivityIndicator, Pressable, ScrollView, TextInput, Text, View } from 
 
 import { journalEntryLabel, type SyncJournalEntry, type SyncJournalEntryType } from '../../lib/sync/journal';
 import { SYNC_JOURNAL_READ_PATH } from '../../lib/sync/syncEngine';
+import { buildLocalDiagnostics } from '../../lib/sync/deviceGateway';
+import { formatDiagnosticsReport } from '../../lib/sync/diagnostics';
 import { useVaults } from '../../lib/sync/VaultsContext';
 import { usePreferences } from '../../preferences/PreferencesContext';
+import { SyncReviewSection } from './SyncReviewSection';
 import { settingsStyles as s } from './settingsStyles';
 
 // Écran « Journal de synchronisation » (v0.4.27) — l'équivalent du journal
@@ -115,8 +118,24 @@ export function SyncJournalSection() {
     }
   };
 
+  // v0.4.76 — 🩺 diagnostic copiable (l'app devient ses propres yeux) :
+  // assemble l'état complet (version, coffres, permission, revue, journal)
+  // dans le presse-papiers, prêt à transmettre.
+  const [diagCopied, setDiagCopied] = useState(false);
+  const copyDiagnostic = async () => {
+    try {
+      const report = await buildLocalDiagnostics();
+      await navigator.clipboard.writeText(formatDiagnosticsReport(report));
+      setDiagCopied(true);
+      setTimeout(() => setDiagCopied(false), 2000);
+    } catch {
+      // Presse-papiers indisponible — silencieux.
+    }
+  };
+
   return (
     <View style={[s.card, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+      <SyncReviewSection />
       <Text style={[s.cardTitle, { color: theme.text }]}>🔄 Journal de synchronisation</Text>
       <Text style={[s.hint, { color: theme.textMuted }]}>
         Activité de ce coffre sur cet appareil — cycles (et leur déclencheur), envois, réceptions, suppressions,
@@ -149,6 +168,13 @@ export function SyncJournalSection() {
           placeholderTextColor={theme.textMuted}
           style={[s.input, { color: theme.text, borderColor: theme.border, flex: 1, minWidth: 0 }]}
         />
+        <Pressable
+          onPress={() => void copyDiagnostic()}
+          accessibilityLabel="Copier le diagnostic"
+          style={[s.modeButton, { borderColor: theme.border, paddingHorizontal: 12, paddingVertical: 8 }]}
+        >
+          <Text style={{ color: theme.text, fontSize: 16 }}>{diagCopied ? '✅' : '🩺'}</Text>
+        </Pressable>
         <Pressable
           onPress={() => void copyJournal()}
           accessibilityLabel="Copier le journal"

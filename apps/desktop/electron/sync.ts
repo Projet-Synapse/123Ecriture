@@ -5,8 +5,14 @@ import fsSync from 'fs';
 import path from 'path';
 
 import * as vaults from './vaults';
-import { EXTENSION_TO_KIND } from './vault';
 import type { HashedNote } from './types';
+// v0.4.76 — SOURCE UNIQUE des règles de hachage (partagé avec le pont
+// mobile nativeSyncAdapter.ts) : isHashableRelPath. Avant, les règles
+// étaient dupliquées avec des divergences (fichiers code dans .trash
+// hachés d'un côté seulement ; liste blanche des métadonnées côté desktop
+// morte — le `continue` sur les noms cachés s'exécutait AVANT le test de
+// liste blanche).
+import { isHashableRelPath } from '../../mobile/lib/sync/syncRules';
 
 // Partie "synchro" (voir docs/ARCHITECTURE.md §6) : la seule opération qui a
 // vraiment besoin du process principal est de hasher le vault actif en une
@@ -47,29 +53,9 @@ async function hashFileContent(fullPath: string): Promise<string> {
 let hashCacheVaultPath: string | null = null;
 const hashCache = new Map<string, { mtimeMs: number; size: number; hash: string }>();
 
-// Métadonnées .123ecriture/** qui VONTAGEnt avec le coffre (liste blanche en
-// POSIX — le reste du sous-arbre reste local) : apparence par coffre
-// (v0.4.42), tâches et listes (v0.4.65 : « tâches enregistrées et
-// synchronisées dans leur vault respectif »), préférences d'UI par coffre
-// (v0.4.65). Même liste côté mobile : nativeSyncAdapter.hashableRelPath —
-// À MAINTENIR ENSEMBLE.
-const SYNCED_META_FILES = [
-  '.123ecriture/appearance.json',
-  '.123ecriture/tasks.json',
-  '.123ecriture/tasklists.json',
-  '.123ecriture/preferences.json',
-];
-
-// Pièces jointes SYNCHRONISÉES (v0.4.66, demande : « gestion des fichiers
-// joints ») : images, documents et audio voyageant avec le coffre, SANS
-// limite de taille (choix de l'utilisatrice ; alerte au-delà de 25 Mo au
-// push). Même liste côté mobile : SYNC_ATTACHMENT_EXTENSIONS de
-// nativeSyncAdapter.ts — À MAINTENIR ENSEMBLE.
-const SYNC_ATTACHMENT_EXTENSIONS = [
-  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.heic',
-  '.pdf', '.txt', '.csv',
-  '.mp3', '.wav', '.ogg', '.m4a', '.mp4', '.webm',
-];
+// Les listes et la règle d'inclusion (métadonnées synchronisées, pièces
+// jointes, .trash, segments cachés, backslash) vivent dans syncRules.ts —
+// SOURCE UNIQUE partagée avec le pont mobile, avec des tests de parité.
 
 function resetHashCache(vaultPath: string): void {
   if (hashCacheVaultPath !== vaultPath) {
@@ -96,36 +82,23 @@ async function walkAndHash(dir: string, vaultRoot: string, out: HashedNote[]): P
   });
   const nextCache = new Map<string, { mtimeMs: number; size: number; hash: string }>();
   for (const entry of entries) {
-    if (entry.name.startsWith('.')) continue;
     const parentAbs = path.resolve(entry.parentPath);
     if (parentAbs !== rootAbs && !parentAbs.startsWith(rootAbsSep)) continue;
     const fullPath = parentAbs + path.sep + entry.name;
     const relSegments = path.relative(vaultRoot, fullPath).split(path.sep);
-    // Contenu caché exclu de la synchro (métadonnées .123ecriture, .obsidian,
-    // corbeille de conflits…) — SAUF `.trash`, la corbeille du coffre,
-    // volontairement SYNCHRONISÉE (v0.4.26 : elle est partagée entre tous
-    // les appareils du compte, chaque suppression y atterrit partout).
-    // Métadonnées SYNCHRONISÉES (liste blanche, en POSIX) :
-    // - .123ecriture/appearance.json — apparence par coffre (v0.4.42) ;
-    // - tasks/tasklists (v0.4.65, demande : « tâches enregistrées et
-    //   synchronisées dans leur vault respectif ») ;
-    // - preferences (v0.4.65 : personnalisation de l'UI par coffre).
+    // v0.4.76 — RÈGLE UNIQUE (syncRules.ts, partagée avec le pont mobile) :
+    // liste blanche des métadonnées .123ecriture/**, .trash/ inclus,
+    // segments cachés exclus, backslash rejetés, extensions de contenu et
+    // pièces jointes. (Avant : le test des noms cachés s'exécutait AVANT la
+    // liste blanche — les métadonnées synchronisées n'étaient jamais
+    // hachées côté desktop, et les fichiers code de .trash jamais côté
+    // mobile : deux vérités différentes pour un même coffre.)
     const relPathPosix = relSegments.join('/');
-    const isSyncedMetaFile = SYNCED_META_FILES.includes(relPathPosix);
-    const extension = path.extname(entry.name).toLowerCase();
-    const isAttachmentFile = SYNC_ATTACHMENT_EXTENSIONS.includes(extension);
-    if (
-      !isSyncedMetaFile &&
-      !isAttachmentFile &&
-      relSegments[0] !== '.trash' &&
-      relSegments.some((segment) => segment.startsWith('.'))
-    ) {
-      continue;
-    }
+    if (!entry.isFile() || !isHashableRelPath(relPathPosix)) continue;
     // Pièces jointes : synchronisées SANS limite de taille (choix de
     // l'utilisatrice) — l'alerte « fichier volumineux » se produit au push
     // (syncEngine, seuil MAX_ATTACHMENT_ALERT_BYTES).
-    if (entry.isFile() && (isSyncedMetaFile || isAttachmentFile || EXTENSION_TO_KIND[path.extname(entry.name)])) {
+    {
       try {
         const stat = await fs.stat(fullPath);
         // v0.4.54 — normalisation POSIX OBLIGATOIRE : sur Windows,

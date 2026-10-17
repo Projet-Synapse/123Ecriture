@@ -53,7 +53,16 @@ function registerAppProtocol(): void {
     if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
       filePath = path.join(WEB_BUILD_DIR, 'index.html');
     }
-    return net.fetch(pathToFileURL(filePath).toString());
+    // v0.4.76 — ANTI-CACHE (patron 123Creez desktop/main.js) : sans cet
+    // en-tête, Chromium pouvait resservir du VIEUX JS depuis son cache après
+    // une mise à jour — l'app tournait avec l'ancien code malgré la version
+    // nouvellement installée.
+    return net
+      .fetch(pathToFileURL(filePath).toString())
+      .then((response) => {
+        response.headers.set('Cache-Control', 'no-cache');
+        return response;
+      });
   });
 }
 

@@ -32,6 +32,7 @@ import {
 } from './journal';
 import { tryThreeWayMerge } from './merge';
 import { textChangeStats, textChangeDetail } from './changeStats';
+import { processDeviceCommands } from './deviceGateway';
 import { vaultStorageObjectKey } from './storageKeys';
 // Liste des pièces jointes synchronisées (source unique : nativeVaultAdapter).
 import { SYNC_ATTACHMENT_EXTENSIONS } from '../storage/nativeVaultAdapter';
@@ -62,9 +63,17 @@ export type SyncSummary = {
 // DANS le dossier du coffre — il suit les déplacements. C'est la référence
 // qui distingue « jamais existé ici » (pull autorisé) de « existait et a
 // été supprimé ici » (tombestone, jamais de résurrection).
+// v0.4.76 — SYNC-STATE HONNÊTE : l'état est TIMBRÉ par le chemin du coffre
+// qu'il décrit (rootPath). Un rootPath différent au chargement (dossier
+// reconnecté, migration du socle, changement de coffre) = l'état est jeté
+// à vide plutôt que cru — aucune suppression ne peut être propagée sur la
+// foi d'un état qui ne décrit pas ce coffre-ci.
 const SYNC_STATE_REL_PATH = '.123ecriture/sync-state.json';
 
-type SyncState = { files: Record<string, string> };
+type SyncState = {
+  files: Record<string, string>;
+  rootPath?: string | null;
+};
 
 // v0.4.58 — Hermes (Android) n'expose PAS `AbortSignal.timeout` (méthode
 // statique du DOM) : l'appeler levait « undefined is not a function » et
@@ -89,7 +98,7 @@ async function loadSyncState(): Promise<SyncState> {
       if (relPath.includes('\\')) continue;
       files[relPath] = hash;
     }
-    return { files };
+    return { files, rootPath: parsed.rootPath ?? null };
   } catch {
     // Absent à la première synchro du coffre — repart à vide.
     return { files: {} };
@@ -311,6 +320,8 @@ async function fetchDevicesByVault(): Promise<Map<string, RemoteVaultDevice[]>> 
       lastCycleDeleted: (row.last_cycle_deleted as number | null) ?? null,
       lastCycleConflicts: (row.last_cycle_conflicts as number | null) ?? null,
       lastCycleErrors: (row.last_cycle_errors as number | null) ?? null,
+      locked: (row.locked as boolean | null) ?? null,
+      lockReason: (row.lock_reason as string | null) ?? null,
     };
     const list = byVault.get(vaultId) ?? [];
     list.push(device);
@@ -1134,6 +1145,24 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
     fetchRemoteFiles(remoteVaultId),
     loadSyncState(),
   ]);
+
+  // v0.4.76 — SYNC-STATE HONNÊTE : l'état ne vaut que pour LE dossier qu'il
+  // décrit. Un rootPath différent (dossier reconnecté, migration du socle,
+  // changement de coffre) = l'état est JETÉ à vide : aucune suppression ne
+  // sera propagée avant qu'un premier cycle complet ait reconstruit la
+  // vérité depuis le disque et le cloud. (Angle mort du 17/10 : reconnecté
+  // sur l'ancien dossier avec un état périmé, le moteur « savait » des
+  // choses fausses.)
+  const vaultRootPath = (await bridges.vault.getCurrentPath?.()) ?? null;
+  if (syncState.rootPath && syncState.rootPath !== vaultRootPath) {
+    syncState.files = {};
+    journal.push(
+      makeJournalEntry('info', {
+        detail: `État de synchro d'un autre dossier ignoré (${syncState.rootPath}) — reconstruit à vide pour ${vaultRootPath ?? 'coffre inconnu'}.`,
+      }),
+    );
+  }
+  syncState.rootPath = vaultRootPath;
   // v0.4.54 : défense en profondeur — les relPaths locaux sont ramenés en
   // slashes POSIX quel que soit le pont (le scan desktop produisait des `\`
   // sur Windows : 1577 doublons cloud, tombestones jamais envoyées,
@@ -1421,7 +1450,7 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
     if (remote) nextFiles[decision.relPath] = remote.contentHash;
   }
   try {
-    await saveSyncState({ files: nextFiles });
+    await saveSyncState({ files: nextFiles, rootPath: vaultRootPath });
   } catch (error) {
     console.error('[sync] échec de la sauvegarde de l’état de synchro :', error);
     journal.push(makeJournalEntry('error', { detail: `sauvegarde de l'état : ${errorMessage(error)}` }));
@@ -1460,6 +1489,11 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   // best-effort APRÈS le cycle de fichiers — jamais dans les erreurs du
   // résumé (voir heartbeatDevice).
   await heartbeatDevice(remoteVaultId, ownerId, summary);
+
+  // v0.4.76 — PASSERELLE À DISTANCE : exécute les commandes adressées à CET
+  // appareil (dump-diagnostics, levée de bloc…) via le canal Supabase —
+  // best-effort, jamais bloquant, sans adb (voir deviceGateway.ts).
+  await processDeviceCommands(remoteVaultId, ownerId);
 
   journal.push(
     makeJournalEntry('cycle-end', {
