@@ -15,6 +15,10 @@ export type SyncJournalEntryType =
   | 'cycle-start'
   | 'cycle-end'
   | 'push'
+  // v0.4.72 (demande Catelina) : le journal raconte le CHANGEMENT — nombre
+  // de caractères ajoutés/supprimés et total, calculés par comparaison avec
+  // la version distante précédente (voir changeStats.ts).
+  | 'modification'
   | 'pull'
   | 'delete'
   | 'conflict'
@@ -83,6 +87,8 @@ export function journalEntryLabel(entry: SyncJournalEntry): string {
       return `Synchronisé — ${entry.detail ?? ''}`.trim();
     case 'push':
       return `Envoyé : ${entry.path ?? ''}`;
+    case 'modification':
+      return `Modifié : ${entry.path ?? ''}${entry.detail ? ` — ${entry.detail}` : ''}`;
     case 'pull':
       return `Reçu : ${entry.path ?? ''}`;
     case 'delete':

@@ -159,7 +159,13 @@ export const nativeSyncAdapter = {
         }
         entries[relPath] = { hash: sha256Hex(bytes), size: bytes.length };
       } catch {
-        delete entries[relPath]; // fichier illisible entre-temps : hors arbre
+        // v0.4.72 — « LECTURE ÉCHOUÉE = NE RIEN SYNCHRONISER » (garde repris
+        // de 123Promptez, demandé par Catelina) : un fichier qui EXISTE dans
+        // l'index mais qu'on n'a pas su LIRE garde son hash précédent — le
+        // diff le verra inchangé, aucune tombstone ne partira, et le
+        // prochain cycle retentera. On ne retire du hachage que les fichiers
+        // que l'INDEX déclare disparus (suppression réelle).
+        if (!entries[relPath]) delete entries[relPath];
       }
     }
 

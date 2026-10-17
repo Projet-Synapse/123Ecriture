@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { computeLocalDeletions, remoteDeletionAction } from './deletions';
+import { computeLocalDeletions, isMassiveDeletion, remoteDeletionAction } from './deletions';
 
 describe('computeLocalDeletions', () => {
   it('détecte les fichiers présents à la dernière synchro et absents maintenant', () => {
@@ -30,5 +30,28 @@ describe('remoteDeletionAction', () => {
 
   it('keep-copy si le fichier a été modifié localement depuis (pas de perte silencieuse)', () => {
     expect(remoteDeletionAction({ localExists: true, lastSyncedHash: 'h1', localHash: 'h2' })).toBe('keep-copy');
+  });
+});
+
+describe('isMassiveDeletion (garde anti-destruction massive, v0.4.72)', () => {
+  it('sous le seuil absolu : propageable sans revue', () => {
+    expect(isMassiveDeletion(5, 100)).toBe(false);
+    expect(isMassiveDeletion(20, 100)).toBe(false);
+  });
+
+  it('au-delà du seuil absolu : suspect — revue manuelle (jamais silencieux)', () => {
+    expect(isMassiveDeletion(21, 1000)).toBe(true);
+  });
+
+  it('plus du tiers de l état précédent : suspect même sous le seuil absolu', () => {
+    expect(isMassiveDeletion(15, 30)).toBe(true);
+  });
+
+  it('un parcours VIDE (permission SAF perdue…) rend toute suppression suspecte', () => {
+    expect(isMassiveDeletion(980, 0)).toBe(true);
+  });
+
+  it('quelques disparitions dans un petit coffre restent raisonnables', () => {
+    expect(isMassiveDeletion(3, 9)).toBe(false);
   });
 });

@@ -19,7 +19,7 @@ type FilterId = 'tout' | 'envois' | 'receptions' | 'suppressions' | 'conflits' |
 
 const FILTERS: { id: FilterId; label: string; types?: SyncJournalEntryType[] }[] = [
   { id: 'tout', label: 'Tout' },
-  { id: 'envois', label: 'Envois', types: ['push'] },
+  { id: 'envois', label: 'Envois', types: ['push', 'modification'] },
   { id: 'receptions', label: 'Réceptions', types: ['pull'] },
   { id: 'suppressions', label: 'Suppressions', types: ['delete', 'restore'] },
   { id: 'conflits', label: 'Conflits', types: ['conflict'] },
@@ -30,6 +30,7 @@ const ICON_BY_TYPE: Record<SyncJournalEntryType, string> = {
   'cycle-start': '🔄',
   'cycle-end': '✅',
   push: '⬆️',
+  modification: '✏️',
   pull: '⬇️',
   delete: '🗑️',
   conflict: '⚠️',
@@ -45,13 +46,16 @@ const ICON_BY_TYPE: Record<SyncJournalEntryType, string> = {
   'download-end': '✅',
 };
 
+// v0.4.72 (demande Catelina) : la date COMPLÈTE (jour inclus) s'affiche en
+// plus de l'heure — un journal qui s'étale sur plusieurs jours doit dire
+// quel jour chaque événement a eu lieu.
 function formatTime(iso: string): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return '';
   return (
-    date.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) +
-    '.' +
-    String(date.getMilliseconds()).padStart(3, '0')
+    date.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' }) +
+    ' ' +
+    date.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
   );
 }
 
