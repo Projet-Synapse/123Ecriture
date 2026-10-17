@@ -1051,6 +1051,29 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   }
   const remoteVaultId = activeEntry.remoteVaultId;
 
+  // v0.4.74 — GARDE « AUCUN COFFRE LOCAL ACTIF » (vécu 17/10 18:34 : 911
+  // pulls en échec « Aucun coffre sélectionné » + disjoncteur ouvert sur le
+  // téléphone alors que la registry connaissait un coffre lié) : sans coffre
+  // LOCAL actif et résolvable, il n'y a rien à afficher ni où écrire — le
+  // cycle est refusé avec un message qui dit quoi faire, au lieu de 911
+  // erreurs.
+  try {
+    const activeLocalPath = await bridges.vault.getCurrentPath?.();
+    if (!activeLocalPath) {
+      const message = "Cycle ignoré : aucun coffre local actif sur cet appareil — choisis d'abord un dossier (Paramètres → Coffres).";
+      summary.errors.push(message);
+      try {
+        await appendJournalEntries([makeJournalEntry('info', { detail: message })]);
+      } catch {
+        // Pas de coffre pour écrire le journal : le message reste dans le résumé.
+      }
+      console.error('[sync]', message);
+      return summary;
+    }
+  } catch {
+    // Pont sans getCurrentPath (vieille version) : comportement historique.
+  }
+
   // v0.4.72 — DISJONCTEUR DE SYNCHRO (angle mort signalé par Catelina) :
   // si le cycle PRÉCÉDENT s'est terminé en rafale d'erreurs, « Synchroniser »
   // est REFUSÉ d'office — on ne resynchronise jamais par-dessus un appareil
