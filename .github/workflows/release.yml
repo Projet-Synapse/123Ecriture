@@ -49,6 +49,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Versions cohérentes (mobile pkg/app + desktop)
+        run: node scripts/check-versions.mjs
+      - name: Le tag correspond à la version (sinon electron-builder saute la publication)
+        if: github.ref_type == 'tag'
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PKG_VERSION=$(node -e "console.log(require('./apps/mobile/package.json').version)")
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::Le tag v$TAG_VERSION ne correspond pas à la version du paquet ($PKG_VERSION) — bump manquant, publication annulée."
+            exit 1
+          fi
+          echo "Tag v$TAG_VERSION = version $PKG_VERSION ✓"
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
