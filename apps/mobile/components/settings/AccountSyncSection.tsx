@@ -3,7 +3,7 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 
 
 import { useAuth } from '../../lib/sync/AuthContext';
 import { useSyncStatus } from '../../lib/sync/SyncStatusContext';
-import { formatLastSeen } from '../../lib/sync/devices';
+import { formatLastCycle, formatLastSeen } from '../../lib/sync/devices';
 import {
   createRemoteVault,
   linkVaultToCloud,
@@ -406,13 +406,24 @@ export function AccountSyncSection() {
                     vault_devices, heartbeat à chaque synchro) — « qui est
                     connecté et vu quand », du plus récent au plus ancien.
                     Le suffixe court (4 hex) distingue deux machines qui
-                    porteraient le même nom. */}
+                    porteraient le même nom. v0.4.71 : version de l'app +
+                    résumé du dernier cycle de CHAQUE appareil
+                    (observabilité croisée — invisibles tant que la migration
+                    SQL correspondante n'est pas appliquée). */}
                 {r.devices.length > 0 && (
                   <View style={styles.deviceList}>
                     {r.devices.map((device) => (
-                      <Text key={device.deviceId} style={[styles.vaultPathText, { color: theme.textMuted }]}>
-                        💻 {device.name} ({device.deviceId.slice(0, 4)}) · vu {formatLastSeen(device.lastSeenAt)}
-                      </Text>
+                      <View key={device.deviceId}>
+                        <Text style={[styles.vaultPathText, { color: theme.textMuted }]}>
+                          💻 {device.name} ({device.deviceId.slice(0, 4)})
+                          {device.appVersion ? ` · v${device.appVersion}` : ''} · vu {formatLastSeen(device.lastSeenAt)}
+                        </Text>
+                        {formatLastCycle(device) && (
+                          <Text style={[styles.vaultPathText, { color: theme.textMuted }]}>
+                            ⏱ {formatLastCycle(device)}
+                          </Text>
+                        )}
+                      </View>
                     ))}
                   </View>
                 )}

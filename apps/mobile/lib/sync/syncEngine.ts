@@ -12,6 +12,8 @@ import {
   VAULTS_TABLE,
 } from './supabaseClient';
 import { diffVault, type LocalHashedNote, type RemoteVaultFile } from './diff';
+import { splitEditHot } from './editQuiet';
+import { installedAppVersion } from '../updaterAndroid';
 import { errorMessage } from '../errorMessage';
 import { sortDevicesByLastSeen, type RemoteVaultDevice } from './devices';
 import { computeLocalDeletions, remoteDeletionAction } from './deletions';
@@ -277,10 +279,13 @@ export async function createRemoteVault(name: string, ownerId: string): Promise<
 // une liste vide plutôt que de faire échouer toute la carte.
 async function fetchDevicesByVault(): Promise<Map<string, RemoteVaultDevice[]>> {
   if (!supabase) return new Map();
+  // select('*') plutôt qu'une liste nominative : les colonnes
+  // d'observabilité (v0.4.71) peuvent être absentes de la base tant que la
+  // migration n'est pas appliquée — une liste nominative échouerait.
   const { data, error } = await supabase
     .schema(APP_SCHEMA)
     .from(VAULT_DEVICES_TABLE)
-    .select('vault_id, device_id, device_name, last_seen_at');
+    .select('*');
   if (error) {
     console.warn('[sync] appareils connectés indisponibles :', error.message);
     return new Map();
@@ -292,6 +297,13 @@ async function fetchDevicesByVault(): Promise<Map<string, RemoteVaultDevice[]>> 
       deviceId: row.device_id as string,
       name: row.device_name as string,
       lastSeenAt: row.last_seen_at as string,
+      appVersion: (row.app_version as string | null) ?? null,
+      lastCycleAt: (row.last_cycle_at as string | null) ?? null,
+      lastCyclePushed: (row.last_cycle_pushed as number | null) ?? null,
+      lastCyclePulled: (row.last_cycle_pulled as number | null) ?? null,
+      lastCycleDeleted: (row.last_cycle_deleted as number | null) ?? null,
+      lastCycleConflicts: (row.last_cycle_conflicts as number | null) ?? null,
+      lastCycleErrors: (row.last_cycle_errors as number | null) ?? null,
     };
     const list = byVault.get(vaultId) ?? [];
     list.push(device);
@@ -364,24 +376,68 @@ async function fetchFileCountsByVault(): Promise<Map<string, number>> {
 // échec (table absente, offline) est loggé mais ne fait PAS échouer la
 // synchro ni apparaître d'erreur — le suivi d'appareils ne doit jamais
 // casser la synchronisation des fichiers elle-même.
-async function heartbeatDevice(remoteVaultId: string, ownerId: string): Promise<void> {
+// v0.4.71 — colonnes d'observabilité ABSENTES tant que la migration
+// supabase/migrations/20261017120000_vault_devices_observability.sql n'a pas
+// été appliquée : une seule tentative enrichie par session, puis repli
+// définitif sur l'upsert historique (jamais de bruit à chaque cycle).
+let colonnesObservabiliteAbsentes = false;
+
+// Version de l'app SUR CET appareil (heartbeat observabilité) :
+// versionName natif (Platform.constants) ou version Electron (bridge
+// `updater` du preload desktop) ; null si indisponible — jamais bloquant.
+async function currentAppVersion(): Promise<string | null> {
+  const native = installedAppVersion();
+  if (native) return native;
+  try {
+    if (typeof window === 'undefined') return null;
+    const updater = (window as unknown as { updater?: { getVersion?: () => Promise<string> } }).updater;
+    const version = await updater?.getVersion?.();
+    return typeof version === 'string' && version ? version : null;
+  } catch {
+    return null;
+  }
+}
+
+async function heartbeatDevice(remoteVaultId: string, ownerId: string, summary?: SyncSummary): Promise<void> {
   try {
     if (!supabase) return;
     const info = typeof window !== 'undefined' && window.vaults ? await window.vaults.deviceInfo() : null;
     if (!info) return;
+    const base = {
+      vault_id: remoteVaultId,
+      owner_id: ownerId,
+      device_id: info.id,
+      device_name: info.name,
+      last_seen_at: new Date().toISOString(),
+    };
+    // v0.4.71 — OBSERVABILITÉ (« donner des yeux au vault », demande de
+    // l'utilisatrice) : version de l'app + résumé du dernier cycle, visibles
+    // par TOUS les appareils sur la carte « Appareils connectés ».
+    if (summary && !colonnesObservabiliteAbsentes) {
+      const { error } = await supabase
+        .schema(APP_SCHEMA)
+        .from(VAULT_DEVICES_TABLE)
+        .upsert(
+          {
+            ...base,
+            app_version: await currentAppVersion(),
+            last_cycle_at: base.last_seen_at,
+            last_cycle_pushed: summary.pushed,
+            last_cycle_pulled: summary.pulled,
+            last_cycle_deleted: summary.deleted,
+            last_cycle_conflicts: summary.conflicts,
+            last_cycle_errors: summary.errors.length,
+          },
+          { onConflict: 'vault_id,device_id' },
+        );
+      if (!error) return;
+      if (!/column|PGRST204/i.test(error.message ?? '')) throw error;
+      colonnesObservabiliteAbsentes = true;
+    }
     const { error } = await supabase
       .schema(APP_SCHEMA)
       .from(VAULT_DEVICES_TABLE)
-      .upsert(
-        {
-          vault_id: remoteVaultId,
-          owner_id: ownerId,
-          device_id: info.id,
-          device_name: info.name,
-          last_seen_at: new Date().toISOString(),
-        },
-        { onConflict: 'vault_id,device_id' },
-      );
+      .upsert(base, { onConflict: 'vault_id,device_id' });
     if (error) throw error;
   } catch (error) {
     console.warn('[sync] heartbeat appareil ignoré :', errorMessage(error));
@@ -927,8 +983,23 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
     ...note,
     relPath: note.relPath.split('\\').join('/'),
   }));
-  const localByPath = new Map(localFiles.map((note) => [note.relPath, note]));
-  const localPaths = new Set(localFiles.map((note) => note.relPath));
+  // v0.4.71 — PÉRIODE DE SILENCE « FICHIER OUVERT » (demande de
+  // l'utilisatrice, incident §9 du journal) : un fichier modifié il y a
+  // moins de 60 s est peut-être OUVERT dans un éditeur (l'app, Obsidian…) —
+  // il sort du cycle : pas de push, pas d'écrasement par le pull, pas
+  // d'archivage en conflit. Le cycle suivant, une fois le fichier
+  // silencieux (quitté, frappe arrêtée), le synchronise normalement. Fini
+  // le « conflit à chaque frappe » pendant l'écriture.
+  const { cold: localFilesCold, hotPaths } = splitEditHot(localFiles, Date.now());
+  if (hotPaths.size > 0) {
+    journal.push(
+      makeJournalEntry('info', {
+        detail: `${hotPaths.size} fichier(s) en cours d'édition — synchronisation différée (silence de 60 s requis) : ${[...hotPaths].slice(0, 2).join(' | ').slice(0, 140)}`,
+      }),
+    );
+  }
+  const localByPath = new Map(localFilesCold.map((note) => [note.relPath, note]));
+  const localPaths = new Set(localFilesCold.map((note) => note.relPath));
 
   // ---- SUPPRESSIONS (v0.4.17, orchestration v0.4.22) --------------------
   // ORDRE CRITIQUE, appris du bug de résurrection : une ligne deleted=true
@@ -1096,6 +1167,15 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
             );
             break;
           }
+          // v0.4.71 — fichier EN COURS D'ÉDITION ici : ne jamais écraser
+          // localement (le diff le retrouvera changé au prochain cycle, et
+          // c'est la version locale qui repartira).
+          if (hotPaths.has(decision.relPath)) {
+            journal.push(
+              makeJournalEntry('info', { path: decision.relPath, detail: 'pull différé : fichier en cours d’édition sur cet appareil' }),
+            );
+            break;
+          }
           await pullFile(remoteVaultId, decision.relPath, remoteByPath.get(decision.relPath)?.storageObjectPath);
           summary.pulled += 1;
           journal.push(makeJournalEntry('pull', { path: decision.relPath }));
@@ -1144,6 +1224,14 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
             break;
           }
           const losingLocalContent = await bridges.vault.readNote(decision.relPath);
+          // v0.4.71 — jamais l'archivage d'un fichier en cours d'édition :
+          // même garde que le pull simple ci-dessus.
+          if (hotPaths.has(decision.relPath)) {
+            journal.push(
+              makeJournalEntry('info', { path: decision.relPath, detail: 'conflit différé : fichier en cours d’édition sur cet appareil' }),
+            );
+            break;
+          }
           await backupLosingSide(decision.relPath, losingLocalContent);
           await pullFile(remoteVaultId, decision.relPath, remoteByPath.get(decision.relPath)?.storageObjectPath);
           summary.pulled += 1;
@@ -1187,7 +1275,7 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   // « Appareils connectés » (Paramètres → Coffres distants) : heartbeat
   // best-effort APRÈS le cycle de fichiers — jamais dans les erreurs du
   // résumé (voir heartbeatDevice).
-  await heartbeatDevice(remoteVaultId, ownerId);
+  await heartbeatDevice(remoteVaultId, ownerId, summary);
 
   journal.push(
     makeJournalEntry('cycle-end', {

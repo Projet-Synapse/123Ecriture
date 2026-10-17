@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { formatLastSeen, sortDevicesByLastSeen } from './devices';
+import { formatLastCycle, formatLastSeen, sortDevicesByLastSeen, type RemoteVaultDevice } from './devices';
 
 // formatLastSeen — dates relatives en français (voir devices.ts pour la
 // grille exacte). Toutes les dates sont construites en HEURE LOCALE
@@ -46,5 +46,40 @@ describe('sortDevicesByLastSeen', () => {
     const input = [oldest, newest, middle];
     expect(sortDevicesByLastSeen(input).map((d) => d.deviceId)).toEqual(['b', 'c', 'a']);
     expect(input.map((d) => d.deviceId)).toEqual(['a', 'b', 'c']);
+  });
+});
+
+describe('formatLastCycle (observabilité v0.4.71)', () => {
+  it('résume le dernier cycle avec les compteurs fournis', () => {
+    const device: RemoteVaultDevice = {
+      deviceId: 'a',
+      name: 'PC',
+      lastSeenAt: '2026-09-18T14:00:00.000Z',
+      lastCycleAt: new Date(NOW - 3 * 60 * 1000).toISOString(),
+      lastCyclePushed: 2,
+      lastCyclePulled: 1,
+      lastCycleDeleted: 0,
+      lastCycleConflicts: 1,
+      lastCycleErrors: 0,
+    };
+    expect(formatLastCycle(device, NOW)).toBe(
+      'dernier cycle il y a 3 min : 2 envoyé(s), 1 reçu(s), 0 supprimé(s), 1 conflit(s)',
+    );
+  });
+
+  it('mentionne les erreurs seulement quand il y en a', () => {
+    const base: RemoteVaultDevice = {
+      deviceId: 'a',
+      name: 'PC',
+      lastSeenAt: '2026-09-18T14:00:00.000Z',
+      lastCycleAt: new Date(NOW - 60 * 1000).toISOString(),
+    };
+    expect(formatLastCycle(base, NOW)).toContain('0 conflit(s)');
+    expect(formatLastCycle({ ...base, lastCycleErrors: 2 }, NOW)).toContain('2 erreur(s)');
+  });
+
+  it('rend null sans activité connue (appareil pré-0.4.71 ou migration absente)', () => {
+    const device: RemoteVaultDevice = { deviceId: 'a', name: 'PC', lastSeenAt: '2026-09-18T14:00:00.000Z' };
+    expect(formatLastCycle(device, NOW)).toBeNull();
   });
 });
