@@ -32,6 +32,7 @@ import {
 } from './journal';
 import { tryThreeWayMerge } from './merge';
 import { textChangeStats, textChangeDetail } from './changeStats';
+import { processDeviceCommands } from './deviceGateway';
 import { vaultStorageObjectKey } from './storageKeys';
 // Liste des pièces jointes synchronisées (source unique : nativeVaultAdapter).
 import { SYNC_ATTACHMENT_EXTENSIONS } from '../storage/nativeVaultAdapter';
@@ -1460,6 +1461,11 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   // best-effort APRÈS le cycle de fichiers — jamais dans les erreurs du
   // résumé (voir heartbeatDevice).
   await heartbeatDevice(remoteVaultId, ownerId, summary);
+
+  // v0.4.76 — PASSERELLE À DISTANCE : exécute les commandes adressées à CET
+  // appareil (dump-diagnostics, levée de bloc…) via le canal Supabase —
+  // best-effort, jamais bloquant, sans adb (voir deviceGateway.ts).
+  await processDeviceCommands(remoteVaultId, ownerId);
 
   journal.push(
     makeJournalEntry('cycle-end', {

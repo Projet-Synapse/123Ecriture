@@ -56,6 +56,19 @@ export type RemoteDeletionReview = {
 // fou, coffre incohérent) bloque tout jusqu'à revue.
 export const SYNC_ERROR_BLOCK_THRESHOLD = 10;
 
+// v0.4.76 — Lève le disjoncteur (après revue humaine, ou via la passerelle
+// à distance deviceGateway.ts « clear-sync-block »).
+export async function clearPendingReviewSyncBlock(vault: {
+  readNote: (relPath: string) => Promise<string>;
+  writeNote: (relPath: string, content: string) => Promise<void>;
+}): Promise<boolean> {
+  const review = await loadPendingReview(vault);
+  if (!review.syncBlocked) return false;
+  delete review.syncBlocked;
+  await savePendingReview(vault, review);
+  return true;
+}
+
 //////// 1. 📥 LECTURE / ÉCRITURE DE LA FILE ///////////
 
 // Un lecteur générique (le pont vault du coffre actif) est passé en

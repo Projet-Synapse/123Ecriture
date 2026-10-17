@@ -60,4 +60,8 @@ export const APP_SCHEMA = 'app_123ecriture';
 export const VAULTS_TABLE = 'vaults';
 export const VAULT_FILES_TABLE = 'vault_files';
 export const VAULT_DEVICES_TABLE = 'vault_devices';
+// v0.4.76 — PASSERELLE À DISTANCE : file de commandes par appareil
+// (dump-diagnostics, levée de disjoncteur…) — voir deviceGateway.ts et la
+// migration 20261018210000_device_commands.sql.
+export const DEVICE_COMMANDS_TABLE = 'device_commands';
 export const VAULT_FILES_BUCKET = '123ecriture-vaults';
