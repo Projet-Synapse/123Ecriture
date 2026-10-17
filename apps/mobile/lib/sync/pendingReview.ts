@@ -29,6 +29,11 @@ export type SuspiciousDeletionReview = {
 
 export type PendingReview = {
   suspiciousDeletions?: SuspiciousDeletionReview;
+  // v0.4.72 — SUPPRESSIONS DISTANTES EN ATTENTE (règle Catelina : « JAMAIS
+  // de façon silencieuse ») : un fichier supprimé sur un autre appareil
+  // n'est plus effacé ici automatiquement — il reste EN PLACE jusqu'à ce
+  // que la revue tranche (Supprimer vraiment / Restaurer dans le cloud).
+  remoteDeletions?: RemoteDeletionReview[];
   // v0.4.72 — DISJONCTEUR DE SYNCHRO (angle mort signalé par Catelina) :
   // quand un cycle se termine avec trop d'erreurs, les cycles SUIVANTS sont
   // refusés d'office tant qu'un humain n'a pas levé le bloc — on ne peut
@@ -38,6 +43,12 @@ export type PendingReview = {
     errorCount: number;
     samples: string[]; // extraits « origine : message » pour le diagnostic
   };
+};
+
+export type RemoteDeletionReview = {
+  path: string;
+  modified: boolean; // le fichier local avait été modifié depuis la dernière synchro
+  at: string;
 };
 
 // Seuil d'erreurs DANS UN MÊME CYCLE qui pose le disjoncteur. 1-2 erreurs
