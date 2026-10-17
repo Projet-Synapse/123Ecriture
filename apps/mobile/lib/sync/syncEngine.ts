@@ -600,9 +600,8 @@ const MAX_ATTACHMENT_ALERT_BYTES = 25 * 1024 * 1024;
 // REVUE MANUELLE (pendingReview.ts) et n'est appliquée que par une action
 // humaine explicite (demande de Catelina : « JAMAIS de façon silencieuse »).
 
-// Mémoire de convergence de la purge backslashed (voir runSync, 1bis).
-let dernierePurgeSignature = '';
-let purgeNonConvergenteSignalee = false;
+// Mémoire du dernier signalement backslash (un seul journal par valeur).
+let lastBackslashReport = -1;
 
 function isBinaryAttachmentRelPath(relPath: string): boolean {
   const lower = relPath.toLowerCase();
@@ -1144,67 +1143,29 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   // tout le cycle — sinon le diff, calculé sur une liste distante périmée,
   // retélécharge le fichier qu'on vient de déclarer mort, puis le repousse
   // (upsert deleted:false), le ressuscitant à jamais.
-  const activeRemoteFiles = remoteFiles.filter((file) => !file.deleted);
+  // 1bis) LIGNES RÉSIDUELLES BACKSLASHED — v0.4.74 (demande de Catelina :
+  // « des purges qui viennent tout seuls sans explications ») : PLUS AUCUNE
+  // purge automatique. Ces lignes impossibles (résidus du bug de
+  // séparateurs v0.4.54) sont simplement IGNORÉES : hors du diff, hors des
+  // décisions, hors du comptage — elles ne peuvent plus rien casser. Leur
+  // nettoyage devient un geste MANUEL (revue/SQL par l'utilisatrice ou
+  // l'assistant), signalé une seule fois quand leur nombre change.
+  const backslashedRows = remoteFiles.filter((file) => (file.rawRelPath ?? '').includes('\\'));
+  if (backslashedRows.length > 0 && backslashedRows.length !== lastBackslashReport) {
+    lastBackslashReport = backslashedRows.length;
+    journal.push(
+      makeJournalEntry('info', {
+        detail: `${backslashedRows.length} ligne(s) résiduelle(s) à backslash ignorée(s) dans le cloud (inoffensives) — nettoyage manuel disponible sur demande`,
+      }),
+    );
+  }
+  const activeRemoteFiles = remoteFiles.filter(
+    (file) => !file.deleted && !(file.rawRelPath ?? '').includes('\\'),
+  );
   const remoteByPath = new Map(activeRemoteFiles.map((file) => [file.relPath, file]));
   const tombstonedPaths = new Set(
     remoteFiles.filter((file) => file.deleted).map((file) => file.relPath),
   );
-
-  // 1bis) PURGE DES JUMEAUX BACKSLASHED (v0.4.54) : Windows ne peut pas
-  // créer de fichier dont le nom contient `\` — toute ligne distante ACTIVE
-  // avec `\` dans son rel_path est donc un résidu du bug de séparateurs
-  // (avant normalisation) : elle est tombestonnée à jamais, quel que soit
-  // son contenu. Sans cette purge, ces lignes restaient actives dans le
-  // cloud et le diff les re-téléchargeait — la résurrection en boucle vécue
-  // sur les coffres contaminés.
-  // v0.4.55 : PAR LOTS (.in() par 100, délai d'attente 30 s).
-  // v0.4.72 — DEUX CORRECTIFS : (a) BUG CRITIQUE : le filtre vault_id
-  // MANQUAIT — la purge marquait ces chemins supprimés dans TOUS les
-  // coffres du compte, pas seulement celui-ci ; (b) GARDE DE CONVERGENCE :
-  // si la même purge revient à cycle identique, quelqu'un re-pousse ces
-  // lignes — on ignore la purge (une seule alerte par session) au lieu de
-  // spammer le journal et d'entretenir le ping-pong entre appareils.
-  const backslashedRawPaths = activeRemoteFiles
-    .filter((file) => (file.rawRelPath ?? '').includes('\\'))
-    .map((file) => file.rawRelPath as string);
-  const purgeSignature = `${backslashedRawPaths.length}:${backslashedRawPaths[0] ?? ''}`;
-  if (backslashedRawPaths.length > 0 && purgeSignature === dernierePurgeSignature) {
-    if (!purgeNonConvergenteSignalee) {
-      purgeNonConvergenteSignalee = true;
-      const message = `Purge backslashed NON CONVERGENTE (${backslashedRawPaths.length} lignes identiques au cycle précédent) — un appareil les re-pousse ; purge ignorée ce cycle. Origine à identifier côté appareils (caches fantômes).`;
-      console.error('[sync]', message);
-      journal.push(makeJournalEntry('error', { detail: message }));
-    }
-  } else if (backslashedRawPaths.length > 0) {
-    dernierePurgeSignature = purgeSignature;
-    for (let i = 0; i < backslashedRawPaths.length; i += 100) {
-      const chunk = backslashedRawPaths.slice(i, i + 100);
-      try {
-        let update = bridges.supabase
-          .schema(APP_SCHEMA)
-          .from(VAULT_FILES_TABLE)
-          .update({ deleted: true, updated_at: new Date().toISOString() })
-          .eq('vault_id', remoteVaultId)
-          .in('rel_path', chunk);
-        const signal = abortAfter(30_000);
-        if (signal) update = update.abortSignal(signal);
-        const { error } = await update;
-        if (error) throw error;
-        chunk
-          .map((raw) => raw.replace(/\\/g, '/'))
-          .forEach((normalized) => tombstonedPaths.add(normalized));
-        summary.deleted += chunk.length;
-        journal.push(
-          makeJournalEntry('delete', { detail: `purge backslashed : ${chunk.length} ligne(s) — ex. ${chunk.slice(0, 2).join(' | ').slice(0, 140)}` }),
-        );
-      } catch (error) {
-        console.error('[sync] échec de la purge backslashed :', error);
-        journal.push(
-          makeJournalEntry('error', { detail: `purge backslashed : ${errorMessage(error)}` }),
-        );
-      }
-    }
-  }
 
   // 1) Supprimés LOCALEMENT depuis le dernier cycle -> tombestones distantes.
   // GARDE ANTI-SUPPRESSION MASSIVE (v0.4.66, durci v0.4.72) : un appareil
@@ -1252,51 +1213,41 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
     }
   }
 
-  // 2) Tombestones distantes : v0.4.72 — RÈGLE ABSOLUE (demande de
-  //    Catelina, après la disparition « toute seule » de Secrets.md et
-  //    Projet L'Enchanteresse) : JAMAIS d'application silencieuse. Un
-  //    fichier supprimé ailleurs et encore présent ici RESTE EN PLACE et
-  //    part en REVUE MANUELLE (pending-review.json) — c'est la revue qui
-  //    supprimera (vers la corbeille) ou restaurera (dans le cloud), pas le
-  //    moteur. La synchronisation est BLOQUÉE pour ces chemins (ni pull ni
-  //    push) tant que la revue n'a pas tranché.
-  const remoteDeletionReviews: { path: string; modified: boolean; at: string }[] = [];
+  // 2) Tombestones distantes — PROPAGATION NORMALE (décision Catelina du
+  //    17/10 : « propagation normale », les purges automatiques étant
+  //    supprimées à part) — application locale CONSERVATRICE
+  //    (remoteDeletionAction) : un fichier jamais apporté par la synchro
+  //    n'est jamais effacé, un fichier modifié laisse une copie
+  //    « (conflit …) » avant de partir. v0.4.66 : l'élagueur de dossiers
+  //    parents vides est conservé.
+  const appliedDeletions = new Set<string>();
   for (const relPath of tombstonedPaths) {
     const local = localByPath.get(relPath);
-    if (!local) continue; // rien localement : rien à protéger ni à valider
-    const action = remoteDeletionAction({
-      localExists: true,
-      lastSyncedHash: syncState.files[relPath],
-      localHash: local.contentHash,
-    });
-    if (action === 'skip') continue;
-    const modified = action === 'keep-copy';
-    remoteDeletionReviews.push({ path: relPath, modified, at: new Date().toISOString() });
-    journal.push(
-      makeJournalEntry('info', {
-        path: relPath,
-        detail: modified
-          ? 'supprimé ailleurs mais modifié ici — EN ATTENTE DE VALIDATION (fichier conservé)'
-          : 'supprimé ailleurs — EN ATTENTE DE VALIDATION (fichier conservé)',
-      }),
-    );
-    console.error(`[sync] suppression distante EN ATTENTE DE VALIDATION : ${relPath} (${modified ? 'modifié ici' : 'inchangé'})`);
-  }
-  if (remoteDeletionReviews.length > 0) {
+    if (!local) continue;
     try {
-      const review = await loadPendingReview(bridges.vault).catch(() => ({}) as PendingReview);
-      const byPath = new Map((review.remoteDeletions ?? []).map((r) => [r.path, r]));
-      for (const entry of remoteDeletionReviews) byPath.set(entry.path, entry);
-      await savePendingReview(bridges.vault, {
-        ...review,
-        remoteDeletions: [...byPath.values()].slice(0, 500),
+      const action = remoteDeletionAction({
+        localExists: true,
+        lastSyncedHash: syncState.files[relPath],
+        localHash: local.contentHash,
       });
+      if (action === 'skip') continue;
+      if (action === 'keep-copy') {
+        const losingLocalContent = await bridges.vault.readNote(relPath);
+        await backupLosingSide(relPath, losingLocalContent);
+        journal.push(makeJournalEntry('conflict', { path: relPath, detail: 'supprimé ailleurs mais modifié ici — copie de secours conservée' }));
+      }
+      await bridges.vault.delete(relPath, { silent: true });
+      appliedDeletions.add(relPath);
+      summary.deleted += 1;
+      journal.push(makeJournalEntry('delete', { path: relPath, detail: 'suppression distante appliquée (corbeille)' }));
     } catch (error) {
-      console.error('[sync] écriture de la file de revue :', error);
+      console.error(`[sync] échec de la suppression distante ${relPath} :`, error);
+      summary.errors.push(`${relPath} (suppression distante) : ${errorMessage(error)}`);
+      journal.push(makeJournalEntry('error', { path: relPath, detail: `suppression distante : ${errorMessage(error)}` }));
     }
   }
 
-  // 3) Diff SUR LES ENSEMBLES FILTRÉS : ni les tombestones (jamais de
+    // 3) Diff SUR LES ENSEMBLES FILTRÉS : ni les tombestones (jamais de
   //    pull, jamais de push — push les réactiverait), ni les fichiers
   //    supprimés localement (absents du disque).
   const diffLocalFiles = localFiles.filter((note) => !tombstonedPaths.has(note.relPath));
@@ -1438,7 +1389,7 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   // idempotemment.
   const nextFiles: Record<string, string> = {};
   for (const note of localFiles) {
-    if (locallyDeleted.includes(note.relPath)) continue;
+    if (locallyDeleted.includes(note.relPath) || appliedDeletions.has(note.relPath)) continue;
     nextFiles[note.relPath] = note.contentHash;
   }
   for (const decision of decisions) {
