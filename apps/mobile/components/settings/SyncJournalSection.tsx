@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, TextInput, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, TextInput, Text, View } from 'react-native';
 
 import { journalEntryLabel, type SyncJournalEntry, type SyncJournalEntryType } from '../../lib/sync/journal';
 import { SYNC_JOURNAL_READ_PATH } from '../../lib/sync/syncEngine';
@@ -19,7 +19,7 @@ type FilterId = 'tout' | 'envois' | 'receptions' | 'suppressions' | 'conflits' |
 
 const FILTERS: { id: FilterId; label: string; types?: SyncJournalEntryType[] }[] = [
   { id: 'tout', label: 'Tout' },
-  { id: 'envois', label: 'Envois', types: ['push'] },
+  { id: 'envois', label: 'Envois', types: ['push', 'modification'] },
   { id: 'receptions', label: 'Réceptions', types: ['pull'] },
   { id: 'suppressions', label: 'Suppressions', types: ['delete', 'restore'] },
   { id: 'conflits', label: 'Conflits', types: ['conflict'] },
@@ -30,6 +30,7 @@ const ICON_BY_TYPE: Record<SyncJournalEntryType, string> = {
   'cycle-start': '🔄',
   'cycle-end': '✅',
   push: '⬆️',
+  modification: '✏️',
   pull: '⬇️',
   delete: '🗑️',
   conflict: '⚠️',
@@ -45,13 +46,16 @@ const ICON_BY_TYPE: Record<SyncJournalEntryType, string> = {
   'download-end': '✅',
 };
 
+// v0.4.72 (demande Catelina) : la date COMPLÈTE (jour inclus) s'affiche en
+// plus de l'heure — un journal qui s'étale sur plusieurs jours doit dire
+// quel jour chaque événement a eu lieu.
 function formatTime(iso: string): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return '';
   return (
-    date.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) +
-    '.' +
-    String(date.getMilliseconds()).padStart(3, '0')
+    date.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' }) +
+    ' ' +
+    date.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
   );
 }
 
@@ -134,13 +138,25 @@ export function SyncJournalSection() {
         })}
       </View>
 
-      <TextInput
-        value={search}
-        onChangeText={setSearch}
-        placeholder="Rechercher un fichier…"
-        placeholderTextColor={theme.textMuted}
-        style={[s.input, { color: theme.text, borderColor: theme.border, flex: 0, minWidth: 220 }]}
-      />
+      {/* v0.4.72 — recherche + copie sur la même ligne : le bouton « Copier
+          le journal » devient une icône (il flottait par-dessus l'historique,
+          vécu 17/10), et la liste défile DANS son cadre au lieu de déborder. */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+        <TextInput
+          value={search}
+          onChangeText={setSearch}
+          placeholder="Rechercher un fichier…"
+          placeholderTextColor={theme.textMuted}
+          style={[s.input, { color: theme.text, borderColor: theme.border, flex: 1, minWidth: 0 }]}
+        />
+        <Pressable
+          onPress={() => void copyJournal()}
+          accessibilityLabel="Copier le journal"
+          style={[s.modeButton, { borderColor: theme.border, paddingHorizontal: 12, paddingVertical: 8 }]}
+        >
+          <Text style={{ color: theme.text, fontSize: 16 }}>{copied ? '✅' : '📋'}</Text>
+        </Pressable>
+      </View>
 
       {entries === null ? (
         <ActivityIndicator color={theme.accent} />
@@ -151,7 +167,7 @@ export function SyncJournalSection() {
             : 'Aucune entrée ne correspond au filtre.'}
         </Text>
       ) : (
-        <View style={{ gap: 2, maxHeight: 420 }}>
+        <ScrollView style={{ maxHeight: 420 }} nestedScrollEnabled>
           {visible.slice(0, 200).map((entry, index) => (
             <View key={`${entry.t}-${index}`} style={{ flexDirection: 'row', gap: 8 }}>
               <Text style={{ color: theme.textMuted, fontFamily: 'monospace', fontSize: 12, minWidth: 86 }}>
@@ -165,12 +181,8 @@ export function SyncJournalSection() {
           {visible.length > 200 && (
             <Text style={[s.hint, { color: theme.textMuted }]}>+ {visible.length - 200} entrée(s) plus anciennes…</Text>
           )}
-        </View>
+        </ScrollView>
       )}
-
-      <Pressable onPress={() => void copyJournal()} style={[s.modeButton, { borderColor: theme.border, alignSelf: 'flex-start' }]}>
-        <Text style={{ color: theme.text }}>{copied ? '✓ Copié' : 'Copier le journal'}</Text>
-      </Pressable>
     </View>
   );
 }

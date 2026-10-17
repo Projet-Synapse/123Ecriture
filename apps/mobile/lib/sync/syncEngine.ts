@@ -16,7 +16,13 @@ import { splitEditHot } from './editQuiet';
 import { installedAppVersion } from '../updaterAndroid';
 import { errorMessage } from '../errorMessage';
 import { sortDevicesByLastSeen, type RemoteVaultDevice } from './devices';
-import { computeLocalDeletions, remoteDeletionAction } from './deletions';
+import { computeLocalDeletions, isMassiveDeletion, remoteDeletionAction } from './deletions';
+import {
+  loadPendingReview,
+  savePendingReview,
+  SYNC_ERROR_BLOCK_THRESHOLD,
+  type PendingReview,
+} from './pendingReview';
 import { pickActiveRemoteVault } from './activeVault';
 import {
   capJournalEntries,
@@ -25,6 +31,7 @@ import {
   type SyncJournalEntry,
 } from './journal';
 import { tryThreeWayMerge } from './merge';
+import { textChangeStats, textChangeDetail } from './changeStats';
 import { vaultStorageObjectKey } from './storageKeys';
 // Liste des pièces jointes synchronisées (source unique : nativeVaultAdapter).
 import { SYNC_ATTACHMENT_EXTENSIONS } from '../storage/nativeVaultAdapter';
@@ -444,6 +451,74 @@ async function heartbeatDevice(remoteVaultId: string, ownerId: string, summary?:
   }
 }
 
+// v0.4.72 — VERROU À DISTANCE (demande de Catelina : « contrôle à distance
+// sur les connexions des appareils au vault distant … pour des cas
+// d'urgence »). Les colonnes locked/lock_reason/locked_at de vault_devices
+// (migration 20261017200000) permettent de STOPPER un appareil devenu
+// dangereux (état périmé, boucle, coffre mal reconnecté) depuis n'importe
+// quel autre appareil du coffre — ou directement en SQL/API par un
+// opérateur. Un appareil verrouillé n'exécute PLUS AUCUN cycle cloud ; son
+// coffre local continue hors ligne, zéro perte de données.
+let colonnesVerrouAbsentes = false;
+
+async function fetchMyDeviceLock(remoteVaultId: string): Promise<{ locked: boolean; reason: string | null }> {
+  try {
+    if (!supabase || colonnesVerrouAbsentes) return { locked: false, reason: null };
+    if (typeof window === 'undefined' || !window.vaults) return { locked: false, reason: null };
+    const info = await window.vaults.deviceInfo();
+    const { data, error } = await supabase
+      .schema(APP_SCHEMA)
+      .from(VAULT_DEVICES_TABLE)
+      .select('locked, lock_reason')
+      .eq('vault_id', remoteVaultId)
+      .eq('device_id', info.id)
+      .maybeSingle();
+    if (error) {
+      // Migration non appliquée : colonnes absentes — pas de verrou possible,
+      // on cesse d'interroger pour ne pas bruiter chaque cycle.
+      if (/column|PGRST204/i.test(error.message ?? '')) colonnesVerrouAbsentes = true;
+      return { locked: false, reason: null };
+    }
+    return { locked: Boolean(data?.locked), reason: (data?.lock_reason as string | null) ?? null };
+  } catch {
+    return { locked: false, reason: null };
+  }
+}
+
+// Pose/lève le verrou d'urgence d'un appareil — appelé par la carte
+// « Appareils connectés » (Batch C) ; utilisable aussi par un opérateur via
+// l'API REST (UPDATE vault_devices SET locked=true). Erreur retournée à
+// l'appelant (l'UI l'affiche).
+export async function setDeviceRemoteLock(
+  remoteVaultId: string,
+  deviceId: string,
+  locked: boolean,
+  reason?: string,
+): Promise<void> {
+  if (!supabase) throw new Error("Non connecté au cloud — verrou impossible pour l'instant.");
+  const { error } = await supabase
+    .schema(APP_SCHEMA)
+    .from(VAULT_DEVICES_TABLE)
+    .update({
+      locked,
+      lock_reason: locked ? (reason ?? 'Verrouillé depuis un autre appareil') : null,
+      locked_at: new Date().toISOString(),
+    })
+    .eq('vault_id', remoteVaultId)
+    .eq('device_id', deviceId);
+  if (error) throw error;
+}
+
+// Lève le disjoncteur (après revue humaine) — appelé par l'écran de revue
+// (Paramètres → Journal de synchronisation, Batch C).
+export async function clearSyncBlock(): Promise<void> {
+  const { vault } = requireBridges();
+  const review = await loadPendingReview(vault).catch(() => ({}) as PendingReview);
+  if (!review.syncBlocked) return;
+  delete review.syncBlocked;
+  await savePendingReview(vault, review);
+}
+
 // v0.4.55 — PAGINATION OBLIGATOIRE : l'API REST de Supabase plafonne toute
 // réponse à 1000 lignes. Sur les gros coffres (EPANOUISSEMENT : 1600+ lignes
 // vault_files), la liste distante était TRANCHÉE — les fichiers au-delà du
@@ -519,10 +594,11 @@ async function blobToText(data: Blob): Promise<string> {
 // des extensions est SYNC_ATTACHMENT_EXTENSIONS (nativeVaultAdapter).
 const MAX_ATTACHMENT_ALERT_BYTES = 25 * 1024 * 1024;
 
-// Gardes anti-suppression massive : un cycle bloqué pose le drapeau du coffre
-// ; le cycle suivant lancé VOLONTAirement confirme (et retire le drapeau).
-// Session-only : redémarrer l'app réarme la protection.
-const massiveDeleteConfirmed = new Set<string>();
+// v0.4.72 — le drapeau « relancer une fois pour confirmer » (massiveDelete
+// Confirmed) est SUPPRIMÉ : une confirmation de suppression massive ne peut
+// plus arriver par un simple second cycle. Toute liste suspecte part en
+// REVUE MANUELLE (pendingReview.ts) et n'est appliquée que par une action
+// humaine explicite (demande de Catelina : « JAMAIS de façon silencieuse »).
 
 function isBinaryAttachmentRelPath(relPath: string): boolean {
   const lower = relPath.toLowerCase();
@@ -655,6 +731,10 @@ async function pushFile(
   ownerId: string,
   note: LocalHashedNote,
   journal: SyncJournalEntry[] = [],
+  // v0.4.72 — version distante précédente (texte) : permet de journaliser le
+  // CHANGEMENT (+ajoutés / −supprimés / total) au lieu d'un « envoyé »
+  // aveugle. null/undefined = fichier nouveau ou statistique indisponible.
+  previousRemoteContent?: string | null,
 ): Promise<void> {
   const { supabase: client, vault } = requireBridges();
   // v0.4.54 : défense en profondeur — quel que soit le pont, le chemin
@@ -699,6 +779,23 @@ async function pushFile(
       { onConflict: 'vault_id,rel_path' },
     );
   if (upsertError) throw upsertError;
+
+  // v0.4.72 — JOURNAL « MODIFICATION » (demande Catelina : le journal raconte
+  // le changement, pas un « envoyé » aveugle). Best-effort : un échec de
+  // statistique n'est JAMAIS un échec de push. Les binaires gardent
+  // l'entrée « push » simple (pas de comparaison de texte).
+  if (isBinaryAttachmentRelPath(relPath)) {
+    journal.push(makeJournalEntry('push', { path: relPath }));
+  } else {
+    try {
+      const stats = textChangeStats(previousRemoteContent ?? null, String(uploadBody));
+      journal.push(
+        makeJournalEntry('modification', { path: relPath, detail: textChangeDetail(stats) }),
+      );
+    } catch {
+      journal.push(makeJournalEntry('push', { path: relPath }));
+    }
+  }
 
   // Alerte VOLUMINEUX (v0.4.66 — choix de l'utilisatrice : sans limite de
   // taille, mais signalée au-delà de 25 Mo dans le journal de synchro).
@@ -951,6 +1048,42 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   }
   const remoteVaultId = activeEntry.remoteVaultId;
 
+  // v0.4.72 — DISJONCTEUR DE SYNCHRO (angle mort signalé par Catelina) :
+  // si le cycle PRÉCÉDENT s'est terminé en rafale d'erreurs, « Synchroniser »
+  // est REFUSÉ d'office — on ne resynchronise jamais par-dessus un appareil
+  // en échec. La levée est manuelle (revue, ou opérateur via le fichier).
+  const pendingReview = await loadPendingReview(bridges.vault).catch(() => ({}) as PendingReview);
+  if (pendingReview.syncBlocked) {
+    const blocked = pendingReview.syncBlocked;
+    const message = `Synchronisation BLOQUÉE par le disjoncteur : ${blocked.errorCount} erreur(s) au dernier cycle (${blocked.at}). Exemple : « ${blocked.samples[0] ?? '…'} ». Validez ou corrigez depuis Paramètres → Journal de synchronisation avant de resynchroniser.`;
+    summary.errors.push(message);
+    // Log visible dans logcat release (console.error) : message + origine,
+    // pour diagnostic à distance sans devinettes.
+    console.error('[sync] disjoncteur ouvert :', message);
+    try {
+      await appendJournalEntries([makeJournalEntry('error', { detail: message })]);
+    } catch {
+      // Le journal ne doit pas masquer le refus.
+    }
+    return summary;
+  }
+
+  // v0.4.72 — VERROU À DISTANCE : si CET appareil a été verrouillé (carte
+  // « Appareils connectés » d'un autre appareil, ou SQL/API d'urgence),
+  // AUCUN cycle cloud ne s'exécute ici — le coffre local continue hors
+  // ligne, zéro perte, tant que le verrou n'est pas levé.
+  const myLock = await fetchMyDeviceLock(remoteVaultId);
+  if (myLock.locked) {
+    const message = `Cycle ignoré : cet appareil est VERROUILLÉ à distance${myLock.reason ? ` — motif : ${myLock.reason}` : ''}.`;
+    summary.errors.push(message);
+    try {
+      await appendJournalEntries([makeJournalEntry('info', { detail: message })]);
+    } catch {
+      // Le journal ne doit pas masquer le message du verrou.
+    }
+    return summary;
+  }
+
   // Verrou ANTI-BASCULE (v0.4.54 — cause racine du mélange de coffres) :
   // le bucket distant est capturé ICI, mais chaque opération locale
   // (hachage, lecture, écriture, suppression) relit le coffre ACTIF au
@@ -1054,22 +1187,29 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   }
 
   // 1) Supprimés LOCALEMENT depuis le dernier cycle -> tombestones distantes.
-  // GARDE ANTI-SUPPRESSION MASSIVE (v0.4.66) : un appareil dont le contenu
-  // local est incomplet (pull partiel, coffre fraîchement reconnecté, panne
-  // de disque) déclare « supprimés » TOUS les fichiers qu'il n'a pas — et
-  // vide le cloud ET les autres appareils (vécu WORLDBUILDING 15/10/2026 :
-  // 2000 fichiers). Au-delà du seuil, les tombestones sont BLOQUÉES ; un
-  // second cycle lancé VOLONTAirement les confirme (flag session, oublié au
-  // redémarrage de l'app — la protection revient toute seule).
+  // GARDE ANTI-SUPPRESSION MASSIVE (v0.4.66, durci v0.4.72) : un appareil
+  // dont le contenu local est incomplet (pull partiel, coffre fraîchement
+  // reconnecté, permission SAF perdue, panne de disque) déclare « supprimés »
+  // TOUS les fichiers qu'il n'a pas — et vide le cloud ET les autres appareils
+  // (vécu WORLDBUILDING 15/10/2026 : 2000 fichiers). v0.4.72 (demande
+  // Catelina) : plus JAMAIS de confirmation par « relancer une fois » — la
+  // liste suspecte part en REVUE MANUELLE (pending-review.json dans le
+  // coffre) et le cycle se termine sans supprimer. La levée se fait par une
+  // action humaine explicite depuis l'écran de revue.
   const locallyDeleted = computeLocalDeletions(syncState.files, localPaths);
-  const massiveThreshold = Math.max(10, Math.ceil(localFiles.length * 0.3));
-  if (locallyDeleted.length > massiveThreshold && !massiveDeleteConfirmed.has(remoteVaultId)) {
-    massiveDeleteConfirmed.add(remoteVaultId);
-    const message = `${locallyDeleted.length} fichier(s) manquent localement (coffre : ${localFiles.length} fichiers) — suppressions BLOQUÉES par le garde anti-suppression. Si cette suppression massive est VOLONTAIRE, relancez « Synchroniser » une fois pour la confirmer ; sinon, vos fichiers seront restaurés par la synchronisation.`;
+  if (isMassiveDeletion(locallyDeleted.length, localFiles.length)) {
+    const review: PendingReview = {
+      suspiciousDeletions: {
+        at: new Date().toISOString(),
+        count: locallyDeleted.length,
+        paths: locallyDeleted.slice(0, 200),
+      },
+    };
+    await savePendingReview(bridges.vault, review).catch(() => undefined);
+    const message = `${locallyDeleted.length} fichier(s) manquent localement (coffre : ${localFiles.length} fichiers) — suppressions BLOQUÉES et mises EN REVUE MANUELLE (pending-review.json). Si cette suppression est VOLONTAIRE, valide-la depuis Paramètres → Journal de synchronisation ; sinon, relance la synchro : tes fichiers seront restaurés depuis le cloud.`;
     summary.errors.push(message);
     journal.push(makeJournalEntry('error', { detail: message }));
   } else {
-    if (massiveDeleteConfirmed.has(remoteVaultId)) massiveDeleteConfirmed.delete(remoteVaultId);
     for (const relPath of locallyDeleted) {
       try {
         if (remoteByPath.has(relPath)) {
@@ -1150,9 +1290,19 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
         case 'push': {
           const note = localByPath.get(decision.relPath);
           if (!note) break;
-          await pushFile(remoteVaultId, ownerId, note, journal);
+          // v0.4.72 — version distante précédente (best-effort, texte seul) :
+          // permet au journal de raconter le changement (+/− caractères).
+          let previousRemoteContent: string | null = null;
+          const remoteRow = remoteByPath.get(decision.relPath);
+          if (remoteRow && !isBinaryAttachmentRelPath(decision.relPath)) {
+            previousRemoteContent = await downloadRemoteText(
+              remoteVaultId,
+              decision.relPath,
+              remoteRow.storageObjectPath,
+            ).catch(() => null);
+          }
+          await pushFile(remoteVaultId, ownerId, note, journal, previousRemoteContent);
           summary.pushed += 1;
-          journal.push(makeJournalEntry('push', { path: decision.relPath }));
           break;
         }
         case 'pull':
@@ -1204,7 +1354,9 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
             remoteByPath.get(decision.relPath)?.storageObjectPath,
           );
           await backupLosingSide(decision.relPath, losingRemoteContent);
-          await pushFile(remoteVaultId, ownerId, note, journal);
+          // v0.4.72 — la version distante perdante sert aussi au journal
+          // « modification » (+/− caractères de la version conservée).
+          await pushFile(remoteVaultId, ownerId, note, journal, losingRemoteContent);
           summary.pushed += 1;
           summary.conflicts += 1;
           journal.push(makeJournalEntry('conflict', { path: decision.relPath, detail: 'version locale conservée, distante archivée' }));
@@ -1270,6 +1422,35 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   } catch (error) {
     console.error('[sync] échec de la sauvegarde de l’état de synchro :', error);
     journal.push(makeJournalEntry('error', { detail: `sauvegarde de l'état : ${errorMessage(error)}` }));
+  }
+
+  // v0.4.72 — DISJONCTEUR : une rafale d'erreurs dans un cycle FERME le
+  // circuit pour les cycles suivants (revue manuelle pour rouvrir — jamais
+  // de resynchronisation par-dessus un appareil en échec). Le message et
+  // son ORIGINE partent dans le journal ET dans les logs (console.error
+  // visible en logcat release).
+  if (summary.errors.length >= SYNC_ERROR_BLOCK_THRESHOLD) {
+    const blocked = {
+      at: new Date().toISOString(),
+      errorCount: summary.errors.length,
+      samples: summary.errors.slice(0, 3),
+    };
+    try {
+      const review = await loadPendingReview(bridges.vault).catch(() => ({}) as PendingReview);
+      await savePendingReview(bridges.vault, { ...review, syncBlocked: blocked });
+    } catch (error) {
+      // Le bloc n'a pas pu être persisté (écritures en échec — c'est
+      // justement le cas typique) : le log et le journal restent la trace.
+      console.error('[sync] disjoncteur non persistable :', error);
+    }
+    console.error(
+      `[sync] DISJONCTEUR OUVERT : ${blocked.errorCount} erreurs ce cycle — synchro bloquée jusqu'à revue. Origines : ${blocked.samples.join(' | ').slice(0, 400)}`,
+    );
+    journal.push(
+      makeJournalEntry('error', {
+        detail: `Disjoncteur ouvert : ${blocked.errorCount} erreur(s) — synchronisation bloquée jusqu'à revue manuelle. Ex. ${blocked.samples[0] ?? ''}`,
+      }),
+    );
   }
 
   // « Appareils connectés » (Paramètres → Coffres distants) : heartbeat
