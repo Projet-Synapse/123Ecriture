@@ -16,84 +16,27 @@ import { ConfirmDialog } from './ConfirmDialog';
 import { DraftTextField } from './DraftTextField';
 import { errorMessage } from '../lib/errorMessage';
 
-// v0.4.60-DIAG : frontière d'erreur temporaire — localise le crash Android
-// « undefined is not a function » en affichant le message + la section à
-// l'écran (le stack release est anonyme, illisible). À RETIRER après diag.
-class TasksDiagBoundary extends Component<{ label: string; children: ReactNode }, { error: Error | null }> {
+// Frontière d'erreur PAR SECTION puis PAR TÂCHE : un rendu qui échoue ne
+// doit jamais emporter l'écran entier (vécu : « undefined is not a
+// function » affiché en plein écran, v0.4.60). La section touchée affiche
+// le message, le reste de l'écran reste utilisable, et l'erreur part dans
+// les logs (logcat) pour rester diagnostiquable.
+class TaskSectionBoundary extends Component<{ label: string; children: ReactNode }, { error: Error | null }> {
   state = { error: null as Error | null };
   static getDerivedStateFromError(error: Error) { return { error }; }
+  componentDidCatch(error: Error) {
+    console.error(`[tasks] rendu impossible de la section « ${this.props.label} » :`, error);
+  }
   render() {
     if (this.state.error) {
       return (
         <Text style={{ color: '#ff5252', padding: 10 }}>
-          [tasks-diag:{this.props.label}] {String(this.state.error?.message ?? this.state.error)}
+          [tasks:{this.props.label}] {String(this.state.error?.message ?? this.state.error)}
         </Text>
       );
     }
     return this.props.children;
   }
-}
-
-// v0.4.64-DIAG : bloc temporaire de diagnostic du round-trip SAF du coffre
-// (le bug « Liste introuvable » : tâche ajoutée en mémoire mais disparue au
-// relancement — hypothèse docs/vault-incidents.md §4.2). Teste en direct sur
-// le coffre ACTIF : lecture du tasklists.json réel, écriture d'un fichier
-// test, relecture, présence dans l'index. À RETIRER après diagnostic.
-function TasksDiagCell() {
-  const vault = typeof window !== 'undefined' ? window.vault : undefined;
-  const [lines, setLines] = useState<string[]>(['…']);
-  useEffect(() => {
-    void (async () => {
-      const out: string[] = [];
-      if (!vault?.readNote || !vault?.writeNote) {
-        setLines(['diag: pont vault absent']);
-        return;
-      }
-      try {
-        const raw = await vault.readNote('.123ecriture/tasklists.json');
-        out.push(`1.read tasklists: ${raw ? `${raw.length} octets` : 'null'}`);
-      } catch (e) {
-        out.push(`1.read tasklists: ERR ${String(e instanceof Error ? e.message : e).slice(0, 60)}`);
-      }
-      const stamp = String(Date.now());
-      try {
-        await vault.writeNote('.123ecriture/diag-write.json', `{"diag":"${stamp}"}`);
-        out.push('2.write diag: OK');
-      } catch (e) {
-        out.push(`2.write diag: ERR ${String(e instanceof Error ? e.message : e).slice(0, 60)}`);
-      }
-      try {
-        const back = await vault.readNote('.123ecriture/diag-write.json');
-        out.push(`3.readback diag: ${back === `{"diag":"${stamp}"}` ? 'ROUNDTRIP OK' : back ? `DIFF ${back.slice(0, 30)}` : 'null'}`);
-      } catch (e) {
-        out.push(`3.readback diag: ERR ${String(e instanceof Error ? e.message : e).slice(0, 60)}`);
-      }
-      try {
-        const tree = await vault.listTree();
-        const names: string[] = [];
-        const walk = (nodes: { relPath: string; children?: unknown }[]) => {
-          for (const n of nodes) {
-            if (n.relPath.startsWith('.123ecriture/')) names.push(n.relPath);
-            if (Array.isArray(n.children)) walk(n.children as { relPath: string; children?: unknown }[]);
-          }
-        };
-        walk(tree as { relPath: string; children?: unknown }[]);
-        out.push(`4.index .123ecriture: ${names.length ? names.filter((n) => n.includes('json')).join(', ').slice(0, 90) : '(rien d\'indexé)'}`);
-      } catch (e) {
-        out.push(`4.index: ERR ${String(e instanceof Error ? e.message : e).slice(0, 60)}`);
-      }
-      setLines(out);
-    })();
-  }, [vault]);
-  return (
-    <View style={{ margin: 8, padding: 8, borderWidth: 1, borderColor: '#ff5252', borderRadius: 6 }}>
-      {lines.map((l, i) => (
-        <Text key={i} style={{ color: '#ffd54f', fontSize: 11 }}>
-          {l}
-        </Text>
-      ))}
-    </View>
-  );
 }
 
 // Écran Tâches — module de productivité (voir docs/ARCHITECTURE.md §8).
@@ -1216,7 +1159,11 @@ export function TasksScreen({
                 <Text style={styles.buttonText}>Ajouter</Text>
               </Pressable>
             </View>
-            {visibleTasks.map(renderTask)}
+            {visibleTasks.map((task) => (
+              <TaskSectionBoundary key={task.id} label={`tâche ${String(task.id).slice(-4)}`}>
+                {renderTask(task)}
+              </TaskSectionBoundary>
+            ))}
             {listTasksAll.length === 0 && (
               <Text style={[styles.navigatorMuted, { color: theme.textMuted }]}>Aucune tâche pour l’instant.</Text>
             )}
@@ -1237,7 +1184,7 @@ export function TasksScreen({
   // RETIRER après diagnostic.
   return (
     <View style={[styles.container, styles.navigatorScreen]}>
-      <TasksDiagBoundary label="en-tête">
+      <TaskSectionBoundary label="en-tête">
       {/* En-tête : titre + créations (menu « + » : liste/dossier) + filtre +
           préférences de lecture (tri échéance / masquage des terminées —
           persistées, appliquées à TOUTES les listes du navigateur). */}
@@ -1314,7 +1261,6 @@ export function TasksScreen({
           )}
         </View>
       </View>
-      <TasksDiagCell />
       <TextInput
         value={filterDraft}
         onChangeText={setFilterDraft}
@@ -1324,8 +1270,8 @@ export function TasksScreen({
       />
       {listActionError && <Text style={[styles.error, { color: theme.danger }]}>⚠️ {listActionError}</Text>}
       {taskActionError && <Text style={[styles.error, { color: theme.danger }]}>⚠️ {taskActionError}</Text>}
-      </TasksDiagBoundary>
-      <TasksDiagBoundary label="navigateur">
+      </TaskSectionBoundary>
+      <TaskSectionBoundary label="navigateur">
       {/* Navigateur — PLEIN ESPACE, collé à la barre latérale principale
           (l'ancien conteneur le centrait avec maxWidth 560 : grand vide
           rapporté). Chaque DOSSIER se replie ; chaque LISTE affiche ses
@@ -1373,7 +1319,7 @@ export function TasksScreen({
           )}
         </View>
       </ScrollView>
-      </TasksDiagBoundary>
+      </TaskSectionBoundary>
 
       {/* Confirmation de suppression de LISTE (panier jetable — les tâches
           partent avec) ; un DOSSIER ne passe pas ici : sa suppression est

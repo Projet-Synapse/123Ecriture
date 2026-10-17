@@ -1178,7 +1178,7 @@ export function NotesScreen({
         console.error('[vault] échec de la suppression :', error);
       }
     },
-    [vault, refreshTree, updateOpenTabsAfterPathChange],
+    [vault, syncStatus, refreshTree, updateOpenTabsAfterPathChange],
   );
 
   // "Dupliquer" (menu contextuel) — copie DANS LE MÊME dossier (voir
@@ -1240,7 +1240,7 @@ export function NotesScreen({
         setEditPathError(errorMessage(error));
       }
     },
-    [vault, editingPathNode, refreshTree, updateOpenTabsAfterPathChange],
+    [vault, syncStatus, editingPathNode, refreshTree, updateOpenTabsAfterPathChange],
   );
 
   const toggleCollapse = useCallback(

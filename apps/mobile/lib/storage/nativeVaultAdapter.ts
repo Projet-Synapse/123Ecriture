@@ -211,8 +211,84 @@ async function readSafFileText(uri: string): Promise<string> {
 // file" via cette fonction sur une URI SAF) — créer un nouveau fichier
 // passe par `StorageAccessFramework.createFileAsync` (voir plus bas),
 // jamais par celle-ci.
-async function writeSafFileText(uri: string, content: string): Promise<void> {
-  await FileSystem.writeAsStringAsync(uri, content);
+// ── ÉCRITURE SAF À TRONCATURE GARANTIE ─────────────────────────────────
+// writeAsStringAsync ouvre le document SAF en écrasant SANS tronquer :
+// quand le nouveau contenu est plus court que l'ancien, la queue de
+// l'ancien reste en place (vécu A13 17/10 : tasks.json réécrit ~300 octets
+// par-dessus 1 145 → JSON cassé en boucle, sauvegardé .corrupt-* à chaque
+// lecture par les ponts de tâches, puis propagé au coffre cloud par la
+// sync). On vérifie donc la taille APRÈS écriture ; si l'ancien contenu
+// traîne, on supprime le document et on le recrée (SAF ne sait pas
+// tronquer) avant de réécrire. Retourne l'URI effectif : il CHANGE en cas
+// de recréation, l'appelant doit mettre à jour son index.
+
+// Longueur UTF-8 d'une chaîne (Hermes n'a ni Buffer ni TextEncoder garanti).
+function utf8ByteLength(text: string): number {
+  let total = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    const code = text.charCodeAt(i);
+    if (code < 0x80) total += 1;
+    else if (code < 0x800) total += 2;
+    else if (code >= 0xd800 && code <= 0xdbff) {
+      total += 4;
+      i += 1; // paire surrogate — un seul caractère
+    } else total += 3;
+  }
+  return total;
+}
+
+// Longueur en octets d'une charge base64 (3 octets pour 4 caractères, hors
+// remplissage « = ») — pour la même vérification sur les pièces jointes.
+function base64ByteLength(base64: string): number {
+  const padding = base64.endsWith('==') ? 2 : base64.endsWith('=') ? 1 : 0;
+  return Math.floor((base64.length * 3) / 4) - padding;
+}
+
+// Reconstruit l'URI du dossier parent depuis un URI document SAF
+// (…/document/<idParent>%2F<nom>) — même convention de décodage que
+// nameFromSafUri. null si l'URI n'a pas la forme attendue (fournisseur
+// tiers) : dans ce cas on ne tente pas la réparation.
+function parentSafUriOfDocument(uri: string): { parentUri: string; name: string } | null {
+  const marker = '/document/';
+  const markerIndex = uri.lastIndexOf(marker);
+  if (markerIndex < 0) return null;
+  const documentId = decodeURIComponent(uri.slice(markerIndex + marker.length));
+  const slashIndex = documentId.lastIndexOf('/');
+  if (slashIndex <= 0) return null;
+  return {
+    parentUri: `${uri.slice(0, markerIndex + marker.length)}${encodeURIComponent(documentId.slice(0, slashIndex))}`,
+    name: documentId.slice(slashIndex + 1),
+  };
+}
+
+// Écrit, vérifie la taille du document, répare si l'ancien contenu traîne.
+async function writeSafTruncationSafe(
+  uri: string,
+  write: (targetUri: string) => Promise<void>,
+  expectedBytes: number,
+): Promise<string> {
+  await write(uri);
+  const info = await FileSystem.getInfoAsync(uri).catch(() => null);
+  const size = info && info.exists && typeof info.size === 'number' ? info.size : null;
+  if (size === null || size <= expectedBytes) return uri;
+  const target = parentSafUriOfDocument(uri);
+  if (!target) return uri;
+  await StorageAccessFramework.deleteAsync(uri);
+  const freshUri = await StorageAccessFramework.createFileAsync(
+    target.parentUri,
+    target.name,
+    mimeForName(target.name),
+  );
+  await write(freshUri);
+  return freshUri;
+}
+
+async function writeSafFileText(uri: string, content: string): Promise<string> {
+  return writeSafTruncationSafe(
+    uri,
+    (target) => FileSystem.writeAsStringAsync(target, content),
+    utf8ByteLength(content),
+  );
 }
 
 // //3. 🌳 PARCOURS DE L'ARBORESCENCE
@@ -674,7 +750,12 @@ async function writeNoteBinaryInternal(relPath: string, base64: string): Promise
   const cached = pathIndex.get(relPath);
   if (cached) {
     if (cached.isDirectory) throw new Error(`« ${relPath} » est un dossier, pas une note.`);
-    await FileSystem.writeAsStringAsync(cached.uri, base64, { encoding: FileSystem.EncodingType.Base64 });
+    const finalUri = await writeSafTruncationSafe(
+      cached.uri,
+      (target) => FileSystem.writeAsStringAsync(target, base64, { encoding: FileSystem.EncodingType.Base64 }),
+      base64ByteLength(base64),
+    );
+    if (finalUri !== cached.uri) pathIndex.set(relPath, { ...cached, uri: finalUri });
     if (relPath.startsWith('.123ecriture/')) await persistIndex();
     else invalidateTree();
     markVaultFileDirty(relPath);
@@ -693,8 +774,12 @@ async function writeNoteBinaryInternal(relPath: string, base64: string): Promise
   if (!uri) {
     uri = await StorageAccessFramework.createFileAsync(parentUri, name, mimeForName(name));
   }
-  await FileSystem.writeAsStringAsync(uri, base64, { encoding: FileSystem.EncodingType.Base64 });
-  pathIndex.set(relPath, { uri, isDirectory: false });
+  const finalUri = await writeSafTruncationSafe(
+    uri,
+    (target) => FileSystem.writeAsStringAsync(target, base64, { encoding: FileSystem.EncodingType.Base64 }),
+    base64ByteLength(base64),
+  );
+  pathIndex.set(relPath, { uri: finalUri, isDirectory: false });
   if (relPath.startsWith('.123ecriture/')) await persistIndex();
   else invalidateTree();
   markVaultFileDirty(relPath);
@@ -784,7 +869,8 @@ export const nativeVaultAdapter: VaultBridge = {
     const cached = pathIndex.get(relPath);
     if (cached) {
       if (cached.isDirectory) throw new Error(`« ${relPath} » est un dossier, pas une note.`);
-      await writeSafFileText(cached.uri, content);
+      const finalUri = await writeSafFileText(cached.uri, content);
+      if (finalUri !== cached.uri) pathIndex.set(relPath, { ...cached, uri: finalUri });
       // Les metadonnees de synchro s'ecrivent a CHAQUE cycle : les exclure
       // de l'invalidation evite de relancer un parcours d'une minute juste
       // apres (l'arbre VISIBLE n'a pas change). MAIS leur entree d'index
@@ -823,8 +909,8 @@ export const nativeVaultAdapter: VaultBridge = {
     if (!uri) {
       uri = await StorageAccessFramework.createFileAsync(parentUri, name, mimeForName(name));
     }
-    await writeSafFileText(uri, content);
-    pathIndex.set(relPath, { uri, isDirectory: false });
+    const finalUri = await writeSafFileText(uri, content);
+    pathIndex.set(relPath, { uri: finalUri, isDirectory: false });
     // Même règle que la branche « cached » ci-dessus : une métadonnée
     // `.123ecriture/**` fraîchement créée doit laisser une trace d'index
     // PERSISTEE immédiatement (aucun autre parcours ne la connaît).
