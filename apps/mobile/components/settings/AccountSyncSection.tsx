@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { useAuth } from '../../lib/sync/AuthContext';
+import { setDeviceRemoteLock } from '../../lib/sync/syncEngine';
 import { useSyncStatus } from '../../lib/sync/SyncStatusContext';
 import { formatLastCycle, formatLastSeen } from '../../lib/sync/devices';
 import {
@@ -86,6 +87,8 @@ export function AccountSyncSection() {
   const [renamingRemoteId, setRenamingRemoteId] = useState<string | null>(null);
   const [renamingRemoteDraft, setRenamingRemoteDraft] = useState('');
   const [renamingRemoteBusy, setRenamingRemoteBusy] = useState(false);
+  // Verrou à distance d'un appareil (v0.4.76) : busy par deviceId.
+  const [lockBusyId, setLockBusyId] = useState<string | null>(null);
 
   const runVaultAction = useCallback(async (action: () => Promise<unknown>) => {
     setVaultActionError(null);
@@ -96,6 +99,28 @@ export function AccountSyncSection() {
       setVaultActionError(errorMessage(error));
     }
   }, []);
+
+  // v0.4.76 — verrou à distance d'un appareil (urgence) : pose/lève le
+  // verrou cloud qui interdit tout cycle sur la machine ciblée.
+  const handleDeviceLock = useCallback(
+    async (deviceId: string, locked: boolean) => {
+      if (!remoteVaults) return;
+      const vaultId = remoteVaults.find((r) => r.devices.some((d) => d.deviceId === deviceId))?.id;
+      if (!vaultId) return;
+      setLockBusyId(deviceId);
+      setRemoteVaultsError(null);
+      try {
+        await setDeviceRemoteLock(vaultId, deviceId, locked, locked ? 'Verrouillé depuis Paramètres' : undefined);
+        setRemoteVaults(await listRemoteVaults());
+      } catch (error) {
+        console.error('[vaults] verrou à distance :', error);
+        setRemoteVaultsError(errorMessage(error));
+      } finally {
+        setLockBusyId(null);
+      }
+    },
+    [remoteVaults],
+  );
 
   const startRenameVault = (v: VaultRegistryEntry) => {
     setRenamingVaultId(v.id);
@@ -415,7 +440,7 @@ export function AccountSyncSection() {
                     {r.devices.map((device) => (
                       <View key={device.deviceId}>
                         <Text style={[styles.vaultPathText, { color: theme.textMuted }]}>
-                          💻 {device.name} ({device.deviceId.slice(0, 4)})
+                          {device.locked ? '🔒' : '💻'} {device.name} ({device.deviceId.slice(0, 4)})
                           {device.appVersion ? ` · v${device.appVersion}` : ''} · vu {formatLastSeen(device.lastSeenAt)}
                         </Text>
                         {formatLastCycle(device) && (
@@ -423,6 +448,24 @@ export function AccountSyncSection() {
                             ⏱ {formatLastCycle(device)}
                           </Text>
                         )}
+                        {device.locked && device.lockReason ? (
+                          <Text style={{ color: theme.danger, fontSize: 12 }}>🔒 {device.lockReason}</Text>
+                        ) : null}
+                        {/* v0.4.76 — verrou à distance (urgence) : un appareil
+                            verrouillé n'exécute plus aucun cycle cloud. */}
+                        <Pressable
+                          disabled={lockBusyId === device.deviceId}
+                          onPress={() => void handleDeviceLock(device.deviceId, !device.locked)}
+                          style={[s.modeButton, { borderColor: theme.border, alignSelf: 'flex-start', marginTop: 4 }]}
+                        >
+                          <Text style={{ color: theme.text, fontSize: 12 }}>
+                            {lockBusyId === device.deviceId
+                              ? '…'
+                              : device.locked
+                                ? '🔓 Déverrouiller'
+                                : '🔒 Verrouiller'}
+                          </Text>
+                        </Pressable>
                       </View>
                     ))}
                   </View>

@@ -320,6 +320,8 @@ async function fetchDevicesByVault(): Promise<Map<string, RemoteVaultDevice[]>> 
       lastCycleDeleted: (row.last_cycle_deleted as number | null) ?? null,
       lastCycleConflicts: (row.last_cycle_conflicts as number | null) ?? null,
       lastCycleErrors: (row.last_cycle_errors as number | null) ?? null,
+      locked: (row.locked as boolean | null) ?? null,
+      lockReason: (row.lock_reason as string | null) ?? null,
     };
     const list = byVault.get(vaultId) ?? [];
     list.push(device);

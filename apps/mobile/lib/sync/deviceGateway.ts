@@ -28,7 +28,7 @@
 
 import { Platform } from 'react-native';
 
-import { APP_SCHEMA, DEVICE_COMMANDS_TABLE, supabase } from './supabaseClient';
+import { APP_SCHEMA, DEVICE_COMMANDS_TABLE, VAULT_FILES_TABLE, supabase } from './supabaseClient';
 import { errorMessage } from '../errorMessage';
 // Le chemin du journal est défini dans syncEngine (repris ici sans
 // import pour éviter un cycle : syncEngine importe cette passerelle).
@@ -112,6 +112,83 @@ export async function processDeviceCommands(remoteVaultId: string, ownerId: stri
   }
 }
 
+// v0.4.76 — RAPPORT DE DIAGNOSTIC LOCAL : assemblé depuis les ponts de la
+// fenêtre — réutilisé par la passerelle (dump-diagnostics) ET par le bouton
+// « copier le diagnostic » de l'UI.
+export async function buildLocalDiagnostics(): Promise<DiagnosticsReport> {
+  const collectionErrors: string[] = [];
+  const storagePermission = Platform.OS === 'android' ? await hasAllFilesAccess().catch(() => false) : null;
+  const vaultBridge = typeof window !== 'undefined' ? window.vault : undefined;
+  const pendingReview = vaultBridge
+    ? await loadPendingReview(vaultBridge).catch(() => ({}) as PendingReview)
+    : ({} as PendingReview);
+  let journalTail: DiagnosticsReport['journalTail'] = [];
+  if (vaultBridge) {
+    try {
+      const parsed = JSON.parse(await vaultBridge.readNote(SYNC_JOURNAL_READ_PATH)) as {
+        entries?: DiagnosticsReport['journalTail'];
+      };
+      journalTail = (parsed.entries ?? []).slice(-40);
+    } catch {
+      collectionErrors.push('journal illisible ou absent');
+    }
+  } else {
+    collectionErrors.push('pont vault absent');
+  }
+  let syncStateFileCount: number | null = null;
+  if (vaultBridge) {
+    try {
+      const state = JSON.parse(await vaultBridge.readNote('.123ecriture/sync-state.json')) as {
+        files?: Record<string, string>;
+      };
+      syncStateFileCount = Object.keys(state.files ?? {}).length;
+    } catch {
+      collectionErrors.push('sync-state illisible ou absent');
+    }
+  }
+  const vaultsList = typeof window !== 'undefined' && window.vaults ? await window.vaults.list() : [];
+  const device = typeof window !== 'undefined' && window.vaults ? await window.vaults.deviceInfo() : { id: '?', name: '?' };
+  const activeVaultPath = vaultBridge ? await vaultBridge.getCurrentPath().catch(() => null) : null;
+  return {
+    at: new Date().toISOString(),
+    platform: Platform.OS,
+    device: { id: device.id, name: device.name, appVersion: await myAppVersion() },
+    storagePermission: Platform.OS === 'android' ? storagePermission : null,
+    activeVaultPath,
+    vaults: vaultsList.map((v) => ({
+      name: v.name,
+      path: v.path,
+      cloudLinked: Boolean(v.cloudLinked),
+      remoteVaultId: v.remoteVaultId ?? null,
+    })),
+    syncStateFileCount,
+    pendingReview,
+    journalTail,
+    collectionErrors,
+  };
+}
+
+// Marque/démarque des lignes distantes (revue : « Supprimer vraiment » pose
+// les tombstones, « Restaurer » les lève — le diff fait le reste au cycle
+// suivant).
+export async function setRemoteRowsDeleted(
+  remoteVaultId: string,
+  relPaths: string[],
+  deleted: boolean,
+): Promise<void> {
+  if (!supabase) throw new Error('Non connecté au cloud.');
+  for (let i = 0; i < relPaths.length; i += 100) {
+    const chunk = relPaths.slice(i, i + 100);
+    const { error } = await supabase
+      .schema(APP_SCHEMA)
+      .from(VAULT_FILES_TABLE)
+      .update({ deleted, updated_at: new Date().toISOString() })
+      .eq('vault_id', remoteVaultId)
+      .in('rel_path', chunk);
+    if (error) throw error;
+  }
+}
+
 //////// 2. 🛠️ EXÉCUTION UNITAIRE ///////////
 
 async function executeCommand(
@@ -123,36 +200,7 @@ async function executeCommand(
   const { vault } = requireBridges();
   switch (command) {
     case 'dump-diagnostics': {
-      const collectionErrors: string[] = [];
-      const storagePermission = Platform.OS === 'android' ? await hasAllFilesAccess().catch(() => false) : null;
-      const pendingReview = await loadPendingReview(vault).catch(() => ({}) as PendingReview);
-      let journalTail: DiagnosticsReport['journalTail'] = [];
-      try {
-        const parsed = JSON.parse(await vault.readNote(SYNC_JOURNAL_READ_PATH)) as { entries?: DiagnosticsReport['journalTail'] };
-        journalTail = (parsed.entries ?? []).slice(-40);
-      } catch {
-        collectionErrors.push('journal illisible ou absent');
-      }
-      let syncStateFileCount: number | null = null;
-      try {
-        const state = JSON.parse(await vault.readNote('.123ecriture/sync-state.json')) as { files?: Record<string, string> };
-        syncStateFileCount = Object.keys(state.files ?? {}).length;
-      } catch {
-        collectionErrors.push('sync-state illisible ou absent');
-      }
-      const vaultsList = typeof window !== 'undefined' && window.vaults ? await window.vaults.list() : [];
-      const report: DiagnosticsReport = {
-        at: new Date().toISOString(),
-        platform: Platform.OS,
-        device: { id: device.id, name: device.name, appVersion: await myAppVersion() },
-        storagePermission: Platform.OS === 'android' ? storagePermission : null,
-        activeVaultPath: await vault.getCurrentPath().catch(() => null),
-        vaults: vaultsList.map((v) => ({ name: v.name, path: v.path, cloudLinked: Boolean(v.cloudLinked), remoteVaultId: v.remoteVaultId ?? null })),
-        syncStateFileCount,
-        pendingReview,
-        journalTail,
-        collectionErrors,
-      };
+      const report = await buildLocalDiagnostics();
       return JSON.stringify(report, null, 2).slice(0, 30_000);
     }
     case 'clear-sync-block':

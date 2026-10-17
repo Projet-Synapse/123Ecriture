@@ -17,6 +17,9 @@ export type RemoteVaultDevice = {
   lastCycleDeleted?: number | null;
   lastCycleConflicts?: number | null;
   lastCycleErrors?: number | null;
+  // v0.4.76 — verrou à distance (migration 20261017200000).
+  locked?: boolean | null;
+  lockReason?: string | null;
 };
 
 // « vu·e… » : date relative courte en français. Volontairement simple (pas
