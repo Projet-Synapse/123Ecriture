@@ -6,6 +6,17 @@ export type RemoteVaultDevice = {
   deviceId: string;
   name: string;
   lastSeenAt: string;
+  // v0.4.71 — observabilité (« donner des yeux au vault ») : colonnes
+  // OPTIONNELLES — absentes tant que la migration
+  // 20261017120000_vault_devices_observability.sql n'a pas été appliquée,
+  // et vides pour les appareils restés sur une version antérieure.
+  appVersion?: string | null;
+  lastCycleAt?: string | null;
+  lastCyclePushed?: number | null;
+  lastCyclePulled?: number | null;
+  lastCycleDeleted?: number | null;
+  lastCycleConflicts?: number | null;
+  lastCycleErrors?: number | null;
 };
 
 // « vu·e… » : date relative courte en français. Volontairement simple (pas
@@ -44,4 +55,22 @@ export function formatLastSeen(iso: string, now: number = Date.now()): string {
 // l'utilisatrice (celui qui vient de heartbeater) apparaît en premier.
 export function sortDevicesByLastSeen(devices: RemoteVaultDevice[]): RemoteVaultDevice[] {
   return [...devices].sort((a, b) => new Date(b.lastSeenAt).getTime() - new Date(a.lastSeenAt).getTime());
+}
+
+// « Dernier cycle il y a N min : X envoyé(s), Y reçu(s)… » — le résumé de
+// l'activité de sync d'un appareil, vu par TOUS les autres appareils
+// (l'activité n'était auparavant consignée que dans le journal LOCAL de
+// chaque machine : aucune observabilité croisée, vécu de l'incident du
+// 17/10). null si l'appareil n'a pas encore heartbeaïté en 0.4.71.
+export function formatLastCycle(device: RemoteVaultDevice, now: number = Date.now()): string | null {
+  if (!device.lastCycleAt) return null;
+  const parts = [
+    `${device.lastCyclePushed ?? 0} envoyé(s)`,
+    `${device.lastCyclePulled ?? 0} reçu(s)`,
+    `${device.lastCycleDeleted ?? 0} supprimé(s)`,
+    `${device.lastCycleConflicts ?? 0} conflit(s)`,
+  ];
+  const erreurs = device.lastCycleErrors ?? 0;
+  if (erreurs > 0) parts.push(`${erreurs} erreur(s)`);
+  return `dernier cycle ${formatLastSeen(device.lastCycleAt, now)} : ${parts.join(', ')}`;
 }
