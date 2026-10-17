@@ -1245,6 +1245,31 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   } else {
     for (const relPath of locallyDeleted) {
       try {
+        // v0.4.77 — REVÉRIFICATION DIRECTE AVANT TOUTE TOMBSTONE (vécu
+        // 18/10 : « Projet L'Enchanteresse » et « Secrets » déclarés
+        // supprimés pendant leur édition — un parcours avait manqué le
+        // fichier et les AUTRES appareils l'avaient effacé). Si le fichier
+        // RÉPOND à une lecture directe, il existe : le parcours s'est
+        // trompé, on ne détruit rien et on le signale.
+        try {
+          await bridges.vault.readNote(relPath);
+          journal.push(
+            makeJournalEntry('info', {
+              path: relPath,
+              detail: 'présent à la relecture directe — tombstone annulée (parcours du cycle non fiable)',
+            }),
+          );
+          continue;
+        } catch (readError) {
+          const brut = readError instanceof Error ? readError.message : String(readError);
+          if (!/introuvable|not found|could not be found|ENOENT/i.test(brut)) {
+            // Illisible (≠ absent) : conservé ce cycle, retenté au suivant.
+            journal.push(
+              makeJournalEntry('info', { path: relPath, detail: `lecture en échec — fichier conservé ce cycle : ${brut.slice(0, 120)}` }),
+            );
+            continue;
+          }
+        }
         if (remoteByPath.has(relPath)) {
           const { error } = await bridges.supabase
             .schema(APP_SCHEMA)
@@ -1273,6 +1298,7 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   //    « (conflit …) » avant de partir. v0.4.66 : l'élagueur de dossiers
   //    parents vides est conservé.
   const appliedDeletions = new Set<string>();
+  const revueSuppressionsDistantes: { path: string; modified: boolean; at: string }[] = [];
   for (const relPath of tombstonedPaths) {
     const local = localByPath.get(relPath);
     if (!local) continue;
@@ -1284,9 +1310,19 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
       });
       if (action === 'skip') continue;
       if (action === 'keep-copy') {
-        const losingLocalContent = await bridges.vault.readNote(relPath);
-        await backupLosingSide(relPath, losingLocalContent);
-        journal.push(makeJournalEntry('conflict', { path: relPath, detail: 'supprimé ailleurs mais modifié ici — copie de secours conservée' }));
+        // v0.4.77 — RÈGLE ABSOLUE (Catelina, après les disparitions en
+        // corbeille de fichiers MODIFIÉS) : un fichier modifié ici et
+        // supprimé ailleurs n'est JAMAIS archivé ni effacé automatiquement —
+        // il reste en place et part en REVUE (l'écran « Revue de sécurité »
+        // propose « Supprimer vraiment » ou « Restaurer dans le cloud »).
+        journal.push(
+          makeJournalEntry('modification', {
+            path: relPath,
+            detail: 'modifié ici, supprimé ailleurs — EN ATTENTE DE VALIDATION (fichier conservé)',
+          }),
+        );
+        revueSuppressionsDistantes.push({ path: relPath, modified: true, at: new Date().toISOString() });
+        continue;
       }
       await bridges.vault.delete(relPath, { silent: true });
       appliedDeletions.add(relPath);
@@ -1299,7 +1335,27 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
     }
   }
 
-    // 3) Diff SUR LES ENSEMBLES FILTRÉS : ni les tombestones (jamais de
+  // v0.4.77 — les suppressions distantes en attente de validation sont
+  // publiées dans pending-review.json (l'écran « Revue de sécurité » les
+  // affiche avec « Supprimer vraiment / Restaurer dans le cloud »).
+  if (revueSuppressionsDistantes.length > 0) {
+    try {
+      const review = await loadPendingReview(bridges.vault).catch(() => ({}) as PendingReview);
+      const byPath = new Map((review.remoteDeletions ?? []).map((r) => [r.path, r]));
+      for (const entry of revueSuppressionsDistantes) byPath.set(entry.path, entry);
+      await savePendingReview(bridges.vault, {
+        ...review,
+        remoteDeletions: [...byPath.values()].slice(0, 500),
+      });
+      console.error(
+        `[sync] ${revueSuppressionsDistantes.length} suppression(s) distante(s) EN ATTENTE DE VALIDATION (fichiers conservés)`,
+      );
+    } catch (error) {
+      console.error('[sync] écriture de la file de revue :', error);
+    }
+  }
+
+  // 3) Diff SUR LES ENSEMBLES FILTRÉS : ni les tombestones (jamais de
   //    pull, jamais de push — push les réactiverait), ni les fichiers
   //    supprimés localement (absents du disque).
   const diffLocalFiles = localFiles.filter((note) => !tombstonedPaths.has(note.relPath));
