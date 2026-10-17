@@ -47,6 +47,12 @@ async function writeRegistry(registry: Registry): Promise<void> {
   notifyListeners(registry.vaults);
 }
 
+// v0.4.76 — migration des coffres SAF (URI content://) vers des chemins
+// ordinaires : réservée au registre lui-même (nativeVaultsAdapter).
+export async function saveRegistry(registry: Registry): Promise<void> {
+  await writeRegistry(registry);
+}
+
 // //2. 🔔 ÉCOUTEURS DE CHANGEMENT
 // ////////////////////////////////////////////////////////////////////////
 
