@@ -146,7 +146,6 @@ export const nativeVaultsAdapter: VaultsBridge = {
     await migrateRegistryPaths();
     return (await readRegistry()).vaults;
   },
-
   getActive: async () => (await readRegistry()).activeVaultId,
 
   addExisting: () => requestAndRegisterVault('Nouveau coffre'),
