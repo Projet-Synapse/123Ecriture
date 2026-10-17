@@ -36,26 +36,12 @@
 import * as FileSystem from 'expo-file-system/legacy';
 
 import { getActiveVaultRootUri } from './nativeVaultsAdapter';
-import { nativeVaultAdapter, SYNCED_META_FILES, SYNC_ATTACHMENT_EXTENSIONS } from './nativeVaultAdapter';
+import { nativeVaultAdapter } from './nativeVaultAdapter';
+import { isHashableRelPath } from '../sync/syncRules';
+import { SYNC_ATTACHMENT_EXTENSIONS } from './nativeVaultAdapter';
 import { sha256Hex, utf8Bytes } from '../sync/nativeSha256';
 
-//////// 1. 📏 RÈGLES DE HACHAGE (hashableRelPath) ///////////
-
-const SYNC_EXTENSIONS = ['.mdx', '.md', '.canvas', '.chart', '.excalidraw', '.base'];
-
-function hashableRelPath(relPath: string): boolean {
-  if (SYNCED_META_FILES.includes(relPath)) return true;
-  // ANTI-CONTAMINATION (v0.4.67) : un nom contenant un `\` est un fichier
-  // plat issu d'anciens pulls du mélange — jamais haché, jamais poussé.
-  if (relPath.includes('\\')) return false;
-  const segments = relPath.split('/');
-  const hidden = segments.some((segment) => segment.startsWith('.'));
-  const inTrash = segments[0] === '.trash';
-  if (hidden && !inTrash) return false;
-  const name = segments[segments.length - 1].toLowerCase();
-  if (SYNC_ATTACHMENT_EXTENSIONS.some((ext) => name.endsWith(ext))) return true;
-  return SYNC_EXTENSIONS.some((ext) => name.endsWith(ext));
-}
+//////// 1. 📏 RÈGLES DE HACHAGE — SOURCE UNIQUE : syncRules.ts ///////////
 
 //////// 2. 🔢 DÉCODAGE BASE64 (pièces jointes) ///////////
 
@@ -101,7 +87,7 @@ async function collectHashable(root: string, dir: string, relPrefix: string, out
       await collectHashable(root, childPath, relPath, out, depth + 1);
       continue;
     }
-    if (hashableRelPath(relPath)) out.push(relPath);
+    if (isHashableRelPath(relPath)) out.push(relPath);
   }
 }
 

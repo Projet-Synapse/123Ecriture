@@ -234,23 +234,10 @@ async function walkPlainTree(
   return nodes;
 }
 
-// Métadonnées .123ecriture/** qui voyagent AVEC le coffre — même liste que
-// SYNCED_META_FILES desktop (apps/desktop/electron/sync.ts) — À MAINTENIR
-// ENSEMBLE.
-export const SYNCED_META_FILES = [
-  '.123ecriture/appearance.json',
-  '.123ecriture/tasks.json',
-  '.123ecriture/tasklists.json',
-  '.123ecriture/preferences.json',
-];
-
-// Pièces jointes SYNCHRONISÉES — même liste que SYNC_ATTACHMENT_EXTENSIONS
-// desktop — À MAINTENIR ENSEMBLE.
-export const SYNC_ATTACHMENT_EXTENSIONS = [
-  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.heic',
-  '.pdf', '.txt', '.csv',
-  '.mp3', '.wav', '.ogg', '.m4a', '.mp4', '.webm',
-];
+// Métadonnées synchronisées + pièces jointes : SOURCE UNIQUE dans
+// syncRules.ts (partagé desktop+mobile) — ré-exportés ici pour les
+// consommateurs existants du pont.
+export { SYNCED_META_FILES, SYNC_ATTACHMENT_EXTENSIONS } from '../sync/syncRules';
 
 //////// 4. 🔌 IMPLÉMENTATION DE VaultBridge (l'objet exposé à l'app) ///////////
 
