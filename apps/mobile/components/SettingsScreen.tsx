@@ -12,6 +12,7 @@ import { PrivacyDataSection } from './settings/PrivacyDataSection';
 import { PropertiesManagementSection } from './settings/PropertiesManagementSection';
 import { SyncJournalSection } from './settings/SyncJournalSection';
 import { TrashSection } from './settings/TrashSection';
+import { VaultSwitcherSection } from './settings/VaultSwitcherSection';
 
 // Écran Paramètres — sous-navigation à 7 sections (voir .claude/CLAUDE.md :
 // "complexifier autant que possible" les réglages, et
@@ -26,6 +27,7 @@ const SETTINGS_WIDE_BREAKPOINT = 900;
 
 type SettingsSectionId =
   | 'personalization'
+  | 'coffres'
   | 'account'
   | 'journal'
   | 'files'
@@ -43,6 +45,8 @@ type SettingsSectionDef = {
 
 const SETTINGS_SECTIONS: SettingsSectionDef[] = [
   { id: 'personalization', label: 'Personnalisation de l’UI', icon: '🎨' },
+  // v0.4.83 (§16) : la bascule entre les coffres, absente du mobile.
+  { id: 'coffres', label: 'Coffres', icon: '📚' },
   { id: 'account', label: 'Compte et synchronisation', icon: '👤' },
   { id: 'journal', label: 'Journal de synchronisation', icon: '🔄' },
   { id: 'files', label: 'Gestion des fichiers et des liens', icon: '🗂️' },
@@ -57,6 +61,8 @@ function renderSection(id: SettingsSectionId) {
   switch (id) {
     case 'personalization':
       return <PersonalizationCard />;
+    case 'coffres':
+      return <VaultSwitcherSection />;
     case 'account':
       return <AccountSyncSection />;
     case 'journal':

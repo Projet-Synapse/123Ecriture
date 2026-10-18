@@ -1398,6 +1398,14 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   const diffLocalFiles = localFiles.filter((note) => !tombstonedPaths.has(note.relPath));
   const diffRemoteFiles = activeRemoteFiles.filter((file) => !tombstonedPaths.has(file.relPath));
   const decisions = diffVault(diffLocalFiles, diffRemoteFiles, syncState.files);
+  // v0.4.83 (§14) : les fichiers VIVANTS passent avant les chemins
+  // `.trash/…` — le tri alphabétique plaçait la corbeille du cloud
+  // (858 lignes du 18/10) devant tout le contenu utile : le mobile y
+  // passait le cycle entier et ne voyait jamais ses fichiers arriver.
+  // Sort stable : l'ordre alphabétique est conservé au sein de chaque groupe.
+  const orderedDecisions = [...decisions].sort(
+    (a, b) => Number(a.relPath.startsWith('.trash/')) - Number(b.relPath.startsWith('.trash/')),
+  );
   const mergedHashes: Record<string, string> = {};
 
   // Les étapes réseau (demande utilisateur : le journal raconte comme
@@ -1407,7 +1415,7 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   if (pushCount > 0) journal.push(makeJournalEntry('upload-start', { detail: `${pushCount} fichier(s)` }));
   if (pullCount > 0) journal.push(makeJournalEntry('download-start', { detail: `${pullCount} fichier(s)` }));
 
-  for (const decision of decisions) {
+  for (const decision of orderedDecisions) {
     try {
       switch (decision.kind) {
         case 'noop':
@@ -1557,7 +1565,7 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
     if (locallyDeleted.includes(note.relPath) || appliedDeletions.has(note.relPath)) continue;
     nextFiles[note.relPath] = note.contentHash;
   }
-  for (const decision of decisions) {
+  for (const decision of orderedDecisions) {
     if (decision.kind !== 'pull' && decision.kind !== 'conflict-pull-wins') continue;
     const remote = remoteByPath.get(decision.relPath);
     if (remote) nextFiles[decision.relPath] = remote.contentHash;
