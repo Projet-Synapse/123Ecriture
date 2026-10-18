@@ -2,23 +2,32 @@ import { GestureResponderEvent, Platform, Pressable, StyleSheet, Text, View } fr
 
 import type { Theme } from '../theme';
 
-// Poignée de redimensionnement d'une barre latérale — barre fine tirable au
-// curseur (`onMouseDown`, transmis tel quel jusqu'au DOM par
-// react-native-web 0.21, voir `forwardedProps` — pas besoin d'échappatoire
-// ref+useEffect ici, contrairement à `draggable` ailleurs dans l'app) + un
-// petit chevron cliquable pour replier/déplier sans avoir à viser le
-// glisser-jusqu'à-zéro. Purement présentationnel : la logique vit dans
-// lib/useResizablePanel.ts.
+// ✒️ 123ECRITURE — components/ResizeHandle.tsx — la poignée de redimensionnement
+//////////////////////////////////////////////////////////////////////////////
 //
-// TACTILE (natif, demande 2026-10-03 : « gérer leur largeur à l'aide de mon
-// doigt ») : quand les callbacks `onTouch*` sont fournis, la poignée capte
-// le geste via le système de responders (x absolu pageX — même sémantique
-// que clientX côté souris) et le suit pendant tout le déplacement. La zone
-// de prise est une vraie largeur de 24 dp en natif (voir le commentaire
-// dans le JSX : un hitSlop ne suffit pas au-dessus du panneau voisin). Le
-// chevron reste prioritaire (descendant pressable : la négociation de
-// responder lui donne la main en premier) — seul le toucher hors chevron
-// déclenche le glisser.
+// Poignée de redimensionnement d'une barre latérale : barre fine tirable
+// au curseur + un petit chevron cliquable pour replier/déplier sans avoir
+// à viser le glisser-jusqu'à-zéro. Purement présentationnel : la logique
+// vit dans lib/useResizablePanel.ts.
+//
+// Invariants du fichier :
+//   • `onMouseDown` est transmis tel quel jusqu'au DOM par
+//     react-native-web 0.21 (voir `forwardedProps`) — pas besoin
+//     d'échappatoire ref+useEffect ici, contrairement à `draggable`
+//     ailleurs dans l'app.
+//   • TACTILE (natif) : quand les callbacks `onTouch*` sont fournis, la
+//     poignée capte le geste via le système de responders (x absolu
+//     pageX — même sémantique que clientX côté souris) et le suit pendant
+//     tout le déplacement. La zone de prise est une vraie largeur de
+//     24 dp en natif : un hitSlop ne suffit pas au-dessus du panneau
+//     voisin (les lignes de contenu, plus profondes dans l'arbre de vues,
+//     y captent le toucher avant la poignée).
+//   • Le chevron reste prioritaire (descendant pressable : la négociation
+//     de responder lui donne la main en premier) — seul le toucher hors
+//     chevron déclenche le glisser.
+//
+//////////////////////////////////////////////////////////////////////////////
+
 type Props = {
   theme: Theme;
   side: 'left' | 'right';
@@ -47,8 +56,8 @@ export function ResizeHandle({ theme, side, collapsed, isDragging, onMouseDown, 
         // bord du panneau qu'elle sert). Un hitSlop ne suffit pas : sur la
         // zone qu'il ajoute PAR-DESSUS le panneau voisin, les lignes de
         // contenu (plus profondes dans l'arbre de vues) captent le toucher
-        // avant la poignée — glisser ne démarrait qu'un swipe sur deux
-        // (vécu A13, 2026-10-03). Web : 6 dp précis au curseur.
+        // avant la poignée — le glisser ne démarre qu'un swipe sur deux.
+        // Web : 6 dp précis au curseur.
         touchEnabled
           ? { width: 24, alignItems: side === 'left' ? 'flex-end' : 'flex-start' }
           : null,

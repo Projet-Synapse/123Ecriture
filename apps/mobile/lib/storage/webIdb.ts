@@ -1,10 +1,25 @@
-// Mini wrapper IndexedDB promisifié — tout ce dont les ponts web ont besoin
-// (deux magasins : les coffres et leurs métadonnées), sans dépendance.
+// ✒️ 123ECRITURE — lib/storage/webIdb.ts — wrapper IndexedDB promisifié (web)
+//////////////////////////////////////////////////////////////////////////////
 //
-// Pourquoi IndexedDB et pas localStorage : un FileSystemDirectoryHandle est
-// sérialisable en IndexedDB (c'est le mécanisme officiel pour retrouver
-// l'accès à un dossier entre deux visites) mais PAS en localStorage, qui
-// n'accepte que des chaînes.
+// Mini wrapper IndexedDB — tout ce dont les ponts web ont besoin (deux
+// magasins : les coffres et leurs métadonnées), sans dépendance.
+//
+// Invariants du fichier :
+//   • IndexedDB et pas localStorage : un FileSystemDirectoryHandle est
+//     sérialisable en IndexedDB (mécanisme officiel pour retrouver
+//     l'accès à un dossier entre deux visites) mais PAS en localStorage,
+//     qui n'accepte que des chaînes.
+//   • Chaque opération rouvre une transaction fraîche : un IDBTransaction
+//     est inutilisable après un await — c'est la convention standard des
+//     wrappers IndexedDB.
+//
+// SOMMAIRE :
+//   1. Ouverture de la base (magasins vaults + meta)
+//   2. Opérations génériques (put/get/getAll/delete)
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. Ouverture de la base (magasins vaults + meta) ///////////////////////////////
 
 export const DB_NAME = '123ecriture';
 export const DB_VERSION = 1;
@@ -53,6 +68,8 @@ export async function withStore<T>(
     db.close();
   }
 }
+
+//////// 2. Opérations génériques (put/get/getAll/delete) ///////////////////////////////
 
 export async function idbPut(storeName: string, value: unknown, key?: IDBValidKey): Promise<void> {
   await withStore(storeName, 'readwrite', (store) => (key !== undefined ? store.put(value, key) : store.put(value)));

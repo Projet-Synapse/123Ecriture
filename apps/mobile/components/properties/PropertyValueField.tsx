@@ -1,0 +1,370 @@
+import { useMemo, useState } from 'react';
+import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+
+import { collectPathOptions } from '../../lib/notes/vaultTree';
+import { formatValueForInput, parseInputForType } from '../../lib/properties/propertyTypes';
+import type { Theme } from '../../theme';
+import { DraftTextField } from '../editors/DraftTextField';
+
+// ✒️ 123ECRITURE — components/properties/PropertyValueField.tsx — le widget d'édition d'une valeur
+//////////////////////////////////////////////////////////////////////////////
+//
+// Éditeur de VALEUR pour une propriété, un widget par type : checkbox,
+// path (navigateur de vault), multi-options, bubbles, options, et champ
+// texte commité pour le reste (nombre, date…). Partagé par
+// PropertiesPanel.tsx (barre latérale) et PropertiesBlock.tsx (bloc en
+// haut de note).
+//
+// Invariants du fichier :
+//   • Chaque type a son propre contrôle — jamais un simple champ texte
+//     partagé par tous les types.
+//   • Nombre de hooks CONSTANT d'un rendu à l'autre : pathOptions est
+//     calculé pour tous les types, jamais après un return conditionnel
+//     (Rules of Hooks) — une même instance peut changer de `def.type`.
+//   • Le brouillon des bulles (type 'bubbles') est commité à la touche
+//     Entrée, comme l'ajout de tags façon Obsidian.
+//   • `tree` n'est nécessaire que pour le type 'path' : absent ailleurs,
+//     le champ retombe sur une saisie texte libre.
+//
+// SOMMAIRE :
+//   1. PropertyValueField — le dispatch par type
+//   2. Les styles
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. PropertyValueField — le dispatch par type /////////////////////////////////////
+
+type Props = {
+  def: PropertyDefinition;
+  value: unknown;
+  onChange: (value: unknown) => void;
+  theme: Theme;
+  // Nécessaire uniquement pour le type 'path' (navigation dans le vault) —
+  // absent ailleurs, le champ retombe alors sur une saisie texte libre.
+  tree?: VaultTreeNode[];
+};
+
+export function PropertyValueField({ def, value, onChange, theme, tree }: Props) {
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [filter, setFilter] = useState('');
+  // Brouillon du champ d'ajout des bulles (type 'bubbles') — commit à la
+  // touche Entrée (onSubmitEditing), comme l'ajout de tags façon Obsidian.
+  const [bubbleDraft, setBubbleDraft] = useState('');
+  // Calculé pour tous les types (pas seulement 'path') afin de garder un
+  // nombre de hooks constant d'un rendu à l'autre — un `useMemo` posé après
+  // un `return` conditionnel enfreindrait les Rules of Hooks dès qu'une
+  // même instance change de `def.type`.
+  const pathOptions = useMemo(() => (tree ? collectPathOptions(tree) : []), [tree]);
+
+  if (def.type === 'checkbox') {
+    return (
+      <Pressable onPress={() => onChange(!value)} style={[styles.checkbox, { borderColor: theme.border }]}>
+        <Text style={{ color: theme.accent }}>{value ? '☑' : '☐'}</Text>
+      </Pressable>
+    );
+  }
+
+  if (def.type === 'path') {
+    const filtered = pathOptions.filter(
+      (o) => filter.trim() === '' || o.relPath.toLowerCase().includes(filter.trim().toLowerCase()),
+    );
+    return (
+      <View style={styles.pickerWrap}>
+        <Pressable
+          onPress={() => setPickerOpen((v) => !v)}
+          style={[styles.pathButton, { borderColor: theme.border }]}
+        >
+          <Text style={{ color: value ? theme.text : theme.textMuted, fontSize: 12 }} numberOfLines={1}>
+            {typeof value === 'string' && value ? value : 'Choisir un chemin…'}
+          </Text>
+        </Pressable>
+        {pickerOpen && (
+          <View style={[styles.popover, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+            <TextInput
+              value={filter}
+              onChangeText={setFilter}
+              placeholder="Filtrer…"
+              placeholderTextColor={theme.textMuted}
+              style={[styles.filterInput, { color: theme.text, borderColor: theme.border }]}
+              autoFocus
+            />
+            <View style={styles.popoverList}>
+              {value ? (
+                <Pressable
+                  onPress={() => {
+                    onChange('');
+                    setPickerOpen(false);
+                  }}
+                  style={styles.popoverRow}
+                >
+                  <Text style={{ color: theme.textMuted, fontSize: 12 }}>✕ Effacer</Text>
+                </Pressable>
+              ) : null}
+              {filtered.map((option) => (
+                <Pressable
+                  key={option.relPath}
+                  onPress={() => {
+                    onChange(option.relPath);
+                    setPickerOpen(false);
+                    setFilter('');
+                  }}
+                  style={[styles.popoverRow, { paddingLeft: 8 + option.depth * 12 }]}
+                >
+                  <Text style={{ color: theme.text, fontSize: 12 }} numberOfLines={1}>
+                    {option.kind === 'folder' ? '📁' : '📄'} {option.label}
+                  </Text>
+                </Pressable>
+              ))}
+              {filtered.length === 0 && (
+                <Text style={[styles.muted, { color: theme.textMuted }]}>Aucun résultat.</Text>
+              )}
+            </View>
+          </View>
+        )}
+      </View>
+    );
+  }
+
+  if (def.type === 'multi-options') {
+    // Comme 'options' mais PLUSIEURS choix : chaque ligne bascule son
+    // appartenance au tableau de valeurs (☑/☐), la liste reste ouverte pour
+    // cumuler les sélections — fermeture explicite via « ✓ Fermer ».
+    const options = def.options ?? [];
+    const selected: string[] = Array.isArray(value) ? value.map(String) : [];
+    return (
+      <View style={styles.pickerWrap}>
+        <Pressable
+          onPress={() => setPickerOpen((v) => !v)}
+          style={[styles.pathButton, { borderColor: theme.border }]}
+        >
+          <Text style={{ color: selected.length ? theme.text : theme.textMuted, fontSize: 12 }} numberOfLines={1}>
+            {selected.length ? selected.join(', ') : 'Choisir des options…'}
+          </Text>
+        </Pressable>
+        {pickerOpen && (
+          <View style={[styles.popover, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+            <View style={styles.popoverList}>
+              {options.map((option) => (
+                <Pressable
+                  key={option}
+                  onPress={() => {
+                    onChange(
+                      selected.includes(option)
+                        ? selected.filter((item) => item !== option)
+                        : [...selected, option],
+                    );
+                  }}
+                  style={styles.popoverRow}
+                >
+                  <Text style={{ color: theme.text, fontSize: 12 }}>
+                    {selected.includes(option) ? '☑' : '☐'} {option}
+                  </Text>
+                </Pressable>
+              ))}
+              {options.length === 0 && (
+                <Text style={[styles.muted, { color: theme.textMuted }]}>
+                  Aucune option configurée (Paramètres → Gestion des propriétés).
+                </Text>
+              )}
+            </View>
+            <Pressable
+              onPress={() => setPickerOpen(false)}
+              style={[styles.popoverRow, { borderTopWidth: 1, borderTopColor: theme.border }]}
+            >
+              <Text style={{ color: theme.textMuted, fontSize: 12 }}>✓ Fermer</Text>
+            </Pressable>
+          </View>
+        )}
+      </View>
+    );
+  }
+
+  if (def.type === 'bubbles') {
+    // Bulles : chaque valeur est une pilule supprimable d'un clic, le
+    // champ « + Ajouter » en empile de nouvelles (Entrée) — le rendu des
+    // tags/aliases, façon Obsidian.
+    const items: string[] = Array.isArray(value) ? value.map(String) : [];
+    const commitDraft = () => {
+      const trimmed = bubbleDraft.trim();
+      if (trimmed && !items.includes(trimmed)) onChange([...items, trimmed]);
+      setBubbleDraft('');
+    };
+    return (
+      <View style={[styles.bubblesWrap, { borderColor: theme.border }]}>
+        {items.length > 0 && (
+          <View style={styles.bubblesRow}>
+            {items.map((item) => (
+              <Pressable
+                key={item}
+                onPress={() => onChange(items.filter((v) => v !== item))}
+                style={[styles.bubble, { backgroundColor: `${theme.accent}1a`, borderColor: `${theme.accent}55` }]}
+                accessibilityLabel={`Retirer ${item}`}
+              >
+                <Text style={{ color: theme.accent, fontSize: 11 }}>
+                  {item} ✕
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        )}
+        <TextInput
+          value={bubbleDraft}
+          onChangeText={setBubbleDraft}
+          onSubmitEditing={commitDraft}
+          onBlur={bubbleDraft.trim() ? commitDraft : undefined}
+          placeholder="+ Ajouter…"
+          placeholderTextColor={theme.textMuted}
+          style={{ color: theme.text, fontSize: 12, paddingVertical: 2, flex: 1, minWidth: 90 }}
+        />
+      </View>
+    );
+  }
+
+  if (def.type === 'options') {
+    const options = def.options ?? [];
+    return (
+      <View style={styles.pickerWrap}>
+        <Pressable
+          onPress={() => setPickerOpen((v) => !v)}
+          style={[styles.pathButton, { borderColor: theme.border }]}
+        >
+          <Text style={{ color: value ? theme.text : theme.textMuted, fontSize: 12 }} numberOfLines={1}>
+            {typeof value === 'string' && value ? value : 'Choisir une option…'}
+          </Text>
+        </Pressable>
+        {pickerOpen && (
+          <View style={[styles.popover, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+            <View style={styles.popoverList}>
+              {value ? (
+                <Pressable
+                  onPress={() => {
+                    onChange('');
+                    setPickerOpen(false);
+                  }}
+                  style={styles.popoverRow}
+                >
+                  <Text style={{ color: theme.textMuted, fontSize: 12 }}>✕ Aucune</Text>
+                </Pressable>
+              ) : null}
+              {options.map((option) => (
+                <Pressable
+                  key={option}
+                  onPress={() => {
+                    onChange(option);
+                    setPickerOpen(false);
+                  }}
+                  style={styles.popoverRow}
+                >
+                  <Text style={{ color: theme.text, fontSize: 12 }}>{option}</Text>
+                </Pressable>
+              ))}
+              {options.length === 0 && (
+                <Text style={[styles.muted, { color: theme.textMuted }]}>
+                  Aucune option configurée (Paramètres → Gestion des propriétés).
+                </Text>
+              )}
+            </View>
+          </View>
+        )}
+      </View>
+    );
+  }
+
+  return (
+    <DraftTextField
+      initialValue={formatValueForInput(def.type, value)}
+      onCommit={(text) => onChange(parseInputForType(def.type, text))}
+      placeholder={def.type === 'date' ? 'AAAA-MM-JJ' : def.type === 'datetime' ? 'AAAA-MM-JJ HH:MM' : ''}
+      theme={theme}
+      style={[styles.valueInput, { color: theme.text, borderColor: theme.border }]}
+    />
+  );
+}
+
+//////// 2. Les styles ////////////////////////////////////////////////////////////////////
+
+const styles = StyleSheet.create({
+  valueInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: 6,
+    paddingVertical: 4,
+    paddingHorizontal: 6,
+    fontSize: 12,
+  },
+  checkbox: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: 6,
+    paddingVertical: 4,
+    alignItems: 'center',
+  },
+  pickerWrap: {
+    flex: 1,
+    position: 'relative',
+  },
+  pathButton: {
+    borderWidth: 1,
+    borderRadius: 6,
+    paddingVertical: 4,
+    paddingHorizontal: 6,
+  },
+  popover: {
+    position: 'absolute',
+    top: '100%',
+    left: 0,
+    right: 0,
+    marginTop: 4,
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 6,
+    gap: 4,
+    zIndex: 20,
+    // Ombre légère pour se détacher visuellement du contenu en dessous
+    // (le popover flotte au-dessus, pas dans le flux normal).
+    shadowColor: '#000',
+    shadowOpacity: 0.15,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 4,
+  },
+  filterInput: {
+    borderWidth: 1,
+    borderRadius: 6,
+    paddingVertical: 4,
+    paddingHorizontal: 6,
+    fontSize: 12,
+  },
+  popoverList: {
+    maxHeight: 200,
+  },
+  popoverRow: {
+    paddingVertical: 6,
+    paddingHorizontal: 6,
+    borderRadius: 4,
+  },
+  muted: {
+    fontSize: 11,
+    padding: 6,
+  },
+  // Bulles : conteneur bordé léger, pilules enroulables.
+  bubblesWrap: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: 6,
+    paddingVertical: 3,
+    paddingHorizontal: 6,
+    gap: 3,
+  },
+  bubblesRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 4,
+  },
+  bubble: {
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingVertical: 2,
+    paddingHorizontal: 8,
+  },
+});

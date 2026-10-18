@@ -1,29 +1,45 @@
-// //1. 🗃️ REGISTRE DES COFFRES WEB — équivalent navigateur de vaults.ts
-// ////////////////////////////////////////////////////////////////////////
+// ✒️ 123ECRITURE — lib/storage/webVaultRegistry.ts — registre des coffres web (IndexedDB + FSA)
+//////////////////////////////////////////////////////////////////////////////
 //
 // Port du registre multi-coffres (apps/desktop/electron/vaults.ts) sur la
-// File System Access API :
-// - L'IDENTITÉ de chaque coffre vit toujours DANS le dossier
-//   (`.123ecriture/vault.json`) — un dossier re-choisi après retrait, ou
-//   partagé desktop/navigateur, reste le même coffre (même clé de sync).
-// - Le REGISTRE (liste + id actif) vit dans IndexedDB au lieu de
-//   config.json : c'est là qu'on peut persister les handles de dossiers,
-//   seule façon de retrouver l'accès entre deux visites.
-// - `path` d'une entrée du registre : le handle ne connaît pas son chemin
-//   disque (jamais exposé par le navigateur, pour raison de sécurité) — on
-//   met le NOM du dossier choisi, suffisant à l'affichage.
+// File System Access API. Singleton partagé par tous les ponts web
+// (window.vault pour chooseFolder, window.vaults pour le registre, les
+// modules pour getActiveHandle) : c'est LA source du coffre actif côté web.
 //
+// Invariants du fichier :
+//   • L'IDENTITÉ de chaque coffre vit DANS le dossier
+//     (`.123ecriture/vault.json`) — un dossier re-choisi après retrait, ou
+//     partagé desktop/navigateur, reste le même coffre (même clé de sync).
+//   • Le REGISTRE (liste + id actif + handles) vit en IndexedDB : c'est le
+//     seul endroit d'un navigateur où persiste un handle de dossier —
+//     seule façon de retrouver l'accès entre deux visites.
+//   • `path` d'une entrée = NOM du dossier choisi : le handle ne connaît
+//     pas son chemin disque (jamais exposé par le navigateur).
+//   • Permission : `queryPermission` ne demande RIEN — un handle restauré
+//     démarre souvent en 'prompt' et reste listé mais inactif ; la
+//     réactivation passe par requestReadWrite DANS un geste utilisateur.
+//   • Retirer un coffre = le sortir de la LISTE, jamais supprimer des
+//     fichiers (règle CLAUDE.md).
+//
+// SOMMAIRE :
+//   1. Identité du coffre (vault.json) et permissions FSA
+//   2. WebVaultRegistry — liste, coffre actif, notifications
+//
+//////////////////////////////////////////////////////////////////////////////
+
+import { type FsaDirectoryHandleLike, getDirByRelPath, readFileText, writeFileText } from './webFs';
+
+import { idbDelete, idbGet, idbGetAll, idbPut, META_STORE, VAULTS_STORE } from './webIdb';
+import { randomUUID as uuid } from './webUuid';
+
+//////// 1. Identité du coffre (vault.json) et permissions FSA /////////////////////////
+
 // Toutes les méthodes attendent `whenReady()` : l'installation des ponts
 // (installWebBridges.ts, appelé avant le premier rendu React) lance le
 // chargement IndexedDB de façon asynchrone — les consommateurs
 // (VaultsContext) lisent `window.vaults` de façon synchrone au premier
 // rendu, l'objet doit donc exister IMMÉDIATEMENT, avec un état interne qui
 // se remplit ensuite (chaque appel attend la fin du chargement).
-
-import { type FsaDirectoryHandleLike, getDirByRelPath, readFileText, writeFileText } from './webFs';
-
-import { idbDelete, idbGet, idbGetAll, idbPut, META_STORE, VAULTS_STORE } from './webIdb';
-import { randomUUID as uuid } from './webUuid';
 
 // Formes stockées en IndexedDB — miroir de config.json côté Electron
 // (types.ts : VaultRegistryEntry) + le handle qui EST la valeur unique d'un
@@ -77,6 +93,8 @@ export async function requestReadWrite(handle: FsaDirectoryHandleLike): Promise<
   if (typeof handle.requestPermission !== 'function') return true;
   return (await handle.requestPermission({ mode: 'readwrite' })) === 'granted';
 }
+
+//////// 2. WebVaultRegistry — liste, coffre actif, notifications //////////////////////
 
 class WebVaultRegistry {
   private vaults: StoredVault[] = [];

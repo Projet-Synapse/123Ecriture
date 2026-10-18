@@ -1,12 +1,31 @@
-// Pont de tâches NATIF (Android) — miroir du pont Electron
-// (apps/desktop/electron/tasks.ts, duplication assumée comme partout entre
-// les deux paquets, CLAUDE.md) : les tâches vivent dans
-// `.123ecriture/tasks.json` (toutes listes confondues, chacune taguée
-// `listId`) et le registre des listes dans `.123ecriture/tasklists.json`,
-// lus/écrits PAR COFFRE via readNote/writeNote du coffre actif. C'est le
-// correctif « enregistrement par vault » (v0.4.50) : avant ce pont, il
-// n'existait AUCUN window.tasks/window.taskLists sur Android — l'écran
-// Tâches était inerte et rien de ce qu'on y créait ne persistait.
+// ✒️ 123ECRITURE — lib/storage/nativeTasksAdapter.ts — pont de tâches natif (Android)
+//////////////////////////////////////////////////////////////////////////////
+//
+// Miroir du pont Electron (apps/desktop/electron/tasks.ts, duplication
+// assumée comme partout entre les deux paquets, CLAUDE.md) : les tâches
+// vivent dans `.123ecriture/tasks.json` (toutes listes confondues, chacune
+// taguée `listId`) et le registre des listes dans
+// `.123ecriture/tasklists.json`, lus/écrits PAR COFFRE via readNote/
+// writeNote du coffre actif.
+//
+// Invariants du fichier :
+//   • Tout passe par le coffre actif — jamais un stockage global : les
+//     tâches et listes suivent leur coffre (et donc sa synchro).
+//   • Toute migration est PERSISTÉE immédiatement (readListsData réécrit
+//     la liste par défaut migrée) — sinon chaque lecture régénère un id
+//     différent et les appels suivants échouent « Liste introuvable ».
+//   • JSON cassé à la lecture = sauvegarde `.corrupt-*` DANS le coffre
+//     avant de repartir à vide : jamais de perte silencieuse (l'écriture
+//     partielle SAF est réparée en amont par le pont troncature-sûr).
+//
+// SOMMAIRE :
+//   1. Lectures tolérantes, ids et migration paresseuse des listes
+//   2. nativeTasksBridge — les tâches (tasks.json)
+//   3. nativeTaskListsBridge — les listes (tasklists.json)
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. Lectures tolérantes, ids et migration paresseuse des listes ///////////////
 
 import { nativeVaultAdapter } from './nativeVaultAdapter';
 
@@ -40,10 +59,10 @@ async function readJson(relPath: string): Promise<unknown> {
   try {
     return JSON.parse(brut);
   } catch {
-    // v0.4.69 — ANTI-PERTE : le fichier existe mais son JSON est cassé
-    // (écriture partielle SAF, vécu). On le SAUVEGARDE tel quel dans le
-    // coffre (jamais de perte silencieuse) et on repart à zéro : l'état
-    // vide est réécrit au prochain write, la copie reste récupérable.
+    // ANTI-PERTE : le fichier existe mais son JSON est cassé (écriture
+    // partielle SAF). On le SAUVEGARDE tel quel dans le coffre (jamais de
+    // perte silencieuse) et on repart à zéro : l'état vide est réécrit au
+    // prochain write, la copie reste récupérable.
     const sauvegarde = `${relPath}.corrupt-${Date.now()}`;
     try {
       await nativeVaultAdapter.writeNote(sauvegarde, brut);
@@ -95,11 +114,10 @@ const listListeners = new Set<(lists: TaskList[]) => void>();
 
 async function readListsData(): Promise<NativeTaskListsData> {
   const data = migrateLists((await readJson(LISTS_PATH)) as NativeTaskListsData | null);
-  // v0.4.62 — CORRECTION du bug « Liste introuvable » sur Android : la liste
-  // par défaut fraîchement migrée est PERSISTÉE immédiatement, sinon chaque
-  // appel régénérait un identifiant différent et `tasks:add` /
-  // `tasklists:switch` échouaient (« Liste introuvable » — l'identifiant
-  // affiché à l'écran n'existait plus à l'appel suivant). Desktop fait la
+  // La liste par défaut fraîchement migrée est PERSISTÉE immédiatement :
+  // sinon chaque lecture régénère un identifiant différent et `tasks:add`
+  // / `tasklists:switch` échouent (« Liste introuvable » — l'identifiant
+  // affiché à l'écran n'existe plus à l'appel suivant). Desktop fait la
   // même écriture dans migrateTaskLists (tasks.ts).
   await nativeVaultAdapter.writeNote(LISTS_PATH, JSON.stringify(data, null, 2));
   return data;
@@ -120,6 +138,8 @@ function findListOrThrow(lists: TaskList[], id: string): TaskList {
 function findTaskOrThrow(tasks: Task[], id: string): void {
   if (!tasks.some((task) => task.id === id)) throw new Error('Tâche introuvable.');
 }
+
+//////// 2. nativeTasksBridge — les tâches (tasks.json) ////////////////////////////////
 
 export const nativeTasksBridge: TasksBridge = {
   list: async () => {
@@ -261,6 +281,8 @@ export const nativeTasksBridge: TasksBridge = {
     return filterActive(next, data.activeListId);
   },
 };
+
+//////// 3. nativeTaskListsBridge — les listes (tasklists.json) ////////////////////////
 
 export const nativeTaskListsBridge: TaskListsBridge = {
   list: async () => (await readListsData()).lists,

@@ -1,16 +1,30 @@
-// //1. 📁 PRIMITIVES FICHIERS WEB — couche commune à tous les ponts web
-// ////////////////////////////////////////////////////////////////////////
+// ✒️ 123ECRITURE — lib/storage/webFs.ts — primitives fichiers web (couche commune aux ponts)
+//////////////////////////////////////////////////////////////////////////////
 //
 // Équivalent navigateur des utilitaires fs/path utilisés par les modules
 // Electron (apps/desktop/electron/vault.ts et suivants) : les ponts web
 // (installWebBridges.ts) travaillent sur des handles File System Access API
 // au lieu de chemins disque.
 //
-// Types volontairement « structural » (DirectoryHandleLike/FileHandleLike)
-// plutôt que les types DOM : les ponts restent testables sous Vitest/Node
-// avec un faux système de fichiers en mémoire (voir webVaultAdapter.test.ts),
-// et les vrais objets File System Access API satisfont ces interfaces tels
-// quels — même convention que les adaptateurs natifs à côté.
+// Invariants du fichier :
+//   • Types volontairement « structural » (…Like) plutôt que DOM : les
+//     ponts restent testables sous Vitest/Node avec un faux système de
+//     fichiers en mémoire, et les vrais objets FSA satisfont ces
+//     interfaces tels quels.
+//   • Aucun chemin n'échappe au coffre : splitRelPath valide CHAQUE
+//     segment — jamais de traversée (« ../.. »), jamais de chemin absolu,
+//     jamais de segment vide.
+//   • La FSA n'a pas de rename natif : déplacer/renommer = copier puis
+//     supprimer, et `lastModified` n'est pas préservable (une note
+//     renommée remonte au tri « Plus récent d'abord », écart assumé).
+//
+// SOMMAIRE :
+//   1. Primitives fichiers (résolution, lecture/écriture, existence, suppression)
+//   2. Tri et parcours d'arbre
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. Primitives fichiers (résolution, lecture/écriture, existence, suppression) //
 
 export interface FsaFileHandleLike {
   kind: 'file';
@@ -186,8 +200,7 @@ export async function pruneEmptyAncestors(
   }
 }
 
-// //2. 🔀 TRI ET PARCOURS D'ARBRE
-// ////////////////////////////////////////////////////////////////////////
+//////// 2. Tri et parcours d'arbre ////////////////////////////////////////////////////
 
 // Copie conforme de la règle de tri de walkTree (vault.ts) : dossiers
 // d'abord, puis notes (récentes/anciennes d'abord selon le mode, qui ne

@@ -1,14 +1,26 @@
-// Résolution du coffre actif pour la synchro (v0.4.28). Pur et testé.
+// ✒️ 123ECRITURE — lib/sync/activeVault.ts — résolution du coffre actif pour la synchro
+//////////////////////////////////////////////////////////////////////////////
 //
-// Contexte : jusqu'à v0.4.27, l'identifiant du coffre distant venait d'un
-// ref React (latestRef) mis à jour dans un effet, tandis que le hachage et
-// les opérations fichiers portaient TOUJOURS sur le coffre actif du
-// processus principal. Entre les deux, une fenêtre de course (bascule de
-// coffre immédiatement suivie d'une synchro) croisait les deux : le contenu
-// du coffre cliqué partait dans le coffre distant du coffre précédent —
-// la contamination croisée vécue pendant des jours. v0.4.28 : le moteur
-// déduit TOUT (dossier, distant) du coffre actif au moment du cycle — une
-// seule source de vérité, désynchronisation impossible.
+// Pur et testé. Le moteur déduit TOUT (dossier local, coffre distant) du
+// coffre actif AU MOMENT du cycle — une seule source de vérité, une
+// désynchronisation entre les deux est impossible par construction.
+//
+// Invariants du fichier :
+//   • L'identifiant du coffre distant ne vient JAMAIS d'un ref React mis à
+//     jour dans un effet : le hachage et les opérations fichiers portent
+//     sur le coffre actif du process principal. Un ref pris entre deux
+//     cycles croise les deux pendant la fenêtre de course d'une bascule de
+//     coffre — le contenu du coffre cliqué partirait dans le coffre
+//     distant du coffre précédent (contamination croisée).
+//   • null si le coffre actif est introuvable dans le registre ou non lié
+//     au cloud : le cycle ne devine jamais un identifiant.
+//
+// SOMMAIRE :
+//   1. Le coffre distant lié du coffre actif (pickActiveRemoteVault)
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. Le coffre distant lié du coffre actif (pickActiveRemoteVault) ///////////
 
 // Retourne le coffre distant lié du coffre actif, ou null si le coffre
 // actif est introuvable dans le registre ou non lié au cloud.

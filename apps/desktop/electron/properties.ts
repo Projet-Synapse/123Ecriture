@@ -4,7 +4,7 @@ import fsSync from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 
-import * as vaults from './vaults';
+import * as vaults from './synchronisation vault/vaults';
 import type { PropertyDefinition, PropertyPatch, PropertyRenameMigrationSummary, PropertyType } from './types';
 // Fonction pure de migration de clé de frontmatter — voir
 // apps/mobile/lib/frontmatterMigration.ts (testée par Vitest côté
@@ -15,12 +15,12 @@ import type { PropertyDefinition, PropertyPatch, PropertyRenameMigrationSummary,
 // importée telle quelle plutôt que dupliquée, esbuild la bundle sans
 // problème (vérifié) même si apps/mobile et apps/desktop restent deux
 // paquets séparés.
-import { migrateFrontmatterKey } from '../../mobile/lib/frontmatterMigration';
+import { migrateFrontmatterKey } from '../../mobile/lib/properties/frontmatterMigration';
 // Même logique de partage que migrateFrontmatterKey ci-dessus : le parseur
 // frontmatter de référence (tolérant, testé) importé du paquet apps/mobile,
 // plus la fusion du scan en fonction pure testée (propertyScanMerge).
-import { parseFrontmatter } from '../../mobile/lib/frontmatter';
-import { createPropertyScanMerger } from '../../mobile/lib/propertyScanMerge';
+import { parseFrontmatter } from '../../mobile/lib/properties/frontmatter';
+import { createPropertyScanMerger } from '../../mobile/lib/properties/propertyScanMerge';
 
 // Module "Propriétés" (voir docs/ARCHITECTURE.md §4/§8, panneau
 // PropertiesPanel.tsx dans la barre latérale) : schéma global de

@@ -4,7 +4,7 @@ import fsSync from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 
-import * as vaults from './vaults';
+import * as vaults from './synchronisation vault/vaults';
 import type { OccurrenceEntry, OccurrencePatch } from './types';
 
 // Module "Occurrences" (voir docs/ARCHITECTURE.md §4/§8, panneau

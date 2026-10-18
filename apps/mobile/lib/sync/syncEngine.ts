@@ -40,37 +40,75 @@ import { SYNC_ATTACHMENT_EXTENSIONS } from '../storage/nativeVaultAdapter';
 // (le helper web tombe sur Math.random), voir lib/storage/webUuid.ts.
 import { randomUUID as uuid } from '../storage/webUuid';
 
-// Orchestrateur de synchro (v0, manuel, sans timer — voir
-// docs/ARCHITECTURE.md §6) : appelle le pont Electron (hash local, lecture/
-// écriture de notes) et le client Supabase (Storage + table de métadonnées),
-// applique les décisions de diff.ts. Volontairement fin et non testable
-// unitairement (trop d'effets de bord réels) — toute la logique de décision
-// qui mérite des tests vit dans diff.ts.
+// ✒️ 123ECRITURE — lib/sync/syncEngine.ts — le moteur du cycle de synchronisation
+//////////////////////////////////////////////////////////////////////////////
+//
+// Un cycle (runSync) déroule toujours la même séquence : résoudre ENSEMBLE
+// le coffre local actif et sa ligne distante, passer les gardes d'entrée
+// (disjoncteur, verrou à distance, verrou anti-bascule), hacher le coffre
+// via le pont, paginer les lignes distantes, propager les suppressions,
+// calculer le diff à trois voix (local / distant / état du dernier cycle),
+// appliquer les décisions (push, pull, fusion de conflit), puis réécrire
+// l'état, tenir le journal progressif et battre le cœur des appareils. Ce
+// fichier est un orchestrateur VOLONTAIREMENT fin : toute la logique de
+// décision qui mérite des tests vit dans les modules voisins — diff.ts
+// (verrouillé par diff.test.ts), deletions.ts, merge.ts, editQuiet.ts
+// (verrouillé par editQuiet.test.ts).
+//
+// Invariants du fichier :
+//   • Un seul coffre à la fois : dossier local et référence distante sont
+//     résolus ensemble en début de cycle, et aucune bascule de coffre n'est
+//     possible pendant le cycle (verrou anti-bascule) — jamais de contenu
+//     de A écrit dans le coffre B.
+//   • Tout chemin qui franchit la frontière cloud est normalisé en slashes
+//     POSIX : un backslash crée des doublons jamais matchés, des
+//     tombestones qui ne partent pas et des résurrections en boucle.
+//   • Une suppression n'est jamais silencieuse : tombestone seulement après
+//     relecture directe du fichier, garde anti-suppression massive en revue
+//     manuelle, application distante conservatrice, état timbré par le
+//     chemin du coffre qu'il décrit.
+//   • Un fichier « chaud » (modifié il y a moins de 60 s) sort du cycle :
+//     ni push, ni pull, ni fusion — le conflit est différé.
+//   • Journal, bases de fusion, heartbeat : best-effort — jamais une raison
+//     de faire échouer un cycle.
+//
+// SOMMAIRE :
+//   1. L'état de synchro et le journal du cycle (persistés dans le coffre)
+//   2. La liaison et le catalogue des coffres distants
+//   3. Les appareils : heartbeat, verrou à distance, levée du disjoncteur
+//   4. La lecture du cloud : pagination et téléchargements
+//   5. Les pièces jointes binaires (détection, MIME, base64)
+//   6. Le push, le pull et les bases de fusion
+//   7. Les conflits : archivage du perdant, corbeille, fusion à trois voix
+//   8. runSync : résolution du coffre et gardes d'entrée
+//   9. runSync : les suppressions (tombestones locales et distantes, revue)
+//  10. runSync : diff, application des décisions, nouvel état et clôture
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. L'état de synchro et le journal du cycle ///////////////////////
 
 export type SyncSummary = {
   pushed: number;
   pulled: number;
   // Fichiers supprimés comptés ce cycle : suppressions LOCALES propagées au
-  // cloud (pierres tombales) + suppressions DISTantes appliquées ici
-  // (v0.4.17).
+  // cloud (pierres tombales) + suppressions DISTANTES appliquées ici.
   deleted: number;
-  // v0.4.81 (§13) : pushes dont le chemin vit sous `.trash/` — le continu
-  // d'un déplacement en corbeille. Comptés À PART (ni « envoyé(s) » ni
-  // « modifié(s) ») pour que le résumé ne compte pas deux fois le même
-  // geste (le journal d'incidents : « 4 envoyé(s), 4 supprimé(s) » pour un
-  // seul déplacement).
+  // Pushes dont le chemin vit sous `.trash/` — le continu d'un déplacement
+  // en corbeille. Comptés À PART (ni « envoyé(s) » ni « modifié(s) ») pour
+  // que le résumé ne compte pas deux fois le même geste.
   trashed: number;
   conflicts: number;
   errors: string[];
 };
 
-// État de synchro par coffre (v0.4.17) : ensemble des fichiers présents à
-// la fin du dernier cycle réussi (rel_path -> hash de contenu), persisté
-// DANS le dossier du coffre — il suit les déplacements. C'est la référence
-// qui distingue « jamais existé ici » (pull autorisé) de « existait et a
-// été supprimé ici » (tombestone, jamais de résurrection).
-// v0.4.76 — SYNC-STATE HONNÊTE : l'état est TIMBRÉ par le chemin du coffre
-// qu'il décrit (rootPath). Un rootPath différent au chargement (dossier
+// État de synchro par coffre : ensemble des fichiers présents à la fin du
+// dernier cycle réussi (rel_path -> hash de contenu), persisté DANS le
+// dossier du coffre — il suit les déplacements. C'est la référence qui
+// distingue « jamais existé ici » (pull autorisé) de « existait et a été
+// supprimé ici » (tombestone, jamais de résurrection).
+// SYNC-STATE HONNÊTE : l'état est TIMBRÉ par le chemin du coffre qu'il
+// décrit (rootPath). Un rootPath différent au chargement (dossier
 // reconnecté, migration du socle, changement de coffre) = l'état est jeté
 // à vide plutôt que cru — aucune suppression ne peut être propagée sur la
 // foi d'un état qui ne décrit pas ce coffre-ci.
@@ -81,11 +119,11 @@ type SyncState = {
   rootPath?: string | null;
 };
 
-// v0.4.58 — Hermes (Android) n'expose PAS `AbortSignal.timeout` (méthode
-// statique du DOM) : l'appeler levait « undefined is not a function » et
-// faisait échouer CHAQUE cycle de synchro sur Android. Helper qui renvoie
-// le signal quand il existe, sinon undefined (pas d'abandon — le délai
-// d'attente strict reste un chantier pour une polyfill dédiée).
+// Hermes (Android) n'expose PAS `AbortSignal.timeout` (méthode statique du
+// DOM) : l'appeler fait échouer CHAQUE cycle de synchro sur Android.
+// Helper qui renvoie le signal quand il existe, sinon undefined (pas
+// d'abandon — le délai d'attente strict reste un chantier pour une
+// polyfill dédiée).
 function abortAfter(ms: number): AbortSignal | undefined {
   const ctor = globalThis.AbortSignal as { timeout?: (ms: number) => AbortSignal } | undefined;
   return typeof ctor?.timeout === 'function' ? ctor.timeout(ms) : undefined;
@@ -96,9 +134,9 @@ async function loadSyncState(): Promise<SyncState> {
   try {
     const raw = await vault.readNote(SYNC_STATE_REL_PATH);
     const parsed = JSON.parse(raw) as Partial<SyncState>;
-    // v0.4.54 : jette les clés backslashed (résidus du bug de séparateurs
-    // desktop — elles ne matcheront plus jamais les chemins normalisés et
-    // ne doivent plus générer de tombestones fantômes).
+    // Jette les clés backslashed (résidus du bug de séparateurs desktop) :
+    // elles ne matcheront jamais les chemins normalisés et ne doivent pas
+    // générer de tombestones fantômes.
     const files: Record<string, string> = {};
     for (const [relPath, hash] of Object.entries(parsed.files ?? {})) {
       if (relPath.includes('\\')) continue;
@@ -116,7 +154,7 @@ async function saveSyncState(state: SyncState): Promise<void> {
   await vault.writeNote(SYNC_STATE_REL_PATH, JSON.stringify(state));
 }
 
-// Journal de synchronisation (v0.4.27) — voir journal.ts. Même pattern
+// Journal de synchronisation — voir journal.ts. Même pattern
 // read-modify-write que l'état de synchro ; best-effort (une écriture
 // ratée ne doit jamais faire échouer un cycle) ; borné par capJournalEntries.
 const SYNC_JOURNAL_REL_PATH = '.123ecriture/sync-journal.json';
@@ -144,7 +182,7 @@ export async function appendJournalEntries(entries: SyncJournalEntry[]): Promise
 
 // Longueur actuelle du journal — mémorisée AVANT d'écrire le début d'un
 // cycle, pour pouvoir le retirer intégralement s'il se termine sans la
-// moindre action (les cycles à vide ne laissent rien, demande utilisateur).
+// moindre action (les cycles à vide ne laissent rien).
 export async function journalLength(): Promise<number> {
   try {
     const { vault } = requireBridges();
@@ -172,11 +210,13 @@ export async function truncateJournalEntries(keepLength: number): Promise<void> 
 
 export const SYNC_JOURNAL_READ_PATH = SYNC_JOURNAL_REL_PATH;
 
+//////// 2. La liaison et le catalogue des coffres distants ////////////////
+
 // Clé d'objet Storage : <coffre>/<chemin encodé base64url>. L'encodage est
-// OBLIGATOIRE depuis v0.4.9 : Supabase Storage rejette les clés contenant
-// émojis/accents (« Invalid key » — vécu : 110 fichiers d'un coffre refusés
-// au push, donc jamais récupérables depuis un autre appareil). Voir
-// storageKeys.ts ; le chemin humain vit dans vault_files.rel_path.
+// OBLIGATOIRE : Supabase Storage rejette les clés contenant émojis/accents
+// (« Invalid key ») — un fichier refusé au push n'est jamais récupérable
+// depuis un autre appareil. Voir storageKeys.ts ; le chemin humain vit dans
+// vault_files.rel_path.
 function storageObjectPath(remoteVaultId: string, relPath: string): string {
   return `${remoteVaultId}/${vaultStorageObjectKey(relPath)}`;
 }
@@ -211,12 +251,11 @@ export async function linkVaultToCloud(
   return remoteVaultId;
 }
 
-// Marque l'ORIGINE d'un coffre distant (demande v0.4.13 : « voir les coffres
-// distants qui proviennent de mon ordinateur LORDI ») : le nom de l'appareil
-// CRÉATEUR, écrit une seule fois — la condition `is null` garantit qu'un
-// re-lien depuis une AUTRE machine (dossier recopié, réinstallation…) n'en
-// change pas la provenance. Best-effort : un échec ne bloque jamais la
-// liaison, l'origine restera simplement inconnue.
+// Marque l'ORIGINE d'un coffre distant : le nom de l'appareil CRÉATEUR,
+// écrit une seule fois — la condition `is null` garantit qu'un re-lien
+// depuis une AUTRE machine (dossier recopié, réinstallation…) n'en change
+// pas la provenance. Best-effort : un échec ne bloque jamais la liaison,
+// l'origine restera simplement inconnue.
 async function stampCreatedByDevice(
   client: NonNullable<typeof supabase>,
   remoteVaultId: string,
@@ -245,11 +284,11 @@ async function stampCreatedByDevice(
 // utilisée par la sync vit dans le registre local de chaque machine.
 // `devices` : appareils ayant synchronisé ce coffre (table vault_devices),
 // du plus récemment vu au plus ancien — la carte « Coffres distants »
-// affiche « qui » est connecté et quand (demande v0.4.10).
-// `createdByDevice` : appareil CRÉATEUR du coffre (v0.4.13) — d'où il
-// « provient », distinct de qui l'a synchronisé depuis.
-// `fileCount` : nombre de fichiers dans le coffre distant (v0.4.14) —
-// distinguer « vide, en attente de contenu » d'un coffre rempli.
+// affiche « qui » est connecté et quand.
+// `createdByDevice` : appareil CRÉATEUR du coffre — d'où il « provient »,
+// distinct de qui l'a synchronisé depuis.
+// `fileCount` : nombre de fichiers dans le coffre distant — distinguer
+// « vide, en attente de contenu » d'un coffre rempli.
 export type RemoteVaultSummary = {
   id: string;
   name: string;
@@ -260,8 +299,8 @@ export type RemoteVaultSummary = {
   fileCount: number;
 };
 
-// Crée un coffre distant DIRECTEMENT depuis le compte (v0.4.14 — modèle
-// « le coffre distant est une donnée du compte », pas d'un ordinateur) :
+// Crée un coffre distant DIRECTEMENT depuis le compte (modèle « le coffre
+// distant est une donnée du compte », pas d'un ordinateur) :
 // aucune liaison à un dossier local, l'origine est l'appareil courant et
 // `local_vault_id` porte un marqueur `account:` (il ne référence AUCUN
 // dossier — champ informatif, jamais utilisé pour le rattachement, qui vit
@@ -302,8 +341,8 @@ export async function createRemoteVault(name: string, ownerId: string): Promise<
 async function fetchDevicesByVault(): Promise<Map<string, RemoteVaultDevice[]>> {
   if (!supabase) return new Map();
   // select('*') plutôt qu'une liste nominative : les colonnes
-  // d'observabilité (v0.4.71) peuvent être absentes de la base tant que la
-  // migration n'est pas appliquée — une liste nominative échouerait.
+  // d'observabilité peuvent être absentes de la base tant que la migration
+  // n'est pas appliquée — une liste nominative échouerait.
   const { data, error } = await supabase
     .schema(APP_SCHEMA)
     .from(VAULT_DEVICES_TABLE)
@@ -361,9 +400,9 @@ export async function listRemoteVaults(): Promise<RemoteVaultSummary[]> {
   }));
 }
 
-// Renomme un vault distant (demande utilisateur : nommer les coffres
-// distants d'après leur contenu réel pour lever les ambiguïtés). Le nom est
-// cosmétique : l'id reste la clé de liaison et de Storage.
+// Renomme un vault distant — nommer les coffres distants d'après leur
+// contenu réel lève les ambiguïtés. Le nom est cosmétique : l'id reste la
+// clé de liaison et de Storage.
 export async function renameRemoteVault(remoteVaultId: string, name: string): Promise<void> {
   if (!supabase) throw new Error('Client Supabase non configuré (variables EXPO_PUBLIC_SUPABASE_* absentes).');
   const { error } = await supabase
@@ -394,13 +433,15 @@ async function fetchFileCountsByVault(): Promise<Map<string, number>> {
   return counts;
 }
 
+//////// 3. Les appareils : heartbeat, verrou à distance, disjoncteur //////
+
 // Heartbeat « appareil connecté » : upsert d'une ligne vault_devices à chaque
 // synchro réussie du coffre par CET appareil (identité stable du pont —
 // hostname sur desktop, « Navigateur » sur web). Best-effort assumé : un
 // échec (table absente, offline) est loggé mais ne fait PAS échouer la
 // synchro ni apparaître d'erreur — le suivi d'appareils ne doit jamais
 // casser la synchronisation des fichiers elle-même.
-// v0.4.71 — colonnes d'observabilité ABSENTES tant que la migration
+// Colonnes d'observabilité ABSENTES tant que la migration
 // supabase/migrations/20261017120000_vault_devices_observability.sql n'a pas
 // été appliquée : une seule tentative enrichie par session, puis repli
 // définitif sur l'upsert historique (jamais de bruit à chaque cycle).
@@ -434,8 +475,7 @@ async function heartbeatDevice(remoteVaultId: string, ownerId: string, summary?:
       device_name: info.name,
       last_seen_at: new Date().toISOString(),
     };
-    // v0.4.71 — OBSERVABILITÉ (« donner des yeux au vault », demande de
-    // l'utilisatrice) : version de l'app + résumé du dernier cycle, visibles
+    // OBSERVABILITÉ : version de l'app + résumé du dernier cycle, visibles
     // par TOUS les appareils sur la carte « Appareils connectés ».
     if (summary && !colonnesObservabiliteAbsentes) {
       const { error } = await supabase
@@ -468,14 +508,12 @@ async function heartbeatDevice(remoteVaultId: string, ownerId: string, summary?:
   }
 }
 
-// v0.4.72 — VERROU À DISTANCE (demande de Catelina : « contrôle à distance
-// sur les connexions des appareils au vault distant … pour des cas
-// d'urgence »). Les colonnes locked/lock_reason/locked_at de vault_devices
-// (migration 20261017200000) permettent de STOPPER un appareil devenu
-// dangereux (état périmé, boucle, coffre mal reconnecté) depuis n'importe
-// quel autre appareil du coffre — ou directement en SQL/API par un
-// opérateur. Un appareil verrouillé n'exécute PLUS AUCUN cycle cloud ; son
-// coffre local continue hors ligne, zéro perte de données.
+// VERROU À DISTANCE : les colonnes locked/lock_reason/locked_at de
+// vault_devices (migration 20261017200000) permettent de STOPPER un appareil
+// devenu dangereux (état périmé, boucle, coffre mal reconnecté) depuis
+// n'importe quel autre appareil du coffre — ou directement en SQL/API par
+// un opérateur. Un appareil verrouillé n'exécute PLUS AUCUN cycle cloud ;
+// son coffre local continue hors ligne, zéro perte de données.
 let colonnesVerrouAbsentes = false;
 
 async function fetchMyDeviceLock(remoteVaultId: string): Promise<{ locked: boolean; reason: string | null }> {
@@ -503,8 +541,8 @@ async function fetchMyDeviceLock(remoteVaultId: string): Promise<{ locked: boole
 }
 
 // Pose/lève le verrou d'urgence d'un appareil — appelé par la carte
-// « Appareils connectés » (Batch C) ; utilisable aussi par un opérateur via
-// l'API REST (UPDATE vault_devices SET locked=true). Erreur retournée à
+// « Appareils connectés » ; utilisable aussi par un opérateur via l'API
+// REST (UPDATE vault_devices SET locked=true). Erreur retournée à
 // l'appelant (l'UI l'affiche).
 export async function setDeviceRemoteLock(
   remoteVaultId: string,
@@ -527,7 +565,7 @@ export async function setDeviceRemoteLock(
 }
 
 // Lève le disjoncteur (après revue humaine) — appelé par l'écran de revue
-// (Paramètres → Journal de synchronisation, Batch C).
+// (Paramètres → Journal de synchronisation).
 export async function clearSyncBlock(): Promise<void> {
   const { vault } = requireBridges();
   const review = await loadPendingReview(vault).catch(() => ({}) as PendingReview);
@@ -536,14 +574,15 @@ export async function clearSyncBlock(): Promise<void> {
   await savePendingReview(vault, review);
 }
 
-// v0.4.55 — PAGINATION OBLIGATOIRE : l'API REST de Supabase plafonne toute
-// réponse à 1000 lignes. Sur les gros coffres (EPANOUISSEMENT : 1600+ lignes
-// vault_files), la liste distante était TRANCHÉE — les fichiers au-delà du
-// plafond disparaissaient de `remoteByPath` à CHAQUE cycle, le diff les
-// croyait nouveaux et les repoussait in finitum (« bloquage » : 572 fichiers
-// re-poussés à chaque cycle, jamais convergés). On boucle par pages de 1000
-// (ordre stable par rel_path) jusqu'à une page incomplète, avec un signal
-// d'abandon pour ne jamais rester suspendu sur une connexion muette.
+//////// 4. La lecture du cloud : pagination et téléchargements ////////////
+
+// PAGINATION OBLIGATOIRE : l'API REST de Supabase plafonne toute réponse à
+// 1000 lignes. Sans pagination, la liste distante d'un gros coffre est
+// TRANCHÉE — les fichiers au-delà du plafond disparaissent de `remoteByPath`
+// à CHAQUE cycle, le diff les croit nouveaux et les repousse in finitum
+// (jamais de convergence). On boucle par pages de 1000 (ordre stable par
+// rel_path) jusqu'à une page incomplète, avec un signal d'abandon pour ne
+// jamais rester suspendu sur une connexion muette.
 const REMOTE_FILES_PAGE_SIZE = 1000;
 const REMOTE_FETCH_TIMEOUT_MS = 60_000;
 
@@ -573,12 +612,12 @@ async function fetchRemoteFiles(remoteVaultId: string): Promise<RemoteVaultFile[
   }
   return rows.map((row) => ({
     // Le desktop Windows pousse des relPaths à séparateurs `\` — normalisés
-    // en `/` ici, sinon le pull aplatissait les sous-dossiers en fichiers à
+    // en `/` ici, sinon le pull aplatit les sous-dossiers en fichiers à
     // racine (Android refuse les `\` dans les noms) et aucun chemin ne
-    // correspondait entre le hash local et les lignes distantes.
+    // correspond entre le hash local et les lignes distantes.
     relPath: (row.rel_path as string).replace(/\\/g, '/'),
-    // v0.4.54 : forme BRUTE conservée pour la purge des jumeaux backslashed
-    // (la mise à jour doit viser la clé exacte en base, pas la normalisée).
+    // Forme BRUTE conservée : repérer les lignes backslashed et viser la
+    // clé exacte en base, pas la normalisée.
     rawRelPath: row.rel_path as string,
     contentHash: row.content_hash as string,
     sizeBytes: row.size_bytes as number,
@@ -589,13 +628,13 @@ async function fetchRemoteFiles(remoteVaultId: string): Promise<RemoteVaultFile[
 }
 
 // Télécharge le contenu d'une note. Priorité à la clé ENREGISTRÉE dans
-// vault_files (storage_object_path) : les fichiers poussés avant v0.4.9
-// sous leur nom brut restent ainsi téléchargeables ; la clé recalculée ne
-// sert qu'aux lignes qui n'en auraient pas.
+// vault_files (storage_object_path) : les fichiers poussés sous leur nom
+// brut restent ainsi téléchargeables ; la clé recalculée ne sert qu'aux
+// lignes qui n'en auraient pas.
 // ⚠️ `Blob.text()` n'existe pas sur le Blob polyfillé de React Native :
-// chaque pull levait « undefined is not a function » (v0.4.41-fix4, sur
-// TOUT fichier tiré du cloud). FileReader lit le blob en texte UTF-8 sur
-// toutes les plateformes (navigateur, Electron, Hermes).
+// chaque pull lèverait « undefined is not a function » sur TOUT fichier
+// tiré du cloud. FileReader lit le blob en texte UTF-8 sur toutes les
+// plateformes (navigateur, Electron, Hermes).
 async function blobToText(data: Blob): Promise<string> {
   if (typeof data.text === 'function') return data.text();
   return new Promise<string>((resolve, reject) => {
@@ -606,16 +645,16 @@ async function blobToText(data: Blob): Promise<string> {
   });
 }
 
-// ---- PIÈCES JOINTES BINAIRES (v0.4.66 — « gestion des fichiers joints »)
+//////// 5. Les pièces jointes binaires : MIME et base64 ///////////////////
+
 // Images/PDF/audio : transport en base64 via les ponts binaires ; la liste
 // des extensions est SYNC_ATTACHMENT_EXTENSIONS (nativeVaultAdapter).
 const MAX_ATTACHMENT_ALERT_BYTES = 25 * 1024 * 1024;
 
-// v0.4.72 — le drapeau « relancer une fois pour confirmer » (massiveDelete
-// Confirmed) est SUPPRIMÉ : une confirmation de suppression massive ne peut
-// plus arriver par un simple second cycle. Toute liste suspecte part en
-// REVUE MANUELLE (pendingReview.ts) et n'est appliquée que par une action
-// humaine explicite (demande de Catelina : « JAMAIS de façon silencieuse »).
+// Aucune confirmation de suppression massive par un simple second cycle :
+// toute liste suspecte part en REVUE MANUELLE (pendingReview.ts) et n'est
+// appliquée que par une action humaine explicite — jamais de façon
+// silencieuse.
 
 // Mémoire du dernier signalement backslash (un seul journal par valeur).
 let lastBackslashReport = -1;
@@ -719,9 +758,9 @@ async function downloadRemoteText(remoteVaultId: string, relPath: string, object
   // ⚠️ Sur NATIF, ne PAS passer par storage.download() : supabase-js le
   // fait transiter par expo/fetch, qui tamponne TOUTE la réponse en
   // mémoire Java (DirectByteBuffer) — OutOfMemoryError natif au bout de
-  // quelques fichiers, mort du processus (vécu : « la synchro charge
-  // indéfiniment », fix4/fix5). Téléchargement DIRECT vers un fichier de
-  // cache (okhttp → disque, zéro tampon JS/Java), lecture, nettoyage.
+  // quelques fichiers, mort du processus. Téléchargement DIRECT vers un
+  // fichier de cache (okhttp → disque, zéro tampon JS/Java), lecture,
+  // nettoyage.
   if (Platform.OS !== 'web') {
     const { data: sessionData } = await client.auth.getSession();
     const token = sessionData.session?.access_token;
@@ -746,20 +785,22 @@ async function downloadRemoteText(remoteVaultId: string, relPath: string, object
   return blobToText(data);
 }
 
+//////// 6. Le push, le pull et les bases de fusion ////////////////////////
+
 async function pushFile(
   remoteVaultId: string,
   ownerId: string,
   note: LocalHashedNote,
   journal: SyncJournalEntry[] = [],
-  // v0.4.72 — version distante précédente (texte) : permet de journaliser le
+  // Version distante précédente (texte) : permet de journaliser le
   // CHANGEMENT (+ajoutés / −supprimés / total) au lieu d'un « envoyé »
   // aveugle. null/undefined = fichier nouveau ou statistique indisponible.
   previousRemoteContent?: string | null,
 ): Promise<void> {
   const { supabase: client, vault } = requireBridges();
-  // v0.4.54 : défense en profondeur — quel que soit le pont, le chemin
-  // poussé au cloud est TOUJOURS en slashes POSIX (un backslashed créait
-  // un doublon cloud jamais matché, cassant tombestones et pulls).
+  // Défense en profondeur — quel que soit le pont, le chemin poussé au
+  // cloud est TOUJOURS en slashes POSIX (un backslashed crée un doublon
+  // cloud jamais matché, cassant tombestones et pulls).
   const relPath = note.relPath.split('\\').join('/');
   let uploadBody: string | Uint8Array;
   let uploadContentType: string;
@@ -800,14 +841,14 @@ async function pushFile(
     );
   if (upsertError) throw upsertError;
 
-  // v0.4.72 — JOURNAL « MODIFICATION » (demande Catelina : le journal raconte
-  // le changement, pas un « envoyé » aveugle). Best-effort : un échec de
-  // statistique n'est JAMAIS un échec de push. Les binaires gardent
-  // l'entrée « push » simple (pas de comparaison de texte).
-  // v0.4.81 — §13 : un push dont le chemin vit sous `.trash/` est le
-  // CONTINU d'un déplacement en corbeille (la corbeille est synchronisée) :
-  // il se raconte « Corbeille : … » — jamais « Modifié : … », sinon le
-  // même geste se lisait « supprimé PUIS modifié » sur le même fichier.
+  // JOURNAL « MODIFICATION » : le journal raconte le changement, pas un
+  // « envoyé » aveugle. Best-effort : un échec de statistique n'est JAMAIS
+  // un échec de push. Les binaires gardent l'entrée « push » simple (pas de
+  // comparaison de texte).
+  // Un push dont le chemin vit sous `.trash/` est le CONTINU d'un
+  // déplacement en corbeille (la corbeille est synchronisée) : il se
+  // raconte « Corbeille : … » — jamais « Modifié : … », sinon le même geste
+  // se lit « supprimé PUIS modifié » sur le même fichier.
   if (isBinaryAttachmentRelPath(relPath)) {
     journal.push(
       makeJournalEntry(relPath.startsWith('.trash/') ? 'corbeille' : 'push', { path: relPath }),
@@ -828,8 +869,8 @@ async function pushFile(
     }
   }
 
-  // Alerte VOLUMINEUX (v0.4.66 — choix de l'utilisatrice : sans limite de
-  // taille, mais signalée au-delà de 25 Mo dans le journal de synchro).
+  // Alerte VOLUMINEUX : pièces jointes sans limite de taille, mais
+  // signalées au-delà de 25 Mo dans le journal de synchro.
   if (isBinaryAttachmentRelPath(relPath) && note.sizeBytes > MAX_ATTACHMENT_ALERT_BYTES) {
     journal.push(
       makeJournalEntry('push', {
@@ -839,8 +880,8 @@ async function pushFile(
     );
   }
 
-  // Base de fusion (v0.4.29) : la version qui vient d'être acceptée des deux
-  // côtés servira de référentiel au prochain conflit (fusion à trois voix
+  // Base de fusion : la version qui vient d'être acceptée des deux côtés
+  // servira de référentiel au prochain conflit (fusion à trois voix
   // diff-match-patch). Best-effort : une base manquante fait retomber le
   // conflit sur le comportement gagnant/perdant archivé.
   if (typeof uploadBody === 'string') {
@@ -850,7 +891,7 @@ async function pushFile(
 
 async function pullFile(remoteVaultId: string, relPath: string, objectPath?: string): Promise<void> {
   const { vault } = requireBridges();
-  // Pièces jointes BINAIRES (v0.4.66) : transport base64 via les ponts
+  // Pièces jointes BINAIRES : transport base64 via les ponts
   // readNoteBinary/writeNoteBinary ; pas de base de fusion (jamais de
   // fusion binaire — les conflits retombent sur gagnant/perdant).
   if (isBinaryAttachmentRelPath(relPath)) {
@@ -866,7 +907,7 @@ async function pullFile(remoteVaultId: string, relPath: string, objectPath?: str
   await saveSyncBase(relPath, content);
 }
 
-// Bases de fusion (v0.4.29) : dernière version SYNCHRONISÉE de chaque
+// Bases de fusion : dernière version SYNCHRONISÉE de chaque
 // fichier, stockée hors arbre synchronisé (`.123ecriture/bases/<clé>` —
 // même encodage base64url que les clés Storage, un fichier par note).
 // C'est le « base » de la fusion à trois voix : sans elle, impossible de
@@ -895,15 +936,16 @@ async function loadSyncBase(relPath: string): Promise<string | null> {
   }
 }
 
+//////// 7. Les conflits : archivage, corbeille, fusion à trois voix ///////
+
 // Écrit le côté PERDANT d'un conflit AVANT de l'écraser — jamais de perte
-// silencieuse. v0.4.26 : sous `.123ecriture/conflits/<horodatage>/…` — un
-// dossier caché, donc HORS de l'arbre synchronisé. Avant, la copie était un
-// fichier normal dans le coffre : elle se synchronisait comme n'importe
-// quelle note, et un appareil en retard la REPOUSSAIT comme contenu actif
-// après une suppression — ressuscitant en boucle des fichiers supprimés
-// (« copies (conflit …) » revenues sans cesse, vécu). Le contenu reste
-// récupérable sur l'appareil qui a tranché le conflit, sans polluer le
-// coffre ni la synchro.
+// silencieuse. Sous `.123ecriture/conflits/<horodatage>/…` : un dossier
+// caché, donc HORS de l'arbre synchronisé. Il FAUT que la copie reste hors
+// arbre — un fichier normal du coffre se synchronise comme n'importe quelle
+// note, et un appareil en retard le REPOUSSE comme contenu actif après une
+// suppression, ressuscitant en boucle des fichiers supprimés. Le contenu
+// reste récupérable sur l'appareil qui a tranché le conflit, sans polluer
+// le coffre ni la synchro.
 async function backupLosingSide(relPath: string, content: string): Promise<void> {
   const { vault } = requireBridges();
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -912,8 +954,8 @@ async function backupLosingSide(relPath: string, content: string): Promise<void>
 }
 
 // Restaure un fichier depuis la corbeille synchronisée `.trash/` vers son
-// chemin d'origine (v0.4.26). Le chemin d'origine est lu dans la structure
-// miroir de la corbeille (`.trash/A/B.md` → `A/B.md`). Étapes :
+// chemin d'origine. Le chemin d'origine est lu dans la structure miroir de
+// la corbeille (`.trash/A/B.md` → `A/B.md`). Étapes :
 // 1) déplacement local (vault.set-path, avec dédoublonnage « 2 », « 3 » si
 //    un fichier plus récent occupe déjà la place) ;
 // 2) SUPPRESSION de la ligne tombestone distale (hard DELETE, pas un
@@ -985,17 +1027,17 @@ export async function restoreFromTrash(
   return moved.relPath;
 }
 
-// Tentative de fusion à trois voix d'un conflit (v0.4.29, diff-match-patch
-// comme Obsidian Sync). Retourne le hash du fichier FUSIONNÉ écrit et
-// poussé si le conflit est RÉSOLU par fusion : les deux versions sont
+// Tentative de fusion à trois voix d'un conflit (diff-match-patch, comme
+// Obsidian Sync). Retourne le hash RÉEL du fichier FUSIONNÉ re-haché après
+// écriture si le conflit est RÉSOLU par fusion : les deux versions sont
 // réunies (modifications de parties différentes), écrites localement ET
-// poussées — les deux appareils convergent. Retourne null quand il n'y a
-// pas de base de fusion ou que les modifications se chevauchent réellement
-// : l'appelant retombe sur le comportement gagnant/perdant archivé d'avant.
-// (v0.4.81 : le retour est le hash RÉEL du fichier fusionné re-haché —
-// l'appelant en enregistre la référence dans le sync-state, sinon le cycle
-// suivant re-détectait la divergence déjà résolue et re-annonçait le
-// conflit, boucle systématique du 18/10, §12.2 du journal d'incidents.)
+// poussées — les deux appareils convergent. L'appelant enregistre ce hash
+// dans le sync-state : enregistrer autre chose que le hash du fichier
+// réellement écrit fait re-détecter au cycle suivant une divergence déjà
+// résolue et re-annoncer le conflit, en boucle. Retourne null quand il
+// n'y a pas de base de fusion ou que les modifications se chevauchent
+// réellement : l'appelant retombe sur le comportement gagnant/perdant
+// archivé.
 async function attemptConflictMerge(
   remoteVaultId: string,
   ownerId: string,
@@ -1017,7 +1059,7 @@ async function attemptConflictMerge(
   }
   const merged = tryThreeWayMerge(base, local, remote);
   if (merged.kind !== 'merged') return null;
-  // Garde JSON (v0.4.65) : les métadonnées synchronisées sont du JSON
+  // Garde JSON : les métadonnées synchronisées sont du JSON
   // (tasks/tasklists/preferences) — une fusion par caractères peut produire
   // du texte inanalysable. Si le résultat ne se parse pas, on retombe sur
   // le comportement gagnant/perdant plutôt que d'écrire un fichier cassé.
@@ -1044,25 +1086,25 @@ async function attemptConflictMerge(
   return note.contentHash;
 }
 
-// v0.4.81 — horodatage de la dernière annonce « connexion » (anti-spam :
-// une seule annonce par session, ou après ≥5 min sans cycle).
+//////// 8. runSync : résolution du coffre et gardes d'entrée //////////////
+
+// Horodatage de la dernière annonce « connexion » (anti-spam : une seule
+// annonce par session, ou après ≥5 min sans cycle).
 let lastConnexionAnnouncedAt = 0;
 
 // Lance une synchro complète (push + pull + résolution de conflit) pour le
-// coffre ACTIF (v0.4.28). `trigger` (v0.4.27) alimente le journal : d'où
-// vient ce cycle (« manuel », « automatique (60 s) », « surveillance du
-// dossier », « retour à l'app », « démarrage »).
+// coffre ACTIF. `trigger` alimente le journal : d'où vient ce cycle
+// (« manuel », « automatique (60 s) », « surveillance du dossier »,
+// « retour à l'app », « démarrage »).
 //
-// v0.4.28 — COHÉRENCE STRUCTURELLE : l'identifiant du coffre distant n'est
-// plus un paramètre venu du renderer (latestRef mis à jour dans un effet
-// React) mais est DÉDUIT ICI du coffre actif via le pont (getActive +
-// registre), exactement comme le dossier haché et toutes les opérations
-// fichiers (elles opèrent par construction sur le coffre actif). La fenêtre
-// de course qui croisait « distant du coffre A » avec « dossier du coffre
-// B » lors d'une bascule immédiatement suivie d'une synchro — la
-// contamination croisée vécue les 19-20/09 — devient impossible : le
-// moteur peut au pire synchroniser l'ANCIEN coffre actif un cycle de trop,
-// jamais deux coffres entremêlés.
+// COHÉRENCE STRUCTURELLE : l'identifiant du coffre distant est DÉDUIT ICI
+// du coffre actif via le pont (getActive + registre), exactement comme le
+// dossier haché et toutes les opérations fichiers (elles opèrent par
+// construction sur le coffre actif) — jamais un paramètre venu du renderer.
+// Sans cela, une bascule de coffre immédiatement suivie d'une synchro croise
+// « distant du coffre A » avec « dossier du coffre B » : le moteur peut au
+// pire synchroniser l'ANCIEN coffre actif un cycle de trop, jamais deux
+// coffres entremêlés.
 export async function runSync(ownerId: string, trigger = 'automatique'): Promise<SyncSummary> {
   const summary: SyncSummary = { pushed: 0, pulled: 0, deleted: 0, trashed: 0, conflicts: 0, errors: [] };
   let bridges;
@@ -1087,12 +1129,10 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   }
   const remoteVaultId = activeEntry.remoteVaultId;
 
-  // v0.4.74 — GARDE « AUCUN COFFRE LOCAL ACTIF » (vécu 17/10 18:34 : 911
-  // pulls en échec « Aucun coffre sélectionné » + disjoncteur ouvert sur le
-  // téléphone alors que la registry connaissait un coffre lié) : sans coffre
-  // LOCAL actif et résolvable, il n'y a rien à afficher ni où écrire — le
-  // cycle est refusé avec un message qui dit quoi faire, au lieu de 911
-  // erreurs.
+  // GARDE « AUCUN COFFRE LOCAL ACTIF » : sans coffre LOCAL actif et
+  // résolvable, il n'y a rien à afficher ni où écrire — le cycle est refusé
+  // avec un message qui dit quoi faire, au lieu d'une rafale de pulls en
+  // échec.
   try {
     const activeLocalPath = await bridges.vault.getCurrentPath?.();
     if (!activeLocalPath) {
@@ -1107,13 +1147,13 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
       return summary;
     }
   } catch {
-    // Pont sans getCurrentPath (vieille version) : comportement historique.
+    // Pont sans getCurrentPath (vieux pont) : on laisse passer le cycle.
   }
 
-  // v0.4.72 — DISJONCTEUR DE SYNCHRO (angle mort signalé par Catelina) :
-  // si le cycle PRÉCÉDENT s'est terminé en rafale d'erreurs, « Synchroniser »
-  // est REFUSÉ d'office — on ne resynchronise jamais par-dessus un appareil
-  // en échec. La levée est manuelle (revue, ou opérateur via le fichier).
+  // DISJONCTEUR DE SYNCHRO : si le cycle PRÉCÉDENT s'est terminé en rafale
+  // d'erreurs, « Synchroniser » est REFUSÉ d'office — on ne resynchronise
+  // jamais par-dessus un appareil en échec. La levée est manuelle (revue,
+  // ou opérateur via le fichier).
   const pendingReview = await loadPendingReview(bridges.vault).catch(() => ({}) as PendingReview);
   if (pendingReview.syncBlocked) {
     const blocked = pendingReview.syncBlocked;
@@ -1130,7 +1170,7 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
     return summary;
   }
 
-  // v0.4.72 — VERROU À DISTANCE : si CET appareil a été verrouillé (carte
+  // VERROU À DISTANCE : si CET appareil a été verrouillé (carte
   // « Appareils connectés » d'un autre appareil, ou SQL/API d'urgence),
   // AUCUN cycle cloud ne s'exécute ici — le coffre local continue hors
   // ligne, zéro perte, tant que le verrou n'est pas levé.
@@ -1146,27 +1186,25 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
     return summary;
   }
 
-  // Verrou ANTI-BASCULE (v0.4.54 — cause racine du mélange de coffres) :
-  // le bucket distant est capturé ICI, mais chaque opération locale
-  // (hachage, lecture, écriture, suppression) relit le coffre ACTIF au
-  // moment de son IPC. Si le coffre actif change pendant le cycle, le
-  // contenu de A partait dans le bucket de B et le cloud de A s'écrivait
-  // sur le disque de B — c'est exactement le mélange vécu. Pendant le
-  // cycle, `vaults:switch` est donc REFUSÉ par le main process (TTL de
-  // 10 min : un crash du renderer ne bloque pas l'app pour toujours).
+  // Verrou ANTI-BASCULE : le bucket distant est capturé ICI, mais chaque
+  // opération locale (hachage, lecture, écriture, suppression) relit le
+  // coffre ACTIF au moment de son IPC. Si le coffre actif change pendant le
+  // cycle, le contenu de A part dans le bucket de B et le cloud de A
+  // s'écrit sur le disque de B. Pendant le cycle, `vaults:switch` est donc
+  // REFUSÉ par le main process (TTL de 10 min : un crash du renderer ne
+  // bloque pas l'app pour toujours).
   await bridges.sync.setVaultLock?.(true);
 
-  // Le journal PROGRESSIF (demande utilisateur : raconter comme Obsidian
-  // Sync — « connexion au serveur », « upload en cours », « upload terminé »)
-  // : la connexion s'écrit immédiatement, les étapes au fil de l'eau. SI le
-  // cycle ne produit AUCUNE action (aucun changement), il est RETIRÉ du
-  // journal à la fin : un cycle à vide ne laisse rien (pas de spam de
-  // « 0 envoyée(s) » à chaque minute — demande utilisateur explicite).
-  // v0.4.81 — ANTI-SPAM : « connexion » n'est annoncé qu'à la VRAIE
-  // reprise (démarrage de l'app, reconnexion après ≥5 min sans cycle) —
-  // les cycles de surveillance d'un même run ne ré-annoncent plus la
-  // connexion à chaque fois (vécu : « la connexion au serveur se fait sans
-  // aucune raison toutes les 2 minutes »).
+  // Le journal PROGRESSIF raconte le cycle comme Obsidian Sync (« connexion
+  // au serveur », « upload en cours », « upload terminé ») : la connexion
+  // s'écrit immédiatement, les étapes au fil de l'eau. SI le cycle ne
+  // produit AUCUNE action (aucun changement), il est RETIRÉ du journal à la
+  // fin : un cycle à vide ne laisse rien (pas de spam de « 0 envoyée(s) » à
+  // chaque minute).
+  // ANTI-SPAM : « connexion » n'est annoncé qu'à la VRAIE reprise
+  // (démarrage de l'app, reconnexion après ≥5 min sans cycle) — les cycles
+  // de surveillance d'un même run ne ré-annoncent pas la connexion à
+  // chaque fois.
   const journal: SyncJournalEntry[] = [];
   if (Date.now() - lastConnexionAnnouncedAt > 5 * 60_000) {
     journal.push(makeJournalEntry('connexion'));
@@ -1180,13 +1218,12 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
     loadSyncState(),
   ]);
 
-  // v0.4.76 — SYNC-STATE HONNÊTE : l'état ne vaut que pour LE dossier qu'il
-  // décrit. Un rootPath différent (dossier reconnecté, migration du socle,
+  // SYNC-STATE HONNÊTE : l'état ne vaut que pour LE dossier qu'il décrit.
+  // Un rootPath différent (dossier reconnecté, migration du socle,
   // changement de coffre) = l'état est JETÉ à vide : aucune suppression ne
   // sera propagée avant qu'un premier cycle complet ait reconstruit la
-  // vérité depuis le disque et le cloud. (Angle mort du 17/10 : reconnecté
-  // sur l'ancien dossier avec un état périmé, le moteur « savait » des
-  // choses fausses.)
+  // vérité depuis le disque et le cloud — sinon le moteur « sait » des
+  // choses fausses.
   const vaultRootPath = (await bridges.vault.getCurrentPath?.()) ?? null;
   if (syncState.rootPath && syncState.rootPath !== vaultRootPath) {
     syncState.files = {};
@@ -1197,21 +1234,20 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
     );
   }
   syncState.rootPath = vaultRootPath;
-  // v0.4.54 : défense en profondeur — les relPaths locaux sont ramenés en
-  // slashes POSIX quel que soit le pont (le scan desktop produisait des `\`
-  // sur Windows : 1577 doublons cloud, tombestones jamais envoyées,
-  // résurrections en boucle — voir le fix à la source dans sync.ts).
+  // Défense en profondeur : les relPaths locaux sont ramenés en slashes
+  // POSIX quel que soit le pont — un relPath backslashed crée des doublons
+  // cloud jamais matchés, des tombestones jamais envoyées et des
+  // résurrections en boucle (le fix à la source vit dans sync.ts).
   const localFiles = (await bridges.sync.hashVaultTree()).map((note) => ({
     ...note,
     relPath: note.relPath.split('\\').join('/'),
   }));
-  // v0.4.71 — PÉRIODE DE SILENCE « FICHIER OUVERT » (demande de
-  // l'utilisatrice, incident §9 du journal) : un fichier modifié il y a
-  // moins de 60 s est peut-être OUVERT dans un éditeur (l'app, Obsidian…) —
-  // il sort du cycle : pas de push, pas d'écrasement par le pull, pas
+  // PÉRIODE DE SILENCE « FICHIER OUVERT » : un fichier modifié il y a moins
+  // de 60 s est peut-être OUVERT dans un éditeur (l'app, Obsidian…) — il
+  // sort du cycle : pas de push, pas d'écrasement par le pull, pas
   // d'archivage en conflit. Le cycle suivant, une fois le fichier
-  // silencieux (quitté, frappe arrêtée), le synchronise normalement. Fini
-  // le « conflit à chaque frappe » pendant l'écriture.
+  // silencieux (quitté, frappe arrêtée), le synchronise normalement —
+  // sinon, conflit à chaque frappe pendant l'écriture.
   const { cold: localFilesCold, hotPaths } = splitEditHot(localFiles, Date.now());
   if (hotPaths.size > 0) {
     journal.push(
@@ -1223,19 +1259,19 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   const localByPath = new Map(localFilesCold.map((note) => [note.relPath, note]));
   const localPaths = new Set(localFilesCold.map((note) => note.relPath));
 
-  // ---- SUPPRESSIONS (v0.4.17, orchestration v0.4.22) --------------------
-  // ORDRE CRITIQUE, appris du bug de résurrection : une ligne deleted=true
-  // (ou qu'on vient de tombestoner) est INTERDITE de pull ET de push pour
-  // tout le cycle — sinon le diff, calculé sur une liste distante périmée,
-  // retélécharge le fichier qu'on vient de déclarer mort, puis le repousse
-  // (upsert deleted:false), le ressuscitant à jamais.
-  // 1bis) LIGNES RÉSIDUELLES BACKSLASHED — v0.4.74 (demande de Catelina :
-  // « des purges qui viennent tout seuls sans explications ») : PLUS AUCUNE
-  // purge automatique. Ces lignes impossibles (résidus du bug de
-  // séparateurs v0.4.54) sont simplement IGNORÉES : hors du diff, hors des
-  // décisions, hors du comptage — elles ne peuvent plus rien casser. Leur
-  // nettoyage devient un geste MANUEL (revue/SQL par l'utilisatrice ou
-  // l'assistant), signalé une seule fois quand leur nombre change.
+//////// 9. runSync : les suppressions — tombestones et revue //////////////
+
+  // ---- SUPPRESSIONS -----------------------------------------------------
+  // ORDRE CRITIQUE : une ligne deleted=true (ou qu'on vient de tombestoner)
+  // est INTERDITE de pull ET de push pour tout le cycle — sinon le diff,
+  // calculé sur une liste distante périmée, retélécharge le fichier qu'on
+  // vient de déclarer mort, puis le repousse (upsert deleted:false), le
+  // ressuscitant à jamais.
+  // 1bis) LIGNES RÉSIDUELLES BACKSLASHED : aucune purge automatique. Ces
+  // lignes impossibles (résidus du bug de séparateurs) sont simplement
+  // IGNORÉES : hors du diff, hors des décisions, hors du comptage — elles
+  // ne peuvent plus rien casser. Leur nettoyage est un geste MANUEL
+  // (revue/SQL), signalé une seule fois quand leur nombre change.
   const backslashedRows = remoteFiles.filter((file) => (file.rawRelPath ?? '').includes('\\'));
   if (backslashedRows.length > 0 && backslashedRows.length !== lastBackslashReport) {
     lastBackslashReport = backslashedRows.length;
@@ -1254,15 +1290,14 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   );
 
   // 1) Supprimés LOCALEMENT depuis le dernier cycle -> tombestones distantes.
-  // GARDE ANTI-SUPPRESSION MASSIVE (v0.4.66, durci v0.4.72) : un appareil
-  // dont le contenu local est incomplet (pull partiel, coffre fraîchement
-  // reconnecté, permission SAF perdue, panne de disque) déclare « supprimés »
-  // TOUS les fichiers qu'il n'a pas — et vide le cloud ET les autres appareils
-  // (vécu WORLDBUILDING 15/10/2026 : 2000 fichiers). v0.4.72 (demande
-  // Catelina) : plus JAMAIS de confirmation par « relancer une fois » — la
-  // liste suspecte part en REVUE MANUELLE (pending-review.json dans le
-  // coffre) et le cycle se termine sans supprimer. La levée se fait par une
-  // action humaine explicite depuis l'écran de revue.
+  // GARDE ANTI-SUPPRESSION MASSIVE : un appareil dont le contenu local est
+  // incomplet (pull partiel, coffre fraîchement reconnecté, permission SAF
+  // perdue, panne de disque) déclarerait « supprimés » TOUS les fichiers
+  // qu'il n'a pas — et viderait le cloud ET les autres appareils. La liste
+  // suspecte part donc en REVUE MANUELLE (pending-review.json dans le
+  // coffre) et le cycle se termine sans supprimer ; jamais de confirmation
+  // par un simple « relancer une fois ». La levée se fait par une action
+  // humaine explicite depuis l'écran de revue.
   const locallyDeleted = computeLocalDeletions(syncState.files, localPaths);
   if (isMassiveDeletion(locallyDeleted.length, localFiles.length)) {
     const review: PendingReview = {
@@ -1279,12 +1314,11 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   } else {
     for (const relPath of locallyDeleted) {
       try {
-        // v0.4.77 — REVÉRIFICATION DIRECTE AVANT TOUTE TOMBSTONE (vécu
-        // 18/10 : « Projet L'Enchanteresse » et « Secrets » déclarés
-        // supprimés pendant leur édition — un parcours avait manqué le
-        // fichier et les AUTRES appareils l'avaient effacé). Si le fichier
-        // RÉPOND à une lecture directe, il existe : le parcours s'est
-        // trompé, on ne détruit rien et on le signale.
+        // REVÉRIFICATION DIRECTE AVANT TOUTE TOMBSTONE : un parcours peut
+        // manquer un fichier (édité pendant le scan). Si le fichier RÉPOND
+        // à une lecture directe, il existe : le parcours s'est trompé, on
+        // ne détruit rien et on le signale — sinon les AUTRES appareils
+        // effacent un fichier vivant.
         try {
           await bridges.vault.readNote(relPath);
           journal.push(
@@ -1324,13 +1358,11 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
     }
   }
 
-  // 2) Tombestones distantes — PROPAGATION NORMALE (décision Catelina du
-  //    17/10 : « propagation normale », les purges automatiques étant
-  //    supprimées à part) — application locale CONSERVATRICE
-  //    (remoteDeletionAction) : un fichier jamais apporté par la synchro
-  //    n'est jamais effacé, un fichier modifié laisse une copie
-  //    « (conflit …) » avant de partir. v0.4.66 : l'élagueur de dossiers
-  //    parents vides est conservé.
+  // 2) Tombestones distantes — PROPAGATION NORMALE, application locale
+  //    CONSERVATRICE (remoteDeletionAction) : un fichier jamais apporté par
+  //    la synchro n'est jamais effacé, un fichier modifié laisse une copie
+  //    « (conflit …) » avant de partir. L'élagueur de dossiers parents vides
+  //    est conservé.
   const appliedDeletions = new Set<string>();
   const revueSuppressionsDistantes: { path: string; modified: boolean; at: string }[] = [];
   for (const relPath of tombstonedPaths) {
@@ -1344,11 +1376,10 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
       });
       if (action === 'skip') continue;
       if (action === 'keep-copy') {
-        // v0.4.77 — RÈGLE ABSOLUE (Catelina, après les disparitions en
-        // corbeille de fichiers MODIFIÉS) : un fichier modifié ici et
-        // supprimé ailleurs n'est JAMAIS archivé ni effacé automatiquement —
-        // il reste en place et part en REVUE (l'écran « Revue de sécurité »
-        // propose « Supprimer vraiment » ou « Restaurer dans le cloud »).
+        // RÈGLE ABSOLUE : un fichier modifié ici et supprimé ailleurs n'est
+        // JAMAIS archivé ni effacé automatiquement — il reste en place et
+        // part en REVUE (l'écran « Revue de sécurité » propose « Supprimer
+        // vraiment » ou « Restaurer dans le cloud »).
         journal.push(
           makeJournalEntry('modification', {
             path: relPath,
@@ -1369,9 +1400,9 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
     }
   }
 
-  // v0.4.77 — les suppressions distantes en attente de validation sont
-  // publiées dans pending-review.json (l'écran « Revue de sécurité » les
-  // affiche avec « Supprimer vraiment / Restaurer dans le cloud »).
+  // Les suppressions distantes en attente de validation sont publiées dans
+  // pending-review.json (l'écran « Revue de sécurité » les affiche avec
+  // « Supprimer vraiment / Restaurer dans le cloud »).
   if (revueSuppressionsDistantes.length > 0) {
     try {
       const review = await loadPendingReview(bridges.vault).catch(() => ({}) as PendingReview);
@@ -1389,27 +1420,28 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
     }
   }
 
+//////// 10. runSync : diff, décisions, nouvel état et clôture //////////////
+
   // 3) Diff SUR LES ENSEMBLES FILTRÉS : ni les tombestones (jamais de
   //    pull, jamais de push — push les réactiveraient), ni les fichiers
-  //    supprimés localement (absents du disque). v0.4.81 : le sync-state
-  //    sert de RÉFÉRENCE au diff (3 voies) — une modification d'un fichier
-  //    dont le cloud porte encore le hash connu est un push, pas un
-  //    conflit (M.4 de la spec, §12 du journal d'incidents).
+  //    supprimés localement (absents du disque). Le sync-state sert de
+  //    RÉFÉRENCE au diff (3 voies) : une modification d'un fichier dont le
+  //    cloud porte encore le hash connu est un push, pas un conflit.
   const diffLocalFiles = localFiles.filter((note) => !tombstonedPaths.has(note.relPath));
   const diffRemoteFiles = activeRemoteFiles.filter((file) => !tombstonedPaths.has(file.relPath));
   const decisions = diffVault(diffLocalFiles, diffRemoteFiles, syncState.files);
-  // v0.4.83 (§14) : les fichiers VIVANTS passent avant les chemins
-  // `.trash/…` — le tri alphabétique plaçait la corbeille du cloud
-  // (858 lignes du 18/10) devant tout le contenu utile : le mobile y
-  // passait le cycle entier et ne voyait jamais ses fichiers arriver.
+  // Les fichiers VIVANTS passent avant les chemins `.trash/…` : sinon le
+  // tri alphabétique place la corbeille du cloud (des centaines de lignes)
+  // devant tout le contenu utile — le mobile y passe le cycle entier sans
+  // jamais voir ses fichiers arriver.
   // Sort stable : l'ordre alphabétique est conservé au sein de chaque groupe.
   const orderedDecisions = [...decisions].sort(
     (a, b) => Number(a.relPath.startsWith('.trash/')) - Number(b.relPath.startsWith('.trash/')),
   );
   const mergedHashes: Record<string, string> = {};
 
-  // Les étapes réseau (demande utilisateur : le journal raconte comme
-  // Obsidian Sync — « upload en cours », « upload terminé »).
+  // Les étapes réseau : le journal raconte le cycle comme Obsidian Sync
+  // (« upload en cours », « upload terminé »).
   const pushCount = decisions.filter((d) => d.kind === 'push' || d.kind === 'conflict-push-wins').length;
   const pullCount = decisions.filter((d) => d.kind === 'pull' || d.kind === 'conflict-pull-wins').length;
   if (pushCount > 0) journal.push(makeJournalEntry('upload-start', { detail: `${pushCount} fichier(s)` }));
@@ -1423,7 +1455,7 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
         case 'push': {
           const note = localByPath.get(decision.relPath);
           if (!note) break;
-          // v0.4.72 — version distante précédente (best-effort, texte seul) :
+          // Version distante précédente (best-effort, texte seul) :
           // permet au journal de raconter le changement (+/− caractères).
           let previousRemoteContent: string | null = null;
           const remoteRow = remoteByPath.get(decision.relPath);
@@ -1435,8 +1467,8 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
             ).catch(() => null);
           }
           await pushFile(remoteVaultId, ownerId, note, journal, previousRemoteContent);
-          // v0.4.81 (§13) : un push sous `.trash/` est le continu d'un
-          // déplacement en corbeille — compté À PART, pas dans « envoyé(s) ».
+          // Un push sous `.trash/` est le continu d'un déplacement en
+          // corbeille — compté À PART, pas dans « envoyé(s) ».
           if (decision.relPath.startsWith('.trash/')) {
             summary.trashed += 1;
           } else {
@@ -1445,18 +1477,18 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
           break;
         }
         case 'pull':
-          // ANTI-CONTAMINATION (v0.4.67) : un chemin contenant un `\` est un
-          // résidu backslashed du mélange — le créer créerait un FICHIER PLAT
-          // au nom impossible (légal sur Android, pas sur le fs desktop) qui
-          // re-contaminerait le cloud à son tour. La purge les tombestone
-          // déjà au début du cycle ; ici on refuse par double sécurité.
+          // ANTI-CONTAMINATION : un chemin contenant un `\` est un résidu
+          // backslashed du mélange — le créer créerait un FICHIER PLAT au
+          // nom impossible (légal sur Android, pas sur le fs desktop) qui
+          // re-contaminerait le cloud à son tour. Ces lignes sont écartées
+          // du diff dès le début du cycle ; ici, refus par double sécurité.
           if (decision.relPath.includes('\\')) {
             journal.push(
               makeJournalEntry('error', { path: decision.relPath, detail: 'pull bloqué : chemin contaminé (backslash)' }),
             );
             break;
           }
-          // v0.4.71 — fichier EN COURS D'ÉDITION ici : ne jamais écraser
+          // Fichier EN COURS D'ÉDITION ici : ne jamais écraser
           // localement (le diff le retrouvera changé au prochain cycle, et
           // c'est la version locale qui repartira).
           if (hotPaths.has(decision.relPath)) {
@@ -1470,20 +1502,17 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
           journal.push(makeJournalEntry('pull', { path: decision.relPath }));
           break;
         case 'conflict-push-wins': {
-          // v0.4.81 — M.4/E3 : un fichier EN COURS D'ÉDITION ne fusionne
-          // JAMAIS à chaud : le conflit est DIFFÉRÉ au cycle suivant,
-          // symétrique du garde du pull (ci-dessus). Vécu §12.1 du journal
-          // d'incidents : le fichier était listé « synchronisation
-          // différée » à 15:20:00 et fusionné à 15:20:01 — la fusion
-          // réécrivait le fichier ouvert, ce qui relançait le conflit à
-          // chaque cycle.
+          // Un fichier EN COURS D'ÉDITION ne fusionne JAMAIS à chaud : le
+          // conflit est DIFFÉRÉ au cycle suivant, symétrique de la garde du
+          // pull (ci-dessus). Fusionner quand même réécrirait le fichier
+          // ouvert — ce qui relance le conflit à chaque cycle.
           if (hotPaths.has(decision.relPath)) {
             journal.push(
               makeJournalEntry('info', { path: decision.relPath, detail: 'conflit différé : fichier en cours d’édition sur cet appareil' }),
             );
             break;
           }
-          // v0.4.29 : fusion à trois voix d'abord (diff-match-patch) — deux
+          // Fusion à trois voix d'abord (diff-match-patch) — deux
           // modifications de parties différentes sont réunies, aucune des
           // deux n'est archivée. Repli : gagnant local + perdant archivé.
           const mergedPushHash = await attemptConflictMerge(
@@ -1506,7 +1535,7 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
             remoteByPath.get(decision.relPath)?.storageObjectPath,
           );
           await backupLosingSide(decision.relPath, losingRemoteContent);
-          // v0.4.72 — la version distante perdante sert aussi au journal
+          // La version distante perdante sert aussi au journal
           // « modification » (+/− caractères de la version conservée).
           await pushFile(remoteVaultId, ownerId, note, journal, losingRemoteContent);
           summary.pushed += 1;
@@ -1528,7 +1557,7 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
             break;
           }
           const losingLocalContent = await bridges.vault.readNote(decision.relPath);
-          // v0.4.71 — jamais l'archivage d'un fichier en cours d'édition :
+          // Jamais l'archivage d'un fichier en cours d'édition :
           // même garde que le pull simple ci-dessus.
           if (hotPaths.has(decision.relPath)) {
             journal.push(
@@ -1570,12 +1599,11 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
     const remote = remoteByPath.get(decision.relPath);
     if (remote) nextFiles[decision.relPath] = remote.contentHash;
   }
-  // v0.4.81 — §12.2 du journal d'incidents : le fichier FUSIONNÉ est la
-  // nouvelle vérité locale ET distante (il vient d'être écrit et poussé).
-  // Le state enregistre le hash RÉEL du fichier écrit, pas celui de
-  // l'indexation d'avant la fusion — sinon le cycle suivant re-détectait
-  // une divergence déjà résolue et re-annonçait le conflit (boucle
-  // systématique du 18/10).
+  // Le fichier FUSIONNÉ est la nouvelle vérité locale ET distante (il vient
+  // d'être écrit et poussé). Le state enregistre le hash RÉEL du fichier
+  // écrit, pas celui de l'indexation d'avant la fusion — sinon le cycle
+  // suivant re-détecte une divergence déjà résolue et re-annonce le
+  // conflit, en boucle.
   for (const [relPath, mergedHash] of Object.entries(mergedHashes)) {
     nextFiles[relPath] = mergedHash;
   }
@@ -1586,7 +1614,7 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
     journal.push(makeJournalEntry('error', { detail: `sauvegarde de l'état : ${errorMessage(error)}` }));
   }
 
-  // v0.4.72 — DISJONCTEUR : une rafale d'erreurs dans un cycle FERME le
+  // DISJONCTEUR : une rafale d'erreurs dans un cycle FERME le
   // circuit pour les cycles suivants (revue manuelle pour rouvrir — jamais
   // de resynchronisation par-dessus un appareil en échec). Le message et
   // son ORIGINE partent dans le journal ET dans les logs (console.error
@@ -1620,7 +1648,7 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   // résumé (voir heartbeatDevice).
   await heartbeatDevice(remoteVaultId, ownerId, summary);
 
-  // v0.4.76 — PASSERELLE À DISTANCE : exécute les commandes adressées à CET
+  // PASSERELLE À DISTANCE : exécute les commandes adressées à CET
   // appareil (dump-diagnostics, levée de bloc…) via le canal Supabase —
   // best-effort, jamais bloquant, sans adb (voir deviceGateway.ts).
   await processDeviceCommands(remoteVaultId, ownerId);
@@ -1633,7 +1661,7 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
 
   // Cycle SANS aucune action : la « Connexion au serveur » est retirée — le
   // journal ne garde que les cycles qui ont réellement fait quelque chose
-  // (demande utilisateur : pas de spam de cycles à vide).
+  // (pas de spam de cycles à vide).
   if (journal.length > 1) {
     await appendJournalEntries(journal.slice(1));
   } else {

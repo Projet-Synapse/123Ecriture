@@ -1,21 +1,33 @@
-// Clé d'objet Storage d'une note — les chemins contenant émojis/accents sont
-// REJETÉS par Supabase Storage (« Invalid key » ; vécu en v0.4.8 : 110
-// fichiers d'un coffre refusés au push, donc jamais récupérables). On encode
-// le chemin relatif en base64url : A-Za-z0-9-_ uniquement, accepté partout,
-// déterministe, sans collision. Le chemin humain reste dans la table
-// `vault_files` (rel_path) — la clé n'est qu'un identifiant technique.
+// ✒️ 123ECRITURE — lib/sync/storageKeys.ts — clé d'objet Storage d'une note (base64url)
+//////////////////////////////////////////////////////////////////////////////
 //
-// Rétro-compatibilité : les fichiers déjà poussés sous leur nom brut (ASCII)
-// continuent d'être téléchargeables via la colonne storage_object_path
-// enregistrée à l'époque (voir downloadRemoteText) ; les nouveaux push
-// réécrivent la ligne avec la clé encodée.
+// Les chemins contenant émojis/accents sont REJETÉS par Supabase Storage
+// (« Invalid key ») : sans encodage, des coffres entiers sont refusés au
+// push, donc jamais récupérables. On encode le chemin relatif en base64url
+// (A-Za-z0-9-_ uniquement) : accepté partout, déterministe, sans collision.
+// Le chemin humain reste dans la table `vault_files` (rel_path) — la clé
+// n'est qu'un identifiant technique.
 //
-// ⚠️ 100 % JS PUR, zéro API navigateur : TextEncoder/btoa/atob/TextDecoder
-// n'existent pas sous Hermes natif — ce fichier tourne à CHAQUE cycle de
-// synchro, sur toutes les plateformes (crash Android vécu en 0.4.41-fix3).
-// UTF-8 : `utf8Bytes` (lib/sync/nativeSha256.ts) ; base64 : implémentation
-// locale, testée contre la référence Node (voir nativeSha256.test.ts et la
-// batterie lancée au développement).
+// Invariants du fichier :
+//   • 100 % JS PUR, zéro API navigateur : TextEncoder/btoa/atob/TextDecoder
+//     n'existent pas sous Hermes natif — ce fichier tourne À CHAQUE cycle
+//     de synchro, sur toutes les plateformes.
+//   • UTF-8 : `utf8Bytes` (lib/sync/nativeSha256.ts) ; base64 :
+//     implémentation locale, testée contre la référence Node
+//     (nativeSha256.test.ts).
+//   • Rétro-compatibilité : les fichiers déjà poussés sous leur nom brut
+//     (ASCII) restent téléchargeables via la colonne storage_object_path
+//     enregistrée à l'époque (voir downloadRemoteText) ; les nouveaux push
+//     réécrivent la ligne avec la clé encodée.
+//
+// SOMMAIRE :
+//   1. Le codec base64/UTF-8 local (base64Encode, base64Decode, utf8Decode)
+//   2. La clé d'objet Storage (vaultStorageObjectKey, decodeVaultStorageObjectKey)
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. Le codec base64/UTF-8 local (base64Encode, base64Decode, utf8Decode) ///////////
+
 import { utf8Bytes } from './nativeSha256';
 
 const B64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
@@ -81,6 +93,8 @@ function utf8Decode(bytes: Uint8Array): string {
   }
   return out;
 }
+
+//////// 2. La clé d'objet Storage (vaultStorageObjectKey, decodeVaultStorageObjectKey) ///////////
 
 export function vaultStorageObjectKey(relPath: string): string {
   return base64Encode(utf8Bytes(relPath))

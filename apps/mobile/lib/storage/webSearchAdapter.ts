@@ -1,17 +1,29 @@
-// //1. 🔍 RECHERCHE GLOBALE + HASH DE SYNC (web)
-// ////////////////////////////////////////////////////////////////////////
+// ✒️ 123ECRITURE — lib/storage/webSearchAdapter.ts — recherche globale + hash de sync (web)
+//////////////////////////////////////////////////////////////////////////////
+//
 // Port de search.ts (recherche globale) et sync.ts (hashVaultTree) sur le
-// coffre web. Mêmes règles que le desktop :
-// - parcours SANS filtre d'extension (pièces jointes et dossiers sont des
-//   résultats), fichiers cachés ignorés ;
-// - lecture paresseuse du contenu (une seule fois par entrée) ;
-// - tags = #mot-clé au contour de mot, frontmatter écarté (même parseur que
-//   le reste de l'app — vue Tags incluse, voir webVaultAdapter.listTags) ;
-// - tâches et évènements cherchables (échéance en ISO ET en français) ;
-// - hashVaultTree = SHA-256 de chaque note (mêmes extensions que walkTree,
-//   voir le commentaire de sync.ts sur EXTENSION_TO_KIND).
+// coffre web (handles FSA). Deux ponts indépendants dans un même fichier :
+// window.search pour trouver, window.sync pour hacher le coffre avant un
+// cycle de synchronisation.
+//
+// Invariants du fichier :
+//   • Mêmes règles que le desktop : parcours SANS filtre d'extension (les
+//     pièces jointes et les dossiers sont des résultats), fichiers cachés
+//     ignorés, contenu lu en paresse (une seule fois par entrée).
+//   • Ni texte ni filtre → pas de « tout lister » : la recherche vide ne
+//     retourne rien.
+//   • hashVaultTree produit EXACTEMENT la même sortie que le desktop
+//     (SHA-256 hexadécimal, mêmes extensions de notes) — un écart de hash
+//     entre plateformes inventerait des modifications fantômes à chaque
+//     cycle.
+//
+// SOMMAIRE :
+//   1. Recherche globale (parcours, tâches, évènements, filtre propriété)
+//   2. Hash de synchronisation (webSyncAdapter.hashVaultTree)
+//
+//////////////////////////////////////////////////////////////////////////////
 
-import { parseFrontmatter } from '../frontmatter';
+import { parseFrontmatter } from '../properties/frontmatter';
 import { type FsaDirectoryHandleLike, getFileByRelPath, listNoteRelPaths, readFileText } from './webFs';
 
 import { getActiveConfigDir, webVaultRegistry } from './webVaultRegistry';
@@ -57,6 +69,8 @@ function extractTags(text: string): string[] {
   }
   return [...tags];
 }
+
+//////// 1. Recherche globale (parcours, tâches, évènements, filtre propriété) /////////
 
 type WalkedEntry = {
   relPath: string;
@@ -284,6 +298,8 @@ export const webSearchAdapter = {
     return results;
   },
 } satisfies SearchBridge;
+
+//////// 2. Hash de synchronisation (webSyncAdapter.hashVaultTree) /////////////////////
 
 // Hash SHA-256 du coffre actif (port de sync.ts) — crypto.subtle au lieu de
 // node:crypto, même sortie hexadécimale.

@@ -1,21 +1,3 @@
-//////////
-// ✒️ 123ECRITURE — SyncReviewSection.tsx
-// CARTE « REVUE DE SÉCURITÉ » (v0.4.76) : tout ce que le moteur a BLOQUÉ
-// attend ici une décision humaine — jamais d'application silencieuse
-//////////
-
-// INTRODUCTION — Demande de Catelina : la gestion des suppressions se fait
-// par ELLE ou par un opérateur, JAMAIS de façon silencieuse. Cette carte
-// n'apparaît dans Paramètres → Journal de synchronisation QUE s'il y a
-// quelque chose à trancher : disjoncteur ouvert, suppressions massives
-// suspectes, suppressions distantes en attente. Tant que la revue n'est pas
-// tranchée, les fichiers concernés restent EN PLACE et la synchro reste
-// bloquée pour eux (ni perte, ni propagation).
-//
-// SOMMAIRE :
-//   1. 📥 Chargement de la file + actions
-//   2. 🖥️ Rendu (disjoncteur / suppressions massives / suppressions distantes)
-
 import { useCallback, useEffect, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 
@@ -26,7 +8,31 @@ import { useVaults } from '../../lib/sync/VaultsContext';
 import { usePreferences } from '../../preferences/PreferencesContext';
 import { settingsStyles as s } from './settingsStyles';
 
-//////// 1. 📥 CHARGEMENT DE LA FILE + ACTIONS ///////////
+// ✒️ 123ECRITURE — components/settings/SyncReviewSection.tsx — la revue de sécurité de la synchro
+//////////////////////////////////////////////////////////////////////////////
+//
+// CARTE « REVUE DE SÉCURITÉ » : tout ce que le moteur a BLOQUÉ attend ici
+// une décision humaine — jamais d'application silencieuse. La gestion des
+// suppressions se fait par l'utilisatrice ou par un opérateur, JAMAIS de
+// façon silencieuse.
+//
+// Invariants du fichier :
+//   • Cette carte n'apparaît dans Paramètres → Journal de synchronisation
+//     QUE s'il y a quelque chose à trancher : disjoncteur ouvert,
+//     suppressions massives suspectes, suppressions distantes en attente.
+//   • Tant que la revue n'est pas tranchée, les fichiers concernés
+//     restent EN PLACE et la synchro reste bloquée pour eux (ni perte, ni
+//     propagation).
+//   • La file est rechargée toutes les 2,5 s tant que l'écran est ouvert,
+//     et rechargée après chaque action (run + reload).
+//
+// SOMMAIRE :
+//   1. Le chargement de la file + les actions
+//   2. Le rendu (disjoncteur / suppressions massives / suppressions distantes)
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. Le chargement de la file + les actions ////////////////////////////////////////
 
 export function SyncReviewSection() {
   const { theme } = usePreferences();
@@ -118,7 +124,7 @@ export function SyncReviewSection() {
       await savePendingReview(window.vault, { ...(review ?? {}), remoteDeletions: remaining });
     });
 
-  //////// 2. 🖥️ RENDU ///////////
+  //////// 2. Le rendu (disjoncteur / suppressions massives / suppressions distantes) ///////
 
   if (!review) return null;
   const hasBlocked = Boolean(review.syncBlocked);

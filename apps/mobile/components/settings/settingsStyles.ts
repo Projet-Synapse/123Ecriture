@@ -1,10 +1,20 @@
 import { StyleSheet } from 'react-native';
 
+// ✒️ 123ECRITURE — components/settings/settingsStyles.ts — les styles partagés des sections
+//////////////////////////////////////////////////////////////////////////////
+//
 // Styles partagés entre toutes les sections de l'écran Paramètres (voir
-// SettingsScreen.tsx) — évite de redéfinir "card"/"button"/"row"... dans
-// chacun des 6 fichiers de apps/mobile/components/settings/. Les couleurs
-// (theme.*) restent appliquées au niveau de chaque composant, pas ici : ce
-// fichier ne porte que la géométrie, commune quel que soit le thème.
+// SettingsScreen.tsx) : card, button, row, input, toggle, stepper...
+//
+// Invariants du fichier :
+//   • Évite de redéfinir "card"/"button"/"row"... dans chacun des fichiers
+//     de apps/mobile/components/settings/.
+//   • Ce fichier ne porte que la GÉOMÉTRIE, commune quel que soit le
+//     thème : les couleurs (theme.*) restent appliquées au niveau de
+//     chaque composant, pas ici.
+//
+//////////////////////////////////////////////////////////////////////////////
+
 export const settingsStyles = StyleSheet.create({
   card: {
     borderWidth: 1,

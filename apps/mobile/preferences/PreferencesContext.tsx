@@ -1,15 +1,15 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useColorScheme } from 'react-native';
 
-import { DEFAULT_CANVAS_TOOLBAR_ORDER } from '../lib/canvasToolbarActions';
-import { DEFAULT_CHART_TOOLBAR_ORDER } from '../lib/chartToolbarActions';
+import { DEFAULT_CANVAS_TOOLBAR_ORDER } from '../lib/editor/canvasToolbarActions';
+import { DEFAULT_CHART_TOOLBAR_ORDER } from '../lib/editor/chartToolbarActions';
 import {
   DEFAULT_NOTES_TOOLBAR_ORDER,
   DEFAULT_NOTES_TOOLBAR_GROUPS,
   migrateNotesToolbarGroups,
   normalizeNotesToolbarGroups,
   normalizeNotesToolbarOrder,
-} from '../lib/notesToolbarActions';
+} from '../lib/editor/notesToolbarActions';
 import {
   buildTheme,
   parseVaultAppearance,
@@ -18,7 +18,7 @@ import {
   type AppearanceProfile,
   type AppearanceTokens,
   type VaultAppearanceFile,
-} from '../lib/appearance';
+} from '../lib/theme/appearance';
 import { useVaults } from '../lib/sync/VaultsContext';
 import { darkTheme, lightTheme, type Theme } from '../theme';
 

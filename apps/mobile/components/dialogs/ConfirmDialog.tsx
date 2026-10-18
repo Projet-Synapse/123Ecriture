@@ -1,0 +1,166 @@
+import { useState } from 'react';
+import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+
+import type { Theme } from '../../theme';
+
+// ✒️ 123ECRITURE — components/dialogs/ConfirmDialog.tsx — confirmation d'action destructrice
+//////////////////////////////////////////////////////////////////////////////
+//
+// Boîte de confirmation générique pour les actions destructrices — même
+// coquille modale que MoveDialog.tsx/EditPathDialog.tsx (backdrop cliquable
+// pour annuler, Échap géré par react-native-web, boîte centrale). Le bouton
+// de confirmation peut être "en cours" (busy) : les deux actions sont
+// masquées jusqu'à la résolution, pour interdire le double-clic —
+// l'appelant résout `onSettled` quand SA mutation est finie (échec inclus :
+// la modale se referme aussi, l'erreur restant affichée à l'écran appelant).
+//
+// Invariants du fichier :
+//   • Pendant busy, backdrop ET boutons sont inertes — un double-clic ne
+//     déclenche jamais deux fois la mutation.
+//   • Si `requireText` est renseigné, la confirmation exige de TAPER ce mot
+//     exact (vidage de corbeille et autres destructions de masse) — le
+//     bouton reste visible mais inerte tant que le texte ne matche pas.
+//
+// SOMMAIRE :
+//   1. Props (garde par texte tapé)
+//   2. Composant (busy, rendu)
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. Props (garde par texte tapé) ///////////////////////////////////
+type Props = {
+  theme: Theme;
+  title: string;
+  message: string;
+  confirmLabel?: string;
+  onConfirm: () => Promise<void> | void;
+  onCancel: () => void;
+  onSettled?: () => void;
+  // Si renseigné, la confirmation exige de TAPER ce mot exact (vidage de
+  // corbeille et autres destructions de masse — le clic sur le bouton
+  // reste possible mais ne fait rien tant que le texte ne matche pas).
+  requireText?: string;
+};
+
+//////// 2. Composant (busy, rendu) ////////////////////////////////////////
+
+export function ConfirmDialog({
+  theme,
+  title,
+  message,
+  confirmLabel = 'Supprimer',
+  onConfirm,
+  onCancel,
+  onSettled,
+  requireText,
+}: Props) {
+  const [busy, setBusy] = useState(false);
+  const [confirmDraft, setConfirmDraft] = useState('');
+  const textMissing = Boolean(requireText) && confirmDraft.trim().toUpperCase() !== (requireText ?? '').toUpperCase();
+
+  const handleConfirm = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await onConfirm();
+    } finally {
+      onSettled?.();
+    }
+  };
+
+  return (
+    <Modal visible transparent animationType="fade" onRequestClose={onCancel}>
+      <Pressable style={styles.backdrop} onPress={busy ? undefined : onCancel}>
+        <Pressable style={[styles.dialog, { backgroundColor: theme.surface }]} onPress={(e) => e.stopPropagation()}>
+          <Text style={[styles.title, { color: theme.text }]}>{title}</Text>
+          <Text style={[styles.message, { color: theme.textMuted }]}>{message}</Text>
+          {requireText && (
+            <TextInput
+              value={confirmDraft}
+              onChangeText={setConfirmDraft}
+              placeholder={requireText}
+              placeholderTextColor={theme.textMuted}
+              autoCapitalize="characters"
+              autoCorrect={false}
+              style={[styles.input, { color: theme.text, borderColor: theme.border }]}
+            />
+          )}
+          <View style={styles.actionsRow}>
+            {busy ? (
+              <ActivityIndicator size="small" color={theme.accent} />
+            ) : (
+              <>
+                <Pressable onPress={onCancel} style={styles.cancelButton}>
+                  <Text style={{ color: theme.textMuted }}>Annuler</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => {
+                    if (textMissing) return;
+                    void handleConfirm();
+                  }}
+                  style={[
+                    styles.confirmButton,
+                    { backgroundColor: theme.danger, opacity: textMissing ? 0.4 : 1 },
+                  ]}
+                  accessibilityLabel={confirmLabel}
+                >
+                  <Text style={styles.confirmButtonText}>{confirmLabel}</Text>
+                </Pressable>
+              </>
+            )}
+          </View>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
+const styles = StyleSheet.create({
+  backdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dialog: {
+    width: 340,
+    borderRadius: 12,
+    padding: 16,
+    gap: 12,
+  },
+  title: {
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  message: {
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  actionsRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    gap: 12,
+    minHeight: 36,
+  },
+  cancelButton: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+  },
+  confirmButton: {
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+  },
+  confirmButtonText: {
+    color: '#fff',
+    fontWeight: '600',
+  },
+  input: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    fontSize: 13,
+  },
+});

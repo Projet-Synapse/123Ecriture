@@ -3,11 +3,19 @@ import { Pressable, Text, View } from 'react-native';
 import type { Theme } from '../../theme';
 import { settingsStyles } from './settingsStyles';
 
+// ✒️ 123ECRITURE — components/settings/SettingsToggle.tsx — l'interrupteur générique
+//////////////////////////////////////////////////////////////////////////////
+//
 // Interrupteur générique (case à cocher + libellé) réutilisé par plusieurs
-// sections de Paramètres (Éditeur, Gestion des fichiers et des liens...) —
-// même visuel que la case des boutons de la barre d'outils Notes
-// (PersonalizationCard.tsx), extrait ici pour ne pas le redéfinir à chaque
-// section.
+// sections de Paramètres (Éditeur, Gestion des fichiers et des liens...).
+//
+// Invariants du fichier :
+//   • Même visuel que la case des boutons de la barre d'outils Notes
+//     (PersonalizationCard.tsx), extrait ici pour ne pas le redéfinir à
+//     chaque section.
+//
+//////////////////////////////////////////////////////////////////////////////
+
 type Props = {
   label: string;
   value: boolean;

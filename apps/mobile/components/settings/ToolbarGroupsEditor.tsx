@@ -1,21 +1,28 @@
 import { useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import type { ToolbarActionId } from '../../lib/notesToolbarActions';
+import type { ToolbarActionId } from '../../lib/editor/notesToolbarActions';
 import type { Theme } from '../../theme';
 import { settingsStyles as s } from './settingsStyles';
 
-// Éditeur des GROUPES de la barre d'outils Notes (v0.4.43, demande
-// 2026-10-05) — remplace la liste plate pour la carte Notes : les groupes
-// sont des conteneurs créés avec « + Nouveau groupe », nommables, réglables
-// dépliants ou non, et les boutons s'y DÉPLACENT par glisser-déposer.
-// PC/web : HTML5 draggable (même échappatoire que l'arborescence).
-// Tactile : appui sur un bouton = le saisir, appui sur une destination = le
-// déposer (le glisser continu tactile viendra avec le chantier DnD natif).
-// Un bouton hors groupe = masqué de la barre, proposé dans la réserve en bas
-// (choix façon Obsidian, validé 2026-10-05).
-
-
+// ✒️ 123ECRITURE — components/settings/ToolbarGroupsEditor.tsx — les groupes de la barre d'outils
+//////////////////////////////////////////////////////////////////////////////
+//
+// Éditeur des GROUPES de la barre d'outils Notes — remplace la liste plate
+// pour la carte Notes : les groupes sont des conteneurs créés avec
+// « + Nouveau groupe », nommables, réglables dépliants ou non, et les
+// boutons s'y DÉPLACENT par glisser-déposer.
+//
+// Invariants du fichier :
+//   • PC/web : HTML5 draggable (même échappatoire que l'arborescence, voir
+//     VaultTreeView.tsx).
+//   • Tactile : appui sur un bouton = le saisir, appui sur une destination
+//     = le déposer (le glisser continu tactile viendra avec le chantier
+//     DnD natif).
+//   • Un bouton hors groupe = masqué de la barre, proposé dans la réserve
+//     en bas (choix façon Obsidian).
+//
+//////////////////////////////////////////////////////////////////////////////
 
 type Props = {
   groups: NotesToolbarGroup[];

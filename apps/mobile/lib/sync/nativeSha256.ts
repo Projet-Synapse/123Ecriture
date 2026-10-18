@@ -1,15 +1,29 @@
+// ✒️ 123ECRITURE — lib/sync/nativeSha256.ts — SHA-256 en JS pur + UTF-8 manuel (synchro native)
+//////////////////////////////////////////////////////////////////////////////
+//
 // SHA-256 en JS pur + encodage UTF-8 manuel — pour la synchro native
 // (Android/Hermes), qui n'a NI `crypto.subtle` (webSyncAdapter l'utilise),
-// NI `TextEncoder` garanti. Même sortie que le hachage desktop
-// (Node `createHash('sha256')` sur les octets du fichier) et web
-// (`crypto.subtle.digest` sur les octets du fichier) : pour des fichiers
-// texte UTF-8 valides, ré-encoder le texte lu donne exactement les octets
-// du fichier — les hashes restent comparables entre appareils.
+// NI `TextEncoder` garanti. Implémentation classique (FIPS 180-4), sans
+// dépendance : l'objectif est de rester hors du catalogue de modules
+// natifs (aucun ajout au build Android).
 //
-// Implémentation classique (FIPS 180-4), sans dépendance : l'objectif est
-// de rester hors du catalogue de modules natifs (aucun ajout au build
-// Android). Testée contre Node crypto (voir nativeSha256.test.ts et le
-// script de vérification exécuté au développement).
+// Invariants du fichier :
+//   • Même sortie que le hachage desktop (Node `createHash('sha256')` sur
+//     les octets du fichier) et web (`crypto.subtle.digest` sur les octets
+//     du fichier) : pour des fichiers texte UTF-8 valides, ré-encoder le
+//     texte lu donne exactement les octets du fichier — les hashes
+//     restent comparables entre appareils.
+//   • Testée contre Node crypto (voir nativeSha256.test.ts).
+//   • Sortie hexadécimale minuscule (64 caractères), même format que
+//     createHash().digest('hex').
+//
+// SOMMAIRE :
+//   1. Le hachage (K, rotr, sha256Hex)
+//   2. L'encodage UTF-8 et le raccourci texte (utf8Bytes, sha256HexOfText)
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. Le hachage (K, rotr, sha256Hex) ///////////
 
 const K = [
   0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
@@ -69,6 +83,8 @@ export function sha256Hex(bytes: number[] | Uint8Array): string {
     .map((word) => (word >>> 0).toString(16).padStart(8, '0'))
     .join('');
 }
+
+//////// 2. L'encodage UTF-8 et le raccourci texte (utf8Bytes, sha256HexOfText) ///////////
 
 // UTF-8 manuel : TextEncoder n'est pas garanti sous Hermes (et l'import
 // d'un polyfill alourdirait le bundle pour une seule conversion).

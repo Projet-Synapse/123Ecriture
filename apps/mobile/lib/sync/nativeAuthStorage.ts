@@ -1,17 +1,32 @@
+// ✒️ 123ECRITURE — lib/sync/nativeAuthStorage.ts — stockage de session Supabase pour le natif (Android)
+//////////////////////////////////////////////////////////////////////////////
+//
+// L'équivalent du localStorage du renderer Electron, sur un fichier du
+// stockage privé de l'app. Interface StorageLike attendue par supabase-js
+// (createClient, option auth.storage) — mêmes signatures que localStorage.
+//
+// Invariants du fichier :
+//   • Sans ce pont, supabase-js retombe sur un stockage EN MÉMOIRE : la
+//     session et l'état PKCE du flux Google (code verifier) disparaissent
+//     au redémarrage — et une Android qui tue l'app en arrière-plan
+//     pendant le passage navigateur casse l'échange du code au retour.
+//   • Un cache mémoire évite de relire le fichier à chaque getItem (les
+//     refresh tokens y passent souvent) ; les écritures sérialisent via
+//     le cache, le risque de course reste borné (supabase-js verrouille
+//     déjà ses propres écritures).
+//   • Fichier absent ou corrompu → cache vide : on repart déconnecté,
+//     jamais de crash au chargement.
+//
+// SOMMAIRE :
+//   1. Le chargement et la persistance (STORAGE_PATH, load, persist)
+//   2. L'adaptateur StorageLike exposé (nativeAuthStorage)
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. Le chargement et la persistance (STORAGE_PATH, load, persist) ///////////
+
 import * as FileSystem from 'expo-file-system/legacy';
 
-// Stockage de session Supabase pour le NATIF (Android) — l'équivalent du
-// localStorage du renderer Electron, sur un fichier du stockage privé de
-// l'app. Sans ce pont, supabase-js retombe sur un stockage EN MÉMOIRE :
-// la session et l'état PKCE du flux Google (code verifier) disparaissent
-// au redémarrage — et une Android qui tue l'app en arrière-plan pendant
-// le passage navigateur casse l'échange du code au retour.
-//
-// Interface StorageLike attendue par supabase-js (createClient, option
-// auth.storage) — mêmes signatures que localStorage. Un cache mémoire
-// évite de relire le fichier à chaque getItem (les refresh tokens y
-// passent souvent) ; les écritures sérialisent via le cache, le risque de
-// course reste borné (supabase-js verrouille déjà ses propres écritures).
 const STORAGE_PATH = `${FileSystem.documentDirectory}supabase-auth.json`;
 
 type StoredMap = Record<string, string>;
@@ -38,6 +53,8 @@ async function persist(map: StoredMap): Promise<void> {
     console.error('[auth-storage] échec d’écriture :', error);
   }
 }
+
+//////// 2. L'adaptateur StorageLike exposé (nativeAuthStorage) ///////////
 
 export const nativeAuthStorage = {
   getItem: async (key: string): Promise<string | null> => (await load())[key] ?? null,

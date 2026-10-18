@@ -4,14 +4,38 @@ import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-
 import type { Theme } from '../theme';
 import { errorMessage } from '../lib/errorMessage';
 
+// ✒️ 123ECRITURE — components/OccurrencesPanel.tsx — le dictionnaire des {{occurrences}}
+//////////////////////////////////////////////////////////////////////////////
+//
 // Onglet "Occurrences" de la barre latérale (voir RightSidebar.tsx,
-// NotesScreen.tsx) — dictionnaire personnel des {{mots}} (voir
+// NotesScreen.tsx) : dictionnaire personnel des {{mots}} (voir
 // apps/desktop/electron/occurrences.js). Deux vues : la LISTE (tous les
-// mots, "+ Ajouter un mot") et la FICHE d'un mot sélectionné (nom éditable,
-// description éditable, notes qui le mentionnent) — `focusedWord` piloté
-// par le parent : cliquer une pastille {{occurrence}} dans une note (voir
-// NotesScreen.tsx, `handleOpenOccurrence`) bascule directement sur la fiche
-// du mot concerné, pas juste sur la liste.
+// mots, "+ Ajouter un mot") et la FICHE d'un mot sélectionné (nom
+// éditable, description éditable, notes qui le mentionnent).
+//
+// Invariants du fichier :
+//   • `focusedWord` est piloté par le parent : cliquer une pastille
+//     {{occurrence}} dans une note (NotesScreen.tsx,
+//     `handleOpenOccurrence`) bascule directement sur la FICHE du mot
+//     concerné, pas juste sur la liste.
+//   • Toute mutation réussie prévient le parent via `onChanged` :
+//     NotesScreen tient son PROPRE état du dictionnaire (partagé avec
+//     NoteRenderer/MdxEditor pour savoir quelles {{...}} styler), séparé
+//     du state local `entries` de ce panneau — sans ce callback, un mot
+//     créé ici n'obtient sa pastille dans l'éditeur qu'au prochain
+//     montage.
+//   • Les brouillons de la fiche (nom/description) se resynchronisent par
+//     ajustement PENDANT le rendu (comparaison d'état, pas d'effet) —
+//     jamais de setState direct en tête d'effet, par convention du projet.
+//
+// SOMMAIRE :
+//   1. OccurrencesPanel — la liste et la fiche d'un mot
+//   2. Les styles
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. OccurrencesPanel — la liste et la fiche d'un mot //////////////////////////////
+
 type Props = {
   theme: Theme;
   focusedWord: string | null;
@@ -208,6 +232,8 @@ export function OccurrencesPanel({ theme, focusedWord, onFocusWord, onOpenNote, 
     </ScrollView>
   );
 }
+
+//////// 2. Les styles ////////////////////////////////////////////////////////////////////
 
 const styles = StyleSheet.create({
   container: {

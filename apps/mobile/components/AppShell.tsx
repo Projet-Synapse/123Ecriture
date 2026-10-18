@@ -2,22 +2,52 @@ import { useEffect, useState, type ReactNode, type RefObject } from 'react';
 import { Image, Platform, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
 import type { Section } from '../navigation';
-import { useResizablePanel } from '../lib/useResizablePanel';
+import { useResizablePanel } from '../lib/ui/useResizablePanel';
 import { useSyncStatus } from '../lib/sync/SyncStatusContext';
 import { usePreferences } from '../preferences/PreferencesContext';
 import { CommandPalette } from './CommandPalette';
 import { ResizeHandle } from './ResizeHandle';
 import { VaultSwitcher } from './VaultSwitcher';
 
+// ✒️ 123ECRITURE — components/AppShell.tsx — la coquille de navigation générale
+//////////////////////////////////////////////////////////////////////////////
+//
 // Coquille de navigation générale de l'app : panneau de sections (Notes,
 // Tâches, Calendrier...) + zone de contenu. Bascule automatiquement entre
 // barre latérale (écrans larges : desktop/web/tablette) et barre d'onglets
 // en bas (écrans étroits : téléphone) — un même composant pour toutes les
 // plateformes, cohérent avec la vision « app multiplateforme » de
 // docs/ARCHITECTURE.md. Présente sur TOUS les écrans (elle englobe
-// `children`), c'est donc ici que vit le raccourci global Ctrl/Cmd+K de la
-// palette de commandes (voir CommandPalette.tsx) — un seul écouteur clavier
-// pour toute l'app plutôt qu'un par écran.
+// `children`).
+//
+// Invariants du fichier :
+//   • Le raccourci global Ctrl/Cmd+K de la palette de commandes vit ICI
+//     (voir CommandPalette.tsx) : un seul écouteur clavier pour toute
+//     l'app plutôt qu'un par écran. L'ÉDITEUR a priorité quand il a le
+//     focus (son keymap Mod-k fait preventDefault) et NotesScreen
+//     n'écoute pas Ctrl+K du tout — jamais deux palettes superposées.
+//   • Les raccourcis clavier sont desktop uniquement : `typeof window` ne
+//     suffit pas en natif (window existe sous Hermes, mais
+//     window.addEventListener n'est pas une fonction).
+//   • Alt+1..N saute aux sections : Alt plutôt que Ctrl/Cmd, car
+//     Mod-1..6 est DÉJÀ pris par les titres H1-H6 de l'éditeur — un
+//     Alt+chiffre est libre partout dans l'app.
+//   • Chaque écran gère son propre scroll interne : la coquille ne pose
+//     JAMAIS de ScrollView extérieur (imbrication = casse de la chaîne
+//     flex:1 et molette capturée au mauvais niveau).
+//   • La nav large est redimensionnable/repliable au curseur
+//     (lib/useResizablePanel.ts) ; la poignée est web/desktop uniquement.
+//
+// SOMMAIRE :
+//   1. Les constantes et types partagés (breakpoint, NotesActions, Props)
+//   2. AppShell — la coquille (nav, contenu, palette)
+//   3. SyncStatusChip — la puce de statut de synchro
+//   4. Les styles
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. Les constantes et types partagés (breakpoint, NotesActions, Props) ////////////
+
 const WIDE_BREAKPOINT = 720;
 
 // "Nouvelle note"/"Nouveau dossier" ne concernent que l'écran Notes (voir
@@ -45,6 +75,8 @@ type Props = {
   onRequestNewEvent: () => void;
 };
 
+//////// 2. AppShell — la coquille (nav, contenu, palette) ////////////////////////////////
+
 export function AppShell({
   sections,
   activeId,
@@ -71,14 +103,14 @@ export function AppShell({
   // les raccourcis (voir MdxEditor.tsx, `shortcuts`). L'ÉDITEUR a priorité
   // quand il a le focus : son keymap Mod-k (insérer un lien, voir
   // notesToolbarActions.ts) fait preventDefault() sur l'évènement natif —
-  // sans ce garde, la palette s'ouvrait PAR-DESSUS l'insertion du lien.
-  // Réciproquement, NotesScreen n'écoute plus Ctrl+K du tout : avant, un
-  // seul Ctrl+K y ouvrait la recherche globale ET cette palette superposées.
+  // sans ce garde, la palette s'ouvre PAR-DESSUS l'insertion du lien.
+  // Réciproquement, NotesScreen n'écoute pas Ctrl+K du tout : un seul
+  // écouteur ici exclut toute superposition de deux palettes.
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   useEffect(() => {
     // Raccourcis clavier = desktop uniquement — `typeof window` ne suffit pas
     // en natif (window existe sous Hermes, mais window.addEventListener n'est
-    // pas une fonction : crash au démarrage, v0.4.41).
+    // pas une fonction : crash au démarrage).
     if (Platform.OS !== 'web') return;
     const isMac = /Mac|iPhone|iPad/.test(navigator.platform ?? '');
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -216,10 +248,12 @@ export function AppShell({
   );
 }
 
+//////// 3. SyncStatusChip — la puce de statut de synchro /////////////////////////////////
+
 // Puce de statut de synchro globale — voir SyncStatusContext.tsx. N'affiche
 // RIEN tant qu'aucun coffre cloud n'est effectivement lié (cloudSyncConfigured
-// à `false`) : avant ça, un "Non synchronisé" permanent n'aurait aucun sens
-// puisque rien n'est configuré (même garde-fou que AccountSyncSection.tsx).
+// à `false`) : un "Non synchronisé" permanent n'aurait aucun sens puisque
+// rien n'est configuré (même garde-fou que AccountSyncSection.tsx).
 // `compact` (barre du bas, écrans étroits) masque le libellé texte et ne
 // garde que l'icône, pour ne pas déborder d'une barre déjà dense.
 function SyncStatusChip({ compact }: { compact?: boolean }) {
@@ -247,8 +281,8 @@ function SyncStatusChip({ compact }: { compact?: boolean }) {
         color = theme.danger;
       } else if (syncStatus.lastSummary && (syncStatus.lastSummary.pushed > 0 || syncStatus.lastSummary.pulled > 0)) {
         // Dernière sync avec du contenu échangé : le détail parle plus que
-        // « Synchronisé » (demande utilisateur : la puce raconte ce qui s'est
-        // passé, pas juste un horodatage).
+        // « Synchronisé » — la puce raconte ce qui s'est passé, pas juste
+        // un horodatage.
         const synced = new Date(syncStatus.lastSyncedAt);
         const hh = String(synced.getHours()).padStart(2, '0');
         const mm = String(synced.getMinutes()).padStart(2, '0');
@@ -280,6 +314,8 @@ function SyncStatusChip({ compact }: { compact?: boolean }) {
     </Pressable>
   );
 }
+
+//////// 4. Les styles ////////////////////////////////////////////////////////////////////
 
 const styles = StyleSheet.create({
   root: {

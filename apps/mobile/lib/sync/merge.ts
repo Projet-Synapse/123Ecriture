@@ -1,15 +1,29 @@
-// Fusion à trois voix (v0.4.29) — diff-match-patch de Google, comme Obsidian
-// Sync. Pur et testé : toute la décision de fusion vit ici, le moteur
-// (syncEngine.ts) ne fait qu'appeler tryThreeWayMerge et appliquer le
-// résultat.
+// ✒️ 123ECRITURE — lib/sync/merge.ts — fusion à trois voix (diff-match-patch)
+//////////////////////////////////////////////////////////////////////////////
 //
-// Avant : un fichier modifié des deux côtés entre deux cycles = conflit
-// tranché au plus récent, le perdant archivé (copies « (conflit …) » vécues
-// pendant des jours). Maintenant : base (dernière version synchronisée) +
-// locale + distante → dmp.patch_merge. Deux modifications de parties
-// différentes de la note sont RÉUNIES ; seules les modifications qui
-// chevauchent réellement les mêmes lignes restent un conflit (comportement
-// précédent conservé comme repli).
+// Fusion à trois voix avec diff-match-patch de Google, comme Obsidian
+// Sync. Une note modifiée des DEUX côtés entre deux cycles ne devient pas
+// systématiquement un conflit tranché au plus récent : base (dernière
+// version synchronisée) + locale + distante → dmp.patch_merge. Deux
+// modifications de parties différentes de la note sont RÉUNIES ; seules
+// les modifications qui chevauchent réellement les mêmes lignes restent
+// un conflit (tranché au plus récent, perdant archivé — repli conservé).
+//
+// Invariants du fichier :
+//   • Pur et testé : toute la décision de fusion vit ici — le moteur
+//     (syncEngine.ts) ne fait qu'appeler tryThreeWayMerge et appliquer le
+//     résultat.
+//   • Une fusion douteuse n'est JAMAIS écrite en silence : si le texte
+//     fusionné contient des marqueurs de conflit, le résultat est traité
+//     comme un conflit (jamais de perte silencieuse).
+//
+// SOMMAIRE :
+//   1. Le moteur de fusion et le contrat de résultat (dmp, MergeOutcome)
+//   2. tryThreeWayMerge — la fusion autour de la base commune
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. Le moteur de fusion et le contrat de résultat (dmp, MergeOutcome) ///////////
 
 import DiffMatchPatch from 'diff-match-patch';
 
@@ -19,12 +33,13 @@ export type MergeOutcome =
   | { kind: 'merged'; text: string; clean: boolean }
   | { kind: 'conflict' };
 
+//////// 2. tryThreeWayMerge — la fusion autour de la base commune ///////////
+
 // Fusionne locale et distante autour de la base commune. `clean` = la
 // fusion n'a laissé AUCUN marqueur de conflit ; sinon le texte contient des
 // marqueurs « <<<<<<< LOCAL / ======= / >>>>>>> DISTANT » aux endroits
 // irréconciliables — traité comme un conflit pour ne JAMAIS écrire une
-// fusion douteuse en silence (règle CLAUDE.md : jamais de perte
-// silencieuse).
+// fusion douteuse en silence (jamais de perte silencieuse).
 export function tryThreeWayMerge(
   base: string,
   local: string,

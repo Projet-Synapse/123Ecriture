@@ -1,25 +1,46 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { usePropertyDefinitions } from '../../lib/usePropertyDefinitions';
-import { TYPE_ICONS, TYPE_LABELS, TYPE_ORDER } from '../../lib/propertyTypes';
+import { usePropertyDefinitions } from '../../lib/properties/usePropertyDefinitions';
+import { TYPE_ICONS, TYPE_LABELS, TYPE_ORDER } from '../../lib/properties/propertyTypes';
 import { usePreferences } from '../../preferences/PreferencesContext';
 import type { Theme } from '../../theme';
-import { DraftTextField } from '../DraftTextField';
+import { DraftTextField } from '../editors/DraftTextField';
 import { settingsStyles as s } from './settingsStyles';
 
-// Paramètres → "Gestion des propriétés" — configuration du SCHÉMA global de
-// propriétés typées (créer/renommer/changer de type/supprimer, et pour le
-// type "Options" la liste des valeurs proposées). Anciennement la moitié
-// basse de PropertiesPanel.tsx (barre latérale) ; déplacé ici pour que ce
-// soit LE endroit où configurer les propriétés (voir demande utilisateur :
-// dépasser Obsidian sur ce point précis), le panneau latéral et le bloc en
-// haut de note (PropertiesBlock.tsx) ne font plus qu'éditer des valeurs.
-// Renommer une définition migre la CLÉ de frontmatter dans les notes qui la
-// portent déjà (voir migrateRenamedPropertyInVault, apps/desktop/electron/
-// properties.ts) ; changer le type ou supprimer une définition, en
-// revanche, ne touche jamais les valeurs déjà écrites — juste ce registre
-// (voir le commentaire d'en-tête d'apps/desktop/electron/properties.ts).
+// ✒️ 123ECRITURE — components/settings/PropertiesManagementSection.tsx — le schéma global des propriétés
+//////////////////////////////////////////////////////////////////////////////
+//
+// Paramètres → "Gestion des propriétés" : LE endroit où configurer le
+// SCHÉMA global de propriétés typées (créer/renommer/changer de type/
+// supprimer, et pour le type "Options" la liste des valeurs proposées).
+// Le panneau latéral (PropertiesPanel.tsx) et le bloc en haut de note
+// (PropertiesBlock.tsx) ne font qu'éditer des valeurs.
+//
+// Invariants du fichier :
+//   • Renommer une définition migre la CLÉ de frontmatter dans les notes
+//     qui la portent déjà (voir migrateRenamedPropertyInVault,
+//     apps/desktop/electron/properties.ts).
+//   • Changer le type ou supprimer une définition ne touche JAMAIS les
+//     valeurs déjà écrites — seulement ce registre (voir le commentaire
+//     d'en-tête d'apps/desktop/electron/properties.ts).
+//   • Un seul sélecteur de type ouvert à la fois : l'état `openTypePickerId`
+//     est levé au parent — plusieurs TypePicker sont montés en même temps,
+//     sans exclusivité leurs popovers `position: 'absolute'` se
+//     chevauchent avec les lignes voisines.
+//   • Le scan du coffre enregistre les propriétés trouvées (type déduit)
+//     et compte leur usage par note (`usage[name]`) ; relançable via
+//     « Revérifier », lancé à l'ouverture de la section.
+//
+// SOMMAIRE :
+//   1. TypePicker et résumé de migration (helpers)
+//   2. PropertiesManagementSection — le registre du schéma
+//   3. Les styles
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. TypePicker et résumé de migration (helpers) ///////////////////////////////////
+
 function TypePicker({
   value,
   onSelect,
@@ -34,10 +55,9 @@ function TypePicker({
   // Levé au composant parent (voir PropertiesManagementSection ci-dessous)
   // plutôt qu'un state local à chaque instance : plusieurs propriétés dans
   // la liste, donc plusieurs TypePicker en même temps — sans exclusivité,
-  // ouvrir le sélecteur d'une ligne puis celui d'une autre laissait les DEUX
-  // popovers ouverts en même temps, chacun en `position: 'absolute'`, et ils
-  // se chevauchaient visuellement avec les lignes voisines (bug rapporté :
-  // "les boutons se rentrent dedans").
+  // ouvrir le sélecteur d'une ligne puis celui d'une autre laisse les DEUX
+  // popovers ouverts en même temps, chacun en `position: 'absolute'`, et
+  // ils se chevauchent visuellement avec les lignes voisines.
   onToggle: () => void;
 }) {
   return (
@@ -85,6 +105,8 @@ function formatMigrationMessage(migration: PropertyRenameMigrationSummary): stri
   return parts.join(' · ');
 }
 
+//////// 2. PropertiesManagementSection — le registre du schéma ///////////////////////////
+
 export function PropertiesManagementSection() {
   const { theme } = usePreferences();
   const { bridge, definitions, error, refresh, create, update, remove } = usePropertyDefinitions();
@@ -99,10 +121,10 @@ export function PropertiesManagementSection() {
   // état par propriété : un seul renommage à la fois a du sens ici.
   const [migrationMessage, setMigrationMessage] = useState<string | null>(null);
 
-  // Scan du coffre (demande utilisateur : « toutes les propriétés
-  // mentionnées dans mes fichiers doivent être enregistrées convenablement,
-  // avec un petit chiffre ») — lancé à l'ouverture de la section, relançable
-  // via « Revérifier ». `usage[name]` = nombre de notes portant la clé.
+  // Scan du coffre : toutes les propriétés mentionnées dans les fichiers
+  // doivent être enregistrées convenablement, avec un petit chiffre —
+  // lancé à l'ouverture de la section, relançable via « Revérifier ».
+  // `usage[name]` = nombre de notes portant la clé.
   const [usage, setUsage] = useState<Record<string, number>>({});
   const [scanMessage, setScanMessage] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
@@ -270,6 +292,8 @@ export function PropertiesManagementSection() {
   );
 }
 
+//////// 3. Les styles ////////////////////////////////////////////////////////////////////
+
 const styles = StyleSheet.create({
   stack: {
     gap: 16,
@@ -288,8 +312,8 @@ const styles = StyleSheet.create({
     gap: 6,
     // Sépare visuellement chaque propriété de la suivante — sans ça, des
     // lignes consécutives très compactes (juste 6px de gap) + un popover de
-    // sélecteur de type ouvert (voir TypePicker) donnaient l'impression que
-    // les rangées "se rentraient dedans" (bug rapporté).
+    // sélecteur de type ouvert (voir TypePicker) donnent l'impression que
+    // les rangées "se rentrent dedans".
     paddingBottom: 10,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: 'rgba(128,128,128,0.25)',

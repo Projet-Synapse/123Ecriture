@@ -7,28 +7,39 @@ import { nativePreferencesAdapter } from './nativePreferencesAdapter';
 import { nativeTaskListsBridge, nativeTasksBridge } from './nativeTasksAdapter';
 import { installNativeAuthBridge } from './nativeAuthBridge';
 
+// ✒️ 123ECRITURE — lib/storage/installNativeBridges.ts — installation des ponts natifs (Android)
+//////////////////////////////////////////////////////////////////////////////
+//
 // Point d'entrée unique qui pose `window.vault`/`window.vaults`/`window.sync`
-// et le pont auth (`window.auth`, voir nativeAuthBridge.ts) sur mobile natif
-// (Android pour l'instant — voir nativeVaultAdapter.ts pour les limites
-// connues) AVANT que le premier composant ne se monte (appelé depuis
-// index.ts, pas App.tsx). Tous les écrans (NotesScreen.tsx, TasksScreen.tsx,
-// CalendarScreen.tsx...) testent déjà
+// et le pont auth (`window.auth`, voir nativeAuthBridge.ts) sur mobile
+// natif (Android pour l'instant), AVANT que le premier composant ne se
+// monte (appelé depuis index.ts, pas App.tsx) — l'équivalent de
+// apps/desktop/electron/preload.ts côté Electron. Les écrans testent
 // `typeof window !== 'undefined' ? window.vault : undefined` sans savoir
-// QUI a posé ce pont — cette fonction leur donne juste une vraie
-// implémentation à trouver là, exactement comme le fait
-// apps/desktop/electron/preload.ts côté Electron. Aucun fichier consommateur
-// n'a besoin d'être modifié.
+// QUI a posé ce pont ; cette fonction leur donne une vraie implémentation
+// à trouver là, aucun consommateur n'a besoin de modification.
 //
-// `window.sync` (hachage du coffre pour la synchro cloud) et `window.auth`
-// (connexion Google navigateur-système + deep link app123ecriture://) sont
-// les deux pièces qui rendent Compte + Coffres distants fonctionnels sur
-// Android — voir nativeSyncAdapter.ts / nativeAuthBridge.ts.
+// Invariants du fichier :
+//   • Installation AVANT le premier montage : les contextes lisent
+//     `window.<domain>` de façon synchrone.
+//   • `window.sync` (hachage du coffre pour la synchro cloud) et
+//     `window.auth` (connexion Google navigateur-système + deep link
+//     app123ecriture://) sont les deux pièces qui rendent Compte + Coffres
+//     distants fonctionnels sur Android.
+//   • `Platform.OS === 'web'` reste exclu : le web n'a ni pont Electron ni
+//     SAF Android — il garde ses messages « disponible sur desktop » (le
+//     pont web FSA est un chantier séparé, installWebBridges.ts).
+//   • Jamais un pont existant écrasé — garde-fou explicite plutôt qu'une
+//     supposition silencieuse.
 //
-// `Platform.OS === 'web'` reste volontairement exclu : le web (hors coquille
-// Electron) n'a ni pont Electron ni SAF Android — il continue d'afficher les
-// messages "disponible sur desktop pour l'instant" déjà en place, Phase 2
-// web restant un chantier séparé (File System Access API, voir
-// docs/ARCHITECTURE.md §5).
+// SOMMAIRE :
+//   1. Garde d'installation
+//   2. Le câblage des ponts window.*
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. Garde d'installation ////////////////////////////////////////////////////////
+
 export function installNativeBridges(): void {
   if (Platform.OS === 'web') return;
   if (typeof window === 'undefined') return;
@@ -40,13 +51,13 @@ export function installNativeBridges(): void {
   window.vault = nativeVaultAdapter;
   window.vaults = nativeVaultsAdapter;
   window.sync = nativeSyncAdapter;
+
+  //////// 2. Le câblage des ponts window.* ///////////////////////////////////////////////
+
   // Personnalisation persistée (thème, accent, polices, largeurs de
-  // panneaux…) — avant ce pont, tout se réinitialisait à chaque relance
-  // (voir nativePreferencesAdapter.ts).
+  // panneaux…) — voir nativePreferencesAdapter.ts.
   window.preferences = nativePreferencesAdapter;
-  // Tâches PAR COFFRE (v0.4.50) — avant ce pont, l'écran Tâches était
-  // inerte sur Android et rien de créé ne persistait (voir
-  // nativeTasksAdapter.ts).
+  // Tâches PAR COFFRE — voir nativeTasksAdapter.ts.
   window.tasks = nativeTasksBridge;
   window.taskLists = nativeTaskListsBridge;
   installNativeAuthBridge();

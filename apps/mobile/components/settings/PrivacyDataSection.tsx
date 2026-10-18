@@ -4,11 +4,21 @@ import { Pressable, Text, View } from 'react-native';
 import { usePreferences } from '../../preferences/PreferencesContext';
 import { settingsStyles as s } from './settingsStyles';
 
-// Section "Confidentialité et données" — n'agit que sur la personnalisation
-// (thème, barre d'outils, réglages Éditeur/Fichiers ci-dessus), jamais sur
-// les notes ou les coffres eux-mêmes : pas d'action destructive sur les
-// données de l'utilisatrice ici. Masquée sans pont Electron (web/mobile),
-// même logique de dégradation que le reste de l'écran.
+// ✒️ 123ECRITURE — components/settings/PrivacyDataSection.tsx — confidentialité et données
+//////////////////////////////////////////////////////////////////////////////
+//
+// Section "Confidentialité et données" : réinitialisation de la
+// personnalisation et accès au dossier de configuration.
+//
+// Invariants du fichier :
+//   • N'agit que sur la personnalisation (thème, barre d'outils, réglages
+//     Éditeur/Fichiers), JAMAIS sur les notes ou les coffres eux-mêmes :
+//     pas d'action destructive sur les données ici.
+//   • Masquée sans pont Electron (web/mobile) — même logique de
+//     dégradation que le reste de l'écran.
+//
+//////////////////////////////////////////////////////////////////////////////
+
 export function PrivacyDataSection() {
   const { theme, resetPreferences, getConfigPath, revealConfigFolder } = usePreferences();
   const [configPath, setConfigPath] = useState<string | null>(null);

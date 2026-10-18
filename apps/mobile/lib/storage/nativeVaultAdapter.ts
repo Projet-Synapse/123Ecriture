@@ -3,34 +3,52 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import { StorageAccessFramework } from 'expo-file-system/legacy';
 
-import { parseFrontmatter } from '../frontmatter';
-import { CODE_FILE_EXTENSIONS } from '../codeLanguages';
+import { parseFrontmatter } from '../properties/frontmatter';
+import { CODE_FILE_EXTENSIONS } from '../editor/codeLanguages';
 import { getActiveVaultRootUri, requestAndRegisterVault } from './nativeVaultsAdapter';
 import { vaultStorageObjectKey } from '../sync/storageKeys';
 
-// Implémentation native (Android) de VaultBridge, sur le Storage Access
-// Framework (SAF) — voir docs/ARCHITECTURE.md §5, "écart pragmatique"
-// Phase 1 : l'implémentation Electron vit directement dans
-// apps/desktop/electron/vault.ts, celle-ci en est le pendant natif, PREMIER
-// vrai second consommateur du concept VaultAdapter décrit dans ce document
-// (extraction d'un packages/storage commun laissée pour plus tard, une fois
-// les deux implémentations éprouvées en usage réel).
+// ✒️ 123ECRITURE — lib/storage/nativeVaultAdapter.ts — le coffre sur Android (pont SAF)
+//////////////////////////////////////////////////////////////////////////////
 //
-// ⚠️ PAS TESTÉ SUR UN VRAI APPAREIL ANDROID (voir la conversation) — écrit
-// aussi soigneusement que possible à partir de la documentation officielle
-// expo-file-system/legacy, mais SAF a des cas limites documentés qui
-// varient selon la version d'Android/le fournisseur de stockage (voir les
-// commentaires ciblés ci-dessous, notamment sur readDirectoryAsync). À
-// valider/corriger avec de vrais retours de bugs plutôt que par relecture.
+// Implémentation NATIVE (Android) de VaultBridge : le coffre vit hors de
+// l'app, dans un dossier accordé via le Storage Access Framework (SAF).
+// SAF ne donne pas des chemins mais des URI `content://` opaques, lentes et
+// capricieuses — ce module encapsule toute cette rudesse derrière le
+// contrat VaultBridge (listTree, readNote, writeNote, rename…), pendant
+// natif de apps/desktop/electron/vault.ts. La synchro (nativeSyncAdapter)
+// comme les ponts de tâches/préférences passent par ici : c'est LE garde
+// du coffre sur Android.
 //
-// //1. 🗺️ Modèle interne (relPath ↔ URI SAF)
-// //2. 📖 Lire/écrire le CONTENU d'un fichier SAF
-// //3. 🌳 Parcours de l'arborescence
-// //4. 🧩 Types de fichiers & noms disponibles
-// //5. 🔌 Implémentation de VaultBridge
+// Invariants du fichier :
+//   • Seules les URI `content://` désignent un fichier du coffre — un
+//     chemin `file://` ne peut jamais y accéder (stockage SAF non monté
+//     dans le système de fichiers de l'app).
+//   • Toute écriture passe par le pont troncature-sûr (writeSafTruncationSafe)
+//     : SAF écrase le début d'un document SANS tronquer la fin, un contenu
+//     plus court que l'ancien laisserait une queue invalide (JSON cassé).
+//   • L'URI racine du coffre vit dans le REGISTRE (nativeVaultsAdapter) ;
+//     ce module n'indexe que le coffre ACTIF (relPath ↔ URI SAF).
+//   • L'index est persisté HORS du coffre (documentDirectory, un fichier
+//     par coffre) : un parcours SAF complet coûte ~1 requête par entrée
+//     (~1 min sur un grand coffre) — jamais rejoué sur un chemin chaud.
+//   • La corbeille locale (`.trash/` du stockage privé) est HORS du coffre
+//     donc non synchronisée — limitation connue face à la corbeille
+//     synchronisée `.trash/` DANS le coffre de la spec (§S.2).
+//
+// SOMMAIRE :
+//   1. Modèle interne : index relPath ↔ URI SAF + file des modifications
+//   2. Lire/écrire le contenu d'un fichier SAF (pont troncature-sûr)
+//   3. Parcours de l'arborescence + index persisté par coffre
+//   4. Types de fichiers, noms et MIME SAF
+//   5. État d'UI du coffre + écriture binaire partagée
+//   6. VaultBridge — coffre actif, arbre et contenu des notes
+//   7. VaultBridge — restructuration (renommer, déplacer, supprimer)
+//   8. VaultBridge — état d'UI, note du jour, pièces jointes, tags
+//
+//////////////////////////////////////////////////////////////////////////////
 
-// //1. 🗺️ MODÈLE INTERNE (relPath ↔ URI SAF)
-// ////////////////////////////////////////////////////////////////////////
+//////// 1. Modèle interne : index relPath ↔ URI SAF + file des modifications ///////
 
 // SAF travaille avec des URI `content://...`, pas des chemins — il n'existe
 // aucune façon de "joindre" une URI + un relPath comme on le ferait avec
@@ -149,12 +167,11 @@ function isMetaRelPath(relPath: string): boolean {
 }
 
 // Métadonnées .123ecriture/** qui voyagent AVEC le coffre (liste blanche en
-// POSIX — le reste du sous-arbre reste local) : apparence par coffre
-// (v0.4.42), tâches/listes et préférences d'UI par coffre (v0.4.65 —
-// « tâches enregistrées et synchronisées dans leur vault respectif »).
-// Consommateurs : markVaultFileDirty ci-dessous, nativeSyncAdapter
-// (hashableRelPath) et côté desktop SYNCED_META_FILES de
-// apps/desktop/electron/sync.ts — À MAINTENIR ENSEMBLE.
+// POSIX — le reste du sous-arbre reste local) : apparence, tâches/listes et
+// préférences d'UI par coffre. Consommateurs : markVaultFileDirty,
+// nativeSyncAdapter (hashableRelPath) et côté desktop SYNCED_META_FILES de
+// apps/desktop/electron/sync.ts — À MAINTENIR ENSEMBLE, sinon deux
+// appareils synchronisent des listes de métadonnées différentes.
 export const SYNCED_META_FILES = [
   '.123ecriture/appearance.json',
   '.123ecriture/tasks.json',
@@ -162,11 +179,11 @@ export const SYNCED_META_FILES = [
   '.123ecriture/preferences.json',
 ];
 
-// Pièces jointes SYNCHRONISÉES (v0.4.66 — « gestion des fichiers joints ») :
-// images, documents et audio voyageant avec le coffre. Même liste côté
-// desktop : SYNC_ATTACHMENT_EXTENSIONS de apps/desktop/electron/sync.ts —
-// À MAINTENIR ENSEMBLE. (La limite de taille par fichier est appliquée au
-// hachage desktop ; le mobile hache ce que l'index connaît.)
+// Pièces jointes SYNCHRONISÉES : images, documents et audio voyageant avec
+// le coffre. Même liste côté desktop : SYNC_ATTACHMENT_EXTENSIONS de
+// apps/desktop/electron/sync.ts — À MAINTENIR ENSEMBLE. (La limite de
+// taille par fichier est appliquée au hachage desktop ; le mobile hache ce
+// que l'index connaît.)
 export const SYNC_ATTACHMENT_EXTENSIONS = [
   '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.heic',
   '.pdf', '.txt', '.csv',
@@ -189,8 +206,7 @@ async function requireActiveRootUri(): Promise<string> {
   return uri;
 }
 
-// //2. 📖 LIRE/ÉCRIRE LE CONTENU D'UN FICHIER SAF
-// ////////////////////////////////////////////////////////////////////////
+//////// 2. Lire/écrire le contenu d'un fichier SAF (pont troncature-sûr) ////////////
 
 // `readAsStringAsync` ne sait PAS lire une URI `content://` directement
 // (documenté) — le contournement standard est de copier le fichier SAF vers
@@ -211,15 +227,13 @@ async function readSafFileText(uri: string): Promise<string> {
 // file" via cette fonction sur une URI SAF) — créer un nouveau fichier
 // passe par `StorageAccessFramework.createFileAsync` (voir plus bas),
 // jamais par celle-ci.
-// ── ÉCRITURE SAF À TRONCATURE GARANTIE ─────────────────────────────────
-// writeAsStringAsync ouvre le document SAF en écrasant SANS tronquer :
-// quand le nouveau contenu est plus court que l'ancien, la queue de
-// l'ancien reste en place (vécu A13 17/10 : tasks.json réécrit ~300 octets
-// par-dessus 1 145 → JSON cassé en boucle, sauvegardé .corrupt-* à chaque
-// lecture par les ponts de tâches, puis propagé au coffre cloud par la
-// sync). On vérifie donc la taille APRÈS écriture ; si l'ancien contenu
-// traîne, on supprime le document et on le recrée (SAF ne sait pas
-// tronquer) avant de réécrire. Retourne l'URI effectif : il CHANGE en cas
+// ÉCRITURE SAF À TRONCATURE GARANTIE : writeAsStringAsync ouvre le document
+// SAF en écrasant SANS tronquer — quand le nouveau contenu est plus court
+// que l'ancien, la queue de l'ancien reste en place et contamine le fichier
+// (JSON cassé en boucle, puis propagé au coffre cloud par la sync). La
+// taille du document est donc vérifiée APRÈS chaque écriture ; si l'ancien
+// contenu traîne, le document est supprimé et recréé (SAF ne sait pas
+// tronquer) avant réécriture. Retourne l'URI effectif : il CHANGE en cas
 // de recréation, l'appelant doit mettre à jour son index.
 
 // Longueur UTF-8 d'une chaîne (Hermes n'a ni Buffer ni TextEncoder garanti).
@@ -291,8 +305,7 @@ async function writeSafFileText(uri: string, content: string): Promise<string> {
   );
 }
 
-// //3. 🌳 PARCOURS DE L'ARBORESCENCE
-// ////////////////////////////////////////////////////////////////////////
+//////// 3. Parcours de l'arborescence + index persisté par coffre /////////////////
 
 function extensionKind(name: string): VaultEntryKind | null {
   const lower = name.toLowerCase();
@@ -319,12 +332,12 @@ const KNOWN_CONTENT_EXTS = [
 
 // Nom SANS extension de contenu — même convention que le desktop
 // (apps/desktop/electron/vault.ts : `name: entry.name.slice(0,
-// -extension.length)`), forme contre laquelle toute l'interface a été
+// -extension.length)`), forme contre laquelle toute l'interface est
 // écrite : titres inline, onglets, autocomplétion `[[`, résolution des
-// liens internes (`note.name === cible`), étiquettes du graphe. L'arbre
-// natif livrait le nom AVEC extension : titres affichés « Note.md », et
-// les `[[Note]]` ne matchaient plus (ouvrir un lien recréait une note ;
-// graphe : 0 liens, vécu A13, 2026-10-03).
+// liens internes (`note.name === cible`), étiquettes du graphe. Livrer le
+// nom AVEC extension casse tout : titres affichés « Note.md » et les
+// `[[Note]]` ne matchent plus (ouvrir un lien recrée une note, le graphe
+// perd ses liens).
 function baseNameOf(name: string): string {
   const lower = name.toLowerCase();
   const ext = KNOWN_CONTENT_EXTS.find((known) => lower.endsWith(known));
@@ -352,12 +365,12 @@ function nameFromSafUri(uri: string): string {
 
 // ⚠️ Android 11+ (MediaProvider) : à la création SAF, si l'extension du nom
 // ne résout pas vers le MIME demandé, il AJOUTE l'extension du MIME au nom
-// (« .md » demandé en text/plain → « .md.txt » sur disque, vécu fix4 :
-// 1026 fichiers invisibles). Il faut demander LE MIME QUE RÉSOUT
-// L'EXTENSION : .md → text/markdown ; .json → application/json ; .txt →
-// text/plain ; les extensions qu'Android ne connaît pas (.mdx, .canvas,
-// .chart, .excalidraw, .base) résolvent en application/octet-stream — même
-// valeur demandée → aucun ajout.
+// (« .md » demandé en text/plain → « .md.txt » sur disque — fichiers ainsi
+// devenus invisibles de l'arbre par centaines). Il faut demander LE MIME
+// QUE RÉSOUT L'EXTENSION : .md → text/markdown ; .json → application/json ;
+// .txt → text/plain ; les extensions qu'Android ne connaît pas (.mdx,
+// .canvas, .chart, .excalidraw, .base) résolvent en application/octet-stream
+// — même valeur demandée → aucun ajout.
 function mimeForName(name: string): string {
   const lower = name.toLowerCase();
   if (lower.endsWith('.md')) return 'text/markdown';
@@ -406,9 +419,9 @@ async function walkSafChildren(childUris: string[], parentRelPath: string, depth
       relPath === '.trash' ||
       relPath.startsWith('.trash/');
     if (name.startsWith('.') && !isMeta) continue; // masque les cachés, comme walkTree côté Electron
-    // ANTI-CONTAMINATION (v0.4.67) : les noms contenant un backslash sont des
-    // fichiers plats issus d'anciens pulls de lignes backslashed — indexés
-    // mais jamais affichés (voir buildTreeFromIndex, même règle).
+    // ANTI-CONTAMINATION : les noms contenant un backslash sont des fichiers
+    // plats issus d'anciens pulls de lignes backslashed — indexés (pour le
+    // hachage) mais jamais affichés (voir buildTreeFromIndex, même règle).
     if (name.includes('\\') && !isMeta) continue;
     let grandChildren: string[] | null = null;
     try {
@@ -453,23 +466,22 @@ async function refreshIndex(): Promise<VaultTreeNode[]> {
   return cachedTree;
 }
 
-// L'index est PERSISTE hors du coffre (documentDirectory) : un parcours SAF
-// complet coute ~1 requete par entree (~1 min sur un grand coffre, thread
-// JS sature, UI figee) — le rejouer a chaque remontee d'ecran ou
-// redemarrage rendait l'explorateur « vide » pendant tout le parcours
-// (vécu : arbre visible un instant puis vide a chaque retour sur Notes).
+// L'index est PERSISTÉ hors du coffre (documentDirectory) : un parcours SAF
+// complet coûte ~1 requête par entrée (~1 min sur un grand coffre, thread
+// JS saturé, UI figée) — le rejouer à chaque remontée d'écran ou
+// redémarrage rendrait l'explorateur « vide » pendant tout le parcours.
 // Les URI SAF document sont des identifiants stables (permission d'arbre
-// persistante) : au lancement, l'index recharge du disque permet de
-// RECONSTRUIRE l'arbre en pur JS, sans une seule requete SAF. Un fichier
-// supprime hors de l'app donnera une URI morte qui echouera per-file
-// (gere) et sera purge au prochain parcours complet.
+// persistante) : au lancement, l'index rechargé du disque permet de
+// RECONSTRUIRE l'arbre en pur JS, sans une seule requête SAF. Un fichier
+// supprimé hors de l'app donne une URI morte qui échoue per-fichier (géré)
+// et sera purgé au prochain parcours complet.
 type PersistedIndex = { rootUri: string | null; entries: Record<string, { u: string; d: boolean }> };
 
-// v0.4.69 — UN FICHIER D'INDEX PAR COFFRE (avant : un seul vault-index.json
-// écrasé à chaque changement de coffre → au retour sur un coffre, l'index
-// était invalide et le PARCOURS SAF COMPLET de ~1 minute repartait —
-// « le vault prend du temps à charger », vécu A13 17-18/10). La clé du nom
-// de fichier est le rootUri (base64url, même motif que les clés Storage).
+// UN FICHIER D'INDEX PAR COFFRE (clé du nom de fichier = rootUri en
+// base64url, même motif que les clés Storage) : un index unique écrasé à
+// chaque changement de coffre rendrait l'index du coffre précédent
+// invalide et relancerait le parcours SAF complet d'une minute à chaque
+// retour sur ce coffre.
 function indexFilePath(rootUri: string): string {
   return `${FileSystem.documentDirectory}vault-index-${vaultStorageObjectKey(rootUri)}.json`;
 }
@@ -555,11 +567,10 @@ function buildTreeFromIndex(): VaultTreeNode[] {
   };
   // Les dossiers d'abord (y compris VIDES — ils émergent ici, pas des
   // parents de fichiers), puis les fichiers.
-  // ANTI-CONTAMINATION (v0.4.67) : les noms contenant un `\` sont des
-  // fichiers plats issus d'anciens pulls de lignes backslashed (résidus du
-  // mélange) — indexés pour le hachage mais JAMAIS affichés dans l'arbre
-  // (l'utilisatrice les voyait comme des dossiers « PROGRAMMATION »
-  // fantômes). Leur purge = retirer le coffre local sur l'appareil.
+  // ANTI-CONTAMINATION : les noms contenant un `\` sont des fichiers plats
+  // issus d'anciens pulls de lignes backslashed — indexés pour le hachage
+  // mais JAMAIS affichés dans l'arbre (ils y apparaissent comme des
+  // dossiers fantômes). Leur purge = retirer le coffre local sur l'appareil.
   const contaminé = (relPath: string): boolean => relPath.includes('\\');
   for (const [relPath, entry] of pathIndex) {
     if (!entry.isDirectory || contaminé(relPath)) continue;
@@ -594,8 +605,7 @@ function buildTreeFromIndex(): VaultTreeNode[] {
   return toNodes(root);
 }
 
-// //4. 🧩 TYPES DE FICHIERS & NOMS DISPONIBLES
-// ////////////////////////////////////////////////////////////////////////
+//////// 4. Types de fichiers, noms et MIME SAF //////////////////////////////////////
 
 const EXTENSION_FOR_KIND: Record<VaultEntryKind, string> = {
   markdown: '.mdx',
@@ -689,8 +699,7 @@ async function ensureSafDir(parentRelPath: string): Promise<string> {
   return parentUri;
 }
 
-// //5. 🔌 IMPLÉMENTATION DE VaultBridge
-// ////////////////////////////////////////////////////////////////////////
+//////// 5. État d'UI du coffre + écriture binaire partagée //////////////////////////
 
 // État d'UI du coffre actif (.123ecriture/state.json) — même fichier et
 // même schéma que côté Electron (vault.ts) : lastOpenedRelPath,
@@ -785,15 +794,16 @@ async function writeNoteBinaryInternal(relPath: string, base64: string): Promise
   markVaultFileDirty(relPath);
 }
 
+//////// 6. VaultBridge — coffre actif, arbre et contenu des notes ////////////////////
+
 export const nativeVaultAdapter: VaultBridge = {
   // Délègue au coffre actif (voir nativeVaultsAdapter.ts) — même relation
   // que côté Electron, où vault:choose-folder appelle en interne
   // vaults.pickAndAddExistingVault().
-  // Rescan COMPLET du coffre (v0.4.47, demande : « les fichiers ajoutés
-  // depuis l'explorateur de fichiers ne sont pas remarqués ») — invalide
-  // l'arbre mémoire, repeuple l'index par un parcours SAF complet puis
-  // persiste. Coûteux (~1 requête SAF par entrée) : à déclencher au retour
-  // au premier plan ou via le bouton Actualiser, pas à chaque frappe.
+  // Rescan COMPLET du coffre : invalide l'arbre mémoire, repeuple l'index
+  // par un parcours SAF complet puis persiste. Coûteux (~1 requête SAF par
+  // entrée) : à déclencher au retour au premier plan ou via le bouton
+  // Actualiser, pas à chaque frappe.
   rescan: async (): Promise<void> => {
     cachedTree = null;
     await refreshIndex();
@@ -803,10 +813,9 @@ export const nativeVaultAdapter: VaultBridge = {
     const uri = await getActiveVaultRootUri();
     if (uri) return uri;
     // AUCUN coffre actif (premier lancement, coffres retirés) : ouvrir le
-    // sélecteur SAF et ENREGISTRER un coffre — sinon le bouton « Choisir un
-    // dossier » de l'écran Tâches ne faisait RIEN (vécu 17/10 : sans vault
-    // actif, plus rien ne marche — tâches, suppression, tout dépend du
-    // coffre). Le coffre fraîchement ajouté devient actif.
+    // sélecteur SAF et ENREGISTRER un coffre, qui devient actif — sans
+    // coffre actif, plus rien ne marche (tâches, suppression : tout dépend
+    // du coffre).
     const liste = await requestAndRegisterVault('Nouveau coffre');
     return liste.length > 0 ? liste[liste.length - 1].path : null;
   },
@@ -833,17 +842,16 @@ export const nativeVaultAdapter: VaultBridge = {
   },
 
   readNote: async (relPath) => {
-    // Garde anti-mélange (v0.4.54) : si le coffre actif a changé depuis le
-    // dernier index, on l'invalide AVANT de résoudre — sinon les relPath
-    // continuaient de pointer vers l'ANCIEN coffre jusqu'au prochain
-    // listTree (code mort récemment branché).
+    // Garde anti-mélange : si le coffre actif a changé depuis le dernier
+    // index, l'invalider AVANT de résoudre — sinon les relPath continuent
+    // de pointer vers l'ANCIEN coffre jusqu'au prochain listTree.
     invalidateIndexIfRootChanged(await getActiveVaultRootUri().catch(() => null));
-    // Métadonnées absentes de l'index : le DISQUE gagne toujours. Un fichier
-    // `.123ecriture/**` créé dans une session antérieure peut manquer à
-    // l'index persisté (v0.4.65 : l'index n'était jamais persisté pour elles
-    // — les tâches « disparaissaient » au relancement, vécu A13 15/10/2026,
-    // docs/vault-incidents.md §4.2). On le cherche DIRECTEMENT dans son
-    // dossier SAF et on l'ajoute à l'index au passage ; erreur réelle sinon.
+    // Métadonnées absentes de l'index : le DISQUE gagne toujours — on
+    // cherche le fichier DIRECTEMENT dans son dossier SAF et on l'ajoute à
+    // l'index au passage (une `.123ecriture/**` peut manquer à l'index
+    // persisté, voir docs/vault-incidents.md §4.2) ; erreur réelle sinon.
+    // Sans ce rattrapage, l'app régénère son état au lieu de lire le
+    // disque (tâches « disparues » au relancement).
     if (isMetaRelPath(relPath) && !pathIndex.get(relPath)) {
       const parentRelPath = relPath.includes('/') ? relPath.slice(0, relPath.lastIndexOf('/')) : '';
       const name = relPath.slice(relPath.lastIndexOf('/') + 1);
@@ -871,13 +879,13 @@ export const nativeVaultAdapter: VaultBridge = {
       if (cached.isDirectory) throw new Error(`« ${relPath} » est un dossier, pas une note.`);
       const finalUri = await writeSafFileText(cached.uri, content);
       if (finalUri !== cached.uri) pathIndex.set(relPath, { ...cached, uri: finalUri });
-      // Les metadonnees de synchro s'ecrivent a CHAQUE cycle : les exclure
-      // de l'invalidation evite de relancer un parcours d'une minute juste
-      // apres (l'arbre VISIBLE n'a pas change). MAIS leur entree d'index
-      // doit etre PERSISTEE immediatement : aucune autre ecriture ne
-      // persiste l'index pour elles, et une app fermee avant le prochain
-      // parcours perdait la trace du fichier (taches disparues au
-      // relancement, v0.4.65).
+      // Les métadonnées de synchro s'écrivent à CHAQUE cycle : les exclure
+      // de l'invalidation évite de relancer un parcours d'une minute juste
+      // après (l'arbre VISIBLE n'a pas changé). MAIS leur entrée d'index
+      // doit être PERSISTÉE immédiatement : aucune autre écriture ne
+      // persiste l'index pour elles, et une app fermée avant le prochain
+      // parcours perd la trace du fichier (métadonnées « disparues » au
+      // relancement).
       if (relPath.startsWith('.123ecriture/')) await persistIndex();
       else invalidateTree();
       markVaultFileDirty(relPath);
@@ -886,19 +894,19 @@ export const nativeVaultAdapter: VaultBridge = {
     // Fichier absent de l'index (note créée sur un autre appareil et tirée
     // ici, premières métadonnées .123ecriture d'un coffre neuf) : le créer,
     // ainsi que ses dossiers parents manquants — writeNote desktop fait de
-    // même ; resolveIndexed lèverait ici « introuvable » (vécu : chaque
-    // pull refusait l'écriture, v0.4.41-fix4).
+    // même. Sans cette branche, toute écriture d'un fichier inconnu de
+    // l'index est refusée (« introuvable ») et chaque pull échoue.
     const parentRelPath = relPath.includes('/') ? relPath.slice(0, relPath.lastIndexOf('/')) : '';
     const parentUri = await ensureSafDir(parentRelPath);
     const name = relPath.slice(relPath.lastIndexOf('/') + 1);
     // ⚠️ SAF ne sait pas ÉCRASER : createFileAsync sur un nom déjà pris
     // crée un DOUBLON numéroté (« appearance (1).json »). Or l'index peut
     // ignorer un fichier pourtant présent sur le disque (index persisté
-    // antérieur à sa création) — l'écriture atterrissait dans le doublon,
-    // jamais relue au démarrage : l'apparence semblait se réinitialiser à
-    // chaque relance (vécu A13, 2026-10-04, « appearance (1..3).json »).
-    // On liste donc le parent pour retrouver l'URI EXISTANTE du fichier et
-    // écrire dedans ; création seulement s'il n'existe vraiment pas.
+    // antérieur à sa création) — écrire sans vérifier crée le doublon,
+    // jamais relu au démarrage : les préférences semblent alors se
+    // réinitialiser à chaque relance. On liste donc le parent pour
+    // retrouver l'URI EXISTANTE du fichier et écrire dedans ; création
+    // seulement s'il n'existe vraiment pas.
     let uri: string | null = null;
     try {
       const children = await StorageAccessFramework.readDirectoryAsync(parentUri);
@@ -948,7 +956,7 @@ export const nativeVaultAdapter: VaultBridge = {
     const ext = EXTENSION_FOR_KIND[kind];
     // Un nom finissant déjà par une extension de contenu reconnue (.md venu
     // d'un lien interne, par ex.) ne doit PAS recevoir '.mdx' en plus —
-    // vécu : « …mondes.md.mdx » créé à la racine au clic d'un lien interne.
+    // sinon « …mondes.md » devient « …mondes.md.mdx », invisible de l'arbre.
     const baseName = KNOWN_CONTENT_EXTS.some((known) => name.toLowerCase().endsWith(known))
       ? name
       : `${name}${ext}`;
@@ -976,16 +984,15 @@ export const nativeVaultAdapter: VaultBridge = {
     return { relPath, name: finalName };
   },
 
-  // Aucune fonction SAF "renommer" native n'existe (voir la doc
-  // expo-file-system/legacy) — copie du CONTENU vers un nouveau fichier
-  // puis suppression de l'original SEULEMENT une fois la copie confirmée
-  // (jamais l'inverse, pour ne pas risquer de perdre le contenu si la copie
-  // échoue en cours de route). Volontairement limité aux FICHIERS : un
-  // renommage de DOSSIER nécessiterait de recopier tout un sous-arbre
-  // récursivement sans jamais avoir pu tester ce chemin sur un vrai
-  // appareil — le risque de perte de données d'un bug non détecté dans ce
-  // cas précis est trop élevé pour le tenter à l'aveugle (voir CLAUDE.md
-  // § Comportement).
+//////// 7. VaultBridge — restructuration (renommer, déplacer, supprimer) /////////////
+
+  // Aucune fonction SAF "renommer" native n'existe — copie du CONTENU vers
+  // un nouveau fichier puis suppression de l'original SEULEMENT une fois la
+  // copie confirmée (jamais l'inverse, pour ne pas risquer de perdre le
+  // contenu si la copie échoue en cours de route). Volontairement limité
+  // aux FICHIERS : un renommage de DOSSIER nécessiterait de recopier tout
+  // un sous-arbre récursivement — un chemin à haut risque de perte de
+  // données, pas tenté à l'aveugle (voir CLAUDE.md § Comportement).
   rename: async (relPath, newName) => {
     const { uri, isDirectory } = resolveIndexed(relPath);
     if (isDirectory) {
@@ -1003,10 +1010,9 @@ export const nativeVaultAdapter: VaultBridge = {
     const siblings = siblingNamesOf(parentRelPath);
     siblings.delete(relPath);
     // Comme le desktop (vault:rename) : préserve l'extension RÉELLE du
-    // fichier quand le nouveau nom n'en porte pas. L'arbre (et donc le
-    // champ de renommage) donne désormais des noms sans extension — sans
-    // ce rattrapage, « Note » devenait un fichier sans extension,
-    // invisible de l'arbre (extensionKind ne le reconnaît plus).
+    // fichier quand le nouveau nom n'en porte pas — sinon « Note » devient
+    // un fichier sans extension, invisible de l'arbre (extensionKind ne le
+    // reconnaît plus).
     const hadKnownExt = KNOWN_CONTENT_EXTS.find((known) => name.toLowerCase().endsWith(known));
     const carriesKnownExt = KNOWN_CONTENT_EXTS.some((known) => newName.toLowerCase().endsWith(known));
     const candidate = hadKnownExt && !carriesKnownExt ? `${newName}${hadKnownExt}` : newName;
@@ -1078,12 +1084,14 @@ export const nativeVaultAdapter: VaultBridge = {
   // fiable que rename()/move() ci-dessus. Confirmation JS AVANT de
   // supprimer (Alert.alert, natif RN) : jamais de suppression silencieuse,
   // même règle que le dialog natif côté Electron (voir vault.ts,
-  // vault:delete). `options.silent` (v0.4.25) : réservé au moteur de
-  // synchro (tombestones distantes appliquées en masse) — pas de
-  // confirmation par fichier. v0.4.26 : sans `options.permanent`, le
-  // fichier est copié dans `.trash/` (corbeille LOCALE — la synchro ne
-  // tourne pas en natif Android) avant destruction ; pas d'élagage des
-  // dossiers vides, expo-file-system n'expose pas de rmdir sûr.
+  // vault:delete). `options.silent` : réservé au moteur de synchro
+  // (tombestones distantes appliquées en masse) — pas de confirmation par
+  // fichier. Sans `options.permanent`, le fichier est copié dans la
+  // corbeille LOCALE du stockage privé (`.trash/` du documentDirectory,
+  // HORS du coffre donc NON synchronisée — écart connu avec la corbeille
+  // synchronisée `.trash/` DANS le coffre de la spec, §S.2) avant
+  // destruction ; pas d'élagage des dossiers vides, expo-file-system
+  // n'expose pas de rmdir sûr.
   delete: (relPath: string, options?: { silent?: boolean; permanent?: boolean }) =>
     new Promise((resolve) => {
       const { uri } = resolveIndexed(relPath);
@@ -1136,14 +1144,15 @@ export const nativeVaultAdapter: VaultBridge = {
       );
     }),
 
-  // État d'UI PAR COFFRE (v0.4.50, correctif « enregistrement par vault ») :
-  // dernier fichier ouvert, dossiers repliés et onglets ouverts vivent dans
-  // le MÊME fichier que côté Electron (.123ecriture/state.json,
-  // read-modify-write champ par champ). Avant cette refonte, ces trois
-  // états vivaient dans des fichiers GLOBAUX du documentDirectory : la
-  // dernière note ouverte, les replis et les onglets d'un coffre débordaient
-  // sur les autres. Les anciens fichiers restent la source de MIGRATION
-  // (lus une fois si la clé manque encore dans state.json).
+//////// 8. VaultBridge — état d'UI, note du jour, pièces jointes, tags ///////////////
+
+  // État d'UI PAR COFFRE : dernier fichier ouvert, dossiers repliés et
+  // onglets ouverts vivent dans le MÊME fichier que côté Electron
+  // (.123ecriture/state.json, read-modify-write champ par champ) — un état
+  // GLOBAL ferait déborder la dernière note ouverte, les replis et les
+  // onglets d'un coffre sur les autres. Les anciens fichiers globaux du
+  // documentDirectory restent la source de MIGRATION (lus une fois si la
+  // clé manque encore dans state.json).
   getLastOpened: async () => {
     const state = await readVaultStateFile();
     if (state.lastOpenedRelPath !== undefined) return state.lastOpenedRelPath ?? null;
@@ -1169,7 +1178,7 @@ export const nativeVaultAdapter: VaultBridge = {
 
   // Onglets de notes ouverts — aligné sur vault:get/set-open-tabs
   // (Electron, state.json) : NotesScreen.tsx dégrade gracieusement quand
-  // le bridge est absent, mais l'adaptateur natif POURVUT les méthodes
+  // le bridge est absent, mais l'adaptateur natif fournit les méthodes
   // pour rester conforme à VaultBridge.
   getOpenTabs: async () => {
     const state = await readVaultStateFile();
@@ -1207,16 +1216,12 @@ export const nativeVaultAdapter: VaultBridge = {
   // ne touche aucune donnée, juste l'ordre d'affichage.
   reorder: async () => refreshIndex(),
 
-  // Nécessiterait expo-document-picker (nouvelle dépendance, pas encore
-  // ajoutée/vérifiée) — volontairement non implémenté cette session plutôt
-  // que bâclé. Retourne `null`, exactement le même contrat qu'un choix
-  // annulé côté Electron (voir NotesScreen.tsx, handleInsertAttachment gère
-  // déjà ce cas sans erreur).
-  // v0.4.66 — « 📎 Joindre un fichier » sur MOBILE (avant : non implémenté —
-  // le bouton était inopérant sur Android) : DocumentPicker système, copie du
-  // fichier dans `<attachmentsFolder>/` du coffre actif (via les ponts
-  // binaires — images/PDF/audio voyagent avec la sync), même contrat de
-  // retour que le desktop ({relPath, name} pour l'embed `![[nom]]`).
+  // 📎 Joindre un fichier : DocumentPicker système, copie du fichier dans
+  // `<attachmentsFolder>/` du coffre actif via les ponts binaires —
+  // images/PDF/audio voyagent avec la sync. Même contrat de retour que le
+  // desktop ({relPath, name} pour l'embed `![[nom]]`) ; `null` = choix
+  // annulé, cas géré sans erreur par l'appelant (NotesScreen.tsx,
+  // handleInsertAttachment).
   importAttachment: async () => {
     const result = await DocumentPicker.getDocumentAsync({ copyToCacheDirectory: true });
     if (result.canceled) return null;

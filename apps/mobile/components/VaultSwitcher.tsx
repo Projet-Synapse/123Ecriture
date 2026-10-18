@@ -4,18 +4,27 @@ import { useVaults } from '../lib/sync/VaultsContext';
 import { useSyncStatus } from '../lib/sync/SyncStatusContext';
 import { usePreferences } from '../preferences/PreferencesContext';
 
-// Sélecteur rapide de coffre (vault), affiché dans la barre latérale — voir
-// AppShell.tsx. Réutilise le menu contextuel natif générique déjà existant
-// (window.contextMenu, voir apps/desktop/electron/contextMenu.js) plutôt que
-// de construire un nouveau menu déroulant : aucun nouveau code main-process
-// nécessaire pour ce composant. Le changement de coffre lui-même passe par
-// VaultsContext (switchVault), qui notifie tout le reste de l'app (Notes,
-// Tâches...) via l'évènement `vaults:changed`.
+// ✒️ 123ECRITURE — components/VaultSwitcher.tsx — le sélecteur rapide de coffre
+//////////////////////////////////////////////////////////////////////////////
 //
-// v0.4.54 : le changement est REFUSÉ pendant une synchronisation (verrou
-// anti-bascule côté main, même garde ici) — une bascule en plein cycle
-// empairait les fichiers locaux du nouveau coffre avec le bucket distant de
-// l'ancien (cause du mélange de coffres vécu).
+// Sélecteur rapide de coffre (vault), affiché dans la barre latérale —
+// voir AppShell.tsx.
+//
+// Invariants du fichier :
+//   • Réutilise le menu contextuel natif générique déjà existant
+//     (window.contextMenu, voir apps/desktop/electron/contextMenu.js)
+//     plutôt que de construire un nouveau menu déroulant : aucun nouveau
+//     code main-process nécessaire pour ce composant.
+//   • Le changement de coffre passe par VaultsContext (switchVault), qui
+//     notifie tout le reste de l'app (Notes, Tâches...) via l'évènement
+//     `vaults:changed`.
+//   • Le changement est REFUSÉ pendant une synchronisation (verrou
+//     anti-bascule côté main, même garde ici) : une bascule en plein cycle
+//     empairerait les fichiers locaux du nouveau coffre avec le bucket
+//     distant de l'ancien — c'est la cause du mélange de coffres.
+//
+//////////////////////////////////////////////////////////////////////////////
+
 export function VaultSwitcher() {
   const { theme } = usePreferences();
   const { vaults, activeVault, switchVault } = useVaults();

@@ -1,9 +1,34 @@
-// Décisions de synchro (push/pull/conflit) — logique PURE, sans Electron ni
-// réseau, volontairement isolée du reste pour rester facilement testable
-// (voir diff.test.ts) : c'est la zone la plus sensible du moteur de synchro
-// au sens de CLAUDE.md ("sauvegarde et gestion des données"), donc celle qui
-// mérite le plus de tests unitaires indépendants de toute vraie fenêtre
-// Electron/session Supabase.
+// ✒️ 123ECRITURE — lib/sync/diff.ts — décisions de synchronisation (push/pull/conflit)
+//////////////////////////////////////////////////////////////////////////////
+//
+// Logique PURE de décision d'un cycle : compare l'état local (hashé côté
+// process main) à l'état distant connu (une ligne `vault_files` par note)
+// et décide, PAR note, de pousser, tirer, ne rien faire ou déclarer un
+// conflit. Volontairement sans Electron ni réseau — c'est la zone la plus
+// sensible du moteur de synchronisation (sauvegarde et gestion des
+// données), donc celle qui mérite le plus de tests unitaires indépendants
+// de toute fenêtre ou session Supabase (diff.test.ts).
+//
+// Invariants du fichier :
+//   • Cette fonction ne fait AUCUN effet de bord : elle ne fait que
+//     DÉCIDER — l'application des décisions (et la sauvegarde du perdant
+//     d'un conflit avant écrasement) vit dans syncEngine.ts.
+//   • Une modification d'un SEUL côté n'est jamais un conflit : la
+//     référence du dernier cycle (`lastSynced`, le sync-state) tranche —
+//     cloud == référence → modification locale pure → push, symétriquement
+//     local == référence → pull.
+//   • Seule une divergence des DEUX côtés depuis la référence reste un
+//     conflit, tranché par le timestamp le plus récent.
+//   • Ordre de sortie déterministe (alphabétique) : tests et résumés de
+//     synchro reproductibles.
+//
+// SOMMAIRE :
+//   1. Les types du contrat (note locale, ligne distante, décision)
+//   2. diffVault — la décision, note par note
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. Les types du contrat (note locale, ligne distante, décision) ///////////
 
 export type LocalHashedNote = {
   relPath: string;
@@ -19,12 +44,12 @@ export type RemoteVaultFile = {
   updatedAt: string; // ISO 8601
   deleted: boolean;
   // Clé d'objet Storage EFFECTIVEMENT enregistrée au moment du push (encodée
-  // base64url depuis v0.4.9 — les noms bruts avec émojis/accents sont
-  // rejetés par Storage, voir storageKeys.ts). Optionnel : les lignes
-  // anciennes peuvent l'omettre, le moteur recalcule alors.
+  // base64url — les noms bruts avec émojis/accents sont rejetés par Storage,
+  // voir storageKeys.ts). Optionnel : les lignes anciennes peuvent
+  // l'omettre, le moteur recalcule alors.
   storageObjectPath?: string;
-  // v0.4.54 : rel_path BRUT tel qu'en base (peut contenir des `\` — résidus
-  // du bug de séparateurs desktop à purger). `relPath`, lui, est normalisé.
+  // rel_path BRUT tel qu'en base (peut contenir des `\` — résidus du bug de
+  // séparateurs desktop à purger). `relPath`, lui, est normalisé.
   rawRelPath?: string;
 };
 
@@ -32,25 +57,22 @@ export type SyncDecisionKind = 'push' | 'pull' | 'noop' | 'conflict-push-wins' |
 
 export type SyncDecision = { kind: SyncDecisionKind; relPath: string };
 
-// Compare l'état local (hashé côté main process, voir
-// apps/desktop/electron/sync.js) à l'état distant connu (une ligne
-// `vault_files` par note, voir supabase/migrations/) et décide, PAR note,
-// quoi faire :
-// - seulement locale             → push
-// - seulement distante (non supprimée) → pull
-// - les deux, même hash          → rien à faire
-// - les deux, hash différent     → tranché par la RÉFÉRENCE du dernier
-//   cycle (v0.4.81, `lastSynced` = le sync-state) : si le cloud porte
-//   encore le hash connu au dernier cycle, c'est une modification LOCALE
-//   pure → push (jamais un conflit — M.4 de la spec : « les modifications
-//   ne doivent PAS être perçues comme des conflits ») ; symétriquement,
-//   si le hash LOCAL est la référence connue, c'est la distante qui a
-//   bougé → pull. Seule une divergence des DEUX côtés depuis la référence
-//   reste un conflit, tranché alors par le timestamp le plus récent (le
-//   perdant est sauvegardé avant d'être écrasé — voir syncEngine.ts,
-//   jamais fait ici : cette fonction ne fait AUCUN effet de bord, juste
-//   des décisions). Sans référence connue (premier cycle, état jeté à
-//   vide), on retombe sur le classement historique par mtime.
+//////// 2. diffVault — la décision, note par note //////////////////////////////////////
+
+// Compare l'état local à l'état distant connu et décide, PAR note, quoi
+// faire :
+// - seulement locale                    → push
+// - seulement distante (non supprimée)  → pull
+// - les deux, même hash                 → rien à faire
+// - les deux, hash différent            → tranché par la RÉFÉRENCE du
+//   dernier cycle (`lastSynced`) : si le cloud porte encore le hash connu
+//   au dernier cycle, c'est une modification LOCALE pure → push (jamais un
+//   conflit — les modifications ne doivent PAS être perçues comme des
+//   conflits) ; symétriquement, si le hash LOCAL est la référence connue,
+//   c'est la distante qui a bougé → pull. Seule une divergence des DEUX
+//   côtés depuis la référence reste un conflit, tranché alors par le
+//   timestamp le plus récent. Sans référence connue (premier cycle, état
+//   jeté à vide), on retombe sur le classement par mtime.
 export function diffVault(
   local: LocalHashedNote[],
   remote: RemoteVaultFile[],
@@ -76,10 +98,10 @@ export function diffVault(
         const referenceHash = lastSynced?.[relPath];
         if (referenceHash === remoteFile.contentHash) {
           // Le cloud est exactement là où on l'avait laissé : tout le
-          // changement est chez nous → pousser (§12 du journal d'incidents :
-          // le classement mtime seul re-déclarait un conflit à chaque
-          // modification dès que l'horodatage du fichier passait devant
-          // celui du push précédent).
+          // changement est chez nous → pousser. Sans cette référence, le
+          // classement mtime seul re-déclarerait un conflit à chaque
+          // modification dès que l'horodatage du fichier passe devant
+          // celui du push précédent.
           decisions.push({ kind: 'push', relPath });
         } else if (referenceHash === localNote.contentHash) {
           decisions.push({ kind: 'pull', relPath });

@@ -3,14 +3,24 @@ import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { useVaults } from '../../lib/sync/VaultsContext';
 
-// Section « Coffres » des réglages (v0.4.83, §16 du journal d'incidents) :
-// la BASCULE entre les coffres, absente du mobile jusqu'ici — l'angle mort
-// signalé par Catelina (« on ne peut pas basculer entre les plusieurs
-// vaults sur mobile… comme si on synchronisait tout dans le même répertoire
-// local »). Le registre et le pont (VaultsBridge) géraient déjà plusieurs
-// coffres : seul l'écran manquait. Pas de suppression ici volontairement —
-// retirer un coffre reste un geste rare qui passe par la déconnexion
-// complète (voir AccountSyncSection).
+// ✒️ 123ECRITURE — components/settings/VaultSwitcherSection.tsx — la bascule de coffres mobile
+//////////////////////////////////////////////////////////////////////////////
+//
+// Section « Coffres » des réglages : la BASCULE entre les coffres sur
+// mobile — l'angle mort historique (« on ne peut pas basculer entre les
+// plusieurs vaults sur mobile… comme si on synchronisait tout dans le même
+// répertoire local »). Le registre et le pont (VaultsBridge) géraient déjà
+// plusieurs coffres : seul cet écran manquait.
+//
+// Invariants du fichier :
+//   • Une seule action de coffre à la fois (busy par id, `__ajout__` pour
+//     l'ajout) — jamais deux bascules/ajouts parallèles.
+//   • PAS de suppression ici, volontairement : retirer un coffre reste un
+//     geste rare qui passe par la déconnexion complète (voir
+//     AccountSyncSection).
+//
+//////////////////////////////////////////////////////////////////////////////
+
 export function VaultSwitcherSection() {
   const { vaults, activeVaultId, switchVault, addExistingVault } = useVaults();
   const [busy, setBusy] = useState<string | null>(null);

@@ -1,0 +1,158 @@
+// ✒️ 123ECRITURE — lib/calendar/calendarDates.ts — grille du mois et heures d'évènement
+//////////////////////////////////////////////////////////////////////////////
+//
+// Calculs purs de la grille d'un mois pour le Calendrier — sans React ni
+// Electron, testée comme lib/sync/diff.ts. Couvre la grille 6×7 de
+// CalendarScreen, les libellés français déterministes et les heures
+// d'évènement de CalendarScreen.tsx : l'heure y est un champ texte libre
+// où "9:00" doit passer, s'afficher juste ET trier correctement (une
+// comparaison lexicale mettrait "9:00" après "10:00").
+//
+// Invariants du fichier :
+//   • buildMonthGrid rend TOUJOURS 42 cases (6 semaines × 7 jours,
+//     semaines commençant le lundi) : même hauteur visuelle d'un mois à
+//     l'autre.
+//   • `today` est un paramètre (pas un `new Date()` interne) dans
+//     buildMonthGrid : tests déterministes quel que soit l'environnement ;
+//     les libellés passent par des tableaux internes (pas
+//     Intl.DateTimeFormat) pour la même raison.
+//   • normalizeTimeInput n'extrait que des heures valides (0-23 h,
+//     0-59 min), normalisées en "HH:MM" : plus rien d'invalide n'entre
+//     dans calendar.json ; compareTimes compare NUMÉRIQUEMENT, sans heure
+//     (null) passe en dernier, une valeur malformée (vieille donnée
+//     d'avant la normalisation) passe après toute heure valide mais avant
+//     null.
+//   • Les calculs de dates passent par le constructeur Date LOCAL (jamais
+//     UTC ni un ajout de millisecondes) : années bissextiles et
+//     changements d'heure ne décalent jamais un jour.
+//
+// SOMMAIRE :
+//   1. Grille du mois — buildMonthGrid + helpers de format
+//   2. Heures d'évènement et décalage de jour
+//
+//////////////////////////////////////////////////////////////////////////////
+
+export type CalendarDay = {
+  dateIso: string; // AAAA-MM-JJ
+  day: number; // 1-31
+  inCurrentMonth: boolean;
+  isToday: boolean;
+};
+
+export const WEEKDAY_LABELS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
+
+const MONTH_NAMES = [
+  'Janvier',
+  'Février',
+  'Mars',
+  'Avril',
+  'Mai',
+  'Juin',
+  'Juillet',
+  'Août',
+  'Septembre',
+  'Octobre',
+  'Novembre',
+  'Décembre',
+];
+
+export function toIsoDate(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+export function monthLabel(year: number, month: number): string {
+  return `${MONTH_NAMES[month]} ${year}`;
+}
+
+const WEEKDAYS_FULL = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche'];
+
+//////// 1. Grille du mois — buildMonthGrid + helpers de format //////////////
+
+// "Vendredi 12 septembre 2026" — titre du panneau du jour. Mêmes tableaux
+// internes que monthLabel : déterministe et testable quel que soit
+// l'environnement.
+export function dayLabel(dateIso: string): string {
+  const [year, month, day] = dateIso.split('-').map(Number);
+  const date = new Date(year, month - 1, day);
+  const weekday = WEEKDAYS_FULL[(date.getDay() + 6) % 7];
+  const capitalized = weekday.charAt(0).toUpperCase() + weekday.slice(1);
+  return `${capitalized} ${day} ${MONTH_NAMES[month - 1].toLowerCase()} ${year}`;
+}
+
+// Grille fixe de 6 semaines × 7 jours (toujours 42 cases, même hauteur
+// visuelle d'un mois à l'autre) — semaines commençant le lundi. `today` est
+// un paramètre (pas `new Date()` interne) pour rester testable de façon
+// déterministe.
+export function buildMonthGrid(year: number, month: number, today: Date = new Date()): CalendarDay[] {
+  const firstOfMonth = new Date(year, month, 1);
+  // Date#getDay() : 0=dimanche..6=samedi — on veut 0=lundi..6=dimanche.
+  const firstWeekday = (firstOfMonth.getDay() + 6) % 7;
+  const gridStart = new Date(year, month, 1 - firstWeekday);
+  const todayIso = toIsoDate(today);
+
+  const days: CalendarDay[] = [];
+  for (let i = 0; i < 42; i += 1) {
+    const date = new Date(gridStart.getFullYear(), gridStart.getMonth(), gridStart.getDate() + i);
+    const dateIso = toIsoDate(date);
+    days.push({
+      dateIso,
+      day: date.getDate(),
+      inCurrentMonth: date.getMonth() === month,
+      isToday: dateIso === todayIso,
+    });
+  }
+  return days;
+}
+
+//////// 2. Heures d'évènement et décalage de jour ///////////////////////////
+
+// Normalise une saisie d'heure libre en "HH:MM" 24h — accepte "9:00",
+// "09:00", "9h05", "9 5"… et retourne null si ça ne ressemble à aucune
+// heure valide (plage incluse : 0-23 h, 0-59 min). Utilisé à l'AJOUT et à
+// l'ÉDITION d'évènement : le champ reste un TextInput libre (pas de
+// time-picker natif multiplateforme satisfaisant), mais plus rien
+// d'invalide ne peut plus entrer dans calendar.json.
+export function normalizeTimeInput(raw: string): string | null {
+  const match = raw.trim().match(/^(\d{1,2})\s*[:hH]?\s*(\d{0,2})$/);
+  if (!match) return null;
+  const hours = Number(match[1]);
+  const minutes = match[2] === '' ? 0 : Number(match[2]);
+  if (hours > 23 || minutes > 59) return null;
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+}
+
+function timeToMinutes(time: string): number | null {
+  const match = time.match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return null;
+  return Number(match[1]) * 60 + Number(match[2]);
+}
+
+// Compare deux heures "HH:MM" NUMÉRIQUEMENT (pas lexicalement) — "9:00"
+// passe avant "10:00". null = pas d'heure : passe en dernier ; une valeur
+// malformée (vieille donnée écrite avant la normalisation) passe après
+// toute heure valide mais avant null (repli : localeCompare entre deux
+// malformées).
+export function compareTimes(a: string | null, b: string | null): number {
+  if (a === null && b === null) return 0;
+  if (a === null) return 1;
+  if (b === null) return -1;
+  const aMinutes = timeToMinutes(a);
+  const bMinutes = timeToMinutes(b);
+  if (aMinutes === null && bMinutes === null) return a.localeCompare(b);
+  if (aMinutes === null) return 1;
+  if (bMinutes === null) return -1;
+  return aMinutes - bMinutes;
+}
+
+// Décale une date AAAA-MM-JJ de `days` jours (peut être négatif) — passe
+// par Date locale (pas UTC) pour que le 1er mars après le 28 février d'une
+// année bissextile reste juste ; les changements d'heure DST ne peuvent
+// pas faire sauter un jour entier, au pire décaler l'heure interne.
+export function shiftIsoDate(dateIso: string, days: number): string {
+  const [year, month, day] = dateIso.split('-').map(Number);
+  const shifted = new Date(year, month - 1, day + days);
+  return toIsoDate(shifted);
+}

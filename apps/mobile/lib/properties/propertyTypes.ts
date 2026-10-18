@@ -1,0 +1,140 @@
+// ✒️ 123ECRITURE — lib/properties/propertyTypes.ts — types de propriétés : constantes et helpers
+//////////////////////////////////////////////////////////////////////////////
+//
+// Constantes et helpers partagés pour le système de propriétés typées
+// (voir PropertyDefinition dans types/global.d.ts) — utilisés par
+// PropertiesPanel.tsx (barre latérale), PropertiesBlock.tsx (bloc en haut
+// de note) et settings/PropertiesManagementSection.tsx (Paramètres →
+// Gestion des propriétés), pour ne pas dupliquer 3 fois la même logique
+// de formatage/parsing des valeurs par type.
+//
+// Invariants du fichier :
+//   • inferPropertyType déduit le type d'après UNE valeur échantillon
+//     (tableau → Liste, nombre → Nombre, booléen → Case à cocher, tout le
+//     reste → Texte) : si des notes différentes portent des types
+//     hétérogènes, la première clé vue gagne.
+//   • Tout littéral PropertyDefinition construit côté renderer passe par
+//     makePropertyDefinition — le cast est localisé là, nulle part
+//     ailleurs (voir le commentaire de la fonction : collision avec
+//     l'interface DOM globale du même nom).
+//   • Une clé de BUBBLE_PROPERTY_NAMES reçoit le type 'bubbles' même si sa
+//     valeur (un tableau) aurait été devinée 'list'.
+//
+// SOMMAIRE :
+//   1. Libellés, icônes et ordre des types
+//   2. Déduction de type et construction de définition
+//   3. Formatage/parsing des valeurs
+//   4. Propriétés built-in en bulles
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. Libellés, icônes et ordre des types //////////////////////////////
+
+export const TYPE_LABELS: Record<PropertyType, string> = {
+  text: 'Texte',
+  list: 'Liste',
+  number: 'Nombre',
+  checkbox: 'Case à cocher',
+  date: 'Date',
+  datetime: 'Date et heure',
+  path: 'Chemin',
+  options: 'Options',
+  'multi-options': 'Options multiples',
+  bubbles: 'Bulles',
+};
+
+// Icône affichée devant chaque propriété — une icône par ligne, façon
+// Obsidian.
+export const TYPE_ICONS: Record<PropertyType, string> = {
+  text: '≡',
+  list: '☰',
+  number: '#',
+  checkbox: '☑',
+  date: '📅',
+  datetime: '🕐',
+  path: '📁',
+  options: '🔘',
+  'multi-options': '⧉',
+  bubbles: '🏷️',
+};
+
+export const TYPE_ORDER: PropertyType[] = [
+  'text',
+  'list',
+  'number',
+  'checkbox',
+  'date',
+  'datetime',
+  'path',
+  'options',
+  'multi-options',
+  'bubbles',
+];
+
+export function defaultValueForType(type: PropertyType): unknown {
+  if (type === 'checkbox') return false;
+  if (type === 'number') return 0;
+  if (type === 'list' || type === 'multi-options' || type === 'bubbles') return [];
+  return '';
+}
+
+//////// 2. Déduction de type et construction de définition //////////////////
+
+// Devine le type d'une propriété à partir d'une valeur de frontmatter
+// (auto-enregistrement des clés trouvées dans les fichiers, voir
+// properties:scan-vault) : tableau → Liste, nombre → Nombre, booléen →
+// Case à cocher, tout le reste → Texte. Une valeur échantillon seulement :
+// si des notes différentes portent des types hétérogènes, la première clé
+// vue gagne (pas de sur-ingénierie pour un cas marginal).
+export function inferPropertyType(value: unknown): PropertyType {
+  if (typeof value === 'boolean') return 'checkbox';
+  if (typeof value === 'number') return 'number';
+  if (Array.isArray(value)) return 'list';
+  return 'text';
+}
+
+// ⚠️ La lib DOM de TypeScript déclare AUSSI une interface globale
+// PropertyDefinition (CSS @property : inherits/initialValue/syntax) qui
+// FUSIONNE avec la nôtre (types/global.d.ts) — un littéral brut exigerait
+// le champ `inherits`, parasite du format properties.json. Tout littéral
+// construit côté renderer passe donc par ce constructeur (cast localisé
+// ici, nulle part ailleurs).
+export function makePropertyDefinition(
+  id: string,
+  name: string,
+  type: PropertyType,
+  createdAt = '',
+): PropertyDefinition {
+  return { id, name, type, createdAt } as unknown as PropertyDefinition;
+}
+
+//////// 3. Formatage/parsing des valeurs ////////////////////////////////////
+
+export function formatValueForInput(type: PropertyType, value: unknown): string {
+  if (type === 'list' || type === 'multi-options' || type === 'bubbles') {
+    return Array.isArray(value) ? value.join(', ') : String(value ?? '');
+  }
+  if (value === null || value === undefined) return '';
+  return String(value);
+}
+
+export function parseInputForType(type: PropertyType, text: string): unknown {
+  if (type === 'number') {
+    const parsed = Number(text.trim());
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  if (type === 'list' || type === 'multi-options' || type === 'bubbles') {
+    return text
+      .split(',')
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0);
+  }
+  return text;
+}
+
+//////// 4. Propriétés built-in en bulles ////////////////////////////////////
+
+// Propriétés BUILT-IN rendues en bulles (tags et aliases) — quand le scan
+// du coffre découvre ces clés, elles reçoivent ce type même si leur valeur
+// (un tableau) aurait été devinée 'list'.
+export const BUBBLE_PROPERTY_NAMES = new Set(['tags', 'tag', 'aliases', 'alias']);

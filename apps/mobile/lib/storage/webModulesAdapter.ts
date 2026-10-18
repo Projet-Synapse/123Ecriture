@@ -1,30 +1,42 @@
-// //1. 📚 SOMMAIRE — modules de productivité web
-// ////////////////////////////////////////////////////////////////////////
+// ✒️ 123ECRITURE — lib/storage/webModulesAdapter.ts — modules de productivité web (tâches, calendrier, propriétés, occurrences)
+//////////////////////////////////////////////////////////////////////////////
+//
 // Port des handlers Electron de modules (tasks.ts, calendar.ts,
 // properties.ts, occurrences.ts) sur le coffre web : mêmes fichiers JSON
 // sous `.123ecriture/`, mêmes validations, mêmes messages d'erreur — un
 // coffre écrit par l'app web reste lisible par l'app desktop et
-// réciproquement. Chaque opération attend le coffre ACTIF du registre web
-// (webVaultRegistry) et se dégrade comme le desktop quand aucun coffre
-// n'est sélectionné ([] ou erreur explicite).
+// réciproquement.
 //
-// - //2. Helpers JSON (lecture/écriture tolérante des registres)
-// - //3. Tâches et listes de tâches (.123ecriture/tasks.json/tasklists.json)
-// - //4. Calendrier (.123ecriture/events.json)
-// - //5. Propriétés (.123ecriture/properties.json, + migration frontmatter
-//      au renommage via lib/frontmatterMigration)
-// - //6. Occurrences (.123ecriture/occurrences.json, + réécriture {{mot}}
-//      dans tout le coffre au renommage)
+// Invariants du fichier :
+//   • Chaque opération attend le coffre ACTIF du registre web
+//     (webVaultRegistry) et se dégrade comme le desktop quand aucun
+//     coffre n'est sélectionné ([] ou erreur explicite).
+//   • Les migrations sont paresseuses et idempotentes À LA LECTURE
+//     (migrateTaskLists) ; la forme des données n'est jamais réécrite en
+//     silence (normalizeTask ne vit qu'en mémoire).
+//   • Ordre des écritures critique : le schéma est persisté D'ABORD, la
+//     migration des notes APRÈS (propriétés) ; la réécriture {{mot}} dans
+//     tout le coffre précède la persistance du dictionnaire (occurrences).
+//   • Log-et-continue : une note en échec n'interrompt jamais une
+//     migration de masse (CLAUDE.md, sauvegarde et gestion des données).
+//
+// SOMMAIRE :
+//   1. Helpers JSON et résolution du coffre actif
+//   2. Tâches et listes de tâches (tasks.json / tasklists.json)
+//   3. Calendrier (events.json)
+//   4. Propriétés (properties.json, migration frontmatter au renommage)
+//   5. Occurrences (occurrences.json, réécriture {{mot}} au renommage)
+//
+//////////////////////////////////////////////////////////////////////////////
 
 import { randomUUID } from './webUuid';
-import { parseFrontmatter } from '../frontmatter';
-import { createPropertyScanMerger } from '../propertyScanMerge';
+import { parseFrontmatter } from '../properties/frontmatter';
+import { createPropertyScanMerger } from '../properties/propertyScanMerge';
 import { type FsaDirectoryHandleLike, listNoteRelPaths, readFileText, writeFileText } from './webFs';
 
 import { getActiveConfigDir, webVaultRegistry } from './webVaultRegistry';
 
-// //2. 🔧 HELPERS JSON
-// ////////////////////////////////////////////////////////////////////////
+//////// 1. Helpers JSON et résolution du coffre actif ////////////////////////////////
 
 async function readJson<T>(configDir: FsaDirectoryHandleLike, fileName: string): Promise<T | null> {
   try {
@@ -66,8 +78,7 @@ async function requireActiveRoot(): Promise<FsaDirectoryHandleLike> {
   return root;
 }
 
-// //3. ✅ TÂCHES ET LISTES
-// ////////////////////////////////////////////////////////////////////////
+//////// 2. Tâches et listes de tâches (tasks.json / tasklists.json) ///////////////////
 
 type TaskListsData = { lists: TaskList[]; activeListId: string | null };
 
@@ -158,7 +169,7 @@ export const webTaskListsAdapter = {
       id: randomUUID(),
       name: trimmed,
       createdAt: new Date().toISOString(),
-      // Dossier de listes (port du handler desktop, v0.4.48).
+      // Dossier de listes (port du handler desktop).
       ...(isFolder ? { isFolder: true } : {}),
       order: nextOrder,
     };
@@ -426,8 +437,7 @@ export const webTasksAdapter = {
   },
 } satisfies TasksBridge;
 
-// //4. 📅 CALENDRIER (.123ecriture/events.json)
-// ////////////////////////////////////////////////////////////////////////
+//////// 3. Calendrier (events.json) //////////////////////////////////////////////////
 
 async function readEvents(configDir: FsaDirectoryHandleLike): Promise<CalendarEvent[]> {
   return (await readJson<CalendarEvent[]>(configDir, 'events.json')) ?? [];
@@ -479,8 +489,7 @@ export const webCalendarAdapter = {
   },
 } satisfies CalendarBridge;
 
-// //5. 🏷️ PROPRIÉTÉS (.123ecriture/properties.json)
-// ////////////////////////////////////////////////////////////////////////
+//////// 4. Propriétés (properties.json, migration frontmatter au renommage) ///////////
 
 const PROPERTY_TYPES: PropertyType[] = ['text', 'list', 'number', 'checkbox', 'date', 'datetime', 'path', 'options'];
 
@@ -509,7 +518,7 @@ async function migrateRenamedProperty(
   oldName: string,
   newName: string,
 ): Promise<PropertyRenameMigrationSummary> {
-  const { migrateFrontmatterKey } = await import('../frontmatterMigration');
+  const { migrateFrontmatterKey } = await import('../properties/frontmatterMigration');
   const summary: PropertyRenameMigrationSummary = { migratedCount: 0, skippedCount: 0, errorCount: 0 };
 
   for (const relPath of await listNoteRelPaths(root, ['.mdx', '.md'])) {
@@ -649,8 +658,7 @@ export const webPropertiesAdapter = {
   },
 } satisfies PropertiesBridge;
 
-// //6. 🔤 OCCURRENCES (.123ecriture/occurrences.json)
-// ////////////////////////////////////////////////////////////////////////
+//////// 5. Occurrences (occurrences.json, réécriture {{mot}} au renommage) /////////////
 
 function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

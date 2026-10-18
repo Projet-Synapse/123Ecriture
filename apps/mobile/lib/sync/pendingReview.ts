@@ -1,22 +1,31 @@
-//////////
-// ✒️ 123ECRITURE — pendingReview.ts
-// FILE DE REVUE MANUELLE (v0.4.72) : les actions destructrices SUSPECTES
-// attendent ici une décision HUMAINE — jamais d'application silencieuse
-//////////
-
-// INTRODUCTION — Demande de Catelina (17/10, après l'incident « Projet
-// L'Enchanteresse ») : la gestion des suppressions se fait par ELLE ou par
-// un opérateur, JAMAIS de façon silencieuse. Quand le moteur détecte
-// quelque chose de dangereux (aujourd'hui : les suppressions massives du
-// garde anti-destruction), il ÉCRIT la liste ici —
-// .123ecriture/pending-review.json, DANS le coffre (elle suit les
-// déplacements et reste consultable depuis n'importe quel appareil) — et
-// S'ARRÊTE. La levée se fait depuis l'interface de revue (ou explicitement
-// par un opérateur), jamais par un cycle automatique. Pur et simple : ce
-// module ne décide rien, il ne fait que porter la file.
+// ✒️ 123ECRITURE — lib/sync/pendingReview.ts — file de revue manuelle des actions destructrices
+//////////////////////////////////////////////////////////////////////////////
+//
+// Les actions destructrices SUSPECTES attendent ici une décision HUMAINE —
+// jamais d'application silencieuse. Quand le moteur détecte quelque chose
+// de dangereux (les suppressions massives du garde anti-destruction, des
+// suppressions distantes à appliquer, un cycle en rafale d'erreurs), il
+// ÉCRIT la liste dans ce fichier et S'ARRÊTE ; la levée se fait depuis
+// l'interface de revue (ou explicitement par un opérateur), jamais par un
+// cycle automatique.
+//
+// Invariants du fichier :
+//   • La gestion des suppressions suspectes se fait par l'utilisatrice ou
+//     par un opérateur, JAMAIS de façon silencieuse — le moteur écrit la
+//     liste et s'arrête, il n'applique rien tout seul.
+//   • Le fichier vit DANS le coffre (.123ecriture/pending-review.json) :
+//     il suit les déplacements et reste consultable depuis n'importe quel
+//     appareil.
+//   • Ce module ne décide rien : il ne fait que porter la file
+//     (lecture/écriture JSON) — pur, sans contexte React.
 //
 // SOMMAIRE :
-//   1. 📥 Lecture / écriture de la file (loadPendingReview / savePendingReview)
+//   1. Le contrat de la file (chemin, types, seuil du disjoncteur)
+//   2. Levée du disjoncteur + lecture/écriture de la file (clearPendingReviewSyncBlock, loadPendingReview, savePendingReview)
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. Le contrat de la file (chemin, types, seuil du disjoncteur) ///////////
 
 // Le chemin relatif, partagé avec syncEngine (même convention .123ecriture).
 export const PENDING_REVIEW_REL_PATH = '.123ecriture/pending-review.json';
@@ -29,15 +38,15 @@ export type SuspiciousDeletionReview = {
 
 export type PendingReview = {
   suspiciousDeletions?: SuspiciousDeletionReview;
-  // v0.4.72 — SUPPRESSIONS DISTANTES EN ATTENTE (règle Catelina : « JAMAIS
-  // de façon silencieuse ») : un fichier supprimé sur un autre appareil
-  // n'est plus effacé ici automatiquement — il reste EN PLACE jusqu'à ce
-  // que la revue tranche (Supprimer vraiment / Restaurer dans le cloud).
+  // SUPPRESSIONS DISTANTES EN ATTENTE (jamais de façon silencieuse) : un
+  // fichier supprimé sur un autre appareil n'est pas effacé ici
+  // automatiquement — il reste EN PLACE jusqu'à ce que la revue tranche
+  // (Supprimer vraiment / Restaurer dans le cloud).
   remoteDeletions?: RemoteDeletionReview[];
-  // v0.4.72 — DISJONCTEUR DE SYNCHRO (angle mort signalé par Catelina) :
-  // quand un cycle se termine avec trop d'erreurs, les cycles SUIVANTS sont
-  // refusés d'office tant qu'un humain n'a pas levé le bloc — on ne peut
-  // plus « resynchroniser » par-dessus un appareil en échec.
+  // DISJONCTEUR DE SYNCHRO : quand un cycle se termine avec trop d'erreurs,
+  // les cycles SUIVANTS sont refusés d'office tant qu'un humain n'a pas
+  // levé le bloc — on ne peut pas « resynchroniser » par-dessus un appareil
+  // en échec.
   syncBlocked?: {
     at: string;
     errorCount: number;
@@ -56,8 +65,10 @@ export type RemoteDeletionReview = {
 // fou, coffre incohérent) bloque tout jusqu'à revue.
 export const SYNC_ERROR_BLOCK_THRESHOLD = 10;
 
-// v0.4.76 — Lève le disjoncteur (après revue humaine, ou via la passerelle
-// à distance deviceGateway.ts « clear-sync-block »).
+//////// 2. Levée du disjoncteur + lecture/écriture de la file (clearPendingReviewSyncBlock, loadPendingReview, savePendingReview) ///////////
+
+// Lève le disjoncteur (après revue humaine, ou à distance via la passerelle
+// deviceGateway.ts « clear-sync-block »).
 export async function clearPendingReviewSyncBlock(vault: {
   readNote: (relPath: string) => Promise<string>;
   writeNote: (relPath: string, content: string) => Promise<void>;
@@ -68,8 +79,6 @@ export async function clearPendingReviewSyncBlock(vault: {
   await savePendingReview(vault, review);
   return true;
 }
-
-//////// 1. 📥 LECTURE / ÉCRITURE DE LA FILE ///////////
 
 // Un lecteur générique (le pont vault du coffre actif) est passé en
 // paramètre : ce module reste utilisable par le moteur comme par l'UI sans

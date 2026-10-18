@@ -3,19 +3,36 @@ import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import type { Theme } from '../../theme';
 import { settingsStyles as s } from './settingsStyles';
 
-// Liste réordonnable/masquable générique (case à cocher + libellé + flèches
-// haut/bas) — utilisée par les 3 cartes "Barre d'outils Notes/Canvas/
-// Graphiques" de Paramètres → Éditeur (EditorSection.tsx), une seule
-// implémentation partagée plutôt que dupliquée trois fois.
+// ✒️ 123ECRITURE — components/settings/ToolbarOrderEditor.tsx — la liste réordonnable d'items
+//////////////////////////////////////////////////////////////////////////////
+//
+// Liste réordonnable/masquable générique (case à cocher + libellé +
+// flèches haut/bas) — utilisée par les cartes "Barre d'outils Canvas/
+// Graphiques" de Paramètres → Éditeur (EditorSection.tsx) ; la barre
+// Notes, elle, passe par ToolbarGroupsEditor.
+//
+// Invariants du fichier :
+//   • Une seule implémentation partagée plutôt que dupliquée par carte.
+//   • `allowGroups` autorise l'attribution de GROUPES COLLAPSIBLES (champ
+//     texte par item — les items partageant un même nom de groupe
+//     apparaissent sous un seul bouton dépliable dans la barre). Optionnel :
+//     Canvas/Graphiques n'ont pas encore l'assemblage groupé côté barre.
+//   • `shortcuts` affiche le raccourci clavier à côté du libellé (ex.
+//     "Ctrl+B", voir lib/notesToolbarActions.ts,
+//     NOTES_TOOLBAR_SHORTCUT_LABELS) — seule la barre Notes en a pour
+//     l'instant.
+//
+//////////////////////////////////////////////////////////////////////////////
+
 type Props = {
   items: ToolbarItemConfig[];
   descriptions: Record<string, string>;
   onChange: (next: ToolbarItemConfig[]) => void;
   theme: Theme;
-  // v0.4.39 : autoriser l'attribution de GROUPES COLLAPSIBLES (champ texte
-  // par item — les items partageant un même nom de groupe apparaissent
-  // sous un seul bouton dépliable dans la barre). Optionnel : Canvas/
-  // Graphiques n'ont pas encore l'assemblage groupé côté barre.
+  // Autoriser l'attribution de GROUPES COLLAPSIBLES (champ texte par item
+  // — les items partageant un même nom de groupe apparaissent sous un seul
+  // bouton dépliable dans la barre). Optionnel : Canvas/Graphiques n'ont
+  // pas encore l'assemblage groupé côté barre.
   allowGroups?: boolean;
   // Raccourci clavier affiché à côté du libellé, ex. "Ctrl+B" (voir
   // lib/notesToolbarActions.ts, NOTES_TOOLBAR_SHORTCUT_LABELS) — seule la

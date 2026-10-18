@@ -1,28 +1,45 @@
-// Journal de synchronisation (v0.4.27) — l'équivalent du « journal des
-// synchronisations » d'Obsidian Sync : chaque cycle, envoi, réception,
-// suppression, conflit, erreur et pause y laisse une entrée lisible.
+// ✒️ 123ECRITURE — lib/sync/journal.ts — journal de synchronisation lisible
+//////////////////////////////////////////////////////////////////////////////
 //
-// Stockage : `.123ecriture/sync-journal.json` DANS le coffre actif (dossier
-// caché, jamais synchronisé — chaque appareil voit donc SON journal, comme
-// Obsidian). Historique borné (SYNC_JOURNAL_MAX entrées) pour que le
-// fichier ne croisse pas sans fin ; lecture par l'écran Paramètres →
-// Journal, qui se rafraîchit périodiquement pour un rendu « en direct ».
+// L'équivalent du « journal des synchronisations » d'Obsidian Sync : chaque
+// cycle, envoi, réception, suppression, conflit, erreur et pause y laisse
+// une entrée lisible, racontée pour l'utilisatrice. Stockage :
+// `.123ecriture/sync-journal.json` DANS le coffre actif (dossier caché,
+// jamais synchronisé — chaque appareil voit donc SON journal, comme
+// Obsidian). Lecture par l'écran Paramètres → Journal, qui se rafraîchit
+// périodiquement pour un rendu « en direct ».
 //
-// Pur et testé : la réduction (bornage) et les libellés vivent ici, le
-// moteur (syncEngine.ts) se contente d'appeler appendJournal().
+// Invariants du fichier :
+//   • Historique borné (SYNC_JOURNAL_MAX entrées, les plus récentes) pour
+//     que le fichier ne croisse pas sans fin — tout en restant généreux
+//     pour un cycle de masse (une rafale de suppressions produit N entrées
+//     d'un coup).
+//   • Pur et testé : la réduction (bornage) et les libellés vivent ici —
+//     le moteur (syncEngine.ts) se contente d'appeler appendJournal().
+//   • Le journal raconte le CHANGEMENT (caractères ajoutés/supprimés via
+//     changeStats.ts) et les gestes reconnaissables (« Corbeille : … »),
+//     pas des cycles techniques à vide.
+//
+// SOMMAIRE :
+//   1. Les types et le bornage (SyncJournalEntryType, SYNC_JOURNAL_MAX, capJournalEntries, makeJournalEntry)
+//   2. Le libellé humain d'une entrée (journalEntryLabel)
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. Les types et le bornage (SyncJournalEntryType, SYNC_JOURNAL_MAX, capJournalEntries, makeJournalEntry) ///////////
 
 export type SyncJournalEntryType =
   | 'cycle-start'
   | 'cycle-end'
   | 'push'
-  // v0.4.72 (demande Catelina) : le journal raconte le CHANGEMENT — nombre
-  // de caractères ajoutés/supprimés et total, calculés par comparaison avec
-  // la version distante précédente (voir changeStats.ts).
+  // Le journal raconte le CHANGEMENT — nombre de caractères
+  // ajoutés/supprimés et total, calculés par comparaison avec la version
+  // distante précédente (voir changeStats.ts).
   | 'modification'
-  // v0.4.81 (§13 du journal d'incidents) : le push d'un chemin `.trash/…`
-  // est le CONTINU d'un déplacement en corbeille (la corbeille est
-  // synchronisée) — il se raconte « Corbeille : … », pas « Modifié : … »,
-  // sinon le même geste se lisait « supprimé PUIS modifié ».
+  // Le push d'un chemin `.trash/…` est le CONTINU d'un déplacement en
+  // corbeille (la corbeille est synchronisée) — il se raconte « Corbeille :
+  // … », pas « Modifié : … », sinon le même geste se lit « supprimé PUIS
+  // modifié ».
   | 'corbeille'
   | 'pull'
   | 'delete'
@@ -70,11 +87,13 @@ export function makeJournalEntry(
   return entry;
 }
 
+//////// 2. Le libellé humain d'une entrée (journalEntryLabel) ///////////
+
 // Libellé humain d'une entrée — utilisé tel quel par l'UI du journal.
 // Les étapes réseau parlent comme Obsidian Sync : « Connexion au serveur »,
-// « Upload en cours », « Upload terminé » — progressif et sans jargon
-// (demande utilisateur : le journal doit raconter ce qui se passe, pas
-// égrener des cycles techniques à vide).
+// « Upload en cours », « Upload terminé » — progressif et sans jargon : le
+// journal raconte ce qui se passe, il n'égrene pas des cycles techniques
+// à vide.
 export function journalEntryLabel(entry: SyncJournalEntry): string {
   switch (entry.type) {
     case 'cycle-start':

@@ -5,17 +5,29 @@ import {
   getNotificationsPermission,
   isValidNotifyTime,
   syncTaskDueNotifications,
-} from '../../lib/taskNotifications';
+} from '../../lib/tasks/taskNotifications';
 import { usePreferences } from '../../preferences/PreferencesContext';
 import { SettingsToggle } from './SettingsToggle';
 import { settingsStyles as s } from './settingsStyles';
 
-// Section "Notifications" (mobile natif uniquement) — rappels locaux
-// d'échéance des tâches (voir lib/taskNotifications.ts). La demande de
-// permission système est EXPLICITE (jamais au démarrage de l'app) : bouton
-// dédié ici, ou au premier activation du pill « 🔔 » de l'écran Tâches.
-// L'accès rapide au toggle reste le pill de l'en-tête Tâches ; cette
-// section porte la permission et l'heure de rappel.
+// ✒️ 123ECRITURE — components/settings/NotificationsSection.tsx — les rappels d'échéance
+//////////////////////////////////////////////////////////////////////////////
+//
+// Section "Notifications" (mobile natif uniquement) : rappels locaux
+// d'échéance des tâches (voir lib/taskNotifications.ts).
+//
+// Invariants du fichier :
+//   • La demande de permission système est EXPLICITE (jamais au démarrage
+//     de l'app) : bouton dédié ici, ou première activation du pill « 🔔 »
+//     de l'écran Tâches.
+//   • L'accès rapide au toggle reste le pill de l'en-tête Tâches ; cette
+//     section porte la permission et l'heure de rappel.
+//   • Activer les rappels replanifie immédiatement avec les tâches
+//     courantes du coffre actif — sinon les rappels n'existeraient qu'au
+//     prochain passage par l'écran Tâches.
+//
+//////////////////////////////////////////////////////////////////////////////
+
 export function NotificationsSection() {
   const { preferences, theme, setTasksNotifyEnabled, setTasksNotifyTime } = usePreferences();
   const [permissionState, setPermissionState] = useState<'unknown' | 'granted' | 'denied'>('unknown');
