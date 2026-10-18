@@ -11,7 +11,7 @@ import type { FileSortMode, VaultEntryKind, VaultOrder, VaultTreeNode } from '..
 // suffixe → nom seul, casse ignorée) — fonction PURE partagée avec le port
 // web (webVaultAdapter.ts) et le Live Preview, importée telle quelle comme
 // frontmatterMigration/propertyScanMerge (esbuild bundle l'import
-// cross-package, vérifié).
+// cross-package).
 import { matchesEmbedTarget } from '../../../mobile/lib/notes/embedResolution';
 // Liste des extensions reconnues comme fichiers CODE (.py/.ts/.js/…) —
 // source de vérité unique partagée avec les adaptateurs web/natif (même
@@ -20,30 +20,51 @@ import { CODE_FILE_EXTENSIONS, isCodeFile } from '../../../mobile/lib/editor/cod
 
 type GetWindow = () => BrowserWindow | null;
 
-// ////////////////////////////////////////////////////////////////////////
-// 🗂️ SOMMAIRE — backend du vault (fichiers/dossiers du coffre actif)
-// ////////////////////////////////////////////////////////////////////////
-// //1. Types de fichiers et gabarits — extensions reconnues, kind, contenu
-//      initial par type (defaultContentForKind).
-// //2. Résolution de chemin et utilitaires — resolveInVault (garde-fou
-//      hors-vault), findAvailableName, escapeRegExp, guessMimeType.
-// //3. Ordre des fichiers — tri automatique (alphabétique/récent/ancien) ET
-//      ordre manuel glissé-déposé (.123ecriture/order.json).
-// //4. Dernier fichier ouvert — état PAR COFFRE (.123ecriture/state.json),
-//      voir Paramètres → "Fichier ouvert par défaut".
-// //5. Arborescence — walkTree, lit le disque + applique tri/ordre.
-// //6. Handlers IPC — Lecture (list-tree, read-note, pièces jointes,
-//      dernier fichier ouvert).
-// //7. Handlers IPC — Création/écriture (write-note, create-note/-folder,
-//      duplication, note journalière, import de pièce jointe).
-// //8. Handlers IPC — Organisation (reorder, rename, move, set-path,
-//      delete).
-// Voir aussi apps/mobile/components/VaultTreeView.tsx (rendu de
-// l'explorateur), NotesScreen.tsx (logique côté renderer : glisser-déposer,
-// clic droit, ouverture par défaut) et FilesLinksSection.tsx (réglages).
+// ✒️ 123ECRITURE — synchronisation vault/vault.ts — backend IPC du coffre actif (fichiers et dossiers)
+//////////////////////////////////////////////////////////////////////////////
+//
+// Backend PROCESS MAIN de tout ce qui touche aux fichiers du coffre actif :
+// lire, créer, dupliquer, renommer, déplacer, supprimer, réordonner, et
+// construire l'arborescence affichée par l'explorateur. Chaque opération est
+// exposée au renderer par un handler IPC `vault:*` ; le renderer est
+// sandboxé (contextIsolation, pas de nodeIntegration) et ne touche jamais
+// au disque directement — tout passe par ici. Côté renderer :
+// VaultTreeView.tsx (rendu de l'explorateur), NotesScreen.tsx
+// (glisser-déposer, clic droit, ouverture par défaut), FilesLinksSection.tsx
+// (réglages).
+//
+// Invariants du fichier :
+//   • Aucun chemin de coffre en dur : getVaultPath() délègue au coffre
+//     ACTIF du registre (vaults.ts) — un seul point de couture entre ce
+//     backend et le registre multi-coffres.
+//   • Tout relPath reçu d'IPC passe par resolveInVault : résolu puis borné
+//     au dossier du coffre, refusé sinon — on ne fait jamais confiance à un
+//     chemin venu du renderer.
+//   • EXTENSION_TO_KIND est la liste faisant foi des extensions reconnues
+//     comme contenu du coffre : walkTree (arborescence) et la synchro
+//     (sync.ts, walkAndHash) couvrent exactement les mêmes extensions,
+//     sinon un fichier est visible d'un côté et invisible de l'autre, en
+//     silence.
+//   • Supprimer ne détruit rien : l'élément est déplacé vers `.trash/`
+//     (corbeille du coffre, structure miroir, synchronisée entre appareils)
+//     — seule une suppression explicite depuis la corbeille détruit.
+//   • L'état d'UI PAR coffre (dernier fichier ouvert, dossiers repliés,
+//     onglets ouverts) vit dans `.123ecriture/state.json`, un seul objet lu
+//     et écrit en read-modify-write.
+//
+// SOMMAIRE :
+//   1. Types de fichiers et gabarits (extensions, kind, contenu initial)
+//   2. Résolution de chemin et utilitaires
+//   3. Ordre des fichiers (tri automatique + ordre manuel order.json)
+//   4. État par coffre (state.json : dernier ouvert, replis, onglets)
+//   5. Arborescence (walkTree : disque + tri + ordre)
+//   6. Handlers IPC — lecture
+//   7. Handlers IPC — création/écriture
+//   8. Handlers IPC — organisation (renommer/déplacer/supprimer)
+//
+//////////////////////////////////////////////////////////////////////////////
 
-// //1. 🗺️ TYPES DE FICHIERS ET GABARITS
-// ////////////////////////////////////////////////////////////////////////
+//////// 1. Types de fichiers et gabarits //////////////////////////////////
 
 // Nom par défaut du dossier de pièces jointes — configurable depuis
 // Paramètres → Gestion des fichiers et des liens (voir
@@ -52,11 +73,11 @@ type GetWindow = () => BrowserWindow | null;
 // absent).
 const DEFAULT_ATTACHMENTS_FOLDER = 'attachments';
 
-// Corbeille DU coffre (v0.4.26), à sa racine. Dossier pointé : exclu de
-// l'explorateur comme tous les dossiers cachés, mais INCLUS dans la
-// synchronisation (voir sync.ts walkAndHash) — la corbeille est partagée
-// entre tous les appareils du compte. Restaurer = déplacer hors de .trash
-// (le chemin d'origine est préservé par la structure miroir).
+// Corbeille DU coffre, à sa racine. Dossier caché : exclu de l'explorateur
+// comme tous les dossiers cachés, mais INCLUS dans la synchronisation (voir
+// sync.ts walkAndHash) — la corbeille est partagée entre tous les appareils
+// du compte. Restaurer = déplacer hors de .trash (le chemin d'origine est
+// préservé par la structure miroir).
 const TRASH_FOLDER = '.trash';
 
 function getAttachmentsFolder(): string {
@@ -108,10 +129,10 @@ export const EXTENSION_TO_KIND: Record<string, VaultEntryKind> = {
   '.canvas': 'canvas',
   '.chart': 'chart',
   '.excalidraw': 'excalidraw',
-  // Obsidian Bases (vues de bases de données, YAML/texte) : sans cette
-  // entrée, les fichiers `.base` restaient INVISIBLES pour la synchro
-  // (vécu : 14 fichiers jamais poussés) — traités comme du texte markdown,
-  // ils s'éditent dans l'éditeur de notes et se synchronisent.
+  // Obsidian Bases (vues de bases de données, YAML/texte) : traités comme
+  // du texte markdown — sans cette entrée, les fichiers `.base` sont
+  // invisibles pour l'arborescence ET pour la synchro, en silence (règle
+  // générale des extensions ci-dessus).
   '.base': 'markdown',
   ...Object.fromEntries(CODE_FILE_EXTENSIONS.map((extension) => [extension, 'code' as const])),
 };
@@ -152,8 +173,7 @@ function defaultContentForKind(kind: VaultEntryKind, safeName: string): string {
   if (kind === 'excalidraw') {
     // Forme du fichier natif `.excalidraw` (https://excalidraw.com) — vide
     // mais valide, pour rester compatible si le vrai outil de dessin est
-    // intégré plus tard (scaffolding seulement cette session, voir
-    // ExcalidrawEditor.tsx).
+    // intégré plus tard (voir ExcalidrawEditor.tsx).
     return JSON.stringify({ type: 'excalidraw', version: 2, elements: [], appState: {} }, null, 2);
   }
   if (kind === 'code') {
@@ -165,20 +185,14 @@ function defaultContentForKind(kind: VaultEntryKind, safeName: string): string {
   return `---\ntitle: ${safeName}\ncreated: ${new Date().toISOString()}\n---\n\n`;
 }
 
-// Phase 1 : vault local minimal — un dossier choisi par l'utilisateur·rice,
-// des fichiers .mdx et des dossiers dedans, exposés comme une vraie
-// arborescence (voir walkTree). Voir docs/ARCHITECTURE.md §5.
-//
-// Depuis l'introduction des coffres multiples (vaults.js), ce fichier ne
-// connaît plus de `vaultPath` en dur : `getVaultPath()` délègue au coffre
-// ACTIF du registre. Tout le reste (walkTree, resolveInVault, les handlers
-// vault:*) est inchangé — un seul point de couture avec vaults.js.
+//////// 2. Résolution de chemin et utilitaires ////////////////////////////
+
+// Aucun chemin de coffre en dur ici : getVaultPath() délègue au coffre
+// ACTIF du registre (vaults.ts) — un seul point de couture entre ce backend
+// et le registre multi-coffres. Voir docs/ARCHITECTURE.md §5.
 function getVaultPath(): string | null {
   return vaults.getActiveVaultPath();
 }
-
-// //2. 🔒 RÉSOLUTION DE CHEMIN ET UTILITAIRES
-// ////////////////////////////////////////////////////////////////////////
 
 // La fenêtre est sandboxée (contextIsolation, pas de nodeIntegration) donc
 // le renderer ne peut pas manipuler fs directement, mais mieux vaut quand
@@ -250,11 +264,10 @@ async function moveToVaultTrash(
 
 // Retire, en remontant depuis `startDir` jusqu'à la racine du coffre, chaque
 // dossier devenu VIDE — utilisé après une suppression de synchro pour que le
-// dossier conteneur disparaisse avec ses fichiers (demande v0.4.25 : « le
-// dossier BMO supprimé doit être supprimé, pas seulement ses fichiers »).
-// S'arrête au premier dossier non vide ; ne touche jamais la racine ni un
-// dossier caché (.123ecriture…) ; best-effort (une erreur se contente
-// d'arrêter la remontée).
+// dossier conteneur disparaisse avec ses fichiers, et pas seulement ses
+// fichiers. S'arrête au premier dossier non vide ; ne touche jamais la
+// racine ni un dossier caché (.123ecriture…) ; best-effort (une erreur se
+// contente d'arrêter la remontée).
 async function pruneEmptyAncestors(vaultPath: string, startDir: string): Promise<void> {
   const root = path.resolve(vaultPath);
   let current = path.resolve(startDir);
@@ -299,8 +312,7 @@ function findAvailableName(dir: string, candidate: string, extension = ''): stri
   return `${name}${extension}`;
 }
 
-// //3. 🔀 ORDRE DES FICHIERS
-// ////////////////////////////////////////////////////////////////////////
+//////// 3. Ordre des fichiers (tri automatique + ordre manuel) ////////////
 
 function getOrderFilePath(vaultPath: string): string {
   return path.join(vaultPath, '.123ecriture', 'order.json');
@@ -326,26 +338,26 @@ async function writeOrder(vaultPath: string, order: VaultOrder): Promise<VaultOr
   return order;
 }
 
-// //4. 📍 DERNIER FICHIER OUVERT
-// ////////////////////////////////////////////////////////////////////////
+//////// 4. État par coffre (state.json) ///////////////////////////////////
 
 function getStateFilePath(vaultPath: string): string {
   return path.join(vaultPath, '.123ecriture', 'state.json');
 }
 
-// Dernière note ouverte DANS CE COFFRE — voir Paramètres → Gestion des
-// fichiers et des liens → "Fichier ouvert par défaut" = "Dernier ouvert"
-// (apps/mobile/components/NotesScreen.tsx). PAR coffre plutôt qu'une
-// préférence app-level (comme fileSortMode) : "la dernière note ouverte"
-// n'a de sens que dans le coffre où elle l'a été, pas globalement. Même
-// forme minimale que order.json/tasklists.json : un petit fichier dédié
-// dans .123ecriture/ plutôt qu'alourdir un fichier existant.
-// state.json porte aujourd'hui TROIS choses : le dernier fichier ouvert, les
-// dossiers repliés de l'explorateur ET les onglets de notes ouverts (les
-// trois sont de l'état d'UI PAR coffre, qui voyage avec lui — même logique
-// que lastOpened). Un seul objet lu/écrit en read-modify-write : deux
+// État d'UI PAR coffre : « la dernière note ouverte » n'a de sens que dans
+// le coffre où elle l'a été, pas globalement — d'où un état stocké DANS le
+// coffre (`.123ecriture/state.json`) plutôt qu'une préférence app-level
+// (comme fileSortMode) ; « Fichier ouvert par défaut = Dernier ouvert » est
+// branché dans Paramètres → Gestion des fichiers et des liens
+// (apps/mobile/components/NotesScreen.tsx).
+// state.json porte TROIS choses : le dernier fichier ouvert, les dossiers
+// repliés de l'explorateur ET les onglets de notes ouverts (les trois sont
+// de l'état d'UI PAR coffre, qui voyage avec lui — même logique que
+// lastOpened). Un seul objet lu/écrit en read-modify-write : deux
 // écrivains indépendants qui réécriraient chacun LEUR champ écraseraient
-// celui de l'autre.
+// celui de l'autre. Même forme minimale que order.json/tasklists.json : un
+// petit fichier dédié dans .123ecriture/ plutôt qu'alourdir un fichier
+// existant.
 type VaultState = {
   lastOpenedRelPath?: string | null;
   collapsedRelPaths?: string[];
@@ -403,8 +415,7 @@ async function writeOpenTabRelPaths(vaultPath: string, relPaths: string[]): Prom
   await writeVaultState(vaultPath, { openTabRelPaths: relPaths });
 }
 
-// //5. 🌳 ARBORESCENCE
-// ////////////////////////////////////////////////////////////////////////
+//////// 5. Arborescence ///////////////////////////////////////////////////
 
 // Arborescence complète du vault : dossiers avec leurs enfants, notes en
 // feuilles. Tri par défaut : dossiers d'abord puis notes, alphabétique à
@@ -482,13 +493,12 @@ async function walkTree(dir: string, vaultRoot: string, order: VaultOrder): Prom
 }
 
 export function registerVaultHandlers(getWindow: GetWindow): void {
-  // //6. 📡 HANDLERS IPC — LECTURE
-  // //////////////////////////////////////////////////////////////////////
+  //////// 6. Handlers IPC — lecture ///////////////////////////////////////
 
-  // Gardé tel quel (nom + signature) car consommé directement par
-  // NotesScreen.tsx/TasksScreen.tsx (écran vide "Choisir un dossier") —
-  // délègue maintenant à vaults.js (ajoute+active le dossier choisi dans le
-  // registre multi-coffres) plutôt que d'écrire un `vaultPath` isolé.
+  // Ajoute+active le dossier choisi dans le registre multi-coffres (via
+  // vaults.ts) et diffuse le changement — consommé par NotesScreen.tsx/
+  // TasksScreen.tsx (écran vide "Choisir un dossier"). Aucun `vaultPath`
+  // isolé n'est écrit ici : tout passe par le registre.
   ipcMain.handle('vault:choose-folder', async () => {
     const vault = await vaults.pickAndAddExistingVault();
     if (vault) vaults.broadcastVaultsChanged(getWindow);
@@ -524,9 +534,9 @@ export function registerVaultHandlers(getWindow: GetWindow): void {
     return fs.readFile(resolveInVault(vaultPath, relPath), 'utf8');
   });
 
-  // v0.4.66 — PIÈCES JOINTES SYNCHRONISÉES : lecture/écriture BINAIRE
-  // (base64) pour les fichiers non-texte (images, PDF, audio…) — le moteur
-  // de synchro les utilise pour les push/pull des pièces jointes.
+  // PIÈCES JOINTES SYNCHRONISÉES : lecture/écriture BINAIRE (base64) pour
+  // les fichiers non-texte (images, PDF, audio…) — le moteur de synchro
+  // les utilise pour les push/pull des pièces jointes.
   ipcMain.handle('vault:read-note-binary', async (_event, relPath: string) => {
     const vaultPath = getVaultPath();
     if (!vaultPath) throw new Error('Aucun vault sélectionné');
@@ -555,8 +565,7 @@ export function registerVaultHandlers(getWindow: GetWindow): void {
     };
   });
 
-  // //7. 📡 HANDLERS IPC — CRÉATION / ÉCRITURE
-  // //////////////////////////////////////////////////////////////////////
+  //////// 7. Handlers IPC — création/écriture /////////////////////////////
 
   ipcMain.handle('vault:write-note', async (_event, relPath: string, content: string) => {
     const vaultPath = getVaultPath();
@@ -707,8 +716,7 @@ export function registerVaultHandlers(getWindow: GetWindow): void {
   // d'embed Obsidian). Copiée dans un dossier `attachments/` à la RACINE du
   // vault (pas à côté de la note) : une pièce jointe référencée par son seul
   // nom reste valide même si la note qui la référence est ensuite déplacée/
-  // renommée — un dossier par note aurait cassé ce lien à chaque
-  // déplacement.
+  // renommée — un dossier par note casserait ce lien à chaque déplacement.
   ipcMain.handle('vault:import-attachment', async () => {
     const vaultPath = getVaultPath();
     if (!vaultPath) throw new Error('Aucun vault sélectionné');
@@ -738,8 +746,8 @@ export function registerVaultHandlers(getWindow: GetWindow): void {
   // l'app, voir import-attachment), 3) recherche PAR NOM dans tout le
   // coffre — les coffres importés d'Obsidian écrivent `![[image.png]]`
   // alors que l'image vit n'importe où (« Pièces jointes/ », sous-dossier,
-  // à côté de la note…) ; sans l'étape 3, l'embed restait « pièce jointe
-  // introuvable » pour un coffre qui n'est pas né dans cette app.
+  // à côté de la note…) : sans l'étape 3, tout embed d'un coffre importé
+  // reste « pièce jointe introuvable ».
   ipcMain.handle('vault:read-attachment-data-url', async (_event, relPath: string) => {
     const vaultPath = getVaultPath();
     if (!vaultPath) throw new Error('Aucun vault sélectionné');
@@ -762,8 +770,7 @@ export function registerVaultHandlers(getWindow: GetWindow): void {
     return `data:${guessMimeType(found)};base64,${buffer.toString('base64')}`;
   });
 
-  // //8. 📡 HANDLERS IPC — ORGANISATION (renommer/déplacer/supprimer)
-  // //////////////////////////////////////////////////////////////////////
+  //////// 8. Handlers IPC — organisation (renommer/déplacer/supprimer) ////
 
   // Renomme une note ou un dossier (détection automatique du type via
   // fs.stat) — reste dans le même dossier parent, pas de déplacement.
@@ -775,10 +782,9 @@ export function registerVaultHandlers(getWindow: GetWindow): void {
     if (!fsSync.existsSync(oldFull)) throw new Error('Élément introuvable.');
     const isNote = fsSync.statSync(oldFull).isFile();
     // Préserve l'extension RÉELLE du fichier (`.mdx`, `.md`, `.canvas`,
-    // `.chart`...) plutôt que de forcer `.mdx` sur tout — un ancien bug qui
-    // corrompait silencieusement tout fichier non-`.mdx` renommé (ex. un
-    // `.canvas` devenait `truc.canvas.mdx`, disparaissait de l'arborescence
-    // car `.canvas.mdx` n'est reconnu par aucun kind).
+    // `.chart`...) plutôt que de forcer `.mdx` sur tout — forcer `.mdx`
+    // donnerait `truc.canvas.mdx`, extension reconnue par aucun kind : le
+    // fichier disparaîtrait de l'arborescence.
     const extension = isNote ? path.extname(oldFull) : '';
 
     // Un nom ne doit pas pouvoir contenir de séparateur de chemin : un
@@ -824,8 +830,7 @@ export function registerVaultHandlers(getWindow: GetWindow): void {
     }
 
     const isNote = fsSync.statSync(oldFull).isFile();
-    // Préserve l'extension réelle (voir vault:rename ci-dessus pour le
-    // détail du bug que ça corrige).
+    // Préserve l'extension réelle (voir vault:rename ci-dessus).
     const extension = isNote ? path.extname(oldFull) : '';
     const baseName = isNote ? path.basename(oldFull, extension) : path.basename(oldFull);
     const finalName = findAvailableName(destFull, baseName, extension);
@@ -899,33 +904,34 @@ export function registerVaultHandlers(getWindow: GetWindow): void {
     };
   });
 
-  // Suppression — jusqu'ici volontairement absente (voir l'historique de ce
-  // fichier : "aucune suppression exposée", cohérent avec le fait que
-  // renommer/déplacer ne perdent jamais de contenu). Ajoutée à la demande
-  // explicite de l'utilisatrice, mais avec une confirmation NATIVE
-  // (`dialog.showMessageBox`, même mécanisme que `vault:choose-folder`)
-  // avant toute suppression réelle — jamais silencieuse, et le message
-  // distingue explicitement "note" de "dossier ET tout son contenu" pour
-  // qu’une suppression de dossier ne surprenne personne. Recours à
-  // `fs.rm(..., {recursive:true})` : fonctionne aussi bien pour un fichier
-  // qu’un dossier, pas besoin de deux chemins de code séparés.
+  // Suppression. Règle cardinale : supprimer ne détruit RIEN — l'élément
+  // est DÉPLACÉ vers `.trash/` (corbeille DU coffre, elle-même synchronisée
+  // : la corbeille est partagée entre tous les appareils du compte, chaque
+  // suppression y atterrit partout). La restauration est un simple
+  // vault:set-path hors de `.trash/` (la structure miroir garde le chemin
+  // d'origine lisible).
   //
-  // `options.silent` (v0.4.25) : suppression SANS confirmation, réservée au
-  // moteur de synchro qui applique des tombestones distantes — une
-  // confirmation PAR FICHIER rendait une synchro à 100 suppressions
-  // inutilisable, et la suppression a déjà été validée par l’appareil
-  // émetteur. En mode silencieux on élague aussi les dossiers devenus vides
-  // (sinon « BMO/ » resterait comme coquille vide après la suppression de
-  // ses fichiers) : on remonte les parents du chemin supprimé en retirant
-  // chaque dossier vide — jamais la racine du coffre, jamais un dossier
-  // caché (.123ecriture…), et on s’arrête au premier dossier non vide.
+  // Confirmation NATIVE (`dialog.showMessageBox`, même mécanisme que
+  // `vault:choose-folder`) avant toute suppression réelle — jamais
+  // silencieuse, et le message distingue explicitement "note" de "dossier
+  // ET tout son contenu" pour qu'une suppression de dossier ne surprenne
+  // personne. Recours à `fs.rm(..., {recursive:true})` : fonctionne aussi
+  // bien pour un fichier qu'un dossier, pas besoin de deux chemins de code
+  // séparés.
   //
-  // v0.4.26 : supprimer ne détruit PLUS rien — l’élément est DÉPLACÉ vers
-  // `.trash/` (corbeille DU coffre, elle-même synchronisée : la corbeille
-  // est partagée entre tous les appareils du compte, chaque suppression y
-  // atterrit partout). `options.permanent` (et toute suppression ciblant
-  // déjà `.trash/`) détruit réellement — c’est le seul chemin destructif,
-  // réservé à « Supprimer définitivement » depuis la corbeille.
+  // `options.silent` : suppression SANS confirmation, réservée au moteur de
+  // synchro qui applique des tombestones distantes — une confirmation PAR
+  // FICHIER rendrait une synchro à 100 suppressions inutilisable, et la
+  // suppression a déjà été validée par l'appareil émetteur. En mode
+  // silencieux on élague aussi les dossiers devenus vides (sinon le dossier
+  // supprimé resterait en coquille vide après la suppression de ses
+  // fichiers) : pruneEmptyAncestors remonte les parents du chemin supprimé
+  // en retirant chaque dossier vide — jamais la racine du coffre, jamais un
+  // dossier caché (.123ecriture…), arrêt au premier dossier non vide.
+  //
+  // `options.permanent` (et toute suppression ciblant déjà `.trash/`) :
+  // destruction réelle — c'est le SEUL chemin destructif, réservé à
+  // « Supprimer définitivement » depuis la corbeille.
   ipcMain.handle(
     'vault:delete',
     async (
@@ -973,9 +979,9 @@ export function registerVaultHandlers(getWindow: GetWindow): void {
     },
   );
 
-  // Corbeille du coffre actif (v0.4.26) — liste plate des fichiers sous
-  // `.trash/` pour l'écran Paramètres → Corbeille (l'explorateur masque les
-  // dossiers cachés). relPath complets, préfixe `.trash/` compris, pour que
+  // Corbeille du coffre actif — liste plate des fichiers sous `.trash/`
+  // pour l'écran Paramètres → Corbeille (l'explorateur masque les dossiers
+  // cachés). relPath complets, préfixe `.trash/` compris, pour que
   // « Restaurer » puisse déplacer via vault:set-path sans ambiguïté.
   ipcMain.handle('vault:list-trash', async () => {
     const vaultPath = getVaultPath();

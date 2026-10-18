@@ -10,11 +10,51 @@ import type { AppConfig, DeviceInfo, VaultIdentity, VaultRegistryEntry } from '.
 
 type GetWindow = () => BrowserWindow | null;
 
-// Registre des coffres (vaults) — voir docs/ARCHITECTURE.md §5/§6. Avant ce
-// fichier, l'app ne connaissait qu'un seul `vaultPath` (string) dans
-// config.json ; on passe à une vraie liste `{ vaults: [...], activeVaultId }`
-// tout en gardant `vault.js`/`tasks.js` inchangés au-delà d'un seul point
-// d'entrée (`getActiveVaultPath`) — voir leur `getVaultPath()` local.
+// ✒️ 123ECRITURE — synchronisation vault/vaults.ts — registre des coffres locaux (multi-coffres)
+//////////////////////////////////////////////////////////////////////////////
+//
+// Registre PROCESS MAIN des coffres (vaults) locaux : liste persistée dans
+// config.json sous la forme `{ vaults: [...], activeVaultId }`, coffre
+// actif, identité par coffre, bascule, renommage, liaison cloud, santé des
+// emplacements. Les autres modules du process main (vault.ts, sync.ts) ne
+// connaissent qu'un seul point d'entrée : getActiveVaultPath(). Voir
+// docs/ARCHITECTURE.md §5/§6.
+//
+// Invariants du fichier :
+//   • L'identité d'un coffre (id stable + nom) vit DANS son dossier
+//     (.123ecriture/vault.json), pas seulement dans config.json : c'est ce
+//     qui permet de reconnaître un coffre déjà connu (retiré de la liste
+//     puis re-sélectionné, déplacé, resynchronisé depuis une autre machine)
+//     et de le faire correspondre à sa ligne cloud sans dupliquer le
+//     coffre.
+//   • La migration de l'ancien format (`vaultPath` seul) est paresseuse et
+//     idempotente, appelée au début de chaque accesseur — jamais séquencée
+//     au démarrage, donc aucun ordre à respecter.
+//   • Retirer un coffre de la liste ne supprime jamais ses fichiers —
+//     jamais de perte de données déclenchée par l'app ; clearVaultContent
+//     n'efface que le contenu visible (les entrées cachées survivent) et
+//     n'efface RIEN côté cloud.
+//   • Pendant un cycle de synchro, la bascule est refusée (verrou
+//     anti-bascule) : le bucket distant est figé au démarrage du cycle
+//     alors que chaque opération locale relit le coffre ACTIF — une
+//     bascule en cours de cycle empaire les fichiers locaux du nouveau
+//     coffre avec le bucket de l'ancien.
+//   • relocateVault valide l'identité : le dossier choisi doit être vide
+//     d'identité ou porter CELLE du coffre — jamais celle d'un autre.
+//
+// SOMMAIRE :
+//   1. Identité des coffres (.123ecriture/vault.json)
+//   2. Registre : migration, lecture, coffre actif
+//   3. Ajout et création de coffres
+//   4. Verrou de synchro et bascule
+//   5. Renommer, retirer, liaison cloud
+//   6. Appareil et sélecteurs natifs
+//   7. Maintenance des emplacements (déconnexion, santé, relocation)
+//   8. Handlers IPC
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. Identité des coffres (.123ecriture/vault.json) /////////////////
 
 const IDENTITY_RELATIVE_PATH = path.join('.123ecriture', 'vault.json');
 
@@ -41,11 +81,13 @@ function writeVaultIdentity(vaultPath: string, identity: VaultIdentity): void {
   fsSync.writeFileSync(filePath, JSON.stringify(identity, null, 2), 'utf8');
 }
 
+//////// 2. Registre : migration, lecture, coffre actif ////////////////////
+
 // Migration paresseuse et idempotente de l'ancien format (`vaultPath` seul)
 // vers le nouveau (`vaults[]` + `activeVaultId`). Appelée au début de chaque
 // accesseur plutôt que séquencée explicitement au démarrage : pas d'ordre à
-// respecter, et un ancien config.json (utilisateur déjà en prod) migre tout
-// seul sans perdre le vault déjà choisi.
+// respecter, et un ancien config.json migre tout seul sans perdre le vault
+// déjà choisi.
 function migrateLegacyConfig(): AppConfig {
   const config = readConfig();
   if (config.vaults) return config;
@@ -103,12 +145,14 @@ function findVaultOrThrow(vaultList: VaultRegistryEntry[], id: string): VaultReg
   return vault;
 }
 
+//////// 3. Ajout et création de coffres ///////////////////////////////////
+
 // Enregistre `chosenPath` comme vault (réutilise son identité si elle
 // existe déjà, ex. vault retiré de la liste puis re-ajouté) et le rend
 // actif. Fonction pure vis-à-vis d'Electron (pas de dialog ici) — testable
-// isolément et réutilisée par les deux points d'entrée IPC qui ont besoin
-// d'ajouter un dossier existant (`vaults:add-existing` et l'ancien
-// `vault:choose-folder`, gardé pour compatibilité — voir vault.js).
+// isolément et réutilisée par les deux points d'entrée IPC qui ajoutent un
+// dossier existant (`vaults:add-existing` et `vault:choose-folder`, voir
+// vault.ts).
 export function addExistingVault(chosenPath: string): VaultRegistryEntry {
   const config = migrateLegacyConfig();
   const vaultList = config.vaults ?? [];
@@ -150,7 +194,7 @@ export function addExistingVault(chosenPath: string): VaultRegistryEntry {
 export function createVault(parentDir: string, name: string, vaultName?: string): VaultRegistryEntry {
   const safeName = name && name.trim().length > 0 ? name.trim() : 'Nouveau coffre';
 
-  // Même logique de dédoublonnage que findAvailableName() dans vault.js
+  // Même logique de dédoublonnage que findAvailableName() dans vault.ts
   // (pas de dépendance croisée pour un si petit bout de code, mais même
   // convention " 2", " 3"...).
   let folderName = safeName;
@@ -183,12 +227,14 @@ export function createVault(parentDir: string, name: string, vaultName?: string)
   return vault;
 }
 
-// Verrou ANTI-BASCULE (v0.4.54 — cause racine du mélange de coffres) :
-// pendant un cycle de synchro, le bucket distant est figé au démarrage mais
-// chaque opération locale relit le coffre ACTIF — une bascule en cours de
-// cycle empairait donc les fichiers locaux du nouveau coffre avec le bucket
-// de l'ancien. TTL 10 min : un renderer qui planterait en plein cycle
-// (verrou jamais relâché) ne bloque pas l'app pour toujours.
+//////// 4. Verrou de synchro et bascule ///////////////////////////////////
+
+// Verrou ANTI-BASCULE : pendant un cycle de synchro, le bucket distant est
+// figé au démarrage mais chaque opération locale relit le coffre ACTIF —
+// une bascule en cours de cycle empairerait donc les fichiers locaux du
+// nouveau coffre avec le bucket de l'ancien, c'est pourquoi switchVault la
+// refuse. TTL 10 min : un renderer qui planterait en plein cycle (verrou
+// jamais relâché) ne bloque pas l'app pour toujours.
 let syncLockUntil = 0;
 const SYNC_LOCK_TTL_MS = 10 * 60 * 1000;
 
@@ -213,6 +259,8 @@ export function switchVault(id: string): VaultRegistryEntry[] {
   return getVaults();
 }
 
+//////// 5. Renommer, retirer, liaison cloud ///////////////////////////////
+
 export function renameVault(id: string, name: string): VaultRegistryEntry {
   const config = migrateLegacyConfig();
   const vaultList = config.vaults ?? [];
@@ -232,7 +280,7 @@ export function renameVault(id: string, name: string): VaultRegistryEntry {
 }
 
 // Retire un vault DE LA LISTE uniquement — ne supprime jamais ses fichiers
-// (règle CLAUDE.md : jamais de perte de données déclenchée par l'app).
+// (jamais de perte de données déclenchée par l'app).
 export function removeVault(id: string): VaultRegistryEntry[] {
   const config = migrateLegacyConfig();
   const vaultList = (config.vaults ?? []).filter((v) => v.id !== id);
@@ -256,6 +304,8 @@ export function setCloudLink(id: string, { linked, remoteVaultId }: CloudLinkPat
   return vault;
 }
 
+//////// 6. Appareil et sélecteurs natifs //////////////////////////////////
+
 // Identité de CET appareil pour le suivi « appareils connectés » d'un coffre
 // distant : id générée une seule fois puis persistée dans config.json (elle
 // survit aux redémarrages et aux mises à jour de l'app), nom = nom de la
@@ -271,7 +321,7 @@ export function getOrCreateDeviceInfo(): DeviceInfo {
 
 // Ouvre le sélecteur de dossier natif puis ajoute+active le dossier choisi.
 // Retourne null si l'utilisateur annule — partagé par `vaults:add-existing`
-// et par l'ancien `vault:choose-folder` (voir vault.js) pour ne pas dupliquer
+// et par `vault:choose-folder` (voir vault.ts) pour ne pas dupliquer
 // la logique de dialog. `title` optionnel : contexte de l'appel (ex. « Où
 // placer les fichiers de « X » ? » lors de la connexion d'un coffre distant)
 // — affiché par le sélecteur là où l'OS le permet.
@@ -306,8 +356,10 @@ export async function pickAndCreateVault(
   return vault;
 }
 
+//////// 7. Maintenance des emplacements (déconnexion, santé, relocation) //
+
 // Vide le CONTENU visible d'un coffre (déconnexion d'un coffre distant :
-// « son contenu doit disparaître du dossier où on l'avait placé » — action
+// son contenu disparaît du dossier où on l'avait placé — action
 // destructive, toujours précédée d'une confirmation côté UI). Ne touche PAS
 // aux entrées commençant par un point : .123ecriture (identité du coffre +
 // ordre/état) et .obsidian (réglages Obsidian du dossier) survivent — le
@@ -324,13 +376,13 @@ export async function clearVaultContent(id: string): Promise<void> {
   }
 }
 
-// Santé de l'emplacement de chaque coffre (déplacement détecté — demande
-// v0.4.16) : « missing » = le dossier enregistré n'existe plus (déplacé,
-// renommé, lecteur débranché) ; « no-identity » = le dossier existe mais ne
-// contient plus .123ecriture/vault.json — signature d'un coffre DÉPLACÉ en
-// laissant un dossier derrière lui (sans ce contrôle, la synchro verserait
-// tout le coffre distant dans ce dossier témoin : la « résurrection » de
-// l'ancien emplacement vécue par l'utilisatrice).
+// Santé de l'emplacement de chaque coffre : « missing » = le dossier
+// enregistré n'existe plus (déplacé, renommé, lecteur débranché) ;
+// « no-identity » = le dossier existe mais ne contient plus
+// .123ecriture/vault.json — signature d'un coffre DÉPLACÉ en laissant un
+// dossier derrière lui. Sans ce contrôle, la synchro verserait tout le
+// coffre distant dans ce dossier témoin (résurrection de l'ancien
+// emplacement).
 export function checkVaultFolders(): Record<string, 'ok' | 'missing' | 'no-identity'> {
   const result: Record<string, 'ok' | 'missing' | 'no-identity'> = {};
   for (const vault of getVaults()) {
@@ -377,6 +429,10 @@ export async function relocateVault(id: string): Promise<VaultRegistryEntry[] | 
   return getVaults();
 }
 
+//////// 8. Handlers IPC ///////////////////////////////////////////////////
+
+// Les opérations qui modifient la liste diffusent `vaults:changed` au
+// renderer pour que tous les écrans se ressynchronisent.
 export function broadcastVaultsChanged(getWindow: GetWindow): void {
   const win = getWindow?.();
   if (win) win.webContents.send('vaults:changed', getVaults());
