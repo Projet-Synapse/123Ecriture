@@ -31,7 +31,7 @@ export type DiagnosticsReport = {
   platform: string;
   device: { id: string; name: string; appVersion: string | null };
   // null = non pertinent sur cette plateforme (permission Android).
-  storagePermission: boolean | null;
+  storagePermission?: boolean | null; // Android/All-Files : null en mode SAF (non pertinent)
   activeVaultPath: string | null;
   vaults: { name: string; path: string; cloudLinked: boolean; remoteVaultId: string | null }[];
   syncStateFileCount: number | null;

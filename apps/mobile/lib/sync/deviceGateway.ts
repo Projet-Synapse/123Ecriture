@@ -33,7 +33,6 @@ import { errorMessage } from '../errorMessage';
 // Le chemin du journal est défini dans syncEngine (repris ici sans
 // import pour éviter un cycle : syncEngine importe cette passerelle).
 const SYNC_JOURNAL_READ_PATH = '.123ecriture/sync-journal.json';
-import { hasAllFilesAccess } from '../storage/nativeVaultAdapter';
 import { clearPendingReviewSyncBlock, loadPendingReview, savePendingReview, type PendingReview } from './pendingReview';
 import type { DiagnosticsReport } from './diagnostics';
 
@@ -117,7 +116,6 @@ export async function processDeviceCommands(remoteVaultId: string, ownerId: stri
 // « copier le diagnostic » de l'UI.
 export async function buildLocalDiagnostics(): Promise<DiagnosticsReport> {
   const collectionErrors: string[] = [];
-  const storagePermission = Platform.OS === 'android' ? await hasAllFilesAccess().catch(() => false) : null;
   const vaultBridge = typeof window !== 'undefined' ? window.vault : undefined;
   const pendingReview = vaultBridge
     ? await loadPendingReview(vaultBridge).catch(() => ({}) as PendingReview)
@@ -153,7 +151,6 @@ export async function buildLocalDiagnostics(): Promise<DiagnosticsReport> {
     at: new Date().toISOString(),
     platform: Platform.OS,
     device: { id: device.id, name: device.name, appVersion: await myAppVersion() },
-    storagePermission: Platform.OS === 'android' ? storagePermission : null,
     activeVaultPath,
     vaults: vaultsList.map((v) => ({
       name: v.name,

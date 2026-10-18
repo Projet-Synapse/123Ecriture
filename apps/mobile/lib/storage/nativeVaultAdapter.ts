@@ -1,117 +1,298 @@
-//////////
-// ✒️ 123ECRITURE — nativeVaultAdapter.ts
-// PONT DE COFFRE NATIF (ANDROID) — FICHIERS ORDINAIRES (refonte v0.4.76)
-//////////
-
-// INTRODUCTION — Implémentation de VaultBridge sur des chemins de fichiers
-// ordinaires (`/storage/emulated/0/…` via la permission « Accès à tous les
-// fichiers »), rendant le mobile ÉQUIVALENT au desktop : mêmes lectures/
-// écritures directes, mêmes dates de fichiers, renommage et déplacement de
-// dossiers inclus. Remplace l'ancien pont Storage Access Framework, dont
-// chaque contournement (index persisté, écriture sans troncature,
-// permissions révocables, dossiers dupliqués) a produit des incidents
-// documentés dans docs/vault-incidents.md. Le SAF ne sert plus qu'UNE fois :
-// pour laisser l'utilisatrice CHOISIR un dossier existant (sélecteur
-// système) — jamais pour lire ni écrire.
-//
-// RÈGLES (mêmes que côté desktop) :
-//   - segments cachés exclus de l'arbre visible, SAUF `.trash` (corbeille
-//     du coffre, synchronisée) — `.123ecriture/**` reste accessible en
-//     lecture/écriture directe sans apparaître dans l'arbre ;
-//   - noms contenant un `\` jamais affichés (résidus de contamination) ;
-//   - suppression = déplacement vers `.trash/` (+ confirmation, sauf
-//     `options.silent` réservé à la revue du moteur) ;
-//   - aucune donnée n'est modifiée sans que l'opération soit réellement
-//     terminée (copie avant suppression, jamais l'inverse).
-//
-// SOMMAIRE :
-//   1. 🔑 Accès stockage (permission, racine, chemins)
-//   2. 🧱 Helpers de contenu (extensions, noms disponibles, dates)
-//   3. 🌳 Parcours de l'arborescence (direct, véridique)
-//   4. 🔌 Implémentation de VaultBridge
-
-import { Alert, Linking } from 'react-native';
+import { Alert } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
+import { StorageAccessFramework } from 'expo-file-system/legacy';
 
 import { parseFrontmatter } from '../frontmatter';
 import { CODE_FILE_EXTENSIONS } from '../codeLanguages';
 import { getActiveVaultRootUri, requestAndRegisterVault } from './nativeVaultsAdapter';
+import { vaultStorageObjectKey } from '../sync/storageKeys';
 
-//////// 1. 🔑 ACCÈS STOCKAGE (permission, racine, chemins) ///////////
+// Implémentation native (Android) de VaultBridge, sur le Storage Access
+// Framework (SAF) — voir docs/ARCHITECTURE.md §5, "écart pragmatique"
+// Phase 1 : l'implémentation Electron vit directement dans
+// apps/desktop/electron/vault.ts, celle-ci en est le pendant natif, PREMIER
+// vrai second consommateur du concept VaultAdapter décrit dans ce document
+// (extraction d'un packages/storage commun laissée pour plus tard, une fois
+// les deux implémentations éprouvées en usage réel).
+//
+// ⚠️ PAS TESTÉ SUR UN VRAI APPAREIL ANDROID (voir la conversation) — écrit
+// aussi soigneusement que possible à partir de la documentation officielle
+// expo-file-system/legacy, mais SAF a des cas limites documentés qui
+// varient selon la version d'Android/le fournisseur de stockage (voir les
+// commentaires ciblés ci-dessous, notamment sur readDirectoryAsync). À
+// valider/corriger avec de vrais retours de bugs plutôt que par relecture.
+//
+// //1. 🗺️ Modèle interne (relPath ↔ URI SAF)
+// //2. 📖 Lire/écrire le CONTENU d'un fichier SAF
+// //3. 🌳 Parcours de l'arborescence
+// //4. 🧩 Types de fichiers & noms disponibles
+// //5. 🔌 Implémentation de VaultBridge
 
-// Racine du stockage partagé principal — cible unique des coffres.
-const PRIMARY_ROOT = '/storage/emulated/0';
+// //1. 🗺️ MODÈLE INTERNE (relPath ↔ URI SAF)
+// ////////////////////////////////////////////////////////////////////////
 
-// Convertit un chemin ordinaire en URI exploitable par expo-file-system.
-function fileUri(plainPath: string): string {
-  return plainPath.startsWith('file://') ? plainPath : `file://${plainPath}`;
+// SAF travaille avec des URI `content://...`, pas des chemins — il n'existe
+// aucune façon de "joindre" une URI + un relPath comme on le ferait avec
+// `path.join` côté Node. On maintient donc un index reconstruit à chaque
+// `listTree()` (l'écran Notes appelle toujours listTree avant d'ouvrir une
+// note, voir NotesScreen.tsx) qui fait le pont entre le relPath affiché
+// dans l'UI et l'URI SAF réelle nécessaire pour chaque opération suivante.
+type IndexEntry = { uri: string; isDirectory: boolean };
+let pathIndex = new Map<string, IndexEntry>();
+let indexedRootUri: string | null = null;
+// Dernier arbre construit — SAF est LENT (une requête content-resolver par
+// entrée + une sonde dossier/fichier) : ~1000 notes = près d'une minute de
+// parcours. listTree renvoie ce cache tant que le coffre ne change pas ;
+// toute mutation de l'index (création, renommage, pull...) l'invalide via
+// invalidateTree() pour que l'ouverture suivante reflète le disque.
+let cachedTree: VaultTreeNode[] | null = null;
+
+function invalidateTree(): void {
+  cachedTree = null;
+  scheduleIndexPersist();
 }
 
-// Un contenu « could not be found » / permission refusée est traduit en
-// message actionnable — jamais d'erreur anglaise nue remontée à l'écran.
-function friendlyFsError(error: unknown, relPath: string): Error {
-  const brut = error instanceof Error ? error.message : String(error);
-  if (/could not be found|not exist|ENOENT/i.test(brut)) {
-    return new Error(`« ${relPath} » est introuvable — l'arborescence a peut-être changé ailleurs. Rouvre l'explorateur pour rafraîchir.`);
-  }
-  if (/permission|denied|not writable|EACCES/i.test(brut)) {
-    return new Error(`Accès refusé sur « ${relPath} » — la permission « Tous les fichiers » est-elle encore accordée à l'app ? (Paramètres → Applications → 123Ecriture → Autorisations)`);
-  }
-  return error instanceof Error ? error : new Error(brut);
-}
+// SAF rend toute relecture du coffre RUINEUSE (une requete par entree) : le
+// hachage de synchro (nativeSyncAdapter) ne relit donc que ce qui a change.
+// Chaque mutation du coffre enregistre le relPath touche dans une file
+// PERSISTEE (l'app peut etre tuee entre l'ecriture et le cycle) ; le
+// consommateur (takeDirtyPathsForRoot) vide sa part. Les metadonnees
+// .123ecriture/** ne sont jamais hachees (hors arbre synchronise).
+type DirtyItem = { root: string; relPath: string };
+const DIRTY_QUEUE_PATH = `${FileSystem.documentDirectory}sync-dirty-queue.json`;
+let dirtyQueue: DirtyItem[] | null = null;
 
-// La permission « Accès à tous les fichiers » (Android 11+) est PROUVÉE par
-// une opération réelle sur la racine du stockage — jamais supposée.
-export async function hasAllFilesAccess(): Promise<boolean> {
+async function loadDirtyQueue(): Promise<DirtyItem[]> {
+  if (dirtyQueue) return dirtyQueue;
   try {
-    await FileSystem.readDirectoryAsync(fileUri(PRIMARY_ROOT));
-    return true;
+    const raw = await FileSystem.readAsStringAsync(DIRTY_QUEUE_PATH);
+    const parsed = JSON.parse(raw) as { items?: DirtyItem[] };
+    dirtyQueue = Array.isArray(parsed.items) ? parsed.items : [];
   } catch {
-    return false;
+    dirtyQueue = []; // absent/corrompu : repart a vide
   }
+  return dirtyQueue;
 }
 
-// Ouvre la page système « Tous les fichiers » de l'app (l'utilisatrice
-// active l'interrupteur puis revient — la sonde ci-dessus revalide).
-export async function requestAllFilesAccess(): Promise<void> {
-  try {
-    await Linking.sendIntent('android.settings.MANAGE_APP_ALL_FILES_ACCESS_PERMISSION', [
-      { key: 'android.intent.extra.DATA', value: 'package:com.ecriture.app' },
-    ]);
-  } catch {
-    await Linking.sendIntent('android.settings.MANAGE_ALL_FILES_ACCESS_PERMISSION');
-  }
-}
-
-// Exige la permission avant toute opération du pont — message unique et
-// actionnable (le même partout, pour que l'écran de diagnostic puisse
-// l'identifier).
-async function requireStorageAccess(): Promise<void> {
-  if (!(await hasAllFilesAccess())) {
-    await requestAllFilesAccess();
-    if (!(await hasAllFilesAccess())) {
-      throw new Error('Accès à tous les fichiers non accordé — active-le dans les réglages Android pour que 123Ecriture puisse lire ton coffre.');
+function markVaultFileDirty(relPath: string): void {
+  // Les métadonnées .123ecriture/** restent hors hachage SAUF la liste
+  // synchronisée (tasks/tasklists/preferences/appearance, cf.
+  // nativeSyncAdapter.SYNCED_META_FILES) — leur modification doit bien
+  // déclencher le re-hachage incrémental du prochain cycle.
+  if (relPath.startsWith('.123ecriture/') && !SYNCED_META_FILES.includes(relPath)) return;
+  void (async () => {
+    const root = await getActiveVaultRootUri();
+    if (!root) return;
+    const queue = await loadDirtyQueue();
+    queue.push({ root, relPath });
+    try {
+      await FileSystem.writeAsStringAsync(DIRTY_QUEUE_PATH, JSON.stringify({ items: queue }));
+    } catch {
+      // Ecriture ratee : la file reste en memoire ; au pire (processus tue),
+      // le fichier sera re-hache au prochain cycle complet (baseline vide).
     }
+  })();
+}
+
+// Vide la part de la file qui concerne CE coffre et renvoie les relPaths.
+export async function takeDirtyPathsForRoot(rootUri: string): Promise<string[]> {
+  const queue = await loadDirtyQueue();
+  const mine: string[] = [];
+  const rest: DirtyItem[] = [];
+  for (const item of queue) {
+    if (item.root === rootUri) mine.push(item.relPath);
+    else rest.push(item);
+  }
+  dirtyQueue = rest;
+  try {
+    await FileSystem.writeAsStringAsync(DIRTY_QUEUE_PATH, JSON.stringify({ items: rest }));
+  } catch {
+    // Best-effort : en cas d'echec, la file memoire reste a jour.
+  }
+  return mine;
+}
+
+// Garantit que l'index reflechit le coffre actif (construit si necessaire) —
+// utilise par nativeSyncAdapter avant toute lecture indexee.
+export async function ensureVaultIndexed(): Promise<void> {
+  const rootUri = await requireActiveRootUri();
+  if (indexedRootUri !== rootUri) {
+    if (await loadPersistedIndex(rootUri)) return;
+    pathIndex = new Map();
+    indexedRootUri = rootUri;
+    cachedTree = await walkSafTree(rootUri, '');
+    await persistIndex();
   }
 }
 
-// Racine du coffre ACTIF en chemin ordinaire (via le registre, qui migre
-// les anciennes URI content:// — voir nativeVaultsAdapter.ts).
-async function requireActiveRoot(): Promise<string> {
-  const root = await getActiveVaultRootUri();
-  if (!root) throw new Error('Aucun coffre sélectionné.');
-  if (root.startsWith('content://')) {
-    throw new Error('Ce coffre pointe encore vers une ancienne URI SAF — déconnecte puis reconnecte-le pour migrer vers le stockage direct.');
+// Lecture seule de l'index pour nativeSyncAdapter (hachage incrémental) —
+// la Map reste privée au module, seules ces deux fenêtres sont exposées.
+export function getVaultIndexKeys(): string[] {
+  return [...pathIndex.keys()];
+}
+
+export function getVaultIndexEntry(relPath: string): IndexEntry | undefined {
+  return pathIndex.get(relPath);
+}
+
+// Chemins métadonnées du coffre : indexés et lus/écrits via readNote/
+// writeNote mais jamais rendus dans l'arbre visible ni hachés pour la sync
+// (même liste que isHiddenRoot de buildTreeFromIndex — à maintenir ensemble).
+function isMetaRelPath(relPath: string): boolean {
+  return (
+    relPath === '.123ecriture' ||
+    relPath.startsWith('.123ecriture/') ||
+    relPath === '.trash' ||
+    relPath.startsWith('.trash/')
+  );
+}
+
+// Métadonnées .123ecriture/** qui voyagent AVEC le coffre (liste blanche en
+// POSIX — le reste du sous-arbre reste local) : apparence par coffre
+// (v0.4.42), tâches/listes et préférences d'UI par coffre (v0.4.65 —
+// « tâches enregistrées et synchronisées dans leur vault respectif »).
+// Consommateurs : markVaultFileDirty ci-dessous, nativeSyncAdapter
+// (hashableRelPath) et côté desktop SYNCED_META_FILES de
+// apps/desktop/electron/sync.ts — À MAINTENIR ENSEMBLE.
+export const SYNCED_META_FILES = [
+  '.123ecriture/appearance.json',
+  '.123ecriture/tasks.json',
+  '.123ecriture/tasklists.json',
+  '.123ecriture/preferences.json',
+];
+
+// Pièces jointes SYNCHRONISÉES (v0.4.66 — « gestion des fichiers joints ») :
+// images, documents et audio voyageant avec le coffre. Même liste côté
+// desktop : SYNC_ATTACHMENT_EXTENSIONS de apps/desktop/electron/sync.ts —
+// À MAINTENIR ENSEMBLE. (La limite de taille par fichier est appliquée au
+// hachage desktop ; le mobile hache ce que l'index connaît.)
+export const SYNC_ATTACHMENT_EXTENSIONS = [
+  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.heic',
+  '.pdf', '.txt', '.csv',
+  '.mp3', '.wav', '.ogg', '.m4a', '.mp4', '.webm',
+];
+
+function resolveIndexed(relPath: string): IndexEntry {
+  const entry = pathIndex.get(relPath);
+  if (!entry) {
+    throw new Error(
+      `« ${relPath} » est introuvable — l'arborescence a peut-être changé ailleurs. Rouvre l'explorateur pour rafraîchir.`,
+    );
   }
-  return root;
+  return entry;
 }
 
-function vaultFileUri(relPath: string): Promise<string> {
-  return requireActiveRoot().then((root) => fileUri(relPath ? `${root}/${relPath}` : root));
+async function requireActiveRootUri(): Promise<string> {
+  const uri = await getActiveVaultRootUri();
+  if (!uri) throw new Error('Aucun coffre sélectionné.');
+  return uri;
 }
 
-//////// 2. 🧱 HELPERS DE CONTENU (extensions, noms disponibles) ///////////
+// //2. 📖 LIRE/ÉCRIRE LE CONTENU D'UN FICHIER SAF
+// ////////////////////////////////////////////////////////////////////////
+
+// `readAsStringAsync` ne sait PAS lire une URI `content://` directement
+// (documenté) — le contournement standard est de copier le fichier SAF vers
+// le cache privé de l'app, puis de le lire normalement depuis ce chemin
+// `file://`, et de nettoyer ensuite.
+async function readSafFileText(uri: string): Promise<string> {
+  const tmpPath = `${FileSystem.cacheDirectory}saf-read-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  try {
+    await FileSystem.copyAsync({ from: uri, to: tmpPath });
+    return await FileSystem.readAsStringAsync(tmpPath);
+  } finally {
+    await FileSystem.deleteAsync(tmpPath, { idempotent: true });
+  }
+}
+
+// `writeAsStringAsync` fonctionne directement sur une URI SAF, mais
+// uniquement si le fichier existe DÉJÀ (documenté : "you can't create a new
+// file" via cette fonction sur une URI SAF) — créer un nouveau fichier
+// passe par `StorageAccessFramework.createFileAsync` (voir plus bas),
+// jamais par celle-ci.
+// ── ÉCRITURE SAF À TRONCATURE GARANTIE ─────────────────────────────────
+// writeAsStringAsync ouvre le document SAF en écrasant SANS tronquer :
+// quand le nouveau contenu est plus court que l'ancien, la queue de
+// l'ancien reste en place (vécu A13 17/10 : tasks.json réécrit ~300 octets
+// par-dessus 1 145 → JSON cassé en boucle, sauvegardé .corrupt-* à chaque
+// lecture par les ponts de tâches, puis propagé au coffre cloud par la
+// sync). On vérifie donc la taille APRÈS écriture ; si l'ancien contenu
+// traîne, on supprime le document et on le recrée (SAF ne sait pas
+// tronquer) avant de réécrire. Retourne l'URI effectif : il CHANGE en cas
+// de recréation, l'appelant doit mettre à jour son index.
+
+// Longueur UTF-8 d'une chaîne (Hermes n'a ni Buffer ni TextEncoder garanti).
+function utf8ByteLength(text: string): number {
+  let total = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    const code = text.charCodeAt(i);
+    if (code < 0x80) total += 1;
+    else if (code < 0x800) total += 2;
+    else if (code >= 0xd800 && code <= 0xdbff) {
+      total += 4;
+      i += 1; // paire surrogate — un seul caractère
+    } else total += 3;
+  }
+  return total;
+}
+
+// Longueur en octets d'une charge base64 (3 octets pour 4 caractères, hors
+// remplissage « = ») — pour la même vérification sur les pièces jointes.
+function base64ByteLength(base64: string): number {
+  const padding = base64.endsWith('==') ? 2 : base64.endsWith('=') ? 1 : 0;
+  return Math.floor((base64.length * 3) / 4) - padding;
+}
+
+// Reconstruit l'URI du dossier parent depuis un URI document SAF
+// (…/document/<idParent>%2F<nom>) — même convention de décodage que
+// nameFromSafUri. null si l'URI n'a pas la forme attendue (fournisseur
+// tiers) : dans ce cas on ne tente pas la réparation.
+function parentSafUriOfDocument(uri: string): { parentUri: string; name: string } | null {
+  const marker = '/document/';
+  const markerIndex = uri.lastIndexOf(marker);
+  if (markerIndex < 0) return null;
+  const documentId = decodeURIComponent(uri.slice(markerIndex + marker.length));
+  const slashIndex = documentId.lastIndexOf('/');
+  if (slashIndex <= 0) return null;
+  return {
+    parentUri: `${uri.slice(0, markerIndex + marker.length)}${encodeURIComponent(documentId.slice(0, slashIndex))}`,
+    name: documentId.slice(slashIndex + 1),
+  };
+}
+
+// Écrit, vérifie la taille du document, répare si l'ancien contenu traîne.
+async function writeSafTruncationSafe(
+  uri: string,
+  write: (targetUri: string) => Promise<void>,
+  expectedBytes: number,
+): Promise<string> {
+  await write(uri);
+  const info = await FileSystem.getInfoAsync(uri).catch(() => null);
+  const size = info && info.exists && typeof info.size === 'number' ? info.size : null;
+  if (size === null || size <= expectedBytes) return uri;
+  const target = parentSafUriOfDocument(uri);
+  if (!target) return uri;
+  await StorageAccessFramework.deleteAsync(uri);
+  const freshUri = await StorageAccessFramework.createFileAsync(
+    target.parentUri,
+    target.name,
+    mimeForName(target.name),
+  );
+  await write(freshUri);
+  return freshUri;
+}
+
+async function writeSafFileText(uri: string, content: string): Promise<string> {
+  return writeSafTruncationSafe(
+    uri,
+    (target) => FileSystem.writeAsStringAsync(target, content),
+    utf8ByteLength(content),
+  );
+}
+
+// //3. 🌳 PARCOURS DE L'ARBORESCENCE
+// ////////////////////////////////////////////////////////////////////////
 
 function extensionKind(name: string): VaultEntryKind | null {
   const lower = name.toLowerCase();
@@ -119,38 +300,338 @@ function extensionKind(name: string): VaultEntryKind | null {
   if (lower.endsWith('.canvas')) return 'canvas';
   if (lower.endsWith('.chart')) return 'chart';
   if (lower.endsWith('.excalidraw')) return 'excalidraw';
+  // Fichiers code (.py/.ts/.js/…) — même liste que le desktop/web (source
+  // de vérité unique : lib/codeLanguages.ts).
   if (CODE_FILE_EXTENSIONS.some((extension) => lower.endsWith(extension))) return 'code';
   return null;
 }
 
-const KNOWN_CONTENT_EXTS = ['.mdx', '.md', '.canvas', '.chart', '.excalidraw', '.base', ...CODE_FILE_EXTENSIONS];
+// Extensions de CONTENU reconnues (même liste que createNote plus bas).
+const KNOWN_CONTENT_EXTS = [
+  '.mdx',
+  '.md',
+  '.canvas',
+  '.chart',
+  '.excalidraw',
+  '.base',
+  ...CODE_FILE_EXTENSIONS,
+];
 
-// Nom SANS extension de contenu — convention desktop (titres inline,
-// onglets, résolution des liens `[[Note]]`). L'arbre ne livre JAMAIS le nom
-// avec extension, sinon les liens internes ne matchent plus.
+// Nom SANS extension de contenu — même convention que le desktop
+// (apps/desktop/electron/vault.ts : `name: entry.name.slice(0,
+// -extension.length)`), forme contre laquelle toute l'interface a été
+// écrite : titres inline, onglets, autocomplétion `[[`, résolution des
+// liens internes (`note.name === cible`), étiquettes du graphe. L'arbre
+// natif livrait le nom AVEC extension : titres affichés « Note.md », et
+// les `[[Note]]` ne matchaient plus (ouvrir un lien recréait une note ;
+// graphe : 0 liens, vécu A13, 2026-10-03).
 function baseNameOf(name: string): string {
   const lower = name.toLowerCase();
   const ext = KNOWN_CONTENT_EXTS.find((known) => lower.endsWith(known));
   return ext ? name.slice(0, -ext.length) : name;
 }
 
+// `FileInfo` est une union discriminée par `exists` — le champ
+// `modificationTime` (en secondes, d'où le ×1000) n'existe que sur la
+// branche `exists: true`, TypeScript le refuse sinon.
+function modifiedAtFromInfo(info: FileSystem.FileInfo): number {
+  return info.exists && info.modificationTime ? info.modificationTime * 1000 : Date.now();
+}
+
+function nameFromSafUri(uri: string): string {
+  // Dernier segment de l'ID document décodé — fonctionne pour le
+  // fournisseur "stockage externe primaire" d'Android (le cas courant),
+  // documenté comme technique standard pour SAF+Expo. Peut se comporter
+  // différemment avec un fournisseur de documents tiers (ex. un dossier
+  // partagé par une autre appli) — à surveiller si des noms bizarres
+  // apparaissent dans l'arborescence.
+  const decoded = decodeURIComponent(uri);
+  const afterLastSlash = decoded.split('/').pop() ?? decoded;
+  return afterLastSlash.split(':').pop() ?? afterLastSlash;
+}
+
+// ⚠️ Android 11+ (MediaProvider) : à la création SAF, si l'extension du nom
+// ne résout pas vers le MIME demandé, il AJOUTE l'extension du MIME au nom
+// (« .md » demandé en text/plain → « .md.txt » sur disque, vécu fix4 :
+// 1026 fichiers invisibles). Il faut demander LE MIME QUE RÉSOUT
+// L'EXTENSION : .md → text/markdown ; .json → application/json ; .txt →
+// text/plain ; les extensions qu'Android ne connaît pas (.mdx, .canvas,
+// .chart, .excalidraw, .base) résolvent en application/octet-stream — même
+// valeur demandée → aucun ajout.
+function mimeForName(name: string): string {
+  const lower = name.toLowerCase();
+  if (lower.endsWith('.md')) return 'text/markdown';
+  if (lower.endsWith('.json')) return 'application/json';
+  if (lower.endsWith('.txt')) return 'text/plain';
+  return 'application/octet-stream';
+}
+
+// ⚠️ Point à tester en priorité sur un vrai appareil : un bug documenté
+// d'expo-file-system (issue GitHub #20102) fait que `readDirectoryAsync`
+// sur l'URI d'un SOUS-dossier peut, sur certaines versions d'Android,
+// renvoyer le contenu du dossier PARENT (celui pour lequel la permission a
+// été accordée) plutôt que celui du sous-dossier demandé. Si l'arborescence
+// affichée répète le même contenu à chaque niveau, c'est ce bug — la
+// parade documentée est de re-dériver l'URI du sous-dossier via
+// `StorageAccessFramework.getUriForDirectoryInRoot` plutôt que d'utiliser
+// telle quelle l'URI renvoyée par le parcours ; pas implémenté ici tant que
+// ça n'a pas été confirmé nécessaire en usage réel.
+async function walkSafTree(dirUri: string, parentRelPath: string, depth = 0): Promise<VaultTreeNode[]> {
+  if (depth > 40) return []; // garde-fou anti-boucle, jamais légitime à cette profondeur
+  const childUris = await StorageAccessFramework.readDirectoryAsync(dirUri);
+  return walkSafChildren(childUris, parentRelPath, depth);
+}
+
+// ⚠️ PAS de getInfoAsync ici : en SAF, expo-file-system legacy l'implémente
+// par openInputStream — sur un DOSSIER le fournisseur répond
+// « Function not implemented » (IOException non attrapée, tout le parcours
+// avorte — vécu sur A13 : « les fichiers ne chargent jamais »), et sur un
+// fichier isDirectory vaut TOUJOURS false. On sonde donc chaque enfant avec
+// readSAFDirectoryAsync : réussite = DOSSIER (les enfants sont déjà
+// récupérés, aucun aller-retour de plus), rejet = fichier.
+async function walkSafChildren(childUris: string[], parentRelPath: string, depth: number, meta = false): Promise<VaultTreeNode[]> {
+  if (depth > 40) return [];
+  const nodes: VaultTreeNode[] = [];
+  for (const uri of childUris) {
+    const name = nameFromSafUri(uri);
+    const relPath = parentRelPath ? `${parentRelPath}/${name}` : name;
+    // Le sous-arbre .123ecriture/** (métadonnées de synchro : état, journal,
+    // bases de fusion) est INDEXÉ pour readNote/writeNote mais jamais
+    // renvoyé dans l'arbre visible — sans lui, loadSyncState/appendJournal/
+    // saveSyncBase échouaient (« introuvable ») dès le premier cycle.
+    const isMeta =
+      meta ||
+      relPath === '.123ecriture' ||
+      relPath.startsWith('.123ecriture/') ||
+      relPath === '.trash' ||
+      relPath.startsWith('.trash/');
+    if (name.startsWith('.') && !isMeta) continue; // masque les cachés, comme walkTree côté Electron
+    // ANTI-CONTAMINATION (v0.4.67) : les noms contenant un backslash sont des
+    // fichiers plats issus d'anciens pulls de lignes backslashed — indexés
+    // mais jamais affichés (voir buildTreeFromIndex, même règle).
+    if (name.includes('\\') && !isMeta) continue;
+    let grandChildren: string[] | null = null;
+    try {
+      grandChildren = await StorageAccessFramework.readDirectoryAsync(uri);
+    } catch {
+      grandChildren = null; // fichier (un dossier illisible serait traité en fichier — coffres réels lisibles)
+    }
+    if (grandChildren) {
+      pathIndex.set(relPath, { uri, isDirectory: true });
+      const children = await walkSafChildren(grandChildren, relPath, depth + 1, isMeta);
+      if (!isMeta) nodes.push({ type: 'folder', relPath, name, children });
+    } else {
+      if (isMeta) {
+        // .json/.txt de métadonnées : indexés même sans extension reconnue.
+        pathIndex.set(relPath, { uri, isDirectory: false });
+        continue;
+      }
+      const kind = extensionKind(name);
+      if (!kind) continue; // ignore les fichiers non reconnus (pièces jointes...), comme walkTree
+      pathIndex.set(relPath, { uri, isDirectory: false });
+      // modifiedAt inconnu en SAF (l'implémentation expo ne l'expose pas) :
+      // l'arborescence ne trie jamais par date (voir reorder ci-dessous).
+      nodes.push({ type: 'note', relPath, name, modifiedAt: Date.now(), kind });
+    }
+  }
+  // Dossiers d'abord, puis notes, alphabétique — même ordre par défaut que
+  // walkTree côté Electron ('fileSortMode' manuel/récent non supporté ici
+  // pour l'instant, voir reorder() plus bas).
+  nodes.sort((a, b) => {
+    if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
+    return a.name.localeCompare(b.name, 'fr');
+  });
+  return nodes;
+}
+
+async function refreshIndex(): Promise<VaultTreeNode[]> {
+  const rootUri = await requireActiveRootUri();
+  pathIndex = new Map();
+  indexedRootUri = rootUri;
+  cachedTree = await walkSafTree(rootUri, '');
+  await persistIndex();
+  return cachedTree;
+}
+
+// L'index est PERSISTE hors du coffre (documentDirectory) : un parcours SAF
+// complet coute ~1 requete par entree (~1 min sur un grand coffre, thread
+// JS sature, UI figee) — le rejouer a chaque remontee d'ecran ou
+// redemarrage rendait l'explorateur « vide » pendant tout le parcours
+// (vécu : arbre visible un instant puis vide a chaque retour sur Notes).
+// Les URI SAF document sont des identifiants stables (permission d'arbre
+// persistante) : au lancement, l'index recharge du disque permet de
+// RECONSTRUIRE l'arbre en pur JS, sans une seule requete SAF. Un fichier
+// supprime hors de l'app donnera une URI morte qui echouera per-file
+// (gere) et sera purge au prochain parcours complet.
+type PersistedIndex = { rootUri: string | null; entries: Record<string, { u: string; d: boolean }> };
+
+// v0.4.69 — UN FICHIER D'INDEX PAR COFFRE (avant : un seul vault-index.json
+// écrasé à chaque changement de coffre → au retour sur un coffre, l'index
+// était invalide et le PARCOURS SAF COMPLET de ~1 minute repartait —
+// « le vault prend du temps à charger », vécu A13 17-18/10). La clé du nom
+// de fichier est le rootUri (base64url, même motif que les clés Storage).
+function indexFilePath(rootUri: string): string {
+  return `${FileSystem.documentDirectory}vault-index-${vaultStorageObjectKey(rootUri)}.json`;
+}
+
+let indexPersistTimer: ReturnType<typeof setTimeout> | null = null;
+
+async function persistIndex(): Promise<void> {
+  if (!indexedRootUri) return;
+  const entries: PersistedIndex['entries'] = {};
+  for (const [relPath, entry] of pathIndex) entries[relPath] = { u: entry.uri, d: entry.isDirectory };
+  const payload: PersistedIndex = { rootUri: indexedRootUri, entries };
+  const chemin = indexFilePath(indexedRootUri);
+  try {
+    await FileSystem.writeAsStringAsync(chemin, JSON.stringify(payload));
+  } catch {
+    // Cache : un echec degrade la prochaine ouverture (parcours complet).
+  }
+}
+
+function scheduleIndexPersist(): void {
+  if (indexPersistTimer) clearTimeout(indexPersistTimer);
+  indexPersistTimer = setTimeout(() => void persistIndex(), 1500);
+}
+
+// Tente de restaurer l'index du coffre depuis le disque. Retourne true si
+// l'index correspond bien a CE coffre (rootUri identique).
+async function loadPersistedIndex(rootUri: string): Promise<boolean> {
+  const chemin = indexFilePath(rootUri);
+  try {
+    const raw = await FileSystem.readAsStringAsync(chemin);
+    const parsed = JSON.parse(raw) as PersistedIndex;
+    if (parsed.rootUri !== rootUri || !parsed.entries) return false;
+    pathIndex = new Map();
+    for (const [relPath, entry] of Object.entries(parsed.entries)) {
+      pathIndex.set(relPath, { uri: entry.u, isDirectory: entry.d });
+    }
+    indexedRootUri = rootUri;
+    return pathIndex.size > 0;
+  } catch {
+    return false;
+  }
+}
+
+// Reconstruit l'arbre VISIBLE depuis l'index (pur JS, instantane) — meme
+// forme que walkSafChildren : dossiers d'abord, tri alphabetique fr,
+// .123ecriture et .trash indexes mais jamais affiches.
+function buildTreeFromIndex(): VaultTreeNode[] {
+  type Builder = { folders: Map<string, Builder>; notes: VaultTreeNode[] };
+  const root: Builder = { folders: new Map(), notes: [] };
+  // Puits pour les chemins cachés (.123ecriture/**, .trash/**) : indexés
+  // pour readNote/hash, mais jamais rendus dans l'arbre visible.
+  const hidden: Builder = { folders: new Map(), notes: [] };
+  const isHiddenRoot = (relPath: string): boolean =>
+    relPath === '.123ecriture' || relPath.startsWith('.123ecriture/') || relPath === '.trash' || relPath.startsWith('.trash/');
+  const builderFor = (parentRelPath: string, isMeta: boolean): Builder => {
+    if (!parentRelPath) return isMeta ? hidden : root;
+    if (isMeta || isHiddenRoot(parentRelPath)) {
+      let sink = hidden;
+      let acc = '';
+      for (const segment of parentRelPath.split('/')) {
+        acc = acc ? `${acc}/${segment}` : segment;
+        let next = sink.folders.get(acc);
+        if (!next) {
+          next = { folders: new Map(), notes: [] };
+          sink.folders.set(acc, next);
+        }
+        sink = next;
+      }
+      return sink;
+    }
+    let current = root;
+    let acc = '';
+    for (const segment of parentRelPath.split('/')) {
+      acc = acc ? `${acc}/${segment}` : segment;
+      let next = current.folders.get(acc);
+      if (!next) {
+        next = { folders: new Map(), notes: [] };
+        current.folders.set(acc, next);
+      }
+      current = next;
+    }
+    return current;
+  };
+  // Les dossiers d'abord (y compris VIDES — ils émergent ici, pas des
+  // parents de fichiers), puis les fichiers.
+  // ANTI-CONTAMINATION (v0.4.67) : les noms contenant un `\` sont des
+  // fichiers plats issus d'anciens pulls de lignes backslashed (résidus du
+  // mélange) — indexés pour le hachage mais JAMAIS affichés dans l'arbre
+  // (l'utilisatrice les voyait comme des dossiers « PROGRAMMATION »
+  // fantômes). Leur purge = retirer le coffre local sur l'appareil.
+  const contaminé = (relPath: string): boolean => relPath.includes('\\');
+  for (const [relPath, entry] of pathIndex) {
+    if (!entry.isDirectory || contaminé(relPath)) continue;
+    const slash = relPath.lastIndexOf('/');
+    builderFor(slash >= 0 ? relPath.slice(0, slash) : '', isHiddenRoot(relPath));
+  }
+  for (const [relPath, entry] of pathIndex) {
+    if (entry.isDirectory) continue;
+    const slash = relPath.lastIndexOf('/');
+    const parentRelPath = slash >= 0 ? relPath.slice(0, slash) : '';
+    const name = slash >= 0 ? relPath.slice(slash + 1) : relPath;
+    const isMeta = isHiddenRoot(relPath);
+    const target = builderFor(parentRelPath, isMeta);
+    const kind = extensionKind(name);
+    if (!kind) continue;
+    target.notes.push({ type: 'note', relPath, name: baseNameOf(name), modifiedAt: Date.now(), kind });
+  }
+  const toNodes = (builder: Builder): VaultTreeNode[] => {
+    const nodes: VaultTreeNode[] = [];
+    for (const [relPath, child] of builder.folders) {
+      const slash = relPath.lastIndexOf('/');
+      const name = slash >= 0 ? relPath.slice(slash + 1) : relPath;
+      nodes.push({ type: 'folder', relPath, name, children: toNodes(child) });
+    }
+    for (const note of builder.notes) nodes.push(note);
+    nodes.sort((a, b) => {
+      if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
+      return a.name.localeCompare(b.name, 'fr');
+    });
+    return nodes;
+  };
+  return toNodes(root);
+}
+
+// //4. 🧩 TYPES DE FICHIERS & NOMS DISPONIBLES
+// ////////////////////////////////////////////////////////////////////////
+
 const EXTENSION_FOR_KIND: Record<VaultEntryKind, string> = {
   markdown: '.mdx',
   canvas: '.canvas',
   chart: '.chart',
   excalidraw: '.excalidraw',
+  // Extension de RETENU — le flux normal fournit le nom AVEC l'extension
+  // choisie (`Sans titre.py`, reconnue via KNOWN_CONTENT_EXTS ci-dessus),
+  // port du handler desktop (vault.ts create-note).
   code: '.js',
 };
 
-// Même règle de mot que TAG_PATTERN desktop (search.ts) — dupliquée tant
-// qu'aucun package commun n'existe (ARCHITECTURE.md §5).
+// ⚠️ Toutes ces extensions sont inconnues d'Android (sauf à demander le
+// MIME qu'elles résolvent) : application/octet-stream = seule valeur qui
+// n'ajoute PAS de suffixe au nom à la création SAF (voir mimeForName).
+const MIME_FOR_KIND: Record<VaultEntryKind, string> = {
+  markdown: 'application/octet-stream',
+  canvas: 'application/octet-stream',
+  chart: 'application/octet-stream',
+  excalidraw: 'application/octet-stream',
+  code: 'application/octet-stream',
+};
+
+// Même règle de limite de mot que TAG_PATTERN dans
+// apps/desktop/electron/search.ts (précédé d'un espace/saut de ligne/
+// tabulation ou début de texte) — reproduite ici plutôt que partagée, même
+// convention de duplication assumée qu'entre ce fichier-là et
+// apps/mobile/lib/markdownPlugins.ts (voir leurs commentaires respectifs) :
+// aucun `packages/` commun aujourd'hui pour la porter une seule fois.
 const TAG_PATTERN = /(^|[\s])#([\p{L}\p{N}_-]+)/gu;
 
 function defaultContentForKind(kind: VaultEntryKind, title: string): string {
   if (kind === 'markdown') return `---\ntitle: ${title}\ncreated: ${new Date().toISOString()}\n---\n\n`;
   if (kind === 'canvas') return JSON.stringify({ nodes: [], edges: [] }, null, 2);
   if (kind === 'excalidraw') return JSON.stringify({ type: 'excalidraw', elements: [], appState: {} }, null, 2);
-  if (kind === 'code') return '';
+  if (kind === 'code') return ''; // fichier code vide, comme VS Code
   return JSON.stringify({ columns: [], rows: [], chart: null }, null, 2);
 }
 
@@ -166,84 +647,55 @@ function findAvailableName(baseName: string, siblingNames: Set<string>): string 
   throw new Error('Trop de fichiers du même nom.');
 }
 
-// Écrit puis VÉRIFIE la taille du fichier (longueur UTF-8 du contenu). Sur
-// fichiers ordinaires l'écriture tronque correctement — la vérification est
-// une assurance gratuite contre toute régression de la couche basse : si la
-// taille ne correspond pas, le fichier est réécrit à zéro.
-async function writeTextVerified(fileUriTarget: string, content: string): Promise<void> {
-  await FileSystem.writeAsStringAsync(fileUriTarget, content);
-  const info = await FileSystem.getInfoAsync(fileUriTarget).catch(() => null);
-  const size = info && info.exists && typeof info.size === 'number' ? info.size : null;
-  if (size === null) return;
-  let expected = 0;
-  for (let i = 0; i < content.length; i += 1) {
-    const code = content.charCodeAt(i);
-    expected += code < 0x80 ? 1 : code < 0x800 ? 2 : code >= 0xd800 && code <= 0xdbff ? 4 : 3;
-    if (code >= 0xd800 && code <= 0xdbff) i += 1;
+function siblingNamesOf(parentRelPath: string): Set<string> {
+  const names = new Set<string>();
+  const prefix = parentRelPath ? `${parentRelPath}/` : '';
+  for (const relPath of pathIndex.keys()) {
+    if (!relPath.startsWith(prefix)) continue;
+    const rest = relPath.slice(prefix.length);
+    if (!rest.includes('/')) names.add(rest);
   }
-  if (size !== expected) await FileSystem.writeAsStringAsync(fileUriTarget, content);
+  return names;
 }
 
-async function listEntryNames(dirUri: string): Promise<string[]> {
-  const entries = await FileSystem.readDirectoryAsync(dirUri);
-  return entries.map((entry) => {
-    if (!entry.includes('/')) return entry;
-    const decoded = decodeURIComponent(entry.slice(entry.lastIndexOf('/') + 1));
-    return decoded;
-  });
+async function resolveParentUri(parentRelPath: string | undefined): Promise<string> {
+  if (!parentRelPath) return requireActiveRootUri();
+  return resolveIndexed(parentRelPath).uri;
 }
 
-//////// 3. 🌳 PARCOURS DE L'ARBORESCENCE (direct, véridique) ///////////
-
-// Parcours récursif direct — chaque stat vient du disque (dates réelles),
-// aucune couche intermédiaire ne peut décrire un contenu fantôme.
-async function walkPlainTree(
-  dirUri: string,
-  parentRelPath: string,
-  depth = 0,
-): Promise<VaultTreeNode[]> {
-  if (depth > 40) return [];
-  const names = await listEntryNames(dirUri);
-  const nodes: VaultTreeNode[] = [];
-  for (const name of names) {
-    const relPath = parentRelPath ? `${parentRelPath}/${name}` : name;
-    if (name.startsWith('.')) continue; // .123ecriture, .trash… hors arbre visible
-    if (name.includes('\\')) continue; // résidus de contamination : jamais affichés
-    const childUri = `${dirUri}/${name}`;
-    const info = await FileSystem.getInfoAsync(childUri);
-    if (!info.exists) continue;
-    if (info.isDirectory) {
-      const children = await walkPlainTree(childUri, relPath, depth + 1);
-      nodes.push({ type: 'folder', relPath, name, children });
+// Résout l'URI d'un dossier en le CRÉANT (récursivement depuis la racine)
+// s'il manque à l'index — nécessaire pour écrire un fichier dont le parent
+// n'existe pas encore (ex. premier pull : .123ecriture/bases/). Les
+// dossiers déjà présents sur disque sont normalement dans l'index (le
+// parcours indexe .123ecriture/** et les dossiers visibles), donc on ne
+// crée vraiment que ce qui manque.
+async function ensureSafDir(parentRelPath: string): Promise<string> {
+  const rootUri = await requireActiveRootUri();
+  if (!parentRelPath) return rootUri;
+  let parentUri = rootUri;
+  let acc = '';
+  for (const seg of parentRelPath.split('/')) {
+    acc = acc ? `${acc}/${seg}` : seg;
+    const entry = pathIndex.get(acc);
+    if (entry?.isDirectory) {
+      parentUri = entry.uri;
       continue;
     }
-    const kind = extensionKind(name);
-    if (!kind) continue; // non reconnu (pièce jointe hors liste) : comme desktop
-    nodes.push({
-      type: 'note',
-      relPath,
-      name: baseNameOf(name),
-      modifiedAt: info.modificationTime ? info.modificationTime * 1000 : Date.now(),
-      kind,
-    });
+    const newUri = await StorageAccessFramework.makeDirectoryAsync(parentUri, seg);
+    pathIndex.set(acc, { uri: newUri, isDirectory: true });
+    invalidateTree();
+    parentUri = newUri;
   }
-  nodes.sort((a, b) => {
-    if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
-    return a.name.localeCompare(b.name, 'fr');
-  });
-  return nodes;
+  return parentUri;
 }
 
-// Métadonnées synchronisées + pièces jointes : SOURCE UNIQUE dans
-// syncRules.ts (partagé desktop+mobile) — ré-exportés ici pour les
-// consommateurs existants du pont.
-export { SYNCED_META_FILES, SYNC_ATTACHMENT_EXTENSIONS } from '../sync/syncRules';
-
-//////// 4. 🔌 IMPLÉMENTATION DE VaultBridge (l'objet exposé à l'app) ///////////
+// //5. 🔌 IMPLÉMENTATION DE VaultBridge
+// ////////////////////////////////////////////////////////////////////////
 
 // État d'UI du coffre actif (.123ecriture/state.json) — même fichier et
 // même schéma que côté Electron (vault.ts) : lastOpenedRelPath,
-// collapsedRelPaths, openTabRelPaths. Read-modify-write champ par champ.
+// collapsedRelPaths, openTabRelPaths. Read-modify-write champ par champ
+// pour que trois auteurs indépendants ne s'écrasent pas mutuellement.
 type NativeVaultState = {
   lastOpenedRelPath?: string | null;
   collapsedRelPaths?: string[];
@@ -255,7 +707,8 @@ async function readVaultStateFile(): Promise<NativeVaultState> {
     const parsed: unknown = JSON.parse(await nativeVaultAdapter.readNote('.123ecriture/state.json'));
     return parsed && typeof parsed === 'object' ? (parsed as NativeVaultState) : {};
   } catch {
-    return {}; // absent (coffre neuf) ou coffre inactif : état vide
+    // Absent (coffre neuf) ou coffre inactif : état vide.
+    return {};
   }
 }
 
@@ -264,12 +717,15 @@ async function patchVaultState(patch: NativeVaultState): Promise<void> {
   await nativeVaultAdapter.writeNote('.123ecriture/state.json', JSON.stringify(next, null, 2));
 }
 
+// Anciens fichiers GLOBAUX du documentDirectory (avant la refonte par
+// coffre) —lus en MIGRATION seulement, jamais réécrits.
 async function readLegacyStringFile(name: string): Promise<string | null> {
   try {
     const path = `${FileSystem.documentDirectory}${name}`;
     const info = await FileSystem.getInfoAsync(path);
     if (!info.exists) return null;
-    return (await FileSystem.readAsStringAsync(path)) || null;
+    const value = await FileSystem.readAsStringAsync(path);
+    return value || null;
   } catch {
     return null;
   }
@@ -287,227 +743,407 @@ async function readLegacyJsonArrayFile(name: string): Promise<string[]> {
   }
 }
 
+// Écriture BINAIRE (base64) : même routing index/SAF que writeNote —
+// partagé entre le pont (sync des pièces jointes) et importAttachment.
 async function writeNoteBinaryInternal(relPath: string, base64: string): Promise<void> {
-  const root = await requireActiveRoot();
+  invalidateIndexIfRootChanged(await getActiveVaultRootUri().catch(() => null));
+  const cached = pathIndex.get(relPath);
+  if (cached) {
+    if (cached.isDirectory) throw new Error(`« ${relPath} » est un dossier, pas une note.`);
+    const finalUri = await writeSafTruncationSafe(
+      cached.uri,
+      (target) => FileSystem.writeAsStringAsync(target, base64, { encoding: FileSystem.EncodingType.Base64 }),
+      base64ByteLength(base64),
+    );
+    if (finalUri !== cached.uri) pathIndex.set(relPath, { ...cached, uri: finalUri });
+    if (relPath.startsWith('.123ecriture/')) await persistIndex();
+    else invalidateTree();
+    markVaultFileDirty(relPath);
+    return;
+  }
   const parentRelPath = relPath.includes('/') ? relPath.slice(0, relPath.lastIndexOf('/')) : '';
+  const parentUri = await ensureSafDir(parentRelPath);
   const name = relPath.slice(relPath.lastIndexOf('/') + 1);
-  const parentUri = fileUri(parentRelPath ? `${root}/${parentRelPath}` : root);
-  await FileSystem.makeDirectoryAsync(parentUri, { intermediates: true }).catch(() => undefined);
-  const siblings = new Set(await listEntryNames(parentUri));
-  const finalName = findAvailableName(name, siblings);
-  const target = `${parentUri}/${finalName}`;
-  await FileSystem.writeAsStringAsync(target, base64, { encoding: FileSystem.EncodingType.Base64 });
-  await writeTextVerified(target, base64).catch(() => undefined);
-  void finalName;
+  let uri: string | null = null;
+  try {
+    const children = await StorageAccessFramework.readDirectoryAsync(parentUri);
+    uri = children.find((child) => nameFromSafUri(child) === name) ?? null;
+  } catch {
+    uri = null;
+  }
+  if (!uri) {
+    uri = await StorageAccessFramework.createFileAsync(parentUri, name, mimeForName(name));
+  }
+  const finalUri = await writeSafTruncationSafe(
+    uri,
+    (target) => FileSystem.writeAsStringAsync(target, base64, { encoding: FileSystem.EncodingType.Base64 }),
+    base64ByteLength(base64),
+  );
+  pathIndex.set(relPath, { uri: finalUri, isDirectory: false });
+  if (relPath.startsWith('.123ecriture/')) await persistIndex();
+  else invalidateTree();
+  markVaultFileDirty(relPath);
 }
 
 export const nativeVaultAdapter: VaultBridge = {
-  // Les parcours sont directs : rien à rafraîchir (la vérité vient du disque).
-  rescan: async (): Promise<void> => undefined,
+  // Délègue au coffre actif (voir nativeVaultsAdapter.ts) — même relation
+  // que côté Electron, où vault:choose-folder appelle en interne
+  // vaults.pickAndAddExistingVault().
+  // Rescan COMPLET du coffre (v0.4.47, demande : « les fichiers ajoutés
+  // depuis l'explorateur de fichiers ne sont pas remarqués ») — invalide
+  // l'arbre mémoire, repeuple l'index par un parcours SAF complet puis
+  // persiste. Coûteux (~1 requête SAF par entrée) : à déclencher au retour
+  // au premier plan ou via le bouton Actualiser, pas à chaque frappe.
+  rescan: async (): Promise<void> => {
+    cachedTree = null;
+    await refreshIndex();
+  },
 
   chooseFolder: async () => {
-    const existing = await getActiveVaultRootUri();
-    if (existing) return existing;
-    await requireStorageAccess();
-    // AUCUN coffre actif : créer directement le dossier par défaut (pas de
-    // sélecteur) — si le nom est pris, findAvailableName-like numérote.
-    // v0.4.79 — nom ASCII SANS emoji ni espace : les chemins avec emoji
-    // (sélecteur de variante FE0F inclus) traversent mal la conversion
-    // JS→Java d'expo-file-system (« isn't writable » sur des dossiers qui
-    // existent, vécu A13 18/10 — le shell écrivait, l'app non). Obsidian
-    // mobile ouvre n'importe quel dossier : un nom ASCII ne perd rien.
-    let name = '123Ecriture-vault';
-    let candidate = `${PRIMARY_ROOT}/${name}`;
-    let n = 2;
-    while (await FileSystem.getInfoAsync(fileUri(candidate)).then((i) => i.exists).catch(() => false)) {
-      name = `✒️ 123Ecriture ${n}`;
-      candidate = `${PRIMARY_ROOT}/${name}`;
-      n += 1;
-    }
-    await FileSystem.makeDirectoryAsync(fileUri(candidate), { intermediates: true });
-    const liste = await requestAndRegisterVault(name, candidate);
+    const uri = await getActiveVaultRootUri();
+    if (uri) return uri;
+    // AUCUN coffre actif (premier lancement, coffres retirés) : ouvrir le
+    // sélecteur SAF et ENREGISTRER un coffre — sinon le bouton « Choisir un
+    // dossier » de l'écran Tâches ne faisait RIEN (vécu 17/10 : sans vault
+    // actif, plus rien ne marche — tâches, suppression, tout dépend du
+    // coffre). Le coffre fraîchement ajouté devient actif.
+    const liste = await requestAndRegisterVault('Nouveau coffre');
     return liste.length > 0 ? liste[liste.length - 1].path : null;
   },
 
   getCurrentPath: () => getActiveVaultRootUri(),
 
   listTree: async () => {
-    const root = await requireActiveRoot();
-    await requireStorageAccess();
-    return walkPlainTree(fileUri(root), '');
+    if (cachedTree) return cachedTree;
+    const rootUri = await requireActiveRootUri();
+    if (indexedRootUri !== rootUri) {
+      // Redemarrage / changement de coffre : l'index persiste evite le
+      // parcours SAF complet (voir la note au-dessus de persistIndex).
+      if (await loadPersistedIndex(rootUri)) {
+        cachedTree = buildTreeFromIndex();
+        return cachedTree;
+      }
+      await refreshIndex();
+      return cachedTree!;
+    }
+    // Coffre courant, arbre juste invalide : reconstruction instantanee
+    // depuis l'index (les mutations y sont deja appliquees).
+    cachedTree = buildTreeFromIndex();
+    return cachedTree;
   },
 
   readNote: async (relPath) => {
-    const target = await vaultFileUri(relPath);
-    try {
-      const info = await FileSystem.getInfoAsync(target);
-      if (info.exists && info.isDirectory) throw new Error(`« ${relPath} » est un dossier, pas une note.`);
-      return await FileSystem.readAsStringAsync(target);
-    } catch (error) {
-      throw friendlyFsError(error, relPath);
+    // Garde anti-mélange (v0.4.54) : si le coffre actif a changé depuis le
+    // dernier index, on l'invalide AVANT de résoudre — sinon les relPath
+    // continuaient de pointer vers l'ANCIEN coffre jusqu'au prochain
+    // listTree (code mort récemment branché).
+    invalidateIndexIfRootChanged(await getActiveVaultRootUri().catch(() => null));
+    // Métadonnées absentes de l'index : le DISQUE gagne toujours. Un fichier
+    // `.123ecriture/**` créé dans une session antérieure peut manquer à
+    // l'index persisté (v0.4.65 : l'index n'était jamais persisté pour elles
+    // — les tâches « disparaissaient » au relancement, vécu A13 15/10/2026,
+    // docs/vault-incidents.md §4.2). On le cherche DIRECTEMENT dans son
+    // dossier SAF et on l'ajoute à l'index au passage ; erreur réelle sinon.
+    if (isMetaRelPath(relPath) && !pathIndex.get(relPath)) {
+      const parentRelPath = relPath.includes('/') ? relPath.slice(0, relPath.lastIndexOf('/')) : '';
+      const name = relPath.slice(relPath.lastIndexOf('/') + 1);
+      try {
+        const parentUri = await ensureSafDir(parentRelPath);
+        const children = await StorageAccessFramework.readDirectoryAsync(parentUri);
+        const uri = children.find((child) => nameFromSafUri(child) === name);
+        if (uri) {
+          pathIndex.set(relPath, { uri, isDirectory: false });
+          scheduleIndexPersist();
+        }
+      } catch {
+        // Pas le droit / introuvable : l'erreur classique ci-dessous parle.
+      }
     }
+    const { uri, isDirectory } = resolveIndexed(relPath);
+    if (isDirectory) throw new Error(`« ${relPath} » est un dossier, pas une note.`);
+    return readSafFileText(uri);
   },
 
   writeNote: async (relPath, content) => {
-    const root = await requireActiveRoot();
-    const parentRelPath = relPath.includes('/') ? relPath.slice(0, relPath.lastIndexOf('/')) : '';
-    const parentUri = fileUri(parentRelPath ? `${root}/${parentRelPath}` : root);
-    await FileSystem.makeDirectoryAsync(parentUri, { intermediates: true }).catch(() => undefined);
-    const target = `${parentUri}/${relPath.slice(relPath.lastIndexOf('/') + 1)}`;
-    try {
-      await writeTextVerified(target, content);
-    } catch (error) {
-      throw friendlyFsError(error, relPath);
+    invalidateIndexIfRootChanged(await getActiveVaultRootUri().catch(() => null));
+    const cached = pathIndex.get(relPath);
+    if (cached) {
+      if (cached.isDirectory) throw new Error(`« ${relPath} » est un dossier, pas une note.`);
+      const finalUri = await writeSafFileText(cached.uri, content);
+      if (finalUri !== cached.uri) pathIndex.set(relPath, { ...cached, uri: finalUri });
+      // Les metadonnees de synchro s'ecrivent a CHAQUE cycle : les exclure
+      // de l'invalidation evite de relancer un parcours d'une minute juste
+      // apres (l'arbre VISIBLE n'a pas change). MAIS leur entree d'index
+      // doit etre PERSISTEE immediatement : aucune autre ecriture ne
+      // persiste l'index pour elles, et une app fermee avant le prochain
+      // parcours perdait la trace du fichier (taches disparues au
+      // relancement, v0.4.65).
+      if (relPath.startsWith('.123ecriture/')) await persistIndex();
+      else invalidateTree();
+      markVaultFileDirty(relPath);
+      return;
     }
+    // Fichier absent de l'index (note créée sur un autre appareil et tirée
+    // ici, premières métadonnées .123ecriture d'un coffre neuf) : le créer,
+    // ainsi que ses dossiers parents manquants — writeNote desktop fait de
+    // même ; resolveIndexed lèverait ici « introuvable » (vécu : chaque
+    // pull refusait l'écriture, v0.4.41-fix4).
+    const parentRelPath = relPath.includes('/') ? relPath.slice(0, relPath.lastIndexOf('/')) : '';
+    const parentUri = await ensureSafDir(parentRelPath);
+    const name = relPath.slice(relPath.lastIndexOf('/') + 1);
+    // ⚠️ SAF ne sait pas ÉCRASER : createFileAsync sur un nom déjà pris
+    // crée un DOUBLON numéroté (« appearance (1).json »). Or l'index peut
+    // ignorer un fichier pourtant présent sur le disque (index persisté
+    // antérieur à sa création) — l'écriture atterrissait dans le doublon,
+    // jamais relue au démarrage : l'apparence semblait se réinitialiser à
+    // chaque relance (vécu A13, 2026-10-04, « appearance (1..3).json »).
+    // On liste donc le parent pour retrouver l'URI EXISTANTE du fichier et
+    // écrire dedans ; création seulement s'il n'existe vraiment pas.
+    let uri: string | null = null;
+    try {
+      const children = await StorageAccessFramework.readDirectoryAsync(parentUri);
+      uri = children.find((child) => nameFromSafUri(child) === name) ?? null;
+    } catch {
+      uri = null; // listage impossible : on retombe sur la création
+    }
+    if (!uri) {
+      uri = await StorageAccessFramework.createFileAsync(parentUri, name, mimeForName(name));
+    }
+    const finalUri = await writeSafFileText(uri, content);
+    pathIndex.set(relPath, { uri: finalUri, isDirectory: false });
+    // Même règle que la branche « cached » ci-dessus : une métadonnée
+    // `.123ecriture/**` fraîchement créée doit laisser une trace d'index
+    // PERSISTEE immédiatement (aucun autre parcours ne la connaît).
+    if (relPath.startsWith('.123ecriture/')) await persistIndex();
+    else invalidateTree();
+    markVaultFileDirty(relPath);
   },
 
   readNoteBinary: async (relPath) => {
-    const target = await vaultFileUri(relPath);
-    try {
-      const info = await FileSystem.getInfoAsync(target);
-      if (info.exists && info.isDirectory) throw new Error(`« ${relPath} » est un dossier, pas une pièce jointe.`);
-      return await FileSystem.readAsStringAsync(target, { encoding: FileSystem.EncodingType.Base64 });
-    } catch (error) {
-      throw friendlyFsError(error, relPath);
+    invalidateIndexIfRootChanged(await getActiveVaultRootUri().catch(() => null));
+    if (isMetaRelPath(relPath) && !pathIndex.get(relPath)) {
+      const parentRelPath = relPath.includes('/') ? relPath.slice(0, relPath.lastIndexOf('/')) : '';
+      const name = relPath.slice(relPath.lastIndexOf('/') + 1);
+      try {
+        const parentUri = await ensureSafDir(parentRelPath);
+        const children = await StorageAccessFramework.readDirectoryAsync(parentUri);
+        const uri = children.find((child) => nameFromSafUri(child) === name);
+        if (uri) {
+          pathIndex.set(relPath, { uri, isDirectory: false });
+          scheduleIndexPersist();
+        }
+      } catch {
+        // Pas le droit / introuvable : l'erreur classique ci-dessous parle.
+      }
     }
+    const { uri, isDirectory } = resolveIndexed(relPath);
+    if (isDirectory) throw new Error(`« ${relPath} » est un dossier, pas une note.`);
+    return FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
   },
 
   writeNoteBinary: writeNoteBinaryInternal,
 
   createNote: async (name, parentRelPath, kind = 'markdown') => {
-    const root = await requireActiveRoot();
-    const parentUri = fileUri(parentRelPath ? `${root}/${parentRelPath}` : root);
-    await FileSystem.makeDirectoryAsync(parentUri, { intermediates: true }).catch(() => undefined);
+    const parentUri = await resolveParentUri(parentRelPath);
     const ext = EXTENSION_FOR_KIND[kind];
-    const baseName = KNOWN_CONTENT_EXTS.some((known) => name.toLowerCase().endsWith(known)) ? name : `${name}${ext}`;
-    const siblings = new Set(await listEntryNames(parentUri));
-    const finalName = findAvailableName(baseName, siblings);
+    // Un nom finissant déjà par une extension de contenu reconnue (.md venu
+    // d'un lien interne, par ex.) ne doit PAS recevoir '.mdx' en plus —
+    // vécu : « …mondes.md.mdx » créé à la racine au clic d'un lien interne.
+    const baseName = KNOWN_CONTENT_EXTS.some((known) => name.toLowerCase().endsWith(known))
+      ? name
+      : `${name}${ext}`;
+    const finalName = findAvailableName(baseName, siblingNamesOf(parentRelPath ?? ''));
     const finalExt = KNOWN_CONTENT_EXTS.find((known) => finalName.toLowerCase().endsWith(known)) ?? ext;
-    const target = `${parentUri}/${finalName}`;
+    const newUri = await StorageAccessFramework.createFileAsync(parentUri, finalName, mimeForName(finalName));
     const title = finalName.slice(0, finalName.length - finalExt.length);
-    await writeTextVerified(target, defaultContentForKind(kind, title));
+    await writeSafFileText(newUri, defaultContentForKind(kind, title));
     const relPath = parentRelPath ? `${parentRelPath}/${finalName}` : finalName;
+    pathIndex.set(relPath, { uri: newUri, isDirectory: false });
+    invalidateTree();
+    markVaultFileDirty(relPath);
+    // Même convention que le desktop (vault.ts:525) : le retour porte le
+    // nom SANS extension.
     return { relPath, name: baseNameOf(finalName), modifiedAt: Date.now(), kind };
   },
 
   createFolder: async (name, parentRelPath) => {
-    const root = await requireActiveRoot();
-    const parentUri = fileUri(parentRelPath ? `${root}/${parentRelPath}` : root);
-    await FileSystem.makeDirectoryAsync(parentUri, { intermediates: true }).catch(() => undefined);
-    const siblings = new Set(await listEntryNames(parentUri));
-    const finalName = findAvailableName(name, siblings);
-    const target = `${parentUri}/${finalName}`;
-    await FileSystem.makeDirectoryAsync(target, { intermediates: true });
+    const parentUri = await resolveParentUri(parentRelPath);
+    const finalName = findAvailableName(name, siblingNamesOf(parentRelPath ?? ''));
+    const newUri = await StorageAccessFramework.makeDirectoryAsync(parentUri, finalName);
     const relPath = parentRelPath ? `${parentRelPath}/${finalName}` : finalName;
+    pathIndex.set(relPath, { uri: newUri, isDirectory: true });
+    invalidateTree();
     return { relPath, name: finalName };
   },
 
-  // Fichiers ET dossiers : moveAsync de la couche ordinaire déplace les deux
-  // (l'ancien pont SAF ne savait pas — limitation disparue avec le socle).
+  // Aucune fonction SAF "renommer" native n'existe (voir la doc
+  // expo-file-system/legacy) — copie du CONTENU vers un nouveau fichier
+  // puis suppression de l'original SEULEMENT une fois la copie confirmée
+  // (jamais l'inverse, pour ne pas risquer de perdre le contenu si la copie
+  // échoue en cours de route). Volontairement limité aux FICHIERS : un
+  // renommage de DOSSIER nécessiterait de recopier tout un sous-arbre
+  // récursivement sans jamais avoir pu tester ce chemin sur un vrai
+  // appareil — le risque de perte de données d'un bug non détecté dans ce
+  // cas précis est trop élevé pour le tenter à l'aveugle (voir CLAUDE.md
+  // § Comportement).
   rename: async (relPath, newName) => {
-    const root = await requireActiveRoot();
+    const { uri, isDirectory } = resolveIndexed(relPath);
+    if (isDirectory) {
+      throw new Error(
+        'Renommer un dossier n’est pas encore pris en charge sur Android — dis-le si tu en as vraiment besoin, ça demande un développement dédié plus prudent.',
+      );
+    }
     const parentRelPath = relPath.includes('/') ? relPath.slice(0, relPath.lastIndexOf('/')) : '';
     const name = relPath.slice(relPath.lastIndexOf('/') + 1);
-    const parentUri = fileUri(parentRelPath ? `${root}/${parentRelPath}` : root);
-    const siblings = new Set(await listEntryNames(parentUri));
-    siblings.delete(name);
+    const parentUri = await resolveParentUri(parentRelPath || undefined);
+    const content = await readSafFileText(uri);
+    // Le fichier renommé lui-même ne doit pas compter comme collision :
+    // sinon valider le titre SANS le modifier créait « … 2.md », puis
+    // « … 2 2.md » à chaque validation (vécu : « mondes 2 2 2 2… »).
+    const siblings = siblingNamesOf(parentRelPath);
+    siblings.delete(relPath);
+    // Comme le desktop (vault:rename) : préserve l'extension RÉELLE du
+    // fichier quand le nouveau nom n'en porte pas. L'arbre (et donc le
+    // champ de renommage) donne désormais des noms sans extension — sans
+    // ce rattrapage, « Note » devenait un fichier sans extension,
+    // invisible de l'arbre (extensionKind ne le reconnaît plus).
     const hadKnownExt = KNOWN_CONTENT_EXTS.find((known) => name.toLowerCase().endsWith(known));
     const carriesKnownExt = KNOWN_CONTENT_EXTS.some((known) => newName.toLowerCase().endsWith(known));
     const candidate = hadKnownExt && !carriesKnownExt ? `${newName}${hadKnownExt}` : newName;
     const finalName = findAvailableName(candidate, siblings);
     if (finalName === name) {
+      // Nom inchangé : aucun fichier à créer/supprimer, l'état reste bon.
       return { relPath, name: baseNameOf(name), modifiedAt: Date.now(), kind: extensionKind(name) ?? 'markdown' };
     }
-    const target = `${parentUri}/${finalName}`;
-    await FileSystem.moveAsync({ from: fileUri(`${root}/${relPath}`), to: target });
+    const finalKind = extensionKind(finalName);
+    const mimeType = finalKind ? MIME_FOR_KIND[finalKind] : mimeForName(finalName);
+    const newUri = await StorageAccessFramework.createFileAsync(parentUri, finalName, mimeType);
+    await writeSafFileText(newUri, content);
+    await FileSystem.deleteAsync(uri, { idempotent: true });
     const newRelPath = parentRelPath ? `${parentRelPath}/${finalName}` : finalName;
+    pathIndex.delete(relPath);
+    pathIndex.set(newRelPath, { uri: newUri, isDirectory: false });
+    invalidateTree();
+    markVaultFileDirty(relPath);
+    markVaultFileDirty(newRelPath);
     return { relPath: newRelPath, name: baseNameOf(finalName) };
   },
 
+  // Même raisonnement que rename() ci-dessus : fichiers uniquement, copie
+  // avant suppression, dossiers explicitement non supportés pour l'instant.
   move: async (relPath, destinationParentRelPath) => {
-    const root = await requireActiveRoot();
+    const { uri, isDirectory } = resolveIndexed(relPath);
+    if (isDirectory) {
+      throw new Error(
+        'Déplacer un dossier n’est pas encore pris en charge sur Android — dis-le si tu en as vraiment besoin.',
+      );
+    }
     const name = relPath.includes('/') ? relPath.slice(relPath.lastIndexOf('/') + 1) : relPath;
-    const destUri = fileUri(destinationParentRelPath ? `${root}/${destinationParentRelPath}` : root);
-    await FileSystem.makeDirectoryAsync(destUri, { intermediates: true }).catch(() => undefined);
-    const siblings = new Set(await listEntryNames(destUri));
-    const finalName = findAvailableName(name, siblings);
-    await FileSystem.moveAsync({ from: fileUri(`${root}/${relPath}`), to: `${destUri}/${finalName}` });
+    const destUri = await resolveParentUri(destinationParentRelPath);
+    const content = await readSafFileText(uri);
+    const finalName = findAvailableName(name, siblingNamesOf(destinationParentRelPath ?? ''));
+    const finalKind = extensionKind(finalName);
+    const mimeType = finalKind ? MIME_FOR_KIND[finalKind] : mimeForName(finalName);
+    const newUri = await StorageAccessFramework.createFileAsync(destUri, finalName, mimeType);
+    await writeSafFileText(newUri, content);
+    await FileSystem.deleteAsync(uri, { idempotent: true });
     const newRelPath = destinationParentRelPath ? `${destinationParentRelPath}/${finalName}` : finalName;
+    pathIndex.delete(relPath);
+    pathIndex.set(newRelPath, { uri: newUri, isDirectory: false });
+    invalidateTree();
+    markVaultFileDirty(relPath);
+    markVaultFileDirty(newRelPath);
     return { relPath: newRelPath, name: baseNameOf(finalName) };
   },
 
+  // Édition manuelle de chemin complet (voir EditPathDialog.tsx) — même
+  // limite fichiers-uniquement, réutilise move()/rename() par-dessous.
   setPath: async (relPath, newRelPath) => {
+    const { isDirectory } = resolveIndexed(relPath);
+    if (isDirectory) {
+      throw new Error('Modifier le chemin d’un dossier n’est pas encore pris en charge sur Android.');
+    }
     const newParent = newRelPath.includes('/') ? newRelPath.slice(0, newRelPath.lastIndexOf('/')) : '';
     const newName = newRelPath.includes('/') ? newRelPath.slice(newRelPath.lastIndexOf('/') + 1) : newRelPath;
     const moved = await nativeVaultAdapter.move(relPath, newParent || undefined);
+    // move() renvoie le nom SANS extension (convention desktop) : comparer
+    // la même forme, sinon un simple déplacement déclenchait un renommage
+    // parasite (« Note » vs « Note.md »).
     if (moved.name !== baseNameOf(newName)) return nativeVaultAdapter.rename(moved.relPath, newName);
     return moved;
   },
 
-  // Suppression = déplacement vers `.trash/` DU COFFRE (corbeille visible
-  // et synchronisée — parité desktop), avec confirmation native sauf
-  // `options.silent` (réservé à la revue du moteur, qui ne l'appelle plus
-  // automatiquement depuis v0.4.73). `options.permanent` détruit réellement.
+  // Suppression réellement récursive gérée par l'OS Android lui-même (un
+  // seul appel natif, pas une boucle qu'on écrit soi-même) — bien plus
+  // fiable que rename()/move() ci-dessus. Confirmation JS AVANT de
+  // supprimer (Alert.alert, natif RN) : jamais de suppression silencieuse,
+  // même règle que le dialog natif côté Electron (voir vault.ts,
+  // vault:delete). `options.silent` (v0.4.25) : réservé au moteur de
+  // synchro (tombestones distantes appliquées en masse) — pas de
+  // confirmation par fichier. v0.4.26 : sans `options.permanent`, le
+  // fichier est copié dans `.trash/` (corbeille LOCALE — la synchro ne
+  // tourne pas en natif Android) avant destruction ; pas d'élagage des
+  // dossiers vides, expo-file-system n'expose pas de rmdir sûr.
   delete: (relPath: string, options?: { silent?: boolean; permanent?: boolean }) =>
     new Promise((resolve) => {
+      const { uri } = resolveIndexed(relPath);
       const run = () => {
-        void (async () => {
-          const root = await requireActiveRoot();
-          const target = fileUri(`${root}/${relPath}`);
-          if (options?.permanent) {
-            await FileSystem.deleteAsync(target, { idempotent: true });
-          } else {
-            const dot = relPath.lastIndexOf('.');
-            const withoutExt = dot >= 0 ? relPath.slice(0, dot) : relPath;
-            const ext = dot >= 0 ? relPath.slice(dot) : '';
-            const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-            const trashRelPath = `.trash/${withoutExt.replace(/\//g, '__')} ${stamp}${ext}`;
-            const trashUri = fileUri(`${root}/${trashRelPath}`);
-            await FileSystem.makeDirectoryAsync(fileUri(`${root}/.trash`), { intermediates: true }).catch(() => undefined);
-            await FileSystem.moveAsync({ from: target, to: trashUri }).catch(async () => {
-              await FileSystem.copyAsync({ from: target, to: trashUri });
-              await FileSystem.deleteAsync(target, { idempotent: true });
-            });
-          }
+        void FileSystem.deleteAsync(uri, { idempotent: true }).then(() => {
+          pathIndex.delete(relPath);
+          invalidateTree();
+          markVaultFileDirty(relPath);
           resolve({ deleted: true });
-        })().catch(() => resolve({ deleted: false }));
+        });
+      };
+      const toTrash = async () => {
+        if (options?.permanent) return;
+        try {
+          const dot = relPath.lastIndexOf('.');
+          const withoutExt = dot >= 0 ? relPath.slice(0, dot) : relPath;
+          const ext = dot >= 0 ? relPath.slice(dot) : '';
+          const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+          const trashUri = `${FileSystem.documentDirectory}.trash/${timestamp}-${withoutExt.replace(/\//g, '__')}${ext}`;
+          await FileSystem.makeDirectoryAsync(`${FileSystem.documentDirectory}.trash`, { intermediates: true });
+          await FileSystem.copyAsync({ from: uri, to: trashUri });
+        } catch {
+          // Best-effort : la corbeille échouée ne doit jamais bloquer la
+          // suppression demandée.
+        }
+      };
+      const runWithTrash = () => {
+        void toTrash().then(run);
       };
       if (options?.silent) {
-        run();
+        runWithTrash();
         return;
       }
+      const { isDirectory } = resolveIndexed(relPath);
       const name = relPath.includes('/') ? relPath.slice(relPath.lastIndexOf('/') + 1) : relPath;
       Alert.alert(
-        'Supprimer ?',
-        `« ${name} » sera déplacé vers la corbeille du coffre (.trash).`,
+        isDirectory ? 'Supprimer ce dossier ?' : 'Supprimer cette note ?',
+        isDirectory
+          ? `« ${name} » et tout son contenu seront déplacés vers la corbeille (.trash).`
+          : `« ${name} » sera déplacée vers la corbeille (.trash).`,
         [
           { text: 'Annuler', style: 'cancel', onPress: () => resolve({ deleted: false }) },
-          { text: 'Supprimer', style: 'destructive', onPress: run },
+          {
+            text: 'Supprimer',
+            style: 'destructive',
+            onPress: runWithTrash,
+          },
         ],
         { cancelable: true, onDismiss: () => resolve({ deleted: false }) },
       );
     }),
 
-  // Corbeille du coffre (parité desktop v0.4.26) : contenu de `.trash/`,
-  // du plus récent au plus ancien — IMPORTÉ sur mobile depuis la refonte
-  // (l'ancien pont ne pouvait pas le faire : corbeille hors coffre).
-  listTrash: async () => {
-    const root = await requireActiveRoot();
-    const trashUri = fileUri(`${root}/.trash`);
-    const names = await listEntryNames(trashUri).catch(() => []);
-    const out: { relPath: string; sizeBytes: number; modifiedAt: string }[] = [];
-    for (const name of names) {
-      const info = await FileSystem.getInfoAsync(`${trashUri}/${name}`).catch(() => null);
-      if (!info || !info.exists || info.isDirectory) continue;
-      out.push({
-        relPath: `.trash/${name}`,
-        sizeBytes: typeof info.size === 'number' ? info.size : 0,
-        modifiedAt: info.modificationTime ? new Date(info.modificationTime * 1000).toISOString() : new Date(0).toISOString(),
-      });
-    }
-    return out.sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt));
-  },
-
+  // État d'UI PAR COFFRE (v0.4.50, correctif « enregistrement par vault ») :
+  // dernier fichier ouvert, dossiers repliés et onglets ouverts vivent dans
+  // le MÊME fichier que côté Electron (.123ecriture/state.json,
+  // read-modify-write champ par champ). Avant cette refonte, ces trois
+  // états vivaient dans des fichiers GLOBAUX du documentDirectory : la
+  // dernière note ouverte, les replis et les onglets d'un coffre débordaient
+  // sur les autres. Les anciens fichiers restent la source de MIGRATION
+  // (lus une fois si la clé manque encore dans state.json).
   getLastOpened: async () => {
     const state = await readVaultStateFile();
     if (state.lastOpenedRelPath !== undefined) return state.lastOpenedRelPath ?? null;
@@ -518,6 +1154,9 @@ export const nativeVaultAdapter: VaultBridge = {
     await patchVaultState({ lastOpenedRelPath: relPath });
   },
 
+  // Dossiers repliés de l'explorateur — best-effort comme côté Electron
+  // (vault.ts/state.json) : une lecture ou écriture qui échoue dégrade le
+  // repli, jamais les données.
   getCollapsedPaths: async () => {
     const state = await readVaultStateFile();
     if (state.collapsedRelPaths !== undefined) return state.collapsedRelPaths;
@@ -528,6 +1167,10 @@ export const nativeVaultAdapter: VaultBridge = {
     await patchVaultState({ collapsedRelPaths: relPaths });
   },
 
+  // Onglets de notes ouverts — aligné sur vault:get/set-open-tabs
+  // (Electron, state.json) : NotesScreen.tsx dégrade gracieusement quand
+  // le bridge est absent, mais l'adaptateur natif POURVUT les méthodes
+  // pour rester conforme à VaultBridge.
   getOpenTabs: async () => {
     const state = await readVaultStateFile();
     if (state.openTabRelPaths !== undefined) return state.openTabRelPaths;
@@ -538,128 +1181,179 @@ export const nativeVaultAdapter: VaultBridge = {
     await patchVaultState({ openTabRelPaths: relPaths });
   },
 
+  // "Note du jour" (Calendrier) — voir CalendarScreen.tsx. Réutilise
+  // createNote ; idempotent (renvoie la note existante si déjà créée
+  // aujourd'hui) comme la version Electron.
   ensureDailyNote: async (dateIso) => {
     const parentRelPath = 'Journal';
-    const relPath = `${parentRelPath}/${dateIso}.mdx`;
-    const root = await requireActiveRoot();
-    const info = await FileSystem.getInfoAsync(fileUri(`${root}/${relPath}`)).catch(() => null);
-    if (info?.exists) {
-      return {
-        relPath,
-        name: dateIso,
-        modifiedAt: info.modificationTime ? info.modificationTime * 1000 : Date.now(),
-        kind: 'markdown' as const,
-      };
+    const fileName = `${dateIso}.mdx`;
+    const relPath = `${parentRelPath}/${fileName}`;
+    const cached = pathIndex.get(relPath);
+    if (cached) {
+      const info = await FileSystem.getInfoAsync(cached.uri);
+      return { relPath, name: baseNameOf(fileName), modifiedAt: modifiedAtFromInfo(info), kind: 'markdown' };
+    }
+    if (!pathIndex.has(parentRelPath)) {
+      await nativeVaultAdapter.createFolder('Journal', undefined);
     }
     return nativeVaultAdapter.createNote(dateIso, parentRelPath, 'markdown');
   },
 
   // Tri manuel (glisser-déposer, `.123ecriture/order.json` côté Electron) —
-  // non implémenté sur Android : l'ordre reste alphabétique (dégradation
-  // d'affichage assumée, aucune donnée touchée).
-  reorder: async () => nativeVaultAdapter.listTree(),
+  // non implémenté pour l'instant sur Android : on retourne l'arborescence
+  // telle quelle (toujours alphabétique) plutôt que de risquer un ordre
+  // persistant mal géré. Pas d'erreur levée : c'est une dégradation
+  // silencieuse ACCEPTABLE (contrairement à delete/rename/move) puisqu'elle
+  // ne touche aucune donnée, juste l'ordre d'affichage.
+  reorder: async () => refreshIndex(),
 
+  // Nécessiterait expo-document-picker (nouvelle dépendance, pas encore
+  // ajoutée/vérifiée) — volontairement non implémenté cette session plutôt
+  // que bâclé. Retourne `null`, exactement le même contrat qu'un choix
+  // annulé côté Electron (voir NotesScreen.tsx, handleInsertAttachment gère
+  // déjà ce cas sans erreur).
+  // v0.4.66 — « 📎 Joindre un fichier » sur MOBILE (avant : non implémenté —
+  // le bouton était inopérant sur Android) : DocumentPicker système, copie du
+  // fichier dans `<attachmentsFolder>/` du coffre actif (via les ponts
+  // binaires — images/PDF/audio voyagent avec la sync), même contrat de
+  // retour que le desktop ({relPath, name} pour l'embed `![[nom]]`).
   importAttachment: async () => {
     const result = await DocumentPicker.getDocumentAsync({ copyToCacheDirectory: true });
     if (result.canceled) return null;
     const asset = result.assets?.[0];
     if (!asset) return null;
 
+    // Dossier cible : préférence attachmentsFolder (défaut 'attachments').
     let folder = 'attachments';
     try {
       const prefs = (await window.preferences?.get()) as Partial<Preferences> | null;
-      if (prefs?.attachmentsFolder && typeof prefs.attachmentsFolder === 'string') folder = prefs.attachmentsFolder;
+      if (prefs?.attachmentsFolder && typeof prefs.attachmentsFolder === 'string') {
+        folder = prefs.attachmentsFolder;
+      }
     } catch {
       // Préférences indisponibles : le dossier par défaut convient.
     }
 
     const extension = asset.name.includes('.') ? asset.name.slice(asset.name.lastIndexOf('.')) : '';
     const stem = extension ? asset.name.slice(0, asset.name.length - extension.length) : asset.name;
-    const base64 = await FileSystem.readAsStringAsync(asset.uri, { encoding: FileSystem.EncodingType.Base64 });
-    const root = await requireActiveRoot();
-    const parentUri = fileUri(`${root}/${folder}`);
-    await FileSystem.makeDirectoryAsync(parentUri, { intermediates: true }).catch(() => undefined);
-    const siblings = new Set(await listEntryNames(parentUri));
     let name = asset.name;
-    let relPath = `${folder}/${name}`;
+    let relPath = folder ? `${folder}/${name}` : name;
+    // SAF ne sait pas écraser : suffixe (2), (3)… si le nom est déjà pris
+    // (même règle que createNote côté desktop).
     let counter = 2;
-    while (siblings.has(name)) {
+    while (pathIndex.has(relPath)) {
       name = `${stem} (${counter})${extension}`;
-      relPath = `${folder}/${name}`;
+      relPath = folder ? `${folder}/${name}` : name;
       counter += 1;
     }
-    await FileSystem.writeAsStringAsync(`${parentUri}/${name}`, base64, { encoding: FileSystem.EncodingType.Base64 });
+
+    const base64 = await FileSystem.readAsStringAsync(asset.uri, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
+    await writeNoteBinaryInternal(relPath, base64);
     return { relPath, name };
   },
 
   readAttachmentDataUrl: async (relPath) => {
-    const target = await vaultFileUri(relPath);
-    const base64 = await FileSystem.readAsStringAsync(target, { encoding: FileSystem.EncodingType.Base64 });
-    const ext = relPath.toLowerCase().split('.').pop() ?? '';
-    const mime =
-      ext === 'png' ? 'image/png' : ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : ext === 'gif' ? 'image/gif' : 'application/octet-stream';
-    return `data:${mime};base64,${base64}`;
+    const { uri } = resolveIndexed(relPath);
+    const tmpPath = `${FileSystem.cacheDirectory}saf-attachment-${Date.now()}`;
+    try {
+      await FileSystem.copyAsync({ from: uri, to: tmpPath });
+      const base64 = await FileSystem.readAsStringAsync(tmpPath, { encoding: FileSystem.EncodingType.Base64 });
+      const ext = relPath.toLowerCase().split('.').pop() ?? '';
+      const mime =
+        ext === 'png' ? 'image/png' : ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : ext === 'gif' ? 'image/gif' : 'application/octet-stream';
+      return `data:${mime};base64,${base64}`;
+    } finally {
+      await FileSystem.deleteAsync(tmpPath, { idempotent: true });
+    }
   },
 
-  // Fichiers ET dossiers (copyAsync récursif sur fichiers ordinaires) —
-  // limitation « fichiers uniquement » de l'ancien pont disparue.
+  // Duplique un FICHIER existant dans SON PROPRE dossier — même limite
+  // fichiers-uniquement que rename()/move() ci-dessus (dupliquer un dossier
+  // demanderait une copie récursive jamais éprouvée sur un vrai appareil).
+  // Suffixe " (copie)"/" (copie 2)"... comme vault:duplicate côté Electron
+  // (apps/desktop/electron/vault.ts) — findAvailableName() ci-dessus
+  // suffixerait juste " 2"/" 3", moins explicite pour identifier une copie.
   duplicate: async (relPath) => {
-    const root = await requireActiveRoot();
+    const { uri, isDirectory } = resolveIndexed(relPath);
+    if (isDirectory) {
+      throw new Error('Dupliquer un dossier n’est pas encore pris en charge sur Android.');
+    }
     const parentRelPath = relPath.includes('/') ? relPath.slice(0, relPath.lastIndexOf('/')) : '';
+    const parentUri = await resolveParentUri(parentRelPath || undefined);
     const segment = relPath.includes('/') ? relPath.slice(relPath.lastIndexOf('/') + 1) : relPath;
     const kind = extensionKind(segment) ?? 'markdown';
-    const parentUri = fileUri(parentRelPath ? `${root}/${parentRelPath}` : root);
-    const siblings = new Set(await listEntryNames(parentUri));
-    let candidate = `${segment} (copie)`;
+    const ext = EXTENSION_FOR_KIND[kind];
+    const baseName = segment.slice(0, segment.length - ext.length);
+
+    const siblings = siblingNamesOf(parentRelPath);
+    let candidateName = `${baseName} (copie)${ext}`;
     let counter = 2;
-    while (siblings.has(candidate)) {
-      candidate = `${segment} (copie ${counter})`;
+    while (siblings.has(candidateName)) {
+      candidateName = `${baseName} (copie ${counter})${ext}`;
       counter += 1;
     }
-    await FileSystem.copyAsync({ from: fileUri(`${root}/${relPath}`), to: `${parentUri}/${candidate}` });
-    const newRelPath = parentRelPath ? `${parentRelPath}/${candidate}` : candidate;
+
+    const content = await readSafFileText(uri);
+    const newUri = await StorageAccessFramework.createFileAsync(parentUri, candidateName, MIME_FOR_KIND[kind]);
+    await writeSafFileText(newUri, content);
+    const newRelPath = parentRelPath ? `${parentRelPath}/${candidateName}` : candidateName;
+    pathIndex.set(newRelPath, { uri: newUri, isDirectory: false });
+    invalidateTree();
+    markVaultFileDirty(newRelPath);
     return {
       relPath: newRelPath,
-      name: baseNameOf(candidate),
+      name: candidateName.slice(0, candidateName.length - ext.length),
       modifiedAt: Date.now(),
-      kind: extensionKind(candidate) ?? kind,
+      kind,
     };
   },
 
+  // Vue dédiée aux tags (voir NotesScreen.tsx, bascule Fichiers/Tags) — même
+  // esprit que vault:list-tags côté Electron (search.ts) : reparcourt le
+  // coffre à la demande (refreshIndex, jamais un index potentiellement
+  // périmé) et extrait les `#tags` du CORPS de chaque note markdown
+  // (frontmatter exclu, via parseFrontmatter), regroupés par tag.
   listTags: async () => {
-    const tree = await nativeVaultAdapter.listTree();
+    await refreshIndex();
     const notesByTag = new Map<string, { relPath: string; name: string }[]>();
-    const stack = [...tree];
-    while (stack.length) {
-      const node = stack.pop()!;
-      if (node.type === 'folder') {
-        stack.push(...node.children);
-        continue;
-      }
+
+    for (const [relPath, entry] of pathIndex) {
+      if (entry.isDirectory || extensionKind(relPath) !== 'markdown') continue;
       let content: string;
       try {
-        content = await nativeVaultAdapter.readNote(node.relPath);
+        content = await readSafFileText(entry.uri);
       } catch {
-        continue; // illisible entre le listage et la lecture — ignoré
+        continue; // fichier illisible entre le listage et la lecture — ignoré
       }
       const { body } = parseFrontmatter(content);
+      const segment = relPath.includes('/') ? relPath.slice(relPath.lastIndexOf('/') + 1) : relPath;
+      const kind = extensionKind(segment);
+      const name = kind ? segment.slice(0, segment.length - EXTENSION_FOR_KIND[kind].length) : segment;
+
       for (const match of body.matchAll(TAG_PATTERN)) {
         const tag = match[2].toLowerCase();
         const notes = notesByTag.get(tag) ?? [];
-        notes.push({ relPath: node.relPath, name: node.name });
+        notes.push({ relPath, name });
         notesByTag.set(tag, notes);
       }
     }
-    return [...notesByTag.entries()].map(([tag, notes]) => ({ tag, notes })).sort((a, b) => a.tag.localeCompare(b.tag, 'fr'));
-  },
 
-  // Dates RÉELLES du disque (parité desktop) — la création n'est pas
-  // exposée par Android : fallback sur la modification, documenté.
-  getTimestamps: async (relPath) => {
-    const target = await vaultFileUri(relPath);
-    const info = await FileSystem.getInfoAsync(target);
-    if (!info.exists) throw new Error(`« ${relPath} » est introuvable.`);
-    const modifiedAt = info.modificationTime ? info.modificationTime * 1000 : Date.now();
-    return { createdAt: modifiedAt, modifiedAt };
+    return [...notesByTag.entries()]
+      .map(([tag, notes]) => ({ tag, notes }))
+      .sort((a, b) => a.tag.localeCompare(b.tag, 'fr'));
   },
 };
+
+// Utilisé par installNativeBridges.ts pour invalider l'index si le coffre
+// actif change pendant que l'app tourne (changement de coffre depuis les
+// Paramètres, par ex.) — évite de continuer à résoudre des relPath par
+// rapport à un ancien coffre.
+export function invalidateIndexIfRootChanged(currentRootUri: string | null): void {
+  if (indexedRootUri !== currentRootUri) {
+    pathIndex = new Map();
+    indexedRootUri = currentRootUri;
+    cachedTree = null;
+  }
+}
