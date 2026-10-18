@@ -43,7 +43,7 @@ export function VaultSwitcherSection() {
     <View style={styles.card}>
       <Text style={styles.title}>📚 Coffres</Text>
       <Text style={styles.hint}>
-        Basculez d'un coffre à l'autre : l'explorateur, les tâches et la synchronisation suivent le coffre actif.
+        Basculez d’un coffre à l’autre : l’explorateur, les tâches et la synchronisation suivent le coffre actif.
       </Text>
       {vaults.map((vault) => {
         const actif = vault.id === activeVaultId;
@@ -60,7 +60,9 @@ export function VaultSwitcherSection() {
               <Pressable
                 style={[styles.button, busy === vault.id && styles.buttonBusy]}
                 disabled={busy !== null}
-                onPress={() => basculer(vault.id)}
+                onPress={() => {
+                  void basculer(vault.id);
+                }}
               >
                 <Text style={styles.buttonLabel}>{busy === vault.id ? '…' : 'Utiliser'}</Text>
               </Pressable>
@@ -73,7 +75,9 @@ export function VaultSwitcherSection() {
       <Pressable
         style={[styles.buttonAjouter, busy === '__ajout__' && styles.buttonBusy]}
         disabled={busy !== null}
-        onPress={ajouter}
+        onPress={() => {
+          void ajouter();
+        }}
       >
         <Text style={styles.buttonLabel}>+ Ajouter un coffre sur cet appareil</Text>
       </Pressable>
