@@ -3,12 +3,24 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import type { Theme } from '../../theme';
 
-// RÈGLE UI (v0.4.32, demande de l'utilisatrice) : tout réglage à options
-// multiples NON numériques (police, style de boutons, mode de fond…) est un
-// BOUTON COLLAPSIBLE VERTICAL — un en-tête compact montrant la valeur
-// courante (▸/▾), qui se rétracte/déploie pour révéler les options en
-// colonne. Les réglages NUMÉRIQUES, eux, sont des curseurs (SliderField).
-// Un seul composant partagé pour que la règle tienne partout d'elle-même.
+// ✒️ 123ECRITURE — components/properties/OptionCollapse.tsx — le bouton collapsible d'options
+//////////////////////////////////////////////////////////////////////////////
+//
+// RÈGLE UI : tout réglage à options multiples NON numériques (police,
+// style de boutons, mode de fond…) est un BOUTON COLLAPSIBLE VERTICAL —
+// un en-tête compact montrant la valeur courante (▸/▾), qui se
+// rétracte/déploie pour révéler les options en colonne.
+//
+// Invariants du fichier :
+//   • La répartition des widgets est symétrique et fermée : les réglages
+//     NUMÉRIQUES sont des curseurs (SliderField), les options non
+//     numériques passent ICI.
+//   • Un seul composant partagé (générique sur le type de valeur) pour que
+//     la règle tienne partout d'elle-même.
+//   • Choisir une option referme la liste ; l'en-tête affiche valueLabel
+//     si fournie, sinon le label de l'option courante.
+//
+//////////////////////////////////////////////////////////////////////////////
 
 export type OptionItem<T extends string> = { value: T; label: string; extra?: ReactNode };
 

@@ -8,20 +8,36 @@ import { AddPropertyButton } from './AddPropertyButton';
 import { DraftTextField } from '../editors/DraftTextField';
 import { PropertyValueField } from './PropertyValueField';
 
+// ✒️ 123ECRITURE — components/properties/PropertiesPanel.tsx — l'onglet « Propriétés »
+//////////////////////////////////////////////////////////////////////////////
+//
 // Onglet "Propriétés" de la barre latérale (voir RightSidebar.tsx,
-// NotesScreen.tsx) — édition des VALEURS de la note actuellement ouverte,
-// façon capture de référence (.claude/References/image-4.png) : une icône
-// par ligne, un widget dédié par type (voir PropertyValueField.tsx), et un
-// bouton "+" pour ajouter une propriété existante ou en créer une nouvelle.
-// Le SCHÉMA global (créer/renommer/changer de type/supprimer une propriété,
-// options du type "Options"…) se configure dans Paramètres → Gestion des
-// propriétés (settings/PropertiesManagementSection.tsx). Mêmes données que
+// NotesScreen.tsx) : édition des VALEURS de la note actuellement ouverte,
+// façon capture de référence — une icône par ligne, un widget dédié par
+// type (voir PropertyValueField.tsx), et un bouton "+" pour ajouter une
+// propriété existante ou en créer une nouvelle. Le SCHÉMA global
+// (créer/renommer/changer de type/supprimer une propriété, options du type
+// "Options"…) se configure dans Paramètres → Gestion des propriétés
+// (settings/PropertiesManagementSection.tsx). Mêmes données que
 // PropertiesBlock.tsx via lib/usePropertyValues.ts.
 //
-// SOURCE DE VÉRITÉ = le frontmatter du fichier (même principe que
-// PropertiesBlock) : TOUTES les clés du YAML s'affichent, dans leur ordre
-// réel, enregistrées au schéma ou non. created/modified sont matérialisées
-// à la sauvegarde (NotesScreen.tsx) et s'affichent en lecture seule.
+// Invariants du fichier :
+//   • SOURCE DE VÉRITÉ = le frontmatter du fichier : TOUTES les clés du
+//     YAML s'affichent, dans leur ordre réel, enregistrées au schéma ou
+//     non. created/modified sont matérialisées à la sauvegarde
+//     (NotesScreen.tsx) et s'affichent en lecture seule.
+//   • Une clé non enregistrée au schéma reçoit une définition de repli
+//     texte générique (même choix que PropertiesBlock).
+//   • Seules les notes (pas les canvas/graphiques) ont des propriétés.
+//
+// SOMMAIRE :
+//   1. Les helpers de formatage (horodatage, date système)
+//   2. PropertiesPanel — la liste des valeurs + le bouton d'ajout
+//   3. Les styles
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. Les helpers de formatage (horodatage, date système) ///////////////////////////
 function formatTimestamp(value: number): string {
   return new Date(value).toLocaleString('fr-FR', {
     day: '2-digit',
@@ -49,6 +65,8 @@ type Props = {
   onChangeContent: (text: string) => void;
   tree?: VaultTreeNode[];
 };
+
+//////// 2. PropertiesPanel — la liste des valeurs + le bouton d'ajout ////////////////////
 
 export function PropertiesPanel({ theme, activeNote, content, onChangeContent, tree }: Props) {
   const propertiesBridge = typeof window !== 'undefined' ? window.properties : undefined;
@@ -146,6 +164,8 @@ export function PropertiesPanel({ theme, activeNote, content, onChangeContent, t
     </ScrollView>
   );
 }
+
+//////// 3. Les styles ////////////////////////////////////////////////////////////////////
 
 const styles = StyleSheet.create({
   container: {

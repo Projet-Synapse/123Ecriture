@@ -18,8 +18,43 @@ import { VaultsProvider } from './lib/sync/VaultsContext';
 import { SECTIONS } from './navigation';
 import { PreferencesProvider } from './preferences/PreferencesContext';
 
-// v0.4.40-diag : barrière d'erreur de rendu — en release, une exception
-// React démontait l'app entière sans message. Affiche le stack à l'écran.
+// ✒️ 123ECRITURE — App.tsx — la racine de l'application
+//////////////////////////////////////////////////////////////////////////////
+//
+// Racine mobile : assemble les providers (coffres, auth, préférences,
+// statut de synchro), la coquille AppShell et le routage entre écrans
+// (Notes, Graph, Tables, Tâches, Calendrier, Paramètres).
+//
+// Invariants du fichier :
+//   • VaultsProvider PUIS PreferencesProvider : la personnalisation est
+//     PAR COFFRE — le résolveur de thème (PreferencesContext) lit le
+//     coffre ACTIF pour charger `.123ecriture/appearance.json`. VaultsContext
+//     ne consomme aucune préférence : l'inversion est sûre, pas l'inverse.
+//   • SyncStatusProvider vient APRÈS Auth/Préférences : la sync a besoin
+//     d'une session ET d'un coffre actif.
+//   • Le mécanisme "ouvrir cet élément" (pending*) bascule sur le bon
+//     onglet ET note QUOI ouvrir ; l'écran cible consomme la valeur dans
+//     un effet puis prévient (callback onOpened*) pour remettre à null —
+//     sinon rouvrir le même onglet redéclencherait l'ouverture à chaque
+//     fois. Trois champs PARALLÈLES (note/tâche/évènement) ; les créations
+//     "Nouvelle tâche"/"Nouvel évènement" passent par des COMPTEURS/tokens,
+//     pour re-déclencher l'effet même quand on est déjà sur l'écran cible.
+//   • notesActionsRef est une REF (pas un state) : elle ne doit pas
+//     déclencher de re-render de Root, seule CommandPalette la lit.
+//   • RootErrorBoundary entoure tout : en release, une exception React ne
+//     démonte plus l'app entière sans message.
+//
+// SOMMAIRE :
+//   1. RootErrorBoundary — la barrière d'erreur de rendu
+//   2. Root — le routage des écrans et le mécanisme pending*
+//   3. App — l'assemblage des providers
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. RootErrorBoundary — la barrière d'erreur de rendu //////////////////////////////
+
+// Barrière d'erreur de rendu : en release, une exception React démontait
+// l'app entière sans message. Affiche le stack à l'écran.
 class RootErrorBoundary extends React.Component<
   { children: React.ReactNode },
   { error: Error | null }
@@ -47,6 +82,8 @@ class RootErrorBoundary extends React.Component<
     return this.props.children;
   }
 }
+
+//////// 2. Root — le routage des écrans et le mécanisme pending* /////////////////////////
 
 function Root() {
   const { theme } = usePreferences();
@@ -193,14 +230,16 @@ function Root() {
   );
 }
 
+//////// 3. App — l'assemblage des providers ///////////////////////////////////////////////
+
 export default function App() {
   return (
-    // v0.4.32 : VaultsProvider PUIS PreferencesProvider — la personnalisation
-    // est PAR COFFRE (demande de l'utilisatrice : « la personnalisation de
-    // l'interface sur PROGRAMMATION ne sera pas impactée sur DIVERS ») : le
-    // résolveur de thème (PreferencesContext) lit le coffre ACTIF pour
-    // charger `.123ecriture/appearance.json` du coffre. VaultsContext ne
-    // consomme aucune préférence (vérifié) — l'inversion est sûre.
+    // VaultsProvider PUIS PreferencesProvider : la personnalisation est
+    // PAR COFFRE (« la personnalisation de l'interface sur PROGRAMMATION
+    // ne sera pas impactée sur DIVERS ») — le résolveur de thème
+    // (PreferencesContext) lit le coffre ACTIF pour charger
+    // `.123ecriture/appearance.json` du coffre. VaultsContext ne consomme
+    // aucune préférence (vérifié) — l'inversion est sûre.
     <VaultsProvider>
       <AuthProvider>
         <PreferencesProvider>

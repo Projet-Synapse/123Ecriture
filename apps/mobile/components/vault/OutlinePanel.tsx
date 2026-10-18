@@ -4,11 +4,23 @@ import { Pressable, Text, View } from 'react-native';
 import { extractOutline } from '../../lib/editor/outline';
 import type { Theme } from '../../theme';
 
-// Panneau « Plan » (v0.4.44, demande : « Plan de la note (barre latérale) »)
-// — les titres H1–H6 de la note ouverte, en retrait par niveau ; un appui
-// positionne le curseur sur le titre dans l'éditeur (nécessite l'EditorView,
-// donc Source/Intermédiaire — en Aperçu la liste reste consultable mais le
-// saut est désactivé faute d'EditorView).
+// ✒️ 123ECRITURE — components/vault/OutlinePanel.tsx — le panneau « Plan »
+//////////////////////////////////////////////////////////////////////////////
+//
+// Panneau « Plan » de la barre latérale : les titres H1–H6 de la note
+// ouverte, en retrait par niveau ; un appui positionne le curseur sur le
+// titre dans l'éditeur.
+//
+// Invariants du fichier :
+//   • Le saut nécessite l'EditorView, donc les modes Source/Intermédiaire :
+//     en Aperçu la liste reste consultable mais l'appui est sans effet
+//     (canJump=false), faute d'EditorView.
+//   • L'extraction du plan vit en logique pure dans lib/editor/outline.ts
+//     (titres dans un bloc de code ignorés) — ce fichier ne fait
+//     qu'afficher.
+//
+//////////////////////////////////////////////////////////////////////////////
+
 type Props = {
   body: string;
   theme: Theme;

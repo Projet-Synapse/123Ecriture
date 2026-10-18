@@ -30,26 +30,38 @@ const EXPLORER_EXPAND_MODE_OPTIONS: { value: ExplorerExpandMode; label: string }
   { value: 'none', label: 'Tous fermés' },
 ];
 
-// Section "Gestion des fichiers et des liens" — dossier des pièces
-// jointes, emplacement par défaut des nouvelles notes, création
-// automatique de note cible pour un wikilink. Toujours disponible (ces
-// réglages sont lus par apps/desktop/electron/vault.ts et
-// NotesScreen.tsx), mais n'a d'effet visible qu'avec un coffre ouvert.
+// ✒️ 123ECRITURE — components/settings/FilesLinksSection.tsx — fichiers, liens et explorateur
+//////////////////////////////////////////////////////////////////////////////
 //
-// //1. Pièces jointes — dossier de destination.
-// //2. Nouvelles notes — emplacement par défaut (+ dossier personnalisé).
-// //3. Wikilinks — création automatique de la note cible.
-// //4. Ordre des fichiers dans l'explorateur.
-// //5. Ouverture des dossiers de l'explorateur au chargement (v0.4.50) —
-//      préférence explorerExpandMode, appliquée par NotesScreen.tsx.
-// //6. Fichier ouvert par défaut (dernier ouvert / nouvelle note /
-//      spécifique) — voir NotesScreen.tsx pour l'effet d'ouverture et le
-//      défilement automatique de l'explorateur vers la note active.
+// Section "Gestion des fichiers et des liens" : dossier des pièces
+// jointes, emplacement par défaut des nouvelles notes, création
+// automatique de note cible pour un wikilink, ordre et ouverture des
+// dossiers dans l'explorateur, fichier ouvert par défaut.
+//
+// Invariants du fichier :
+//   • Toujours disponible : ces réglages sont lus par
+//     apps/desktop/electron/vault.ts et NotesScreen.tsx — mais la section
+//     n'a d'effet visible qu'avec un coffre ouvert.
+//   • Les champs texte sont des brouillons locaux validés à la soumission
+//     (onBlur/Enter) — jamais une sauvegarde IPC par caractère tapé ;
+//     resynchronisés pendant le rendu (pas dans un effet) si la valeur
+//     change ailleurs (ex. chargement des préférences depuis Electron).
+//   • « Fichier ouvert par défaut → spécifique » se choisit dans un
+//     sélecteur RÉEL (arborescence du coffre actif), pas en tapant un
+//     chemin à la main ; le choix s'applique immédiatement.
+//
+// SOMMAIRE :
+//   1. Les options déclarées et DefaultOpenFilePicker (le sélecteur réel)
+//   2. FilesLinksSection — les six réglages de la carte
+//
+//////////////////////////////////////////////////////////////////////////////
 
-// v0.4.36 : sélecteur RÉEL pour « Fichier ouvert par défaut » — l'ancien
-// champ texte exigeait de connaître le chemin exact par cœur ; ici on
-// choisit le fichier dans l'arborescence du coffre actif, et le choix
-// s'applique immédiatement (persistance via setDefaultOpenSpecificPath).
+//////// 1. Les options déclarées et DefaultOpenFilePicker (le sélecteur réel) /////////////
+
+// Sélecteur RÉEL pour « Fichier ouvert par défaut » : on choisit le
+// fichier dans l'arborescence du coffre actif (pas besoin de connaître le
+// chemin exact par cœur), et le choix s'applique immédiatement
+// (persistance via setDefaultOpenSpecificPath).
 function DefaultOpenFilePicker() {
   const { preferences, theme, setDefaultOpenSpecificPath } = usePreferences();
   const [fichiers, setFichiers] = useState<{ relPath: string; nom: string }[]>([]);
@@ -121,6 +133,8 @@ function DefaultOpenFilePicker() {
     </View>
   );
 }
+
+//////// 2. FilesLinksSection — les six réglages de la carte ///////////////////////////////
 
 export function FilesLinksSection() {
   const {

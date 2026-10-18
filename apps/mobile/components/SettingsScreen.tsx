@@ -14,15 +14,31 @@ import { SyncJournalSection } from './settings/SyncJournalSection';
 import { TrashSection } from './settings/TrashSection';
 import { VaultSwitcherSection } from './settings/VaultSwitcherSection';
 
-// Écran Paramètres — sous-navigation à 7 sections (voir .claude/CLAUDE.md :
-// "complexifier autant que possible" les réglages, et
-// apps/mobile/components/settings/). Une pile plate de cartes ne tenait
-// plus une fois passé de 3 à 7 sections ; on reprend le même principe que
-// AppShell.tsx (rail latéral sur écran large / onglets scrollables sur
-// écran étroit) mais à l'échelle de cet écran, avec son propre seuil de
-// largeur : le contenu disponible ici est déjà amputé de la largeur du
-// rail de AppShell (~220px) sur écran large, donc le seuil est plus haut
-// que celui de AppShell.
+// ✒️ 123ECRITURE — components/SettingsScreen.tsx — l'écran Paramètres
+//////////////////////////////////////////////////////////////////////////////
+//
+// Écran Paramètres : sous-navigation à 7+ sections (voir
+// apps/mobile/components/settings/). Une pile plate de cartes ne tient
+// plus au-delà de 3 sections ; on reprend le même principe que AppShell.tsx
+// (rail latéral sur écran large / onglets scrollables sur écran étroit)
+// mais à l'échelle de cet écran, avec son propre seuil de largeur.
+//
+// Invariants du fichier :
+//   • Le seuil (SETTINGS_WIDE_BREAKPOINT = 900) est PLUS HAUT que celui de
+//     AppShell : sur écran large, le contenu disponible ici est déjà
+//     amputé de la largeur du rail de AppShell (~220px).
+//   • Une seule section rendue à la fois (renderSection, switch exhaustif)
+//     — jamais une pile de toutes les cartes.
+//
+// SOMMAIRE :
+//   1. Les sections déclarées et leur rendu
+//   2. SettingsScreen — le rail/onglets et le contenu
+//   3. Les styles
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. Les sections déclarées et leur rendu ///////////////////////////////////////////
+
 const SETTINGS_WIDE_BREAKPOINT = 900;
 
 type SettingsSectionId =
@@ -45,7 +61,7 @@ type SettingsSectionDef = {
 
 const SETTINGS_SECTIONS: SettingsSectionDef[] = [
   { id: 'personalization', label: 'Personnalisation de l’UI', icon: '🎨' },
-  // v0.4.83 (§16) : la bascule entre les coffres, absente du mobile.
+  // La bascule entre les coffres — absente du mobile ailleurs, elle vit ici.
   { id: 'coffres', label: 'Coffres', icon: '📚' },
   { id: 'account', label: 'Compte et synchronisation', icon: '👤' },
   { id: 'journal', label: 'Journal de synchronisation', icon: '🔄' },
@@ -86,6 +102,8 @@ function renderSection(id: SettingsSectionId) {
       return <AboutSection />;
   }
 }
+
+//////// 2. SettingsScreen — le rail/onglets et le contenu ////////////////////////////////
 
 export function SettingsScreen() {
   const { theme } = usePreferences();
@@ -144,6 +162,8 @@ export function SettingsScreen() {
     </View>
   );
 }
+
+//////// 3. Les styles ////////////////////////////////////////////////////////////////////
 
 const styles = StyleSheet.create({
   root: {

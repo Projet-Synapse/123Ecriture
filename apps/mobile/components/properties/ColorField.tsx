@@ -5,15 +5,36 @@ import Slider from '@react-native-community/slider';
 import { hexToHsv, hsvToHex } from '../../lib/theme/appearance';
 import type { Theme } from '../../theme';
 
-// RÈGLE UI (v0.4.32, demande de l'utilisatrice) : tout réglage de COULEUR
-// a sa ROUE DES COULEURS dédiée — les préréglages restent un raccourci
-// apprécié, la roue donne la liberté totale. Implémentation : un disque en
-// dégradé conique CSS (l'angle = teinte, la distance au centre =
-// saturation), un curseur de luminosité, un aperçu live et le champ hex.
-// Pur web-safe : conversions HSV dans lib/appearance.ts (testées).
+// ✒️ 123ECRITURE — components/properties/ColorField.tsx — la roue des couleurs
+//////////////////////////////////////////////////////////////////////////////
+//
+// RÈGLE UI : tout réglage de COULEUR a sa ROUE DES COULEURS dédiée — les
+// préréglages restent un raccourci, la roue donne la liberté totale.
+// Implémentation : un disque en dégradé conique CSS (l'angle = teinte, la
+// distance au centre = saturation), un curseur de luminosité, un aperçu
+// live et le champ hex.
+//
+// Invariants du fichier :
+//   • Pur web-safe : les conversions HSV vivent dans lib/appearance.ts
+//     (testées) — ce fichier ne fait que dessiner et relayer.
+//   • La roue est une extension web : `backgroundImage` n'existe pas dans
+//     les types ViewStyle de RN, RNWeb (desktop/web) le rend tel quel —
+//     cast volontaire.
+//   • La ligne de réglage est épurée : libellé à gauche, pastille de la
+//     couleur courante à droite ; la pastille ouvre la roue (modale), où
+//     vivent aussi les préréglages.
+//
+// SOMMAIRE :
+//   1. ColorWheel — le disque HSV + le curseur de luminosité
+//   2. ColorField — la ligne de réglage et sa modale
+//   3. Les styles
+//
+//////////////////////////////////////////////////////////////////////////////
 
 const WHEEL_SIZE = 190;
 const KNOB = 18;
+
+//////// 1. ColorWheel — le disque HSV + le curseur de luminosité //////////////////////////
 
 export function ColorWheel({
   color,
@@ -113,6 +134,8 @@ export function ColorField({
     setOpen(true);
   };
 
+//////// 2. ColorField — la ligne de réglage et sa modale //////////////////////////////////
+
   return (
     <View style={{ gap: 6 }}>
       {/* v0.4.35 (demandes de l'utilisatrice) : une ligne épurée — libellé à
@@ -175,6 +198,8 @@ export function ColorField({
     </View>
   );
 }
+
+//////// 3. Les styles ////////////////////////////////////////////////////////////////////
 
 const styles = StyleSheet.create({
   swatch: {

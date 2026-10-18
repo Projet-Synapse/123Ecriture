@@ -22,8 +22,11 @@ import { ColorField } from './properties/ColorField';
 import { OptionCollapse } from './properties/OptionCollapse';
 import { SliderField } from './properties/SliderField';
 
-// Section « Personnalisation » (v0.4.32) — RÈGLES (demandes de
-// l'utilisatrice, à respecter pour TOUT futur réglage) :
+// ✒️ 123ECRITURE — components/PersonalizationCard.tsx — la carte « Personnalisation »
+//////////////////////////////////////////////////////////////////////////////
+//
+// Section « Personnalisation » de Paramètres — RÈGLES à respecter pour
+// TOUT futur réglage de cette carte :
 // 1. PAR COFFRE : tout ce qui suit s'applique au coffre ACTIF uniquement
 //    (fichier .123ecriture/appearance.json du coffre — PROGRAMMATION et
 //    DIVERS ont chacun leur apparence).
@@ -34,6 +37,27 @@ import { SliderField } from './properties/SliderField';
 // 5. Panneaux : couleur + translucidité réglables.
 // 6. Modes : deux boutons ☀️/🌙 — cliquer déploie les réglages du mode en
 //    brouillon ; « Sauvegarder » enregistre ; pas de libellé superflu.
+//
+// Invariants du fichier :
+//   • PAS DE BROUILLON : chaque réglage s'applique IMMÉDIATEMENT
+//     (updateVaultAppearance : thème live + écriture disque regroupée
+//     800 ms). Les réglages affichés sont TOUJOURS ceux du MODE ACTIF :
+//     seuls les boutons « Mode actif » y donnent accès.
+//   • Le bouton « Sauvegarder » donne un retour visible (enregistré /
+//     échec) : l'écriture automatique peut échouer SILENCIEUSEMENT sur
+//     Android (SAF créant un doublon au lieu d'écraser) — le bouton
+//     explicite rassure et diagnostique.
+//   • Hiérarchie des couleurs : fond d'écran > carte (panneaux) >
+//     bordures/texte > éditeur > boutons.
+//
+// SOMMAIRE :
+//   1. Les préréglages de couleurs et les pas des curseurs
+//   2. PersonalizationCard — les réglages du mode actif
+//   3. Les styles
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. Les préréglages de couleurs et les pas des curseurs ///////////////////////////
 
 const ACCENT_PRESETS = ['#4f46e5', '#2563eb', '#0d9488', '#16a34a', '#d97706', '#dc2626', '#db2777', '#7c3aed'];
 const LIGHT_BG_PRESETS = ['#ffffff', '#f5f5f7', '#faf5ff', '#f0fdf4', '#fff7ed', '#f0f9ff', '#fef2f2', '#fdf4ff'];
@@ -51,6 +75,8 @@ const OPACITY_STEP = 0.05;
 
 type ModeKey = 'light' | 'dark';
 
+//////// 2. PersonalizationCard — les réglages du mode actif ///////////////////////////////
+
 export function PersonalizationCard() {
   const {
     preferences,
@@ -67,17 +93,16 @@ export function PersonalizationCard() {
   } = usePreferences();
   const { activeVault } = useVaults();
 
-  // v0.4.34 : PLUS DE BROUILLON — chaque réglage s'applique IMMÉDIATEMENT
-  // (updateVaultAppearance : thème live + écriture disque regroupée 800 ms).
-  // Les réglages affichés sont TOUJOURS ceux du MODE ACTIF : seuls les
-  // boutons « Mode actif » y donnent accès (demande de l'utilisatrice —
-  // plus de sections ☀️/🌙 séparées).
+  // Chaque réglage s'applique IMMÉDIATEMENT (updateVaultAppearance : thème
+  // live + écriture disque regroupée 800 ms). Les réglages affichés sont
+  // TOUJOURS ceux du MODE ACTIF : seuls les boutons « Mode actif » y
+  // donnent accès.
   //
-  // Le bouton « Sauvegarder » REVIENT (demande 2026-10-04) : sur Android,
-  // l'écriture automatique pouvait échouer SILENCIEUSEMENT (SAF créait un
-  // doublon « appearance (1).json » au lieu d'écraser — l'apparence
-  // semblait se réinitialiser à chaque relance) ; un bouton explicite avec
-  // retour visible (enregistré / échec) rassure et diagnostique.
+  // Le bouton « Sauvegarder » porte un retour visible (enregistré / échec)
+  // : sur Android, l'écriture automatique peut échouer SILENCIEUSEMENT
+  // (SAF créant un doublon « appearance (1).json » au lieu d'écraser —
+  // l'apparence semble alors se réinitialiser à chaque relance) ; un
+  // bouton explicite rassure et diagnostique.
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [saveError, setSaveError] = useState('');
   const handleSave = () => {
@@ -349,6 +374,8 @@ export function PersonalizationCard() {
     </View>
   );
 }
+
+//////// 3. Les styles ////////////////////////////////////////////////////////////////////
 
 const styles = StyleSheet.create({
   card: {

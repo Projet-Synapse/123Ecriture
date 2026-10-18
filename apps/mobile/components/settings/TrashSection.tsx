@@ -9,6 +9,36 @@ import { usePreferences } from '../../preferences/PreferencesContext';
 import { ConfirmDialog } from '../dialogs/ConfirmDialog';
 import { settingsStyles as s } from './settingsStyles';
 
+// ✒️ 123ECRITURE — components/settings/TrashSection.tsx — la corbeille du coffre
+//////////////////////////////////////////////////////////////////////////////
+//
+// Corbeille du coffre actif. Supprimer ne détruit plus rien : le fichier
+// part dans `.trash/`, un dossier caché à la racine du coffre qui est
+// LUI-MÊME SYNCHRONISÉ — la corbeille est donc partagée entre tous les
+// appareils du compte, chaque suppression y atterrit partout.
+//
+// Invariants du fichier :
+//   • Restaurer remet le fichier à son chemin d'origine (structure miroir)
+//     et retire la tombestone distante (voir restoreFromTrash,
+//     syncEngine.ts).
+//   • Restauration = opération EXCLUSIVE (runSyncExclusive) : entre le
+//     déplacement local et la suppression de la tombestone distante, un
+//     cycle auto déclenché par le déplacement repousserait la tombestone
+//     et annulerait la restauration en transparence. Un SEUL cycle part
+//     ensuite, sur l'état final cohérent. « Tout restaurer » = UNE seule
+//     opération exclusive pour TOUTES les restaurations.
+//   • « Supprimer définitivement » (et « Vider ») sont les seules actions
+//     destructrices — confirmées, et propagées comme suppressions de la
+//     corbeille aux autres appareils.
+//
+// SOMMAIRE :
+//   1. Les helpers de formatage (taille, date)
+//   2. TrashSection — la liste et les actions de la corbeille
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. Les helpers de formatage (taille, date) ///////////////////////////////////////
+
 type TrashItem = { relPath: string; sizeBytes: number; modifiedAt: string };
 
 function formatSize(bytes: number): string {
@@ -26,15 +56,8 @@ function formatDate(iso: string): string {
         date.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
 }
 
-// Corbeille du coffre actif (v0.4.26). Supprimer ne détruit plus rien : le
-// fichier part dans `.trash/`, un dossier caché à la racine du coffre qui
-// est LUI-MÊME SYNCHRONISÉ — la corbeille est donc partagée entre tous les
-// appareils du compte, chaque suppression y atterrit partout. Restaurer
-// remet le fichier à son chemin d'origine (structure miroir) et retire la
-// tombestone distante (voir restoreFromTrash, syncEngine.ts).
-// « Supprimer définitivement » (et « Vider ») sont les seules actions
-// destructrices — confirmées, et propagées comme suppressions de la
-// corbeille aux autres appareils.
+//////// 2. TrashSection — la liste et les actions de la corbeille ////////////////////////
+
 export function TrashSection() {
   const { theme } = usePreferences();
   const auth = useAuth();
@@ -84,10 +107,10 @@ export function TrashSection() {
     try {
       // EXCLUSIF : entre le déplacement local et la suppression de la
       // tombestone distante, un cycle auto déclenché par le déplacement
-      // pouvait repousser la tombestone et ANNULER la restauration en
-      // transparence (vécu 14/10/2026 : « tout se synchronise avant que le
-      // fichier soit posé, et rien ne se restaure réellement »). Un SEUL
-      // cycle part ensuite, sur l'état final cohérent.
+      // repousse la tombestone et ANNULE la restauration en transparence
+      // (« tout se synchronise avant que le fichier soit posé, et rien ne
+      // se restaure réellement »). Un SEUL cycle part ensuite, sur l'état
+      // final cohérent.
       await syncStatus.runSyncExclusive(() => restoreFromTrash(item.relPath, remoteVaultId, ownerId));
       await syncStatus.runSync();
       await refresh();
@@ -119,7 +142,7 @@ export function TrashSection() {
     setBusy(true);
     try {
       // UNE seule opération exclusive pour TOUTES les restaurations, puis un
-      // seul cycle (même logique que restore, cf. v0.4.65).
+      // seul cycle (même logique que restore).
       await syncStatus.runSyncExclusive(async () => {
         for (const item of items) {
           await restoreFromTrash(item.relPath, remoteVaultId, ownerId);

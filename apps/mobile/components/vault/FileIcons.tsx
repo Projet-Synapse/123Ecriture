@@ -4,10 +4,29 @@ import { Svg, Path, Circle } from 'react-native-svg';
 
 import type { Theme } from '../../theme';
 
-// Icônes VECTORIELLES de l'explorateur (v0.4.36, demande de l'utilisatrice :
-// « des icônes à part entière, pas des emojis »). Réact-native-svg rend du
-// vrai SVG à n'importe quelle taille sans pixellisation. Le dossier change
-// de forme selon qu'il est replié (fermé) ou déplié (ouvert).
+// ✒️ 123ECRITURE — components/vault/FileIcons.tsx — les icônes vectorielles de l'explorateur
+//////////////////////////////////////////////////////////////////////////////
+//
+// Icônes VECTORIELLES de l'explorateur (« des icônes à part entière, pas
+// des emojis ») : react-native-svg rend du vrai SVG à n'importe quelle
+// taille sans pixellisation. Le dossier change de forme selon qu'il est
+// replié (fermé) ou déplié (ouvert) ; chaque `kind` de note a sa couleur.
+//
+// Invariants du fichier :
+//   • La rotation du chevron vit sur un View RN (transform tableau), PAS
+//     sur le <Svg> : en natif, react-native-svg parse l'attribut transform
+//     en syntaxe SVG et rejette la forme CSS — le rendu de TOUT
+//     l'explorateur crashe sinon dès qu'un dossier existe.
+//   • Même motif de base pour toutes les notes (FileIcon), seule la
+//     couleur varie par `kind`.
+//
+// SOMMAIRE :
+//   1. Les icônes de dossier (fermé / ouvert)
+//   2. Le chevron de repli, la feuille générique, l'icône par `kind`
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. Les icônes de dossier (fermé / ouvert) ////////////////////////////////////////
 
 type IconProps = { size?: number; color?: string };
 
@@ -38,12 +57,14 @@ export function FolderOpenIcon(props: IconProps) {
   return <FolderIconBase {...props} open />;
 }
 
+//////// 2. Le chevron de repli, la feuille générique, l'icône par `kind` //////////////////
+
 // Chevron de repli/dépli (flèche) — remplace le triangle Text.
 // ⚠️ La rotation vit sur un View RN (transform tableau), PAS sur le <Svg> :
 // en natif, react-native-svg parse l'attribut transform en syntaxe SVG et
 // rejette la forme CSS (« Expected transform functions but "r" found ») —
-// crash du rendu de TOUT l'explorateur dès qu'un dossier existait
-// (v0.4.41-fix5 : arbre rempli = écran d'erreur, arbre vide = rien).
+// crash du rendu de TOUT l'explorateur dès qu'un dossier existe dans
+// l'arbre.
 export function ChevronIcon({ size = 12, color = '#888', expanded = false }: IconProps & { expanded?: boolean }) {
   return (
     <View style={{ width: size, height: size, transform: expanded ? [{ rotate: '90deg' }] : [] }}>

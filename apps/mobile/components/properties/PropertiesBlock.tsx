@@ -9,15 +9,36 @@ import { AddPropertyButton } from './AddPropertyButton';
 import { DraftTextField } from '../editors/DraftTextField';
 import { PropertyValueField } from './PropertyValueField';
 
-// Bloc "Propriétés" (v0.4.37 refondu — demande : « comme le rendu d'Obsidian,
-// sans le type de propriétés mélangé »). Une ligne = clé à gauche, valeur à
-// droite, aussi large que possible. Plus d'icônes emoji par ligne, plus de
-// sélecteur de type visible : le TYPE se gère uniquement dans Paramètres →
-// Gestion des propriétés. Le nom de la clé reste cliquable pour le renommer
-// (migration globale), la valeur utilise le widget dédié (PropertyValueField).
+// ✒️ 123ECRITURE — components/properties/PropertiesBlock.tsx — le bloc « Propriétés » de la note
+//////////////////////////////////////////////////////////////////////////////
 //
-// Affiché en mode Intermédiaire et Aperçu : fait partie du SCROLL de la note
-// (plus de carte fixe en haut — demande v0.4.37).
+// Bloc "Propriétés" rendu DANS la note (modes Intermédiaire et Aperçu) :
+// une ligne = clé à gauche, valeur à droite, aussi large que possible,
+// rendu façon Obsidian. Mêmes données que PropertiesPanel.tsx via
+// lib/usePropertyValues.ts.
+//
+// Invariants du fichier :
+//   • Pas d'icône par ligne, pas de sélecteur de type visible : le TYPE se
+//     gère uniquement dans Paramètres → Gestion des propriétés.
+//   • Le nom de la clé reste cliquable pour le renommer (migration
+//     globale via usePropertyDefinitions.update) ; la valeur utilise le
+//     widget dédié PropertyValueField.
+//   • SOURCE DE VÉRITÉ = le frontmatter : toutes les clés du YAML
+//     s'affichent, enregistrées au schéma ou non ; une clé inconnue reçoit
+//     une définition de repli texte générique. created/modified sont
+//     matérialisées à la sauvegarde (NotesScreen.tsx) et restent en
+//     lecture seule.
+//   • Le bloc fait partie du SCROLL de la note (pas de carte fixe en haut)
+//     et se replie via son en-tête.
+//
+// SOMMAIRE :
+//   1. Les helpers de formatage (horodatage, date système)
+//   2. PropertiesBlock — le bloc repliable clé/valeur
+//   3. Les styles
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. Les helpers de formatage (horodatage, date système) ///////////////////////////
 function formatTimestamp(value: number): string {
   return new Date(value).toLocaleString('fr-FR', {
     day: '2-digit',
@@ -44,6 +65,8 @@ type Props = {
   tree: VaultTreeNode[];
   interactive?: boolean;
 };
+
+//////// 2. PropertiesBlock — le bloc repliable clé/valeur ////////////////////////////////
 
 export function PropertiesBlock({ theme, activeNote, content, onChangeContent, tree, interactive = false }: Props) {
   const { definitions, update, create } = usePropertyDefinitions();
@@ -131,6 +154,8 @@ export function PropertiesBlock({ theme, activeNote, content, onChangeContent, t
     </View>
   );
 }
+
+//////// 3. Les styles ////////////////////////////////////////////////////////////////////
 
 const styles = StyleSheet.create({
   card: {

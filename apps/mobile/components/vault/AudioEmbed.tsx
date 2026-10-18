@@ -1,12 +1,22 @@
 import { useEffect, useRef } from 'react';
 import { Platform, Text, View } from 'react-native';
 
+// ✒️ 123ECRITURE — components/vault/AudioEmbed.tsx — le lecteur audio des notes
+//////////////////////////////////////////////////////////////////////////////
+//
 // Lecteur audio minimal pour les pièces jointes audio des notes (voir
-// NoteRenderer.tsx, `![[fichier.mp3]]`) — RN n'a pas de composant <audio>
-// natif. Même échappatoire que SvgOverlay.tsx/ChartView.tsx : un vrai
-// élément HTML <audio controls> injecté dans le DOM via une ref, plutôt
-// qu'une dépendance (ex. expo-av) pour ce seul besoin — cet écran est de
-// toute façon desktop/web uniquement pour l'instant.
+// NoteRenderer.tsx, `![[fichier.mp3]]`).
+//
+// Invariants du fichier :
+//   • RN n'a pas de composant <audio> natif : même échappatoire que
+//     SvgOverlay.tsx/ChartView.tsx — un vrai élément HTML <audio controls>
+//     injecté dans le DOM via une ref, plutôt qu'une dépendance
+//     (ex. expo-av) pour ce seul besoin (écran desktop/web uniquement).
+//   • Hors web (natif), le composant affiche un simple message : jamais de
+//     crash sur une plateforme non prévue.
+//
+//////////////////////////////////////////////////////////////////////////////
+
 type Props = {
   dataUrl: string;
 };

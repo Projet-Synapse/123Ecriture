@@ -27,14 +27,25 @@ const FONT_FAMILY_OPTIONS: { value: EditorFontFamily; label: string }[] = [
   { value: 'dyslexic', label: 'Dyslexie' },
 ];
 
-// Section "Éditeur" — réglages lus par MdxEditor.tsx et NotesScreen.tsx à
-// chaque ouverture/rendu de note (voir usages de `preferences.editorFontSize`,
-// `.editorDefaultMode`, `.editorCloseBrackets`, `.editorInlineTitle`), plus
-// les barres d'outils Notes/Canvas/Graphiques (lues par NotesScreen.tsx/
-// CanvasEditor.tsx/ChartEditor.tsx via `preferences.notesToolbarOrder`/
-// `canvasToolbarOrder`/`chartToolbarOrder`) — regroupées ici plutôt que la
-// barre Notes dans Personnalisation et les deux autres ici : les 3 réglages
-// de barre d'outils vivent au même endroit.
+// ✒️ 123ECRITURE — components/settings/EditorSection.tsx — les réglages de l'éditeur
+//////////////////////////////////////////////////////////////////////////////
+//
+// Section "Éditeur" : taille et police, mode d'ouverture, crochets
+// automatiques, titre inline, et les barres d'outils
+// Notes/Canvas/Graphiques.
+//
+// Invariants du fichier :
+//   • Tous ces réglages sont lus par MdxEditor.tsx et NotesScreen.tsx à
+//     chaque ouverture/rendu de note (preferences.editorFontSize,
+//     .editorDefaultMode, .editorCloseBrackets, .editorInlineTitle).
+//   • Les trois barres d'outils vivent au MÊME endroit (lues par
+//     NotesScreen.tsx/CanvasEditor.tsx/ChartEditor.tsx via
+//     preferences.notesToolbarGroups/canvasToolbarOrder/
+//     chartToolbarOrder) — jamais une barre dans Personnalisation et les
+//     autres ici.
+//
+//////////////////////////////////////////////////////////////////////////////
+
 export function EditorSection() {
   const {
     preferences,

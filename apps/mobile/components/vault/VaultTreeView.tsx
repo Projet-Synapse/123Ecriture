@@ -4,60 +4,59 @@ import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import type { Theme } from '../../theme';
 import { ChevronIcon, FolderOpenIcon, FolderClosedIcon, NoteIconByKind } from './FileIcons';
 
+// ✒️ 123ECRITURE — components/vault/VaultTreeView.tsx — l'arborescence du coffre
+//////////////////////////////////////////////////////////////////////////////
+//
+// Rendu récursif de l'arborescence du vault (dossiers + notes) : une ligne
+// par nœud — chevron de repli, icône vectorielle, nom + extension — avec
+// recursion sur les enfants d'un dossier. Composant purement
+// présentationnel : toutes les données (arbre, sélection en cours,
+// dossiers repliés, état de renommage) et les actions vivent dans
+// NotesScreen — ce fichier ne fait qu'afficher et relayer les événements.
+//
+// Invariants du fichier :
+//   • Le clic droit n'est PAS géré ici : chaque ligne porte juste un
+//     `dataSet={{ relpath: ... }}` (converti en attribut data-relpath par
+//     react-native-web) et c'est NotesScreen qui écoute un SEUL événement
+//     "contextmenu" délégué sur tout le conteneur puis retrouve la ligne
+//     visée via cet attribut — un seul écouteur est bien plus robuste que
+//     des handlers par ligne.
+//   • Le repli/dépli d'un dossier passe EXCLUSIVEMENT par le chevron ;
+//     le clic sur le corps du dossier ouvre l'APERÇU de son contenu.
+//   • Le composant est mémoïsé avec un comparateur qui ignore
+//     volontairement les props fonctions : chacune ferme sur un état
+//     couvert par une prop comparée, donc un handler périmé ne peut pas
+//     survivre à un changement visible de l'arbre.
+//   • Icônes VECTORIELLES (react-native-svg) : dossier ouvert ou fermé
+//     selon l'état de repli, chevron, type de fichier différencié par
+//     couleur et par kind.
+//   • Les dossiers de premier niveau sont des CONTENEURS bordés ; tout ce
+//     qui est imbriqué reste une ligne continue sous des rails
+//     d'arborescence (un trait par ancêtre).
+//
+// SOMMAIRE :
+//   1. DraggablePressable — l'échappatoire de typage pour `draggable`
+//   2. Le rendu récursif de l'arborescence (props, ligne par nœud)
+//   3. Les styles
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. DraggablePressable — l'échappatoire de typage pour `draggable` ///////////////
+
 // `draggable` n'est pas dans les types RN officiels de Pressable (ce n'est
-// pas une prop React Native — voir le commentaire plus bas sur
-// `onContextMenu`), mais react-native-web la transmet bel et bien telle
-// quelle jusqu'au <div> sous-jacent, ce qui est justement ce qui rend le
-// glisser-déposer HTML5 délégué (voir NotesScreen.tsx) possible sans
+// pas une prop React Native), mais react-native-web la transmet bel et bien
+// telle quelle jusqu'au <div> sous-jacent, ce qui est justement ce qui rend
+// le glisser-déposer HTML5 délégué (voir NotesScreen.tsx) possible sans
 // handler par ligne. Échappatoire de typage locale et explicite plutôt que
-// de parsemer des `as any` dans le JSX plus bas. Exportée : réutilisée telle
-// quelle par CanvasEditor.tsx pour les mêmes raisons (cartes/poignées de
-// connexion glissables).
-// //1. 🖱️ DRAGGABLEPRESSABLE
-// ////////////////////////////////////////////////////////////////////////
+// de parsemer des `as any` dans le JSX. Exportée : réutilisée telle quelle
+// par CanvasEditor.tsx pour les mêmes raisons (cartes/poignées de connexion
+// glissables).
 
 export const DraggablePressable = Pressable as unknown as ComponentType<
   ComponentProps<typeof Pressable> & { draggable?: boolean }
 >;
 
-// Rendu récursif de l'arborescence du vault (dossiers + notes). Composant
-// purement présentationnel : toutes les données (arbre, sélection en cours,
-// dossiers repliés, état de renommage) et les actions vivent dans
-// NotesScreen — ce fichier ne fait qu'afficher et relayer les événements,
-// pour ne pas éparpiller la logique métier vault entre deux fichiers.
-//
-// //1. DraggablePressable — échappatoire de typage pour `draggable`.
-// //2. Props/rendu — une ligne par nœud (chevron, icône SVG, nom+extension),
-//      récursif sur les enfants d'un dossier.
-// //3. Styles.
-//
-// v0.4.36 (demandes de l'utilisatrice) :
-// - Icônes VECTORIELLES (react-native-svg) : dossier ouvert ou FERMÉ selon
-//   l'état de repli, chevron de repli, types de fichiers différenciés par
-//   couleur. Fini les emojis.
-// - EXTENSION du fichier affichée à la fin du nom (.mdx, .canvas…).
-// - Les DOSSIERS sont sélectionnables (clic = ouvre l'aperçu du contenu
-//   dans l'éditeur, style Make.md d'Obsidian ; le chevron replie/déplie).
-//
-// v0.4.50 (demande : des dossiers qui fassent plus « boutons rétractables »,
-// à la Obsidian) :
-// - Chaque ligne est une pilule arrondie — les dossiers portent une bordure
-//   et un fond teinté accent, les notes un fond plus léger : le dossier
-//   déplié se lit comme le CONTENEUR visuel de ses enfants, qui
-//   s'imbriquent en retrait sous lui (fin des rails verticaux style VS
-//   Code, l'indentation suffit à porter la hiérarchie).
-// - Le clic droit n'est PAS géré ici : chaque ligne porte juste un
-//   `dataSet={{ relpath: ... }}` (converti en attribut data-relpath par
-//   react-native-web), et c'est NotesScreen qui écoute un seul événement
-//   "contextmenu" délégué sur tout le conteneur puis retrouve la ligne
-//   visée via cet attribut. Passer `onContextMenu` directement à Pressable
-//   ne fonctionnait pas de façon fiable — la délégation sur un seul
-//   écouteur est bien plus robuste.
-//
-// v0.4.51 (retour sur la capture Obsidian réelle) : l'effet conteneur bordé
-// est réservé aux DOSSIERS DE PREMIER NIVEAU ; tout ce qui est imbriqué est
-// une ligne continue (aucune séparation verticale) sous des RAILS
-// d'arborescence restaurés (un trait par ancêtre, style VS Code).
+//////// 2. Le rendu récursif de l'arborescence //////////////////////////////////////////
 
 export type RenameState = {
   relPath: string;
@@ -81,8 +80,8 @@ type Props = {
   depth?: number;
   theme: Theme;
   activeRelPath?: string;
-  // Dossier dont l'APERÇU est affiché dans l'éditeur (v0.4.36) — teinté
-  // comme une note active.
+  // Dossier dont l'APERÇU est affiché dans l'éditeur — teinté comme une
+  // note active.
   activeFolderRelPath?: string | null;
   collapsedPaths: Set<string>;
   onToggleCollapse: (relPath: string) => void;
@@ -103,14 +102,11 @@ type Props = {
   onNodeLongPress?: (node: VaultTreeNode) => void;
 };
 
-// //2. 🌳 PROPS/RENDU
-// ////////////////////////////////////////////////////////////////////////
-
-// Mémoïsé (voir propsAreEqual en bas de fichier) : chaque FRAPPE re-rend
-// NotesScreen en entier (le contenu de la note est son state) et ce
+// Mémoïsé (voir vaultTreePropsAreEqual en bas de fichier) : chaque FRAPPE
+// re-rend NotesScreen en entier (le contenu de la note est son state) et ce
 // sous-arbre représente des centaines de lignes sur un gros coffre — le
-// re-rendu par frappe était le premier coût de frappe ressenti sur PC
-// (Intermédiaire, 2026-10-05).
+// re-rendu par frappe est le premier coût de frappe ressenti sur un gros
+// coffre.
 function VaultTreeViewImpl({
   nodes,
   depth = 0,
@@ -154,8 +150,8 @@ function VaultTreeViewImpl({
                 shiftKey?: boolean;
               };
               if (isFolder) {
-                // v0.4.36 : le clic sur un dossier ouvre l'APERÇU de son
-                // contenu (Make.md) — le repli/dépli passe par le CHEVRON.
+                // Le clic sur un dossier ouvre l'APERÇU de son contenu
+                // (Make.md) — le repli/dépli passe par le CHEVRON.
                 onOpenFolder(node);
                 return;
               }
@@ -218,10 +214,8 @@ function VaultTreeViewImpl({
               // Champ MIROIR de l'édition de titre : SANS autoFocus ni
               // onBlur-auto-submit — le titre inline (ou l'endroit d'où
               // vient le renommage) garde le focus. Deux champs autoFocus
-              // montés ensemble se volaient le focus en boucle : chaque
-              // blur déclenchait onSubmit → le champ se refermait
-              // aussitôt (mobile ET desktop, vécu 2026-10-02) et
-              // l'ancien code ajoutait un « 2 » au nom à chaque blur.
+              // montés ensemble se volent le focus en boucle : chaque
+              // blur déclenche onSubmit et le champ se referme aussitôt.
               <TextInput
                 value={rename.value}
                 onChangeText={rename.onChangeValue}
@@ -244,13 +238,13 @@ function VaultTreeViewImpl({
           </DraggablePressable>
         );
 
-        // v0.4.52 (capture Obsidian à l'appui) : DOSSIER DE PREMIER NIVEAU =
-        // CONTENEUR. L'en-tête ET tout son sous-arbre déplié vivent dans UN
-        // bloc bordé arrondi au fond teinté — l'effet « bouton rétractable »
-        // s'étend à ce que le dossier CONTIENT. Replié, le conteneur ne
-        // montre que l'en-tête et prend l'allure d'une pilule. Les dossiers
-        // IMBRIQUÉS ne créent jamais de sous-conteneur : leurs lignes
-        // vivent sur le fond du bloc parent, sous les rails. Les états
+        // DOSSIER DE PREMIER NIVEAU = CONTENEUR : l'en-tête ET tout son
+        // sous-arbre déplié vivent dans UN bloc bordé arrondi au fond
+        // teinté — l'effet « bouton rétractable » s'étend à ce que le
+        // dossier CONTIENT. Replié, le conteneur ne montre que l'en-tête
+        // et prend l'allure d'une pilule. Les dossiers IMBRIQUÉS ne
+        // créent jamais de sous-conteneur : leurs lignes vivent sur le
+        // fond du bloc parent, sous les rails. Les états
         // actif/sélection/drop restent prioritaires sur le fond du bloc.
         if (depth === 0 && isFolder) {
           return (
@@ -351,27 +345,25 @@ function vaultTreePropsAreEqual(prev: Props, next: Props): boolean {
 
 export const VaultTreeView = memo(VaultTreeViewImpl, vaultTreePropsAreEqual);
 
-// //3. 🎨 STYLES
-// ////////////////////////////////////////////////////////////////////////
+//////// 3. Les styles ////////////////////////////////////////////////////////////////////
 
 const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    // HAUTEUR FIXE + AUCUNE marge verticale (v0.4.51, demande : « pas de
-    // séparations blanches entre chaque fichier ») : les lignes se touchent,
-    // les rails d'arborescence (un par ancêtre, voir indentGuideCell)
-    // forment des traits continus de haut en bas.
+    // HAUTEUR FIXE + AUCUNE marge verticale : les lignes se touchent, les
+    // rails d'arborescence (un par ancêtre, voir indentGuideCell) forment
+    // des traits continus de haut en bas.
     height: 32,
     paddingLeft: 4,
     paddingRight: 12,
   },
-  // Conteneur DOSSIER DE PREMIER NIVEAU (v0.4.52) : bordure arrondie qui
-  // englobe l'en-tête ET tout le sous-arbre déplié (fond teinté accent
-  // passé au rendu). Replié = pilule (le conteneur ne montre que
-  // l'en-tête). `overflow hidden` : les lignes enfants sont coupées
-  // proprement aux coins arrondis.
+  // Conteneur DOSSIER DE PREMIER NIVEAU : bordure arrondie qui englobe
+  // l'en-tête ET tout le sous-arbre déplié (fond teinté accent passé au
+  // rendu). Replié = pilule (le conteneur ne montre que l'en-tête).
+  // `overflow hidden` : les lignes enfants sont coupées proprement aux
+  // coins arrondis.
   topContainer: {
     borderWidth: 1,
     borderRadius: 10,

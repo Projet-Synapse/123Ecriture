@@ -3,10 +3,18 @@ import Slider from '@react-native-community/slider';
 
 import type { Theme } from '../../theme';
 
-// RÈGLE UI (v0.4.32, demande de l'utilisatrice) : tout réglage NUMÉRIQUE
-// (échelle de l'interface, arrondi des boutons, voile de lisibilité,
-// translucidité des panneaux…) est un CURSEUR — jamais une rangée de
-// boutons. Affiche la valeur courante formatée à droite de l'étiquette.
+// ✒️ 123ECRITURE — components/properties/SliderField.tsx — le curseur de réglage numérique
+//////////////////////////////////////////////////////////////////////////////
+//
+// RÈGLE UI : tout réglage NUMÉRIQUE (échelle de l'interface, arrondi des
+// boutons, voile de lisibilité, translucidité des panneaux…) est un
+// CURSEUR — jamais une rangée de boutons.
+//
+// Invariants du fichier :
+//   • La valeur courante formatée s'affiche à droite de l'étiquette : le
+//     réglage se lit sans bouger le curseur.
+//
+//////////////////////////////////////////////////////////////////////////////
 
 export function SliderField({
   label,

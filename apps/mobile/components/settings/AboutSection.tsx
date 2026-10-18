@@ -17,11 +17,43 @@ import { usePreferences } from '../../preferences/PreferencesContext';
 import { SettingsToggle } from './SettingsToggle';
 import { settingsStyles as s } from './settingsStyles';
 
-// Carte de mise à jour NATIVE (Android) — vérifie la dernière release
-// GitHub publiée, la compare à la version INSTALLÉE (Platform.constants,
-// v0.4.55) et propose le lien direct de l'APK ou la page de téléchargement
-// (voir lib/updaterAndroid.ts). Volontairement simple : pas de
-// téléchargement in-app — le flux navigateur est le plus fiable.
+// ✒️ 123ECRITURE — components/settings/AboutSection.tsx — la carte « À propos »
+//////////////////////////////////////////////////////////////////////////////
+//
+// Section "À propos" : version installée, raccourcis clavier, mises à
+// jour. Deux régimes selon la plateforme :
+//   • desktop : window.updater (Electron, voir apps/desktop/electron/
+//     preload.ts) — statut live du updater, téléchargement, installation.
+//   • natif (Android) : MobileUpdateCard — releases GitHub + APK via
+//     lib/updaterAndroid.ts.
+//
+// Invariants du fichier :
+//   • La version est TOUJOURS affichée en premier, sur toutes les
+//     plateformes.
+//   • Les raccourcis clavier sont générés depuis les REGISTRES réels
+//     (NOTES_TOOLBAR_ACTIONS/NOTES_TOOLBAR_SHORTCUT_LABELS — la même
+//     source que la barre d'outils et Paramètres → Éditeur) plutôt qu'une
+//     liste codée en dur qui dérive dès qu'un raccourci change.
+//   • Pas de téléchargement in-app sur Android : le flux navigateur est
+//     le plus fiable (l'installation d'un APK exige des permissions
+//     système spécifiques).
+//   • La section raccourcis est purement informative (pas de bridge) et
+//     s'affiche AVANT le early-return `!updater` : ces raccourcis
+//     fonctionnent aussi en web, pas seulement desktop.
+//
+// SOMMAIRE :
+//   1. MobileUpdateCard — la carte de mise à jour native (Android)
+//   2. AboutSection — version, raccourcis, mises à jour desktop
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. MobileUpdateCard — la carte de mise à jour native (Android) ////////////////////
+
+// Carte de mise à jour NATIVE (Android) : vérifie la dernière release
+// GitHub publiée, la compare à la version INSTALLÉE (Platform.constants)
+// et propose le lien direct de l'APK ou la page de téléchargement (voir
+// lib/updaterAndroid.ts). Volontairement simple : pas de téléchargement
+// in-app — le flux navigateur est le plus fiable.
 function MobileUpdateCard() {
   const { theme } = usePreferences();
   const [checking, setChecking] = useState(false);
@@ -84,10 +116,11 @@ function MobileUpdateCard() {
   );
 }
 
-// Section "À propos" — version installée + statut du updater, déplacée
-// telle quelle depuis l'ancien SettingsScreen plat (qui l'appelait "Mises à
-// jour" sans section dédiée). Sur desktop, dépend de window.updater (Electron,
-// voir apps/desktop/electron/preload.ts) ; sur natif, voir MobileUpdateCard.
+//////// 2. AboutSection — version, raccourcis, mises à jour desktop ///////////////////////
+
+// Section "À propos" : version installée + statut du updater. Sur desktop,
+// dépend de window.updater (Electron, voir apps/desktop/electron/preload.ts) ;
+// sur natif, voir MobileUpdateCard.
 export function AboutSection() {
   const { theme } = usePreferences();
   const updater = typeof window !== 'undefined' ? window.updater : undefined;
@@ -146,15 +179,16 @@ export function AboutSection() {
   }, [updater]);
 
   // Raccourcis clavier (Ctrl sur Windows/Linux, Cmd sur macOS) —
-  // génération depuis les REGISTRES réels plutôt qu'une liste codée en dur
-  // qui avait déjà dérivé (elle décrivait Ctrl+K "Recherche globale" alors
-  // qu'il ouvre la palette de commandes, et ignorait tout le formatage).
-  // Sources : NOTES_TOOLBAR_ACTIONS/NOTES_TOOLBAR_SHORTCUT_LABELS pour
-  // l'éditeur (lib/notesToolbarActions.ts — la même source que la barre
-  // d'outils et Paramètres → Éditeur), implémentations pour les globaux
-  // (AppShell.tsx palette, NotesScreen.tsx S/N, MdxEditor.tsx recherche
-  // dans la note). Section purement informative (pas de bridge), affichée
-  // AVANT le early-return `!updater` ci-dessous puisque ces raccourcis
+  // génération depuis les REGISTRES réels plutôt qu'une liste codée en
+  // dur : une liste locale dérive dès qu'un raccourci change (elle
+  // décrivait Ctrl+K "Recherche globale" alors qu'il ouvre la palette de
+  // commandes, et ignorait tout le formatage). Sources :
+  // NOTES_TOOLBAR_ACTIONS/NOTES_TOOLBAR_SHORTCUT_LABELS pour l'éditeur
+  // (lib/notesToolbarActions.ts — la même source que la barre d'outils et
+  // Paramètres → Éditeur), implémentations pour les globaux (AppShell.tsx
+  // palette, NotesScreen.tsx S/N, MdxEditor.tsx recherche dans la note).
+  // Section purement informative (pas de bridge), affichée AVANT le
+  // early-return `!updater` ci-dessous puisque ces raccourcis
   // fonctionnent aussi en web, pas seulement desktop.
   const globalShortcutRows: [string, string][] = [
     ['Ctrl/Cmd + K', 'Palette de commandes & recherche globale'],

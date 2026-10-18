@@ -5,14 +5,34 @@ import { TYPE_ICONS, TYPE_LABELS, TYPE_ORDER } from '../../lib/properties/proper
 import { usePreferences } from '../../preferences/PreferencesContext';
 import type { Theme } from '../../theme';
 
+// ✒️ 123ECRITURE — components/properties/AddPropertyButton.tsx — le bouton « + » des propriétés
+//////////////////////////////////////////////////////////////////////////////
+//
 // Bouton "+" en bas des propriétés d'une note — deux usages, dans le même
 // popover (partagé par PropertiesPanel.tsx et PropertiesBlock.tsx) :
 // 1. ajouter une propriété déjà déclarée dans le schéma du vault mais pas
 //    encore utilisée sur CETTE note (liste filtrable) ;
-// 2. CRÉER une propriété neuve (nom + type) et l'ajouter immédiatement à la
-//    note — sans passer par Paramètres → Gestion des propriétés (demande
-//    utilisateur : les "+" semblaient morts quand le schéma était vide, le
-//    popover n'offrait alors rien d'actionnable).
+// 2. CRÉER une propriété neuve (nom + type) et l'ajouter immédiatement à
+//    la note — sans passer par Paramètres → Gestion des propriétés, pour
+//    que le popover reste actionnable même quand le schéma est vide.
+//
+// Invariants du fichier :
+//   • Fond OPAQUE pour le popover : theme.surface est rgba translucide
+//     depuis la personnalisation des panneaux, la couleur de panneau est
+//     recomposée à opacité 1 via la résolution du profil du mode actif.
+//   • Le popover s'ouvre EN FLUX NORMAL (pas `position: 'absolute'`) : il
+//     pousse le contenu vers le bas au lieu de le recouvrir.
+//   • La création est garde-fous : pas de double soumission (creating),
+//     bouton désactivé tant que le nom est vide.
+//
+// SOMMAIRE :
+//   1. AddPropertyButton — le popover à deux usages
+//   2. Les styles
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. AddPropertyButton — le popover à deux usages //////////////////////////////////
+
 type Props = {
   available: PropertyDefinition[];
   onAdd: (def: PropertyDefinition) => void;
@@ -21,9 +41,8 @@ type Props = {
 };
 
 export function AddPropertyButton({ available, onAdd, onCreateNew, theme }: Props) {
-  // Fond OPAQUE pour le popover (v0.4.38 — « t'assurer qu'il ne soit pas
-  // transparent ») : theme.surface est rgba translucide depuis la
-  // personnalisation des panneaux ; on recompose la couleur de panneau à
+  // Fond OPAQUE pour le popover : theme.surface est rgba translucide depuis
+  // la personnalisation des panneaux ; on recompose la couleur de panneau à
   // opacité 1 via la résolution du profil du mode actif.
   const { preferences, colorScheme } = usePreferences();
   const { resolveAppearanceProfile } = require('../lib/theme/appearance');
@@ -63,10 +82,9 @@ export function AddPropertyButton({ available, onAdd, onCreateNew, theme }: Prop
       </Pressable>
       {open && (
         // EN FLUX NORMAL (pas `position: 'absolute'`) — un popover flottant
-        // ici s'ouvrait vers le bas et chevauchait visuellement la barre
+        // ici s'ouvre vers le bas et chevauche visuellement la barre
         // d'outils de l'éditeur juste en dessous, quelle que soit la marge
-        // ajoutée autour de la carte "Propriétés" (bug rapporté : le "+" "en
-        // conflit visuel avec la barre des tâches"). En flux normal, cette
+        // ajoutée autour de la carte "Propriétés". En flux normal, cette
         // liste POUSSE le reste du contenu vers le bas au lieu de le
         // recouvrir — plus de chevauchement possible, par construction.
         <View style={[styles.popover, { backgroundColor: opaqueSurface, borderColor: theme.border }]}>
@@ -148,6 +166,8 @@ export function AddPropertyButton({ available, onAdd, onCreateNew, theme }: Prop
     </View>
   );
 }
+
+//////// 2. Les styles ////////////////////////////////////////////////////////////////////
 
 const styles = StyleSheet.create({
   wrap: {

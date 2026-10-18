@@ -20,12 +20,45 @@ import { SettingsToggle } from './SettingsToggle';
 import { settingsStyles as s } from './settingsStyles';
 import { errorMessage } from '../../lib/errorMessage';
 
-// Section "Compte et synchronisation" — Compte (Google/Supabase) et Coffres
-// multiples + sync cloud, déplacés tels quels depuis l'ancien SettingsScreen
-// plat. Dépendent de ponts exposés uniquement par Electron desktop
-// (window.auth/window.vaults — voir apps/desktop/electron/preload.ts) ; sur
-// web/mobile, la section explique pourquoi elle est vide plutôt que de
-// disparaître silencieusement.
+// ✒️ 123ECRITURE — components/settings/AccountSyncSection.tsx — le compte et les coffres + sync cloud
+//////////////////////////////////////////////////////////////////////////////
+//
+// Section "Compte et synchronisation" de Paramètres : Compte
+// (Google/Supabase) et Coffres multiples + sync cloud. Trois cartes :
+// Compte (session), Coffres distants (ce que le COMPTE possède dans le
+// cloud), Coffres locaux (registre de l'appareil + boutons de sync).
+//
+// Invariants du fichier :
+//   • Dépend de ponts exposés uniquement par Electron desktop
+//     (window.auth/window.vaults — voir apps/desktop/electron/preload.ts) ;
+//     sur web/mobile, la section explique pourquoi elle est vide plutôt
+//     que de disparaître silencieusement.
+//   • Le statut de synchro vient du contexte partagé (SyncStatusContext) :
+//     source de vérité pour le coffre ACTIF, la même que l'indicateur
+//     global de AppShell.tsx. Les autres coffres liés gardent leur propre
+//     state local — le contexte ne suit que "le" coffre courant.
+//   • Le moteur de sync opère TOUJOURS sur le coffre ACTIF : synchroniser
+//     un coffre non actif sans basculer d'abord lirait/écrirait dans le
+//     dossier du coffre actif (contamination croisée). Toujours : bascule
+//     d'abord, sync ensuite — zéro contournement du pont.
+//   • Retrait d'un coffre = confirmation (le disque n'est pas effacé, mais
+//     un ✕ frôlé délierait la liaison cloud) ; déconnexion d'un coffre
+//     distant = confirmation DESTRUCTIVE avec avertissement explicite
+//     (le contenu local est supprimé, la corbeille OS n'est pas utilisée).
+//   • Le coffre distant est une donnée du COMPTE (modèle Obsidian Sync) :
+//     il peut être créé sans machine, retrouvé sur un nouvel appareil, et
+//     un coffre local peut se raccorder à un distant existant sans
+//     aucune écriture cloud.
+//
+// SOMMAIRE :
+//   1. AccountSyncSection — les états et les handlers
+//   2. Le rendu — Compte, Coffres distants, Coffres locaux
+//   3. Les styles
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. AccountSyncSection — les états et les handlers ////////////////////////////////
+
 export function AccountSyncSection() {
   const { theme, preferences, setAutoSyncEnabled } = usePreferences();
   const auth = useAuth();
@@ -87,7 +120,7 @@ export function AccountSyncSection() {
   const [renamingRemoteId, setRenamingRemoteId] = useState<string | null>(null);
   const [renamingRemoteDraft, setRenamingRemoteDraft] = useState('');
   const [renamingRemoteBusy, setRenamingRemoteBusy] = useState(false);
-  // Verrou à distance d'un appareil (v0.4.76) : busy par deviceId.
+  // Verrou à distance d'un appareil : busy par deviceId.
   const [lockBusyId, setLockBusyId] = useState<string | null>(null);
 
   const runVaultAction = useCallback(async (action: () => Promise<unknown>) => {
@@ -100,8 +133,8 @@ export function AccountSyncSection() {
     }
   }, []);
 
-  // v0.4.76 — verrou à distance d'un appareil (urgence) : pose/lève le
-  // verrou cloud qui interdit tout cycle sur la machine ciblée.
+  // Verrou à distance d'un appareil (urgence) : pose/lève le verrou cloud
+  // qui interdit tout cycle sur la machine ciblée.
   const handleDeviceLock = useCallback(
     async (deviceId: string, locked: boolean) => {
       if (!remoteVaults) return;
@@ -216,12 +249,12 @@ export function AccountSyncSection() {
     [runVaultAction, setCloudLink],
   );
 
-  // Connexion d'un coffre distant SUR CET APPAREIL, dans l'ordre demandé par
-  // l'utilisatrice (v0.4.10/0.4.11) : 1) « Connecter » ci-dessous, 2) l'app
-  // demande OÙ placer les fichiers, 3) un SOUS-DOSSIER au nom du coffre
-  // distant est créé à cet endroit (le coffre garde son nom original, aucun
-  // mélange possible entre coffres placés au même endroit) et le distant y
-  // dépose TOUT son contenu (première synchro immédiate).
+  // Connexion d'un coffre distant SUR CET APPAREIL, dans cet ordre :
+  // 1) « Connecter » ci-dessous, 2) l'app demande OÙ placer les fichiers,
+  // 3) un SOUS-DOSSIER au nom du coffre distant est créé à cet endroit (le
+  // coffre garde son nom original, aucun mélange possible entre coffres
+  // placés au même endroit) et le distant y dépose TOUT son contenu
+  // (première synchro immédiate).
   const handleRetrieveRemote = useCallback(
     async (remote: RemoteVaultSummary) => {
       setRetrievingRemoteId(remote.id);
@@ -255,11 +288,11 @@ export function AccountSyncSection() {
     [auth, emailDraft, passwordDraft],
   );
 
-  // Création d'un coffre distant DEPUIS LE COMPTE (v0.4.14, modèle « le
-  // coffre distant est une donnée du compte ») : aucune machine n'est
-  // impliquée — le coffre apparaît vide dans la liste, chaque appareil s'y
-  // connecte ensuite (« Connecter sur cet appareil… ») en choisissant son
-  // chemin, et la synchro est bidirectionnelle partout, comme Obsidian Sync.
+  // Création d'un coffre distant DEPUIS LE COMPTE (modèle « le coffre
+  // distant est une donnée du compte ») : aucune machine n'est impliquée —
+  // le coffre apparaît vide dans la liste, chaque appareil s'y connecte
+  // ensuite (« Connecter sur cet appareil… ») en choisissant son chemin,
+  // et la synchro est bidirectionnelle partout, comme Obsidian Sync.
   const [showCreateRemoteForm, setShowCreateRemoteForm] = useState(false);
   const [createRemoteDraft, setCreateRemoteDraft] = useState('');
   const [creatingRemote, setCreatingRemote] = useState(false);
@@ -288,10 +321,9 @@ export function AccountSyncSection() {
       // Le moteur de sync (ponts vault/sync) opère TOUJOURS sur le coffre
       // ACTIF : synchroniser un coffre non actif sans basculer d'abord
       // échangerait avec le bon coffre distant mais lirait/écrirait dans le
-      // dossier du coffre actif — contamination croisée (bug vécu v0.4.14 :
-      // deux coffres échangés contre le même dossier). Désormais : bascule
-      // d'abord, sync ensuite — même chemin que l'utilisatrice suivrait à la
-      // main, zéro contournement du pont.
+      // dossier du coffre actif — contamination croisée (deux coffres
+      // échangés contre le même dossier). Toujours : bascule d'abord, sync
+      // ensuite — même chemin qu'à la main, zéro contournement du pont.
       if (v.id !== activeVaultId) {
         await runVaultAction(() => switchVault(v.id));
       }
@@ -299,6 +331,8 @@ export function AccountSyncSection() {
     },
     [auth.user, activeVaultId, syncStatus, switchVault, runVaultAction],
   );
+
+//////// 2. Le rendu — Compte, Coffres distants, Coffres locaux ///////////////////////////
 
   if (!auth.available && !vault) {
     return (
@@ -801,6 +835,8 @@ export function AccountSyncSection() {
     </View>
   );
 }
+
+//////// 3. Les styles ////////////////////////////////////////////////////////////////////
 
 const styles = StyleSheet.create({
   stack: {

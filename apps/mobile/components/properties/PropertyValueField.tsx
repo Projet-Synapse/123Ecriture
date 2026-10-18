@@ -6,12 +6,34 @@ import { formatValueForInput, parseInputForType } from '../../lib/properties/pro
 import type { Theme } from '../../theme';
 import { DraftTextField } from '../editors/DraftTextField';
 
-// Éditeur de VALEUR pour une propriété, un widget par type — remplace
-// l'ancien champ texte unique partagé par tous les types (voir capture de
-// référence .claude/References/image-4.png : chaque type a son propre
-// contrôle, pas une simple édition de texte). Partagé par
-// PropertiesPanel.tsx (barre latérale) et PropertiesBlock.tsx (bloc en haut
-// de note).
+// ✒️ 123ECRITURE — components/properties/PropertyValueField.tsx — le widget d'édition d'une valeur
+//////////////////////////////////////////////////////////////////////////////
+//
+// Éditeur de VALEUR pour une propriété, un widget par type : checkbox,
+// path (navigateur de vault), multi-options, bubbles, options, et champ
+// texte commité pour le reste (nombre, date…). Partagé par
+// PropertiesPanel.tsx (barre latérale) et PropertiesBlock.tsx (bloc en
+// haut de note).
+//
+// Invariants du fichier :
+//   • Chaque type a son propre contrôle — jamais un simple champ texte
+//     partagé par tous les types.
+//   • Nombre de hooks CONSTANT d'un rendu à l'autre : pathOptions est
+//     calculé pour tous les types, jamais après un return conditionnel
+//     (Rules of Hooks) — une même instance peut changer de `def.type`.
+//   • Le brouillon des bulles (type 'bubbles') est commité à la touche
+//     Entrée, comme l'ajout de tags façon Obsidian.
+//   • `tree` n'est nécessaire que pour le type 'path' : absent ailleurs,
+//     le champ retombe sur une saisie texte libre.
+//
+// SOMMAIRE :
+//   1. PropertyValueField — le dispatch par type
+//   2. Les styles
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. PropertyValueField — le dispatch par type /////////////////////////////////////
+
 type Props = {
   def: PropertyDefinition;
   value: unknown;
@@ -158,8 +180,8 @@ export function PropertyValueField({ def, value, onChange, theme, tree }: Props)
   }
 
   if (def.type === 'bubbles') {
-    // Bulles (v0.4.50) : chaque valeur est une pilule supprimable d'un clic,
-    // le champ « + Ajouter » en empile de nouvelles (Entrée) — le rendu des
+    // Bulles : chaque valeur est une pilule supprimable d'un clic, le
+    // champ « + Ajouter » en empile de nouvelles (Entrée) — le rendu des
     // tags/aliases, façon Obsidian.
     const items: string[] = Array.isArray(value) ? value.map(String) : [];
     const commitDraft = () => {
@@ -259,6 +281,8 @@ export function PropertyValueField({ def, value, onChange, theme, tree }: Props)
   );
 }
 
+//////// 2. Les styles ////////////////////////////////////////////////////////////////////
+
 const styles = StyleSheet.create({
   valueInput: {
     flex: 1,
@@ -323,7 +347,7 @@ const styles = StyleSheet.create({
     fontSize: 11,
     padding: 6,
   },
-  // Bulles (v0.4.50) : conteneur bordé léger, pilules enroulables.
+  // Bulles : conteneur bordé léger, pilules enroulables.
   bubblesWrap: {
     flex: 1,
     borderWidth: 1,

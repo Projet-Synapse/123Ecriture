@@ -3,13 +3,23 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import type { Theme } from '../../theme';
 
+// ✒️ 123ECRITURE — components/vault/RightSidebar.tsx — le panneau latéral droit des notes
+//////////////////////////////////////////////////////////////////////////////
+//
 // Panneau persistant à droite de l'éditeur Notes (voir NotesScreen.tsx,
-// bouton de repli dans l'en-tête) — un rail de boutons en haut choisit quel
-// contenu afficher en dessous. Conçu pour accueillir d'AUTRES onglets plus
-// tard (ex. vue graphique des liens) au-delà de Propriétés/Occurrences,
-// d'où un rail générique plutôt que deux composants ad hoc. Composant
-// purement présentationnel : NotesScreen possède l'état (onglet actif) et
-// lui fournit déjà le bon contenu via `children`.
+// bouton de repli dans l'en-tête) : un rail de boutons en haut choisit quel
+// contenu afficher en dessous (Propriétés / Occurrences / Plan).
+//
+// Invariants du fichier :
+//   • Composant purement présentationnel : NotesScreen possède l'état
+//     (onglet actif) et fournit déjà le bon contenu via `children`.
+//   • Rail d'onglets GÉNÉRIQUE (tableau TABS) plutôt que deux composants
+//     ad hoc : il accueille de nouveaux onglets en ajoutant une entrée.
+//   • `width` est optionnelle et retombe sur la largeur fixe d'origine
+//     (280) si omise — ex. un appelant sans redimensionnement.
+//
+//////////////////////////////////////////////////////////////////////////////
+
 export type SidebarTab = 'properties' | 'occurrences' | 'outline';
 
 type SidebarTabConfig = { id: SidebarTab; icon: string; label: string };

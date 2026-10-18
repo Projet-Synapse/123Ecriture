@@ -6,18 +6,44 @@ import { createConfiguredMarkdownIt } from '../../lib/editor/markdownPlugins';
 import type { Theme } from '../../theme';
 import { AudioEmbed } from './AudioEmbed';
 
-// Rendu Markdown des notes (mode "Aperçu"/"Intermédiaire", voir
-// NotesScreen.tsx) — react-native-markdown-display consomme le flux de
-// tokens de markdown-it (voir lib/markdownPlugins.ts pour les extensions
-// `[[liens]]`/`#tags`/`![[embeds]]`) et fusionne automatiquement les
-// `rules` fournies ici avec ses règles par défaut (headers, gras, listes,
-// tableaux GFM, images `![alt](url)`...) — pas besoin de les redéclarer.
+// ✒️ 123ECRITURE — components/vault/NoteRenderer.tsx — le rendu Markdown des notes
+//////////////////////////////////////////////////////////////////////////////
 //
+// Rendu Markdown des notes (mode "Aperçu"/"Intermédiaire", voir
+// NotesScreen.tsx) : react-native-markdown-display consomme le flux de
+// tokens de markdown-it (voir lib/markdownPlugins.ts pour les extensions
+// `[[liens]]`/`#tags`/`![[embeds]]`).
+//
+// Invariants du fichier :
+//   • La lib fusionne automatiquement les `rules` fournies ici avec ses
+//     règles par défaut (headers, gras, listes, tableaux GFM, images
+//     `![alt](url)`...) — jamais de redéclaration de ce qu'elle couvre.
+//   • `ASTNode` (type officiel de la lib) ne déclare pas `sourceMeta` alors
+//     que l'implémentation réelle le pose (tokensToAST.js) : le type local
+//     élargi NodeWithMeta remplace un `any`.
+//   • Une {{occurrence}} n'est stylée/cliquable QUE si son mot figure dans
+//     knownOccurrenceWords (voir occurrenceRule dans lib/markdownPlugins.ts).
+//   • Les tailles de titres sont PAR NIVEAU et explicites : chaque niveau
+//     reste au-dessus du corps de texte, gras, avec une respiration
+//     verticale (les défauts de la lib mettaient h5 sous la taille du
+//     corps).
+//   • Les pièces jointes passent par le composant EmbedNode : c'est le seul
+//     moyen d'y appeler des hooks (une rule de rendu n'est pas un composant
+//     React monté normalement).
+//
+// SOMMAIRE :
+//   1. Les helpers (style de titre, extensions, EmbedNode)
+//   2. NoteRenderer — la config markdown-it et les rules de rendu
+//
+//////////////////////////////////////////////////////////////////////////////
+
 // `ASTNode` (le type officiel de la lib) ne déclare pas `sourceMeta` alors
-// que l'implémentation réelle le pose bien (voir tokensToAST.js, lu avant
-// d'écrire ceci) — .d.ts en retard sur le code, pas une erreur de notre
-// côté. D'où ce petit type élargi plutôt qu'un `any`.
+// que l'implémentation réelle le pose bien (voir tokensToAST.js) — .d.ts en
+// retard sur le code, pas une erreur de notre côté. D'où ce petit type
+// élargi plutôt qu'un `any`.
 type NodeWithMeta = ASTNode & { sourceMeta?: { target?: string } };
+
+//////// 1. Les helpers (style de titre, extensions, EmbedNode) ///////////////////////////
 
 // Style d'un titre d'aperçu — taille par niveau (voir les rules) + mise en
 // forme commune. `node.children` est l'arbre déjà rendu par la lib (gras,
@@ -86,11 +112,13 @@ type Props = {
   // Mots du dictionnaire personnel connus (voir OccurrencesPanel.tsx) —
   // une {{occurrence}} n'est stylée/cliquable QUE si son mot y figure (voir
   // occurrenceRule dans lib/markdownPlugins.ts), sinon elle reste du texte
-  // brut. Optionnel : un appelant qui ne fournit rien n'aura simplement
+  // brut. Optionnel : un appelant qui ne fournit rien n'a simplement
   // jamais de pastille occurrence.
   knownOccurrenceWords?: Set<string>;
   onOpenOccurrence?: (word: string) => void;
 };
+
+//////// 2. NoteRenderer — la config markdown-it et les rules de rendu ////////////////////
 
 export function NoteRenderer({ content, theme, onOpenWikilink, knownOccurrenceWords, onOpenOccurrence }: Props) {
   // Recréé seulement quand le dictionnaire change (pas à chaque frappe) —
@@ -103,11 +131,11 @@ export function NoteRenderer({ content, theme, onOpenWikilink, knownOccurrenceWo
 
   const rules: RenderRules = useMemo(
     () => ({
-      // Taille PAR NIVEAU, explicite (demande 2026-10-05) : les défauts de
-      // la lib mettaient h5 à 13px — SOUS la taille du corps, ce qui
-      // aplatissait les notes structurées en #####. Échelle alignée sur le
-      // mode Intermédiaire (base ~16px) : chaque niveau reste au-dessus du
-      // corps, gras, avec un respiration verticale.
+      // Taille PAR NIVEAU, explicite : les défauts de la lib mettaient h5
+      // à 13px — SOUS la taille du corps, ce qui aplatissait les notes
+      // structurées en #####. Échelle alignée sur le mode Intermédiaire
+      // (base ~16px) : chaque niveau reste au-dessus du corps, gras, avec
+      // une respiration verticale.
       heading1: (node, children) => (
         <Text key={node.key} style={headingStyle(theme, 32)}>{children}</Text>
       ),

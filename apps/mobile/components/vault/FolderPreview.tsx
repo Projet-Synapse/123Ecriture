@@ -4,11 +4,33 @@ import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-
 import type { Theme } from '../../theme';
 import { FolderOpenIcon, NoteIconByKind } from './FileIcons';
 
-// APERÇU DE DOSSIER (v0.4.36, demande de l'utilisatrice — « comme le plugin
-// Make.md d'Obsidian ») : cliquer un dossier de l'explorateur affiche CETTE
-// vue à la place de l'éditeur — une grille de cartes, une par fichier du
-// dossier (avec sous-dossiers), cliquer une carte ouvre la note. Le contenu
-// de chaque carte : les premières lignes de la note (aperçu de texte).
+// ✒️ 123ECRITURE — components/vault/FolderPreview.tsx — l'aperçu d'un dossier
+//////////////////////////////////////////////////////////////////////////////
+//
+// APERÇU DE DOSSIER (« plugin Make.md d'Obsidian ») : cliquer un dossier de
+// l'explorateur affiche CETTE vue à la place de l'éditeur — une grille de
+// cartes, une par fichier du dossier (avec sous-dossiers), cliquer une
+// carte ouvre la note. Le contenu de chaque carte : les premières lignes
+// de la note (aperçu de texte).
+//
+// Invariants du fichier :
+//   • Les aperçus de texte sont limités aux 30 premières notes du dossier
+//     et aux 140 premiers caractères, frontmatter retiré — la vue reste
+//     instantanée même sur un dossier dense.
+//   • Le filtre (recherche) porte sur les dossiers ET les notes en même
+//     temps ; il filtre le nom, et le chemin complet pour les notes.
+//   • Composant purement présentationnel : il reçoit l'arbre et délègue
+//     l'ouverture (note ou dossier) à son appelant via onOpenNote /
+//     onOpenFolder.
+//
+// SOMMAIRE :
+//   1. Les helpers (collecte du contenu, recherche du dossier)
+//   2. FolderPreview — la grille de cartes filtrable
+//   3. Les styles
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. Les helpers (collecte du contenu, recherche du dossier) ///////////////////////
 
 type Props = {
   folderRelPath: string;
@@ -38,6 +60,8 @@ function findFolder(nodes: VaultTreeNode[], relPath: string): VaultFolderNode | 
   }
   return null;
 }
+
+//////// 2. FolderPreview — la grille de cartes filtrable //////////////////////////////////
 
 export function FolderPreview({ folderRelPath, tree, theme, onOpenNote, onOpenFolder }: Props) {
   const folder = useMemo(() => findFolder(tree, folderRelPath), [tree, folderRelPath]);
@@ -169,6 +193,8 @@ export function FolderPreview({ folderRelPath, tree, theme, onOpenNote, onOpenFo
 function FolderGlyph({ size = 24 }: { size?: number }) {
   return <FolderOpenIcon size={size} />;
 }
+
+//////// 3. Les styles ////////////////////////////////////////////////////////////////////
 
 const styles = StyleSheet.create({
   centered: {

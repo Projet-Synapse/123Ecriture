@@ -10,13 +10,36 @@ import { usePreferences } from '../../preferences/PreferencesContext';
 import { SyncReviewSection } from './SyncReviewSection';
 import { settingsStyles as s } from './settingsStyles';
 
-// Écran « Journal de synchronisation » (v0.4.27) — l'équivalent du journal
-// d'Obsidian Sync : chaque cycle (avec son déclencheur), envoi, réception,
+// ✒️ 123ECRITURE — components/settings/SyncJournalSection.tsx — le journal de synchronisation
+//////////////////////////////////////////////////////////////////////////////
+//
+// Écran « Journal de synchronisation » — l'équivalent du journal d'Obsidian
+// Sync : chaque cycle (avec son déclencheur), envoi, réception,
 // suppression, conflit, erreur, pause et restauration y est tracé, du plus
-// récent au plus ancien. Le journal vit dans `.123ecriture/sync-journal.json`
-// du coffre ACTIF : il est propre à chaque appareil (comme Obsidian) et se
-// rafraîchit ici toutes les 2,5 s tant l'écran est ouvert — assez pour voir
-// un cycle « en direct » quand un autre appareil pousse des changements.
+// récent au plus ancien.
+//
+// Invariants du fichier :
+//   • Le journal vit dans `.123ecriture/sync-journal.json` du coffre ACTIF :
+//     il est propre à chaque appareil (comme Obsidian).
+//   • Relecture périodique (2,5 s) tant que l'écran est ouvert — assez
+//     pour voir un cycle « en direct » quand un autre appareil pousse des
+//     changements.
+//   • La date COMPLÈTE (jour inclus) s'affiche en plus de l'heure : un
+//     journal qui s'étale sur plusieurs jours doit dire quel jour chaque
+//     événement a eu lieu.
+//   • Le diagnostic copiable (🩺) assemble l'état complet (version,
+//     coffres, permission, revue, journal) dans le presse-papiers, prêt à
+//     transmettre.
+//   • La revue de sécurité (SyncReviewSection) s'affiche au-dessus du
+//     journal : rien à trancher = rien de visible.
+//
+// SOMMAIRE :
+//   1. Les filtres, icônes et formatage du journal
+//   2. SyncJournalSection — la carte (revue, filtres, recherche, copie)
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. Les filtres, icônes et formatage du journal ///////////////////////////////////
 
 type FilterId = 'tout' | 'envois' | 'receptions' | 'suppressions' | 'conflits' | 'erreurs';
 
@@ -24,9 +47,9 @@ const FILTERS: { id: FilterId; label: string; types?: SyncJournalEntryType[] }[]
   { id: 'tout', label: 'Tout' },
   { id: 'envois', label: 'Envois', types: ['push', 'modification'] },
   { id: 'receptions', label: 'Réceptions', types: ['pull'] },
-  // v0.4.81 (§13) : « corbeille » = le continu d'un déplacement en corbeille
-  // (le push du chemin `.trash/…`) — lu avec les suppressions, pas avec les
-  // envois, pour raconter UN geste et non deux.
+  // « corbeille » = le continu d'un déplacement en corbeille (le push du
+  // chemin `.trash/…`) — lu avec les suppressions, pas avec les envois,
+  // pour raconter UN geste et non deux.
   { id: 'suppressions', label: 'Suppressions', types: ['delete', 'restore', 'corbeille'] },
   { id: 'conflits', label: 'Conflits', types: ['conflict'] },
   { id: 'erreurs', label: 'Erreurs', types: ['error'] },
@@ -53,9 +76,9 @@ const ICON_BY_TYPE: Record<SyncJournalEntryType, string> = {
   'download-end': '✅',
 };
 
-// v0.4.72 (demande Catelina) : la date COMPLÈTE (jour inclus) s'affiche en
-// plus de l'heure — un journal qui s'étale sur plusieurs jours doit dire
-// quel jour chaque événement a eu lieu.
+// La date COMPLÈTE (jour inclus) s'affiche en plus de l'heure — un journal
+// qui s'étale sur plusieurs jours doit dire quel jour chaque événement a
+// eu lieu.
 function formatTime(iso: string): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return '';
@@ -65,6 +88,8 @@ function formatTime(iso: string): string {
     date.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
   );
 }
+
+//////// 2. SyncJournalSection — la carte (revue, filtres, recherche, copie) ///////////////
 
 export function SyncJournalSection() {
   const { theme } = usePreferences();
@@ -122,9 +147,9 @@ export function SyncJournalSection() {
     }
   };
 
-  // v0.4.76 — 🩺 diagnostic copiable (l'app devient ses propres yeux) :
-  // assemble l'état complet (version, coffres, permission, revue, journal)
-  // dans le presse-papiers, prêt à transmettre.
+  // 🩺 diagnostic copiable (l'app devient ses propres yeux) : assemble
+  // l'état complet (version, coffres, permission, revue, journal) dans le
+  // presse-papiers, prêt à transmettre.
   const [diagCopied, setDiagCopied] = useState(false);
   const copyDiagnostic = async () => {
     try {

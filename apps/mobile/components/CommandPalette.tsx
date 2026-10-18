@@ -15,6 +15,9 @@ import { usePreferences } from '../preferences/PreferencesContext';
 import type { Theme } from '../theme';
 import type { NotesActions } from './AppShell';
 
+// ✒️ 123ECRITURE — components/CommandPalette.tsx — la palette de commandes (Ctrl/Cmd+K)
+//////////////////////////////////////////////////////////////////////////////
+//
 // Palette de commandes (Ctrl/Cmd+K, voir AppShell.tsx pour le raccourci
 // clavier global) — même coquille modale que SearchDialog.tsx (backdrop
 // cliquable, boîte centrale, champ de requête débouncé) pour rester
@@ -24,10 +27,36 @@ import type { NotesActions } from './AppShell';
 //   2. les résultats de la recherche globale (window.search, MÊME backend
 //      que SearchDialog.tsx — voir lib/searchResults.ts pour la logique
 //      partagée d'icône/ouverture, pas de duplication).
-// Contrairement à SearchDialog.tsx (qui montre TOUT, y compris dossiers/
-// pièces jointes non cliquables, pour naviguer/parcourir), cette palette ne
-// propose QUE des résultats de recherche OUVRABLES — une palette de
-// commandes sert à "faire quelque chose", pas à parcourir passivement.
+//
+// Invariants du fichier :
+//   • Contrairement à SearchDialog.tsx (qui montre TOUT, y compris
+//     dossiers/pièces jointes non cliquables, pour naviguer/parcourir),
+//     cette palette ne propose QUE des résultats de recherche OUVRABLES —
+//     une palette de commandes sert à "faire quelque chose", pas à
+//     parcourir passivement.
+//   • `notesActionsRef.current` se lit UNIQUEMENT dans activateItem (vrai
+//     gestionnaire d'évènement), jamais pendant le rendu — React interdit
+//     de lire une ref ailleurs : "new-note"/"new-folder" n'ont donc pas de
+//     `run` dans le tableau d'actions et passent par un `switch`.
+//   • La sélection est recalée au premier élément à chaque changement de
+//     liste, par ajustement PENDANT le rendu (comparaison d'état, pas de
+//     ref) — jamais de sélection périmée sur un élément disparu.
+//   • La recherche est débouncée (SEARCH_DEBOUNCE_MS) comme SearchDialog.tsx ;
+//     requête vide = masquage par `hasQuery`, pas de setState synchrone en
+//     tête d'effet.
+//   • Les créations "Nouvelle tâche"/"Nouvel évènement" passent par App.tsx
+//     (changement de section + mécanisme `pending*`) : demandables depuis
+//     N'IMPORTE quel écran, sans closure sur un écran démonté.
+//
+// SOMMAIRE :
+//   1. Les types et helpers (PaletteAction, Props, gotoLabel)
+//   2. CommandPalette — actions statiques, recherche, navigation clavier
+//   3. Les styles
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. Les types et helpers (PaletteAction, Props, gotoLabel) ////////////////////////
+
 const SEARCH_DEBOUNCE_MS = 300;
 
 type PaletteAction = {
@@ -71,6 +100,8 @@ type Props = {
 function gotoLabel(section: Section): string {
   return `Aller à ${section.label}`;
 }
+
+//////// 2. CommandPalette — actions statiques, recherche, navigation clavier /////////////
 
 export function CommandPalette({
   theme,
@@ -356,6 +387,8 @@ export function CommandPalette({
     </Modal>
   );
 }
+
+//////// 3. Les styles ////////////////////////////////////////////////////////////////////
 
 const styles = StyleSheet.create({
   backdrop: {
