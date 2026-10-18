@@ -2,7 +2,8 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type { RealtimeChannel } from '@supabase/supabase-js';
 
 import { useAuth } from './AuthContext';
-import { runSync as runSyncEngine, type SyncSummary } from './syncEngine';
+import { runSync as runSyncEngine } from './syncEngine';
+import type { SyncSummary } from './syncTypes';
 import { supabase } from './supabaseClient';
 import { useVaults } from './VaultsContext';
 import { usePreferences } from '../../preferences/PreferencesContext';
