@@ -75,49 +75,57 @@ import { errorMessage } from '../../lib/errorMessage';
 // séparés à synchroniser.
 type ViewMode = 'source' | 'split' | 'reading';
 
-// Écran Notes — Phase 1 : vault local (arborescence réelle, pas juste une
-// liste plate) + édition MDX avec barre de formatage personnalisable (voir
-// Paramètres → Personnalisation) + rendu Markdown réel (voir
-// docs/ARCHITECTURE.md §4). Le vault n'existe
-// que côté Electron desktop pour l'instant (window.vault, exposé par
-// apps/desktop/electron/preload.js) — sur web/mobile, cette section reste
-// indisponible jusqu'à la Phase 2. Le CHEMIN du vault actif vient de
-// VaultsContext (coffres multiples, voir apps/desktop/electron/vaults.js) —
-// cet écran ne connaît plus que le nom du coffre actif, pas comment il est
-// choisi/changé. Changer de DOSSIER PARENT : par "Déplacer vers…"
-// (MoveDialog), par édition manuelle du chemin complet (EditPathDialog), ou
-// en glissant DANS un dossier (curseur, voir l'effet dragstart/dragover/
-// drop plus bas — zone centrale d'une ligne dossier). Le même glisser sert
-// aussi à réordonner entre frères (zones haut/bas d'une ligne) — voir
-// vault:move/vault:reorder dans apps/desktop/electron/vault.ts.
+// ✒️ 123ECRITURE — components/screens/NotesScreen.tsx — l'écran Notes : explorateur du coffre + édition de note
+//////////////////////////////////////////////////////////////////////////////
 //
-// //////////////////////////////////////////////////////////////////////
-// 🗂️ SOMMAIRE — ce que ce fichier fait EN PLUS de l'édition de note
-// (fichiers/explorateur, le reste — mode d'édition, barre d'outils,
-// occurrences... est propre à l'édition, pas à cette liste) :
-// //////////////////////////////////////////////////////////////////////
-// //1. Chargement de l'arborescence — refreshTree, ouverture d'une note
-//      demandée par un autre écran (pendingOpenRelPath).
-// //2. Ouverture d'une note — openNote (mémorise le dernier fichier ouvert
-//      par coffre), création (note/canvas/graphique/excalidraw/dossier).
-// //3. Fichier ouvert par défaut au démarrage (Paramètres → "Fichier
-//      ouvert par défaut") + révélation automatique dans l'explorateur
-//      (déplier les dossiers ancêtres, faire défiler jusqu'à la ligne).
-// //4. Renommer/déplacer/dupliquer/modifier le chemin/supprimer.
-// //5. Menu contextuel de l'explorateur (clic droit) + bouton d'ordre de
-//      tri.
-// //6. Glisser-déposer — réordonner entre frères OU déplacer dans un
-//      dossier, bascule automatique vers le tri "Manuel".
-// //7. Sauvegarde (autosave débouncée) + rendu (liste + éditeur actif).
-// //8. Favoris — section fixe "⭐ Favoris" en tête de l'explorateur.
-// //9. Multi-sélection — Ctrl/Cmd+clic, Shift+clic, barre d'actions
-//      groupées (déplacer/supprimer plusieurs éléments à la fois).
-// //10. Vue Tags — bascule Fichiers/Tags de l'explorateur.
-// //11. Onglets — plusieurs notes ouvertes en même temps, persistées par
-//      coffre (state.json), barre au-dessus de l'éditeur + Ctrl+Tab/Ctrl+W.
-// Voir aussi apps/desktop/electron/vault.ts (backend fichiers),
-// VaultTreeView.tsx (rendu de l'explorateur), FilesLinksSection.tsx
-// (réglages).
+// Écran central de l'app : à gauche l'explorateur de l'arborescence du
+// coffre actif (VaultTreeView, dossiers repliables, favoris, vue Tags,
+// multi-sélection, glisser-déposer), à droite la zone d'édition — MDX en
+// trois modes (Source, Intermédiaire avec Live Preview façon Obsidian,
+// Aperçu en lecture seule), plus canvas/graphique/excalidraw/code. Les
+// modes markdown partagent le MÊME éditeur CodeMirror (MdxEditor.tsx,
+// `livePreview` activé ou non) ; sur natif, Source/Intermédiaire passent
+// par le même éditeur web embarqué dans une WebView (MdxEditorWeb.tsx) et
+// l'Aperçu par NoteRenderer. S'ajoutent les onglets persistés par coffre,
+// la barre d'outils personnalisable, le panneau latéral
+// (propriétés/plan/occurrences), la recherche globale et les boîtes de
+// dialogue renommer/déplacer/chemin.
+//
+// Invariants du fichier :
+//   • Le contenu affiché vit dans le state `content`, miroité dans
+//     `contentRef` ; les callbacks qui écrivent lisent la ref — jamais une
+//     closure d'un rendu antérieur, jamais de deps qui gonflent à chaque
+//     frappe.
+//   • Toute écriture passe par l'autosave débouncée (scheduleSave) ou par
+//     flushSave ; la note quittée est flushée AVANT d'en ouvrir une autre —
+//     aucune frappe perdue, aucune écriture dans le mauvais fichier.
+//   • La matérialisation des dates (created/modified) est markdown-only et
+//     son texte n'est JAMAIS réinjecté dans l'éditeur : le disque et
+//     l'éditeur restent deux vues distinctes du même contenu.
+//   • Les états persistés par coffre (onglets, dossiers repliés, dernier
+//     fichier ouvert) vivent dans .123ecriture/state.json côté main
+//     process ; ici on ne garde que des chemins, re-résolus dans l'arbre
+//     au rendu — un chemin obsolète disparaît, jamais de ligne fantôme.
+//   • Les actions structurantes (suppression, renommage, déplacement,
+//     modification de chemin) passent par runSyncExclusive : la synchro
+//     passe APRÈS l'action, jamais pendant.
+//   • Tout accès DOM (clic droit délégué, glisser-déposer, scrollIntoView,
+//     attribut draggable) est desktop/web uniquement — garde
+//     `Platform.OS !== 'web'` systématique.
+//
+// SOMMAIRE :
+//   1. Modes d'affichage, types et état du composant
+//   2. Chargement de l'arborescence et résolutions dérivées
+//   3. Ouverture, création, onglets et démarrage du coffre
+//   4. Renommage, déplacement, chemin et suppression
+//   5. Menus, tri, modèles et glisser-déposer
+//   6. Sauvegarde, formatage, liens et pièces jointes
+//   7. Favoris, multi-sélection et vue Tags
+//   8. Rendu (JSX), helpers natifs et feuille de styles
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. Modes d'affichage, types et état du composant //////////////////
 const AUTOSAVE_DELAY_MS = 600;
 
 // Formatage fr-FR des compteurs (1 234 mots) — une seule instance pour tout
@@ -127,10 +135,9 @@ const formatCount = (value: number) => countFormatter.format(value);
 
 type Status = 'idle' | 'saving' | 'saved' | 'error';
 
-// Voir lib/openTabs.ts — déplacée là pour être partagée avec
-// applyPathChange (onglets) et testée ; mêmes règles qu'avant : un
-// renommage/déplacement de DOSSIER affecte en cascade tout ce qu'il
-// contient.
+// Les règles de cascade d'un changement de chemin (un renommage/déplacement
+// de DOSSIER affecte tout ce qu'il contient) vivent dans lib/openTabs.ts
+// (isPathAffected, applyPathChange) — partagées et testées.
 
 type Props = {
   // Demande d'ouverture d'une note depuis un AUTRE écran (Calendrier,
@@ -156,16 +163,16 @@ type Props = {
   onRegisterActions?: (actions: NotesActions) => void;
 };
 
-// Construit les items de la barre d'outils depuis les GROUPES (v0.4.43,
-// Paramètres → Éditeur) : groupe dépliant = un bouton qui déploie sa rangée
-// au survol/appui (voir EditorToolbar) ; groupe ouvert = boutons côte à
-// côte séparés entre groupes. Annuler/Rétablir (commands CodeMirror
-// natives) et Pièce jointe (importAttachment + insertion au curseur) sont
-// des ids de la config branchés sur leurs handlers réels. Fonction HORS
-// composant : elle ne touche aucun ref — l'EditorView et l'insertion
-// arrivent en paramètres (l'accès à viewRef.current pendant le rendu est
-// interdit par react-hooks/refs, et la règle ne voit ici que des closures
-// d'évènements passées en props).
+// Construit les items de la barre d'outils depuis les GROUPES (Paramètres →
+// Éditeur) : groupe dépliant = un bouton qui déploie sa rangée au survol/
+// appui (voir EditorToolbar) ; groupe ouvert = boutons côte à côte séparés
+// entre groupes. Annuler/Rétablir (commands CodeMirror natives) et Pièce
+// jointe (importAttachment + insertion au curseur) sont des ids de la
+// config branchés sur leurs handlers réels. Fonction HORS composant : elle
+// ne touche aucun ref — l'EditorView et l'insertion arrivent en paramètres
+// (l'accès à viewRef.current pendant le rendu est interdit par
+// react-hooks/refs, et la règle ne voit ici que des closures d'évènements
+// passées en props).
 export function NotesScreen({
   pendingOpenRelPath,
   onOpenedPendingNote,
@@ -177,8 +184,8 @@ export function NotesScreen({
   const vault = typeof window !== 'undefined' ? window.vault : undefined;
   // Gel des cycles de synchronisation pendant les actions structurantes
   // (suppression, renommage, déplacement) : un cycle partant au milieu
-  // d'une action créait l'effet « il ne se passe rien » (vécu 17/10 —
-  // la synchro doit passer APRÈS l'action, jamais pendant).
+  // d'une action crée l'effet « il ne se passe rien » — la synchro passe
+  // APRÈS l'action, jamais pendant.
   const syncStatus = useSyncStatus();
   const contextMenuBridge = typeof window !== 'undefined' ? window.contextMenu : undefined;
   // Menu contextuel unifié : pont Electron desktop (`contextMenuBridge.show`,
@@ -215,18 +222,18 @@ export function NotesScreen({
     treeRef.current = tree;
   }, [tree]);
   const [activeNote, setActiveNote] = useState<VaultEntry | null>(null);
-  // APERÇU DE DOSSIER (v0.4.36, style Make.md) : quand un dossier est
-  // cliqué dans l'explorateur, son chemin est mémorisé ici et la zone
-  // éditeur affiche FolderPreview au lieu de l'éditeur de note. null =
-  // pas d'aperçu (une note est ouverte, ou rien).
+  // APERÇU DE DOSSIER : quand un dossier est cliqué dans l'explorateur, son
+  // chemin est mémorisé ici et la zone éditeur affiche FolderPreview au
+  // lieu de l'éditeur de note. null = pas d'aperçu (une note est ouverte,
+  // ou rien).
   const [previewFolderRelPath, setPreviewFolderRelPath] = useState<string | null>(null);
   const [content, setContent] = useState('');
   const [status, setStatus] = useState<Status>('idle');
   const [viewMode, setViewMode] = useState<ViewMode>(preferences.editorDefaultMode);
   // Sur natif, l'éditeur CodeMirror est du pur DOM (crash au montage) :
-  // l'Intermédiaire embarque désormais le MÊME éditeur web que le desktop
-  // dans une WebView (MdxEditorWeb — v0.4.42, demande 2026-10-02), le
-  // mode Source reste un TextInput natif et l'Aperçu le NoteRenderer natif.
+  // Source et Intermédiaire passent par le MÊME éditeur web que le desktop
+  // dans une WebView (MdxEditorWeb — sans aperçu vivant en Source),
+  // l'Aperçu reste le NoteRenderer natif.
   const isNativeNotes = Platform.OS !== 'web';
   const effectiveViewMode: ViewMode = viewMode;
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
@@ -236,15 +243,15 @@ export function NotesScreen({
   // retrouver l'arborescence telle qu'elle a été laissée au redémarrage ou
   // au changement de coffre. Chargé après la première lecture de l'arbre ;
   // les chemins obsolètes (dossier renommé/supprimé depuis) sont ignorés.
-  // v0.4.50 : l'état INITIAL dépend de la préférence `explorerExpandMode`
-  // (Paramètres → Gestion des fichiers) — 'last' (défaut historique,
-  // replis persistés), 'all' (tout déplié), 'none' (tout replié).
+  // L'état INITIAL dépend de la préférence `explorerExpandMode` (Paramètres
+  // → Gestion des fichiers) — 'last' (défaut, replis persistés), 'all'
+  // (tout déplié), 'none' (tout replié).
   const [collapsedPaths, setCollapsedPaths] = useState<Set<string>>(new Set());
   // Miroir du mode dans une ref : l'effet de chargement de l'arbre (deps
   // [vault, vaultPath]) le lit sans s'abonner à la préférence — la
   // réaction aux changements à chaud vit dans l'effet dédié plus bas.
   const expandModeRef = useRef<ExplorerExpandMode>(preferences.explorerExpandMode);
-  // Onglets de notes ouverts (//11) — liste de relPaths, l'ordre du tableau
+  // Onglets de notes ouverts — liste de relPaths, l'ordre du tableau
   // EST l'ordre des onglets, persisté PAR COFFRE dans .123ecriture/state.json
   // (voir vault:get/set-open-tabs) pour retrouver les onglets au
   // redémarrage/changement de coffre. Les métadonnées (nom/icône) sont
@@ -256,7 +263,7 @@ export function NotesScreen({
   const [movingNode, setMovingNode] = useState<VaultTreeNode | null>(null);
   const [editingPathNode, setEditingPathNode] = useState<VaultTreeNode | null>(null);
   const [editPathError, setEditPathError] = useState<string | null>(null);
-  // Multi-sélection (voir //9 plus bas, `handleRowPress`) — `lastClickedRelPath`
+  // Multi-sélection (voir `handleRowPress` plus bas) — `lastClickedRelPath`
   // sert d'ancre pour Shift+clic (étendre depuis LE DERNIER élément cliqué,
   // pas depuis le début de la sélection). `bulkMoveOpen` réutilise
   // MoveDialog en mode multi (voir `multiCount`) plutôt que de dupliquer une
@@ -264,7 +271,7 @@ export function NotesScreen({
   const [selectedRelPaths, setSelectedRelPaths] = useState<Set<string>>(new Set());
   const [lastClickedRelPath, setLastClickedRelPath] = useState<string | null>(null);
   const [bulkMoveOpen, setBulkMoveOpen] = useState(false);
-  // Bascule Fichiers/Tags de l'explorateur (voir //10 plus bas) — état
+  // Bascule Fichiers/Tags de l'explorateur (voir toggleExplorerViewMode) — état
   // purement local (pas de préférence à persister, contrairement au mode de
   // tri), la liste de tags n'est chargée qu'À LA DEMANDE, au moment où on
   // bascule dessus.
@@ -287,11 +294,8 @@ export function NotesScreen({
   // le glisser-jusqu'à-zéro vers ce même bouton plutôt que d'introduire une
   // deuxième notion de "fermé" qui pourrait diverger.
   // Plafond de largeur de l'explorateur : la largeur persistée (jusqu'à
-  // 480, pensée pour desktop) sur un écran de téléphone laissait ~225 px à
-  // l'éditeur — titre sur 6 lignes, apparence cassée (vécu sur A13). Le
-  // plafond initial (45 %) empêchait aussi TOUT élargissement au doigt —
-  // demande 2026-10-03 : « gérer leur largeur à l'aide de mon doigt » —
-  // relâché à 60 % : l'éditeur garde toujours ~40 % de fenêtre.
+  // 480, pensée pour desktop) est plafonnée à 60 % de la fenêtre —
+  // l'éditeur garde toujours ~40 %, le titre reste lisible sur téléphone.
   const { width: windowWidth } = useWindowDimensions();
   const explorerPanel = useResizablePanel('explorer', { min: 180, max: 480, edge: 1 });
   // Largeur RÉELLE de l'explorateur (la même que le style du panneau plus
@@ -358,9 +362,9 @@ export function NotesScreen({
   }, [content]);
 
   // Matérialise les dates système `created`/`modified` DANS le frontmatter à
-  // chaque sauvegarde (demande utilisateur : les lignes « Créé/Modifié » des
-  // vues deviennent de vraies clés, pour une cohérence totale entre les
-  // modes source/intermédiaire/aperçu). `created` n'est écrit qu'une fois
+  // chaque sauvegarde — les lignes « Créé/Modifié » des vues sont de vraies
+  // clés, cohérentes entre les modes source/intermédiaire/aperçu.
+  // `created` n'est écrit qu'une fois
   // (date de création du fichier, jamais une valeur existante écrasée) ;
   // `modified` est actualisé à chaque enregistrement. Le texte retourné est
   // aussi réinjecté dans `content` par les appelants (les clés ajoutées
@@ -454,8 +458,7 @@ export function NotesScreen({
     [],
   );
 
-  // //1. 🌳 CHARGEMENT DE L'ARBORESCENCE
-  // //////////////////////////////////////////////////////////////////////
+//////// 2. Chargement de l'arborescence et résolutions dérivées ///////////
 
   const refreshTree = useCallback(async () => {
     if (!vault) return;
@@ -602,11 +605,9 @@ export function NotesScreen({
   }, [explorerExpandMode, vault]);
 
   // (Ctrl/Cmd+K — palette de commandes/recherche globale — vit dans
-  // AppShell.tsx, UN seul écouteur pour toute l'app : cet écran n'en a
-  // plus de propre. Historique : deux listeners parallèles ici ouvraient
-  // la SearchDialog SOUS la palette superposée ; la palette intègre déjà
-  // la recherche globale (voir CommandPalette.tsx) et la loupe 🔍 de
-  // listHeaderActions reste le clic dédié aux filtres par propriété.)
+  // AppShell.tsx, un seul écouteur pour toute l'app : cet écran n'en a
+  // pas de propre. La loupe 🔍 de listHeaderActions reste le clic dédié
+  // aux filtres par propriété.)
 
   const refreshOccurrences = useCallback(async () => {
     if (!occurrencesBridge) return;
@@ -702,8 +703,7 @@ export function NotesScreen({
     }
   };
 
-  // //2. 📂 OUVERTURE ET CRÉATION
-  // //////////////////////////////////////////////////////////////////////
+//////// 3. Ouverture, création, onglets et démarrage du coffre ////////////
 
   const openFolder = useCallback((node: VaultFolderNode) => {
     setPreviewFolderRelPath(node.relPath);
@@ -760,8 +760,6 @@ export function NotesScreen({
     [vault, preferences.editorDefaultMode, applyOpenTabs, materializeTimestamps],
   );
 
-  // //11. 🗂️ ONGLETS — fermeture et navigation clavier
-  // //////////////////////////////////////////////////////////////////////
 
   // Ferme un onglet (✕ de la barre ou Ctrl+W). S'il était actif : le
   // voisin — MÊME index après retrait, sinon le dernier — devient actif ;
@@ -893,8 +891,6 @@ export function NotesScreen({
     [vault, refreshTree, openNote, activeNote, preferences.newNoteLocation, preferences.newNoteCustomFolder],
   );
 
-  // //3. 🚀 FICHIER OUVERT PAR DÉFAUT + RÉVÉLATION DANS L'EXPLORATEUR
-  // //////////////////////////////////////////////////////////////////////
 
   // "Fichier ouvert par défaut" (Paramètres → Gestion des fichiers et des
   // liens) : quoi ouvrir au tout premier affichage d'un coffre. Ne
@@ -999,8 +995,7 @@ export function NotesScreen({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeNote?.relPath]);
 
-  // Fraîcheur de l'arborescence (v0.4.47, demande : « les fichiers ajoutés
-  // depuis l'explorateur de fichiers ne sont pas remarqués ») :
+  // Fraîcheur de l'arborescence :
   // - PC : l'arbre est relu au retour de focus de la fenêtre ;
   // - Android : retour au premier plan OU bouton Actualiser = rescan SAF
   //   complet en arrière-plan (~1 requête par entrée), l'arbre se met à
@@ -1058,8 +1053,7 @@ export function NotesScreen({
     });
   }, [onRegisterActions, handleCreateNote, handleCreateFolder]);
 
-  // //4. ✏️ RENOMMER / DÉPLACER / MODIFIER LE CHEMIN / SUPPRIMER
-  // //////////////////////////////////////////////////////////////////////
+//////// 4. Renommage, déplacement, chemin et suppression //////////////////
 
   const startRename = useCallback((node: VaultTreeNode) => {
     setRenamingRelPath(node.relPath);
@@ -1264,14 +1258,14 @@ export function NotesScreen({
     [collapsedPaths, vault],
   );
 
-  // Bouton "ordre de tri" en haut de l'explorateur (voir
-  // .claude/References/Sources.md §2) — même mécanisme de choix
-  // contextuel que le sélecteur de liste de TasksScreen.tsx : une entrée
-  // par mode, celle active préfixée ✅. Paramètres → Gestion des fichiers
-  // et des liens propose déjà ce réglage ; ce bouton n'en est qu'un accès
-  // direct depuis l'explorateur lui-même, pas un doublon de logique.
-  // //5. 🖱️ MENU CONTEXTUEL DE L'EXPLORATEUR + TRI
-  // //////////////////////////////////////////////////////////////////////
+  // Bouton "ordre de tri" en haut de l'explorateur — même mécanisme de
+  // choix contextuel que le sélecteur de liste de TasksScreen.tsx : une
+  // entrée par mode, celle active préfixée ✅. Paramètres → Gestion des
+  // fichiers et des liens propose déjà ce réglage ; ce bouton n'en est
+  // qu'un accès direct depuis l'explorateur lui-même, pas un doublon de
+  // logique.
+
+//////// 5. Menus, tri, modèles et glisser-déposer /////////////////////////
 
   const showSortMenu = useCallback(() => {
     const options: { id: FileSortMode; label: string }[] = [
@@ -1386,16 +1380,6 @@ export function NotesScreen({
     ],
   );
 
-  // Menu « ⋯ » de l'en-tête de l'éditeur (bouton rendu plus bas) — mêmes
-  // actions que le clic droit sur la ligne de la note dans l'arbre
-  // (showContextMenuFor), mais accessibles sans aller la retrouver dans
-  // l'explorateur : la note OUVERTE se déplace/duplique/supprime d'ici,
-  // quel que soit l'état de l'arbre. Le nœud est reconstruit depuis
-  // activeNote (même forme que `{ type: 'note', ...activeNote }` du
-  // renommage par clic titre).
-  // (DÉPLACÉ plus bas, après handleChangeContent dont il dépend — déclaré
-  // const plus bas dans le composant, l'utiliser avant sa déclaration
-  // relevait à la fois du TDZ et de la règle react-hooks du compilateur.)
   // Insertion du CONTENU d'un modèle au curseur (le frontmatter du modèle
   // est retiré — il n'a pas de sens dans la note cible). Nécessite
   // l'EditorView (Source/Intermédiaire). Déclarée AVANT showTemplateMenu,
@@ -1426,12 +1410,10 @@ export function NotesScreen({
     [vault, activeNote],
   );
 
-  // « 📋 Insérer un modèle » (v0.4.44, demande Templates) — liste les notes
-  // des dossiers MODÈLES/TEMPLATES du coffre ; le choix insère le contenu
-  // du modèle au curseur (via ActionMenu, natif ET desktop). L'insertion
-  // (insertTemplateById, ci-dessus) est branchée sur le choix du menu —
-  // elle était déclarée mais JAMAIS appelée (le menu s'affichait, choisir
-  // un modèle ne faisait rien) : fin de branchement + fix lint.
+  // « 📋 Insérer un modèle » — liste les notes des dossiers
+  // MODÈLES/TEMPLATES du coffre ; le choix insère le contenu du modèle au
+  // curseur (via ActionMenu, natif ET desktop), en appelant
+  // insertTemplateById ci-dessus.
   const showTemplateMenu = useCallback(() => {
     const notes = listTemplateNotes(tree);
     if (!activeNote) return;
@@ -1446,10 +1428,6 @@ export function NotesScreen({
       if (choice) void insertTemplateById(choice);
     });
   }, [tree, activeNote, presentMenu, insertTemplateById]);
-
-  // (DÉPLACÉ plus bas, après handleChangeContent dont il dépend — déclaré
-  // const plus bas dans le composant, l'utiliser avant sa déclaration
-  // relevait à la fois du TDZ et de la règle react-hooks du compilateur.)
 
   // Un seul écouteur "contextmenu" délégué sur tout le conteneur de la
   // liste, plutôt qu'un handler par ligne : chaque ligne de VaultTreeView
@@ -1476,8 +1454,6 @@ export function NotesScreen({
     return () => container.removeEventListener('contextmenu', handler);
   }, [vaultPath, tree, contextMenuBridge, showContextMenuFor]);
 
-  // //6. 🖐️ GLISSER-DÉPOSER (réordonner / déplacer dans un dossier)
-  // //////////////////////////////////////////////////////////////////////
 
   // Glisser pour RÉORDONNER OU DÉPLACER DANS UN DOSSIER (curseur), même
   // mécanisme de délégation que le clic droit ci-dessus : un seul jeu
@@ -1491,9 +1467,8 @@ export function NotesScreen({
   // elle, reste toujours à jour.
   useEffect(() => {
     // Glisser-déposer DOM = desktop/web uniquement — sur natif, les refs RN
-    // ne sont pas des HTMLElement (crash « undefined is not a function »,
-    // offset 1:1903343 v0.4.41-fix2, au premier coffre actif). Le
-    // réordonnancement tactile reviendra avec une vraie implémentation RN.
+    // ne sont pas des HTMLElement (crash au premier coffre actif). Le
+    // réordonnancement tactile reste à implémenter en React Native.
     if (Platform.OS !== 'web') return;
     const container = listAreaRef.current as unknown as HTMLElement | null;
     if (!container || !vault) return;
@@ -1606,19 +1581,13 @@ export function NotesScreen({
       // (voir walkTree dans apps/desktop/electron/vault.ts, qui ignore
       // l'ordre enregistré dans les deux autres modes) — plutôt que
       // d'exiger que l'utilisatrice bascule ce réglage AVANT de pouvoir
-      // glisser quoi que ce soit (sans quoi glisser ne fait rigoureusement
-      // rien de visible, `draggable` restant à `false`), on bascule ICI,
-      // seulement quand un glisser aboutit vraiment — l'intention "je veux
-      // ranger mes fichiers à la main" est alors sans ambiguïté. ATTENDU
-      // (pas fire-and-forget) AVANT `vault.reorder` : `preferences.set`
-      // écrit `fileSortMode` sur le DISQUE de façon asynchrone, et
-      // `vault:reorder` relit ce même fichier à CHAQUE appel côté main
-      // process pour décider s'il applique l'ordre glissé-déposé — sans
-      // cette attente, `vault:reorder` s'exécutait souvent encore avec
-      // l'ancien mode (ex. 'alphabetical'), ignorait l'ordre qu'on venait
-      // de lui donner, et le fichier glissé "revenait à sa place"
-      // instantanément (course gagnée par `vault.reorder`, perdue par
-      // l'écriture de préférence).
+      // glisser quoi que ce soit, on bascule ICI, seulement quand un
+      // glisser aboutit vraiment. ATTENDU (pas fire-and-forget) AVANT
+      // `vault.reorder` : `preferences.set` écrit `fileSortMode` sur le
+      // DISQUE de façon asynchrone, et `vault:reorder` relit ce même
+      // fichier à CHAQUE appel côté main process pour décider s'il
+      // applique l'ordre glissé-déposé — l'attente garantit que
+      // `vault:reorder` lit déjà le mode "Manuel".
       if (preferences.fileSortMode !== 'manual') {
         try {
           await setFileSortMode('manual');
@@ -1660,20 +1629,17 @@ export function NotesScreen({
 
   // Pose l'attribut HTML `draggable` réel sur chaque ligne — react-native-
   // web 0.21 ne transmet PAS les props inconnues comme `draggable` jusqu'au
-  // DOM pour Pressable/View (seul `Image` le fait nativement, vérifié dans
-  // ses sources), donc `draggable={...}` passé en prop à VaultTreeView
-  // resterait un no-op silencieux sans ceci. Posé impérativement plutôt que
-  // par prop, sur tous les `[data-relpath]` du conteneur, à chaque fois que
-  // la liste ou la ligne en cours de renommage change. TOUJOURS activé,
-  // quel que soit Paramètres → Gestion des fichiers et des liens → "Ordre
-  // des fichiers" — glisser un fichier fait désormais basculer ce réglage
-  // sur "Manuel" tout seul dès qu'un dépôt aboutit (voir handleDrop
-  // ci-dessus) plutôt que d'exiger ce réglage AU PRÉALABLE : le geste de
-  // glisser ne faisait sinon rigoureusement rien de visible en dehors du
-  // mode manuel, ce qui ressemblait à une fonctionnalité cassée.
+  // DOM pour Pressable/View (seul `Image` le fait nativement), donc
+  // `draggable={...}` passé en prop à VaultTreeView resterait un no-op
+  // silencieux sans ceci. Posé impérativement plutôt que par prop, sur
+  // tous les `[data-relpath]` du conteneur, à chaque fois que la liste ou
+  // la ligne en cours de renommage change. TOUJOURS activé, quel que soit
+  // Paramètres → Gestion des fichiers et des liens → "Ordre des fichiers" —
+  // un dépôt qui aboutit bascule lui-même le tri sur "Manuel" (voir
+  // handleDrop ci-dessus).
   useEffect(() => {
     // Attribut `draggable` des lignes = DOM web uniquement (même raison que
-    // le glisser-déposer ci-dessus — offset 1:1902664 sur fix2).
+    // le glisser-déposer ci-dessus).
     if (Platform.OS !== 'web') return;
     const container = listAreaRef.current as unknown as HTMLElement | null;
     if (!container) return;
@@ -1684,8 +1650,7 @@ export function NotesScreen({
     });
   }, [tree, renamingRelPath]);
 
-  // //7. 💾 SAUVEGARDE + RENDU
-  // //////////////////////////////////////////////////////////////////////
+//////// 6. Sauvegarde, formatage, liens et pièces jointes /////////////////
 
   const scheduleSave = useCallback(
     () => {
@@ -1709,13 +1674,11 @@ export function NotesScreen({
             // sauvegarde écrasait le disque avec une version périmée.
             const finalText = await materializeTimestamps(activeNote.relPath, contentRef.current, activeNote.kind);
             // PAS de setContent(finalText) : réinjecter le texte matérialisé
-            // dans l'éditeur le remplaçait ENTIÈREMENT côté CodeMirror
-            // (mode Source : value=content) — si l'utilisatrice reprenait
-            // sa frappe pendant l'aller-retour, ses frappes étaient
-            // écrasées (« des morceaux s'annulent tout seuls ») et le
-            // curseur sautait. La matérialisation des dates va sur le
-            // DISQUE ; l'éditeur reste la source de l'affichage, les clés
-            // créées (created/modified) apparaissent à la réouverture.
+            // remplacerait ENTIÈREMENT le contenu côté CodeMirror (mode
+            // Source : value=content) et écraserait les frappes arrivées
+            // pendant l'aller-retour. La matérialisation des dates va sur
+            // le DISQUE ; l'éditeur reste la source de l'affichage, les
+            // clés créées (created/modified) apparaissent à la réouverture.
             await vault.writeNote(activeNote.relPath, finalText);
             setStatus('saved');
             // PAS de refreshTree() ici (contrairement à flushSave) : un
@@ -1821,16 +1784,15 @@ export function NotesScreen({
   // Ctrl/Cmd+S force la sauvegarde immédiate, Ctrl/Cmd+N crée une nouvelle
   // note (même emplacement par défaut que le bouton "+ Nouvelle note").
   // Ctrl/Cmd+W ferme l'onglet actif, Ctrl/Cmd+Tab / Ctrl/Cmd+Shift+Tab
-  // naviguent entre les onglets (//11). Menu Electron désactivé
+  // naviguent entre les onglets. Menu Electron désactivé
   // (Menu.setApplicationMenu(null), voir main.ts) : aucun accélérateur ne
   // court-circuite ces touches côté main process, et Ctrl+W n'a pas
   // d'action par défaut dans un BrowserWindow. Ctrl/Cmd+K (palette/
-  // recherche globale) vit dans AppShell.tsx, pas ici — voir le
-  // commentaire du bloc retiré ci-dessus ("1.5"). La recherche DANS la
-  // note (Ctrl/Cmd+F) vit dans MdxEditor.tsx (keymap CodeMirror).
+  // recherche globale) vit dans AppShell.tsx, pas ici. La recherche DANS
+  // la note (Ctrl/Cmd+F) vit dans MdxEditor.tsx (keymap CodeMirror).
   // Web/Electron uniquement — `typeof window` ne suffit pas : window existe
   // sous Hermes natif mais addEventListener n'y est pas une fonction (crash
-  // au démarrage v0.4.41). Garde Platform.OS.
+  // au démarrage). Garde Platform.OS.
   useEffect(() => {
     if (Platform.OS !== 'web') return;
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -1879,10 +1841,10 @@ export function NotesScreen({
   }, [vault]);
 
   // Le bloc "Propriétés" (PropertiesBlock.tsx) affiche déjà le frontmatter
-  // de façon structurée en mode Intermédiaire/Aperçu — sans ça, le bloc YAML
-  // brut ("---\ntitre: ...\n---") apparaissait EN PLUS, en texte littéral,
-  // dans l'éditeur/le rendu juste en dessous : deux représentations de la
-  // même donnée à l'écran (bug rapporté). En mode Source, `content` reste
+  // de façon structurée en mode Intermédiaire/Aperçu — sans ce retrait, le
+  // bloc YAML brut ("---\ntitre: ...\n---") apparaîtrait EN PLUS, en texte
+  // littéral, juste en dessous : deux représentations de la même donnée à
+  // l'écran. En mode Source, `content` reste
   // inchangé (le YAML brut redevient la seule représentation, directement
   // éditable). `bodyOnly`/`handleChangeBody` reconstruisent le frontmatter
   // complet à l'écriture à partir du dernier `data` connu (le bloc
@@ -1890,15 +1852,13 @@ export function NotesScreen({
   // serializeFrontmatter — les deux restent cohérents puisqu'ils partent du
   // même state `content`).
   const { data: frontmatterData, body: bodyOnly } = useMemo(() => parseFrontmatter(content), [content]);
-  // Compteur mots/caractères (barre d'en-tête, markdown uniquement) —
+  // Compteur mots/caractères (barre bas d'éditeur, markdown uniquement) —
   // compté sur le CORPS (frontmatter exclu) quel que soit le mode
   // d'affichage : c'est le texte lu/écrit qui compte, pas la config YAML.
-  // DÉBOUNCÉ (l'ancien useMemo recalculait à chaque frappe) : le comptage
-  // est linéaire sur TOUT le corps, négligeable sur une note normale
-  // (~1 ms) mais catastrophique sur une note géante (2,3 s mesuré sur une
-  // note de 32 Mo → chaque caractère tapé gelait l'éditeur). Un retard de
-  // 400 ms sur l'affichage du compteur est invisible ; un gel par frappe
-  // ne l'est pas.
+  // DÉBOUNCÉ (400 ms) : le comptage est linéaire sur TOUT le corps —
+  // négligeable sur une note normale, catastrophique sur une note géante.
+  // Un retard sur l'affichage du compteur est invisible ; un gel par
+  // frappe ne l'est pas.
   const [wordStats, setWordStats] = useState({ words: 0, characters: 0 });
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -2007,18 +1967,8 @@ export function NotesScreen({
     }
   }, [vault, activeNote, content, scheduleSave]);
 
-  // Barre d'outils depuis les GROUPES (v0.4.43, Paramètres → Éditeur) :
-  // groupe dépliant = un bouton qui déploie sa rangée au survol/appui ;
-  // groupe ouvert = boutons côte à côte, séparés entre groupes. Annuler/
-  // Rétablir (commands CodeMirror natives) et Pièce jointe (importAttachment
-  // + insert au curseur) sont des ids de la config branchés sur leurs
-  // handlers réels.
 
-
-
-
-  // //8. ⭐ FAVORIS
-  // //////////////////////////////////////////////////////////////////////
+//////// 7. Favoris, multi-sélection et vue Tags ///////////////////////////
 
   // Résout chaque relPath favori (préférence app-level, voir
   // PreferencesContext.tsx) en son nœud RÉEL dans l'arbre courant — un
@@ -2034,8 +1984,6 @@ export function NotesScreen({
     return notes;
   }, [preferences.favoriteRelPaths, tree]);
 
-  // //11. 🗂️ ONGLETS — résolution pour le rendu
-  // //////////////////////////////////////////////////////////////////////
 
   // Les relPaths des onglets n'ont ni nom ni kind : chaque onglet est
   // re-résolu dans l'arbre (même logique que favoriteNotes ci-dessus). Un
@@ -2051,8 +1999,6 @@ export function NotesScreen({
     return nodes;
   }, [openTabRelPaths, tree]);
 
-  // //9. 🖱️ MULTI-SÉLECTION
-  // //////////////////////////////////////////////////////////////////////
 
   // Reçoit tous les clics sur une ligne NOTE de l'explorateur (voir
   // VaultTreeView.tsx, prop `onOpenNote`) — les dossiers restent gérés à
@@ -2182,8 +2128,6 @@ export function NotesScreen({
     await refreshTree();
   }, [vault, selectedRelPaths, refreshTree, updateOpenTabsAfterPathChange]);
 
-  // //10. 🏷️ VUE TAGS
-  // //////////////////////////////////////////////////////////////////////
 
   // Bascule Fichiers ⇄ Tags (bouton à côté du tri ⇅) — charge la liste des
   // tags À LA DEMANDE, seulement au moment où on bascule VERS la vue Tags
@@ -3095,14 +3039,12 @@ function NativeFileTypeUnavailable({ color }: { color: string }) {
 
 // Barre de défilement fine à droite de l'éditeur natif — React Native
 // n'affiche ses barres qu'un instant pendant le geste, inutilisable pour
-// se repérer dans une note longue (demande explicite). Un pouce simple
-// positionné par onScroll ; masqué quand le contenu tient dans la vue.
-// MAINTENABLE AU DOIGT (demande 2026-10-03 : « la maintenir avec mon doigt
-// et la diriger ») : quand `scrollTo` est fourni, la bande de 24 dp à
-// droite capte le toucher — la saisie saute à la position du doigt puis le
-// suit ; le pouce s'élargit pendant la prise. Sans `scrollTo` (TextInput
-// de mode Source : pas de scroll programmatique), elle reste un simple
-// indicateur non interactif.
+// se repérer dans une note longue. Un pouce simple positionné par onScroll ;
+// masqué quand le contenu tient dans la vue. MAINTENABLE AU DOIGT : quand
+// `scrollTo` est fourni, la bande de 24 dp à droite capte le toucher — la
+// saisie saute à la position du doigt puis la suit ; le pouce s'élargit
+// pendant la prise. Sans `scrollTo` (TextInput de mode Source : pas de
+// scroll programmatique), elle reste un simple indicateur non interactif.
 function NativeScrollbar({ viewportHeight, contentHeight, scrollOffset, color, scrollTo }: {
   viewportHeight: number;
   contentHeight: number;
@@ -3113,9 +3055,9 @@ function NativeScrollbar({ viewportHeight, contentHeight, scrollOffset, color, s
   const [dragging, setDragging] = useState(false);
   // Position du pouce PENDANT la prise, pilotée par le doigt : le
   // scrollOffset remonte par un évènement asynchrone (aller-retour natif)
-  // et arrive en retard sur le doigt — s'en servir pendant le glisser
-  // fait trembler le pouce (vécu 2026-10-04 : « assez instable »). On
-  // fige donc la position au geste, puis on rend la main à scrollOffset.
+  // et arrive en retard sur le doigt — s'en servir pendant le glisser fait
+  // trembler le pouce. On fige donc la position au geste, puis on rend la
+  // main à scrollOffset.
   const [dragThumbTop, setDragThumbTop] = useState<number | null>(null);
   if (contentHeight <= viewportHeight + 1) return null;
   const track = viewportHeight - 8;
@@ -3204,11 +3146,10 @@ function NativeReadingScroll({ scrollbarColor, children }: { scrollbarColor: str
   );
 }
 
-// (L'ancien éditeur Source natif TextInput a été retiré : Android ne sait
-// pas faire défiler un TextInput par programme, sa barre de défilement
-// restait purement décorative. Le mode Source passe désormais par le même
-// éditeur web que l'Intermédiaire, sans aperçu vivant — voir la branche
-// `isNativeNotes` du rendu.)
+// Le mode Source natif passe par le même éditeur web que l'Intermédiaire,
+// sans aperçu vivant (voir la branche `isNativeNotes` du rendu) — Android
+// ne sait pas faire défiler un TextInput par programme, sa barre de
+// défilement y restait purement décorative.
 
 const styles = StyleSheet.create({
   row: {
@@ -3279,7 +3220,7 @@ const styles = StyleSheet.create({
   searchButtonFlex: {
     flex: 1,
   },
-  // Barre d'actions groupées (multi-sélection, //9) — bandeau compact entre
+  // Barre d'actions groupées (multi-sélection) — bandeau compact entre
   // l'en-tête de l'explorateur et l'arbre, même esprit visuel que
   // listHeader (bordures/fond du thème).
   bulkBar: {
@@ -3299,7 +3240,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
   },
-  // "⭐ Favoris" (//8) — section fixe en tête de l'explorateur.
+  // "⭐ Favoris" — section fixe en tête de l'explorateur.
   favoritesSection: {
     borderBottomWidth: 1,
     paddingVertical: 4,
@@ -3318,7 +3259,7 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     paddingHorizontal: 12,
   },
-  // Vue Tags (//10) — un tag dépliable, ses notes indentées dessous.
+  // Vue Tags — un tag dépliable, ses notes indentées dessous.
   tagRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -3399,7 +3340,7 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
   },
-  // Barre d'onglets (//11) — rangée fine entre l'en-tête de l'éditeur et
+  // Barre d'onglets — rangée fine entre l'en-tête de l'éditeur et
   // la zone de contenu, même esprit visuel que modeRow (bordures du
   // thème). `flexShrink: 1` sur le nom pour que le texte tronque AVANT de
   // pousser le ✕ hors de l'onglet.

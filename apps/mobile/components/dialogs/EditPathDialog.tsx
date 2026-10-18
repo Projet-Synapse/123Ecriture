@@ -3,6 +3,9 @@ import { Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-nativ
 
 import type { Theme } from '../../theme';
 
+// ✒️ 123ECRITURE — components/dialogs/EditPathDialog.tsx — édition manuelle du chemin complet
+//////////////////////////////////////////////////////////////////////////////
+//
 // Édition manuelle du chemin complet d'une note/dossier — un complément au
 // glisser-déposer (voir NotesScreen.tsx) pour les destinations pas
 // pratiques à atteindre en glissant (dossier replié loin dans
@@ -11,6 +14,22 @@ import type { Theme } from '../../theme';
 // dossiers déjà existants), on tape ici le chemin complet à la main ; les
 // dossiers intermédiaires manquants sont créés automatiquement côté main
 // process (voir vault:set-path dans apps/desktop/electron/vault.js).
+//
+// Invariant du fichier :
+//   • Le champ est initialisé une fois avec `node.relPath` : le parent
+//     (NotesScreen) remonte ce composant à chaque ouverture via
+//     `key={node?.relPath}`, le state se réinitialise donc naturellement à
+//     chaque nouveau `node` — sans effet ni synchronisation manuelle, et
+//     sans effacer la saisie en cas d'erreur de validation (pas de remount
+//     tant que `node` ne change pas).
+//
+// SOMMAIRE :
+//   1. Composant (state initial par remount)
+//   2. Rendu (modale) et styles
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. Composant (state initial par remount) //////////////////////////
 type Props = {
   node: VaultTreeNode | null;
   theme: Theme;
@@ -27,6 +46,8 @@ export function EditPathDialog({ node, theme, error, onSubmit, onCancel }: Props
   // l'utilisatrice tape en cas d'erreur de validation, puisqu'il n'y a pas
   // de remount tant que `node` ne change pas).
   const [value, setValue] = useState(() => node?.relPath ?? '');
+
+//////// 2. Rendu (modale) et styles ///////////////////////////////////////
 
   if (!node) return null;
 

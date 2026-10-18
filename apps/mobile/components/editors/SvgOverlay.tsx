@@ -1,12 +1,30 @@
 import { useEffect, useRef } from 'react';
 import { View } from 'react-native';
 
-// Superposition SVG générique pour dessiner des flèches entre deux points —
-// utilisée par CanvasEditor.tsx pour les connexions entre cartes. Même
+// ✒️ 123ECRITURE — components/editors/SvgOverlay.tsx — superposition SVG de flèches
+//////////////////////////////////////////////////////////////////////////////
+//
+// Superposition SVG générique pour dessiner des flèches entre deux points
+// — utilisée par CanvasEditor.tsx pour les connexions entre cartes. Même
 // échappatoire que `draggable` (voir VaultTreeView.tsx) : RN n'a pas de
 // primitive de dessin vectoriel, on injecte un <svg> réel dans le DOM via
 // une ref plutôt que d'ajouter une dépendance (react-native-svg) pour un
 // seul besoin ponctuel.
+//
+// Invariants du fichier :
+//   • Le SVG est reconstruit de zéro à chaque exécution de l'effet
+//     (innerHTML = ''), y compris au nettoyage — aucun état DOM résiduel.
+//   • Le fond du SVG ne capte aucun évènement pointeur (pointerEvents:
+//     'none') ; chaque ligne réactive les siens ('stroke') pour rester
+//     cliquable — le glisser des cartes du dessous n'est pas intercepté.
+//
+// SOMMAIRE :
+//   1. Types et constantes
+//   2. Composant (montage du SVG)
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. Types et constantes /////////////////////////////////////////////
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const MARKER_ID = 'canvas-overlay-arrowhead';
 
@@ -17,6 +35,8 @@ export type OverlayLine = {
   x2: number;
   y2: number;
 };
+
+//////// 2. Composant (montage du SVG) //////////////////////////////////////
 
 type Props = {
   width: number;

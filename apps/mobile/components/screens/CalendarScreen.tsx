@@ -15,21 +15,47 @@ import { usePreferences } from '../../preferences/PreferencesContext';
 import { ConfirmDialog } from '../dialogs/ConfirmDialog';
 import { errorMessage } from '../../lib/errorMessage';
 
-// Écran Calendrier — notes journalières (façon Obsidian, convention de
-// chemin `Journal/AAAA-MM-JJ.mdx`, voir vault:ensure-daily-note dans
-// apps/desktop/electron/vault.js) ET évènements horodatés (stockage dédié,
-// voir apps/desktop/electron/calendar.js) dans la même vue — décision
-// prise avec l'utilisatrice en amont. Desktop uniquement pour l'instant
-// (window.vault/window.calendar, comme Notes/Tâches).
+// ✒️ 123ECRITURE — components/screens/CalendarScreen.tsx — l'écran Calendrier : grille mensuelle + panneau du jour
+//////////////////////////////////////////////////////////////////////////////
 //
-// Les évènements sont éditables en place dans le panneau du jour (✎) :
-// titre, heure (normalisée via normalizeTimeInput), déplacement à un
-// autre jour — via calendar:update-event, câblé depuis le début côté
-// Electron mais jamais exposé dans l'UI avant cette refonte.
+// Réunit dans une même grille mensuelle les notes journalières (façon
+// Obsidian, chemin `Journal/AAAA-MM-JJ.mdx`, voir vault:ensure-daily-note
+// dans apps/desktop/electron/vault.js) et les évènements horodatés
+// (stockage dédié calendar.json via window.calendar — voir
+// apps/desktop/electron/calendar.js). Une cellule affiche sa note
+// existante (📓), sa première tâche à échéance et ses deux premiers
+// évènements ; le panneau du jour (Modal) liste tâches et évènements,
+// édite un évènement en place (✎ : titre, heure, jour, toute-la-journée,
+// notes, via calendar:update-event) et en ajoute de nouveaux.
+//
+// Invariants du fichier :
+//   • Desktop/web uniquement (window.vault / window.calendar) — les écrans
+//     de repli couvrent l'absence de pont et l'absence de coffre actif.
+//   • Les heures saisies sont normalisées (normalizeTimeInput) ou refusées
+//     avec message — jamais de valeur libre entrée dans calendar.json.
+//   • « Aujourd'hui » est un state rafraîchi chaque minute : la grille ne
+//     fige jamais le jour courant.
+//   • Les demandes venues d'un autre écran (pendingOpenDate,
+//     pendingNewEventDate) naviguent vers le bon mois puis ouvrent le
+//     panneau, et se consomment via callback au parent.
+//
+// SOMMAIRE :
+//   1. Props et état du composant
+//   2. Chargement, dérivés et navigation
+//   3. Évènements : ajout, édition, suppression
+//   4. Rendu (grille, panneau du jour) et styles
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. Props et état du composant /////////////////////////////////////
+
+// Écran Calendrier — desktop uniquement pour l'instant (window.vault/
+// window.calendar, comme Notes/Tâches). Les évènements sont éditables en
+// place dans le panneau du jour (✎) via calendar:update-event.
 type Props = {
   onRequestOpenNote: (relPath: string) => void;
-  // v0.4.40 : ouvrir une TÂCHE depuis le panneau du jour (échéances) —
-  // même mécanique que requestOpenTask dans App.tsx.
+  // Ouvrir une TÂCHE depuis le panneau du jour (échéances) — même
+  // mécanique que requestOpenTask dans App.tsx.
   onRequestOpenTask?: (taskListId: string, taskId: string) => void;
   // Révélation d'un jour demandée par un AUTRE écran (recherche globale,
   // palette de commandes — voir App.tsx, `requestOpenCalendarDate`, résultat
@@ -85,17 +111,16 @@ export function CalendarScreen({
   const [editTitle, setEditTitle] = useState('');
   const [editTime, setEditTime] = useState('');
   const [editDate, setEditDate] = useState('');
-  // `allDay` est éditable AUSSI en édition (le champ existait au création
-  // mais le patch ne le transportait jamais — transformer un évènement
-  // horodaté en évènement "toute la journée" était impossible sans passer
-  // par events.json à la main).
+  // `allDay` est éditable AUSSI en édition : basculer un évènement
+  // horodaté en "toute la journée" (et inversement) fait partie du patch.
   const [editAllDay, setEditAllDay] = useState(false);
   const [editNotes, setEditNotes] = useState('');
-  // Suppression d'un évènement — désormais confirmée (ConfirmDialog) :
-  // un ✕ mal visé faisait disparaître l'évènement sans retour, et contrairement
-  // à une tâche (re-tapable en 5 secondes) un évènement planifié peut porter
-  // heure/notes qu'il faudra re-saisir de mémoire.
+  // Suppression d'un évènement — confirmée (ConfirmDialog) : un ✕ mal visé
+  // ne doit pas faire disparaître sans retour un évènement planifié, qui
+  // peut porter heure/notes non re-tapables.
   const [eventToDelete, setEventToDelete] = useState<CalendarEvent | null>(null);
+
+//////// 2. Chargement, dérivés et navigation //////////////////////////////
 
   const refresh = useCallback(async () => {
     if (!vault || !calendarBridge) return;
@@ -137,7 +162,7 @@ export function CalendarScreen({
     );
   }, [tree]);
 
-  // v0.4.40 : tâches à ÉCHÉANCE du coffre — lues directement dans
+  // Tâches à ÉCHÉANCE du coffre — lues directement dans
   // .123ecriture/tasks.json (liste plate avec dueDate AAAA-MM-JJ).
   const [dueTasks, setDueTasks] = useState<Task[]>([]);
   useEffect(() => {
@@ -259,6 +284,8 @@ export function CalendarScreen({
     onOpenedPendingNewEvent?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingNewEventDate]);
+
+//////// 3. Évènements : ajout, édition, suppression ///////////////////////
 
   const handleOpenDailyNote = useCallback(async () => {
     if (!vault || !selectedDate) return;
@@ -387,15 +414,16 @@ export function CalendarScreen({
         setEvents(await calendarBridge.removeEvent(id));
         if (editingEventId === id) setEditingEventId(null);
       } catch (error) {
-        // Affiché dans le panneau du jour (dayActionError) : avant, l'échec
-        // n'était que loggué console — l'évènement semblait indestructible
-        // sans explication.
+        // Affiché dans le panneau du jour (dayActionError) : un échec de
+        // suppression n'est jamais silencieux.
         console.error('[calendar] échec de la suppression de l’évènement :', error);
         setDayActionError(errorMessage(error));
       }
     },
     [calendarBridge, editingEventId],
   );
+
+//////// 4. Rendu (grille, panneau du jour) et styles //////////////////////
 
   if (!vault || !calendarBridge) {
     return (

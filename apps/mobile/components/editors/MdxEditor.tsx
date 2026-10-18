@@ -14,15 +14,47 @@ import { editorHighlightExtensions } from '../../lib/editor/codemirrorHighlight'
 import type { FormattingResult, Selection } from '../../lib/editor/mdxFormatting';
 import type { Theme } from '../../theme';
 
+// ✒️ 123ECRITURE — components/editors/MdxEditor.tsx — l'éditeur CodeMirror des notes (Source + Intermédiaire)
+//////////////////////////////////////////////////////////////////////////////
+//
+// Wrapper CodeMirror (@uiw/react-codemirror) utilisé par NotesScreen pour
+// les modes Source (`livePreview=false`, texte brut) et Intermédiaire
+// (`livePreview=true`, décorations façon Obsidian via lib/mdxLivePreview.ts).
+// Compose les extensions : autocomplétion `{{occurrences}}` et `[[notes]]`
+// (une seule instance `autocompletion()`, sources à déclencheurs
+// disjoints), recherche dans la note (Ctrl/Cmd+F), raccourcis de la barre
+// de formatage en Prec.highest, contournement du blocage du panneau emoji
+// Windows. S'intègre directement dans l'arbre React Native — l'app tourne
+// en react-dom, ce wrapper « DOM pur » n'a besoin d'aucune échappatoire
+// ref+useEffect.
+//
+// Invariants du fichier :
+//   • Un seul composant pour les deux modes : pas deux widgets à
+//     synchroniser ; l'Aperçu (lecture seule) reste NoteRenderer.tsx.
+//   • Les useMemo des extensions ne se recréent qu'au changement RÉEL de
+//     leurs entrées (thème, listes de complétion) — jamais à chaque frappe.
+//   • Le `style` posé sur CodeMirror corrige le flexbug de hauteur du div
+//     wrapper (`flex:1` + `minHeight:0` + `flexDirection:'column'`) :
+//     sans lui, .cm-scroller grandit à la hauteur du contenu entier et
+//     l'éditeur perd tout scroll.
+//
+// SOMMAIRE :
+//   1. Plugins exportés (emoji, piles de polices)
+//   2. Le composant : props, thèmes et extensions
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. Plugins exportés (emoji, piles de polices) /////////////////////
+
 // Panneau emoji Windows (Win+.) : avec `autocorrect="off"`/`autocapitalize=
 // "off"` sur le champ éditable, Chromium REFUSE d'insérer la sélection du
-// panneau (bug documenté côté Chromium ; symptôme rapporté : le panneau
-// s'ouvre, l'emoji n'apparaît jamais). CodeMirror pose exactement ces
-// attributs sur son champ à la création de la view — on les retire ici.
-// CodeMirror s'en sert aussi pour deux contournements d'autocorrection
-// iOS/Enter : sans effet sur Windows (l'autocorrect système n'y existe pas),
-// d'où un retrait inconditionnel. Le plugin repasse à chaque création de
-// view (remontage du composant), donc le strip reste en place.
+// panneau (bug documenté côté Chromium : le panneau s'ouvre, l'emoji
+// n'apparaît jamais). CodeMirror pose exactement ces attributs sur son
+// champ à la création de la view — on les retire ici. CodeMirror s'en
+// sert aussi pour deux contournements d'autocorrection iOS/Enter : sans
+// effet sur Windows (l'autocorrect système n'y existe pas), d'où un
+// retrait inconditionnel. Le plugin repasse à chaque création de view
+// (remontage du composant), donc le strip reste en place.
 // EXPORTÉ : réutilisé tel quel par CodeEditor.tsx (le bug Chromium ne
 // connaît pas le type de fichier).
 export const enableOsEmojiInsertion = ViewPlugin.fromClass(
@@ -47,6 +79,8 @@ export const EDITOR_FONT_STACKS: Record<EditorFontFamily, string> = {
   dyslexic: '"OpenDyslexic", "Comic Sans MS", sans-serif',
 };
 
+//////// 2. Le composant : props, thèmes et extensions /////////////////////
+
 // Éditeur MDX — remplace l'ancien `TextInput` brut pour les modes "Source"
 // et "Intermédiaire" (voir NotesScreen.tsx). Un seul composant pour les
 // deux modes : `livePreview=false` = CodeMirror nu (texte brut, comme un
@@ -67,13 +101,13 @@ type Props = {
   onChange: (text: string) => void;
   livePreview: boolean;
   // Contenu (React) rendu AU-DESSUS du texte, DANS le scroller CodeMirror
-  // (v0.4.37 — le bloc Propriétés fait partie du scroll en mode
-  // Intermédiaire, comme Obsidian) : rendu via un portail React dans un
-  // widget CM position 0. null/absent = rien (mode Source par ex.).
+  // (le bloc Propriétés fait partie du scroll en mode Intermédiaire, comme
+  // Obsidian) : rendu via un portail React dans un widget CM position 0.
+  // null/absent = rien (mode Source par ex.).
   headerContent?: React.ReactNode;
-  // v0.4.37 : CM sans hauteur fixe (le PARENT scrolle) — sert au mode
-  // Intermédiaire où le bloc Propriétés fait partie du même scroll que le
-  // texte. En mode Source, false = CM garde son propre scroll interne.
+  // CM sans hauteur fixe (le PARENT scrolle) — sert au mode Intermédiaire
+  // où le bloc Propriétés fait partie du même scroll que le texte. En mode
+  // Source, false = CM garde son propre scroll interne.
   autoHeight?: boolean;
   theme: Theme;
   onOpenWikilink: (target: string) => void;
@@ -134,7 +168,7 @@ export function MdxEditor({
     () =>
       EditorView.theme({
         '&': {
-          // v0.4.34 : fond de l'éditeur RÉGLABLE indépendamment (Paramètres →
+          // Fond de l'éditeur RÉGLABLE indépendamment (Paramètres →
           // Personnalisation) — retombe sur le fond du mode sinon.
           backgroundColor: theme.editorBackground ?? theme.background,
           color: theme.text,
@@ -288,24 +322,21 @@ export function MdxEditor({
         // contenu (`min-height:auto`) plutôt que de respecter la place
         // disponible dans le `View` (`styles.container`, `flex:1`,
         // pourtant bien borné) qui l'entoure — exactement le classique
-        // "flexbug" des hauteurs en % dans une chaîne flexbox. Résultat
-        // observé : `.cm-scroller` grandissait à la hauteur du CONTENU
-        // entier de la note (confirmé : 3152px pour ~120 lignes) au lieu
-        // de rester borné avec un scroll interne — l'éditeur semblait
-        // "figé" (aucun scroll nulle part, tout le monde plus bas que
-        // 800px passait simplement hors champ). `flex:1` + `minHeight:0`
-        // ici donnent enfin une hauteur DÉFINIE à ce wrapper, ce qui
-        // permet à `height:100%` de `.cm-editor` de se résoudre
-        // normalement et à `.cm-scroller` (overflow-y:auto déjà géré en
-        // interne par CodeMirror) de redevenir réellement scrollable.
+        // "flexbug" des hauteurs en % dans une chaîne flexbox :
+        // `.cm-scroller` grandit alors à la hauteur du CONTENU entier de
+        // la note au lieu de rester borné, et l'éditeur semble "figé"
+        // (aucun scroll nulle part). `flex:1` + `minHeight:0` ici donnent
+        // une hauteur DÉFINIE à ce wrapper, ce qui permet à `height:100%`
+        // de `.cm-editor` de se résoudre normalement et à `.cm-scroller`
+        // (overflow-y:auto déjà géré en interne par CodeMirror) de
+        // redevenir réellement scrollable.
         // `flexDirection:'column'` est IMPÉRATIF ici : par défaut, un
         // `display:'flex'` brut (ce div n'est pas un `View` React Native,
         // ses props ne passent donc PAS par les défauts habituels de RN)
         // vaut `flex-direction:row` — l'unique enfant (`.cm-editor`) se
-        // serait alors dimensionné à la largeur de SON CONTENU sur l'axe
-        // principal (horizontal) au lieu de s'étirer sur toute la largeur
-        // disponible. Régression trouvée après coup : c'est exactement ce
-        // qui causait "le fichier ne s'affiche qu'à la moitié de la page".
+        // dimensionnerait à la largeur de SON CONTENU sur l'axe principal
+        // (horizontal) au lieu de s'étirer sur toute la largeur disponible
+        // (« le fichier ne s'affiche qu'à la moitié de la page »).
         style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}
         theme="none"
         extensions={[editorTheme, ...extensions]}

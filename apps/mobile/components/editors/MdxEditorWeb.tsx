@@ -5,19 +5,35 @@ import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import { EDITOR_WEB_BUNDLE } from '../generated/editorWebBundle';
 import type { Theme } from '../../theme';
 
-// Éditeur CodeMirror embarqué dans une WebView — le mode Intermédiaire
-// natif (demande 2026-10-02, « mêmes fonctionnement et particularités que
-// sur ordinateur ») : le bundle est le MÊME @uiw/react-codemirror que le
-// desktop (voir webview/editor-entry.tsx, généré dans
+// ✒️ 123ECRITURE — components/editors/MdxEditorWeb.tsx — l'éditeur CodeMirror natif (WebView)
+//////////////////////////////////////////////////////////////////////////////
+//
+// Éditeur CodeMirror embarqué dans une WebView — les modes Source et
+// Intermédiaire NATIFS, avec les mêmes fonctionnement et particularités
+// que sur ordinateur : le bundle est le MÊME @uiw/react-codemirror que le
+// desktop (webview/editor-entry.tsx, généré dans
 // generated/editorWebBundle.ts — tout est embarqué, aucun réseau).
 //
-// Pont bidirectionnel :
-// - web → RN : postMessage {type: 'change'|'wikilink'|'createOccurrence'|
-//   'ready'} — la frappe est throttlée côté web (300 ms + flush au blur).
-// - RN → web : injectJavaScript vers window.__editorApi (applyDoc,
-//   applyConfig). applyDoc n'est envoyé que pour un changement EXTERNE
-//   (changement de note, pull de synchro) — les échos de frappe sont
-//   filtrés par lastFromWeb.
+// Invariants du fichier :
+//   • Pont bidirectionnel : web → RN postMessage {type: 'change'|
+//     'wikilink'|'createOccurrence'|'ready'|'height'|'configApplied'}
+//     (frappe throttlée côté web, 300 ms + flush au blur) ; RN → web via
+//     injectJavaScript vers window.__editorApi (applyDoc, applyConfig).
+//   • applyDoc n'est envoyé que pour un changement EXTERNE (changement de
+//     note, pull de synchro) — les échos de frappe sont filtrés par
+//     lastWebContent.
+//   • Les callbacks stables (onMessage) lisent les derniers handlers via
+//     des refs mises à jour en EFFET, jamais pendant le rendu.
+//   • editorBackground n'est PAS transmis : la WebView suit le fond de
+//     l'app (la préférence donnait une page blanche en thème sombre).
+//
+// SOMMAIRE :
+//   1. Pont RN → web (config, document)
+//   2. Pont web → RN (messages) et synchronisation externe
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. Pont RN → web (config, document) ///////////////////////////////
 type Props = {
   value: string;
   onChange: (text: string) => void;
@@ -31,7 +47,7 @@ type Props = {
   closeBrackets: boolean;
   // false = mode Source : le même CodeMirror SANS l'aperçu vivant (le
   // TextInput natif ne permettait pas de barre de défilement manipulable —
-  // tous les modes passent désormais par la WebView, 2026-10-04).
+  // tous les modes passent par la WebView).
   livePreview?: boolean;
   // Mobile : la WebView se dimensionne à son contenu (hauteur renvoyée par
   // le web) et vit dans le ScrollView natif de l'éditeur — le bloc
@@ -106,6 +122,8 @@ export function MdxEditorWeb({
     inject(`window.__editorApi && window.__editorApi.applyConfig(${JSON.stringify(payload)});`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inject, fontSize, fontFamily, closeBrackets, livePreview, occurrenceWords, noteNames, theme]);
+
+//////// 2. Pont web → RN (messages) et synchronisation externe ////////////
 
   const onMessage = useCallback(
     (event: WebViewMessageEvent) => {

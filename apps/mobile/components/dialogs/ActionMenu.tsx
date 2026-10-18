@@ -4,11 +4,26 @@ import type { Theme } from '../../theme';
 
 export type ActionMenuItem = { id: string; label: string };
 
+// ✒️ 123ECRITURE — components/dialogs/ActionMenu.tsx — menu d'actions tactile
+//////////////////////////////////////////////////////////////////////////////
+//
 // Menu d'actions natif (maintien de doigt dans l'explorateur, bouton « ⋯ »
 // de l'éditeur, tri) — l'équivalent tactile du menu contextuel du clic
-// droit desktop (`contextMenuBridge.show`, menu natif Electron) : une carte
-// ancrée en bas, refermée au toucher hors de la carte, par « Annuler » ou
-// par le bouton retour Android (onRequestClose).
+// droit desktop (`contextMenuBridge.show`, menu natif Electron) : mêmes
+// items, mêmes handlers, branchés par presentMenu dans NotesScreen.
+//
+// Invariants du fichier :
+//   • Composant sans état : une carte ancrée en bas, refermée au toucher
+//     hors de la carte, par « Annuler » ou par le bouton retour Android
+//     (onRequestClose) — le choix part via onPick(id).
+//
+// SOMMAIRE :
+//   1. Menu (rendu)
+//   2. Styles
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. Menu (rendu) ////////////////////////////////////////////////////
 export function ActionMenu({ visible, title, items, onPick, onClose, theme }: {
   visible: boolean;
   title?: string;
@@ -46,6 +61,8 @@ export function ActionMenu({ visible, title, items, onPick, onClose, theme }: {
     </Modal>
   );
 }
+
+//////// 2. Styles //////////////////////////////////////////////////////////
 
 const styles = StyleSheet.create({
   backdrop: {

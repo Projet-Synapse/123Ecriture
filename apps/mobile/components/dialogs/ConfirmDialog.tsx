@@ -3,13 +3,31 @@ import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, TextInput, View 
 
 import type { Theme } from '../../theme';
 
+// ✒️ 123ECRITURE — components/dialogs/ConfirmDialog.tsx — confirmation d'action destructrice
+//////////////////////////////////////////////////////////////////////////////
+//
 // Boîte de confirmation générique pour les actions destructrices — même
 // coquille modale que MoveDialog.tsx/EditPathDialog.tsx (backdrop cliquable
 // pour annuler, Échap géré par react-native-web, boîte centrale). Le bouton
-// de confirmation peut être "en cours" (busy) : le composant masque alors
-// les deux actions jusqu'à la résolution, pour interdire le double-clic —
+// de confirmation peut être "en cours" (busy) : les deux actions sont
+// masquées jusqu'à la résolution, pour interdire le double-clic —
 // l'appelant résout `onSettled` quand SA mutation est finie (échec inclus :
 // la modale se referme aussi, l'erreur restant affichée à l'écran appelant).
+//
+// Invariants du fichier :
+//   • Pendant busy, backdrop ET boutons sont inertes — un double-clic ne
+//     déclenche jamais deux fois la mutation.
+//   • Si `requireText` est renseigné, la confirmation exige de TAPER ce mot
+//     exact (vidage de corbeille et autres destructions de masse) — le
+//     bouton reste visible mais inerte tant que le texte ne matche pas.
+//
+// SOMMAIRE :
+//   1. Props (garde par texte tapé)
+//   2. Composant (busy, rendu)
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. Props (garde par texte tapé) ///////////////////////////////////
 type Props = {
   theme: Theme;
   title: string;
@@ -18,11 +36,13 @@ type Props = {
   onConfirm: () => Promise<void> | void;
   onCancel: () => void;
   onSettled?: () => void;
-  // v0.4.66 : si renseigné, la confirmation exige de TAPER ce mot exact
-  // (vidage de corbeille et autres destructions de masse — le clic sur le
-  // bouton reste possible mais ne fait rien tant que le texte ne matche pas).
+  // Si renseigné, la confirmation exige de TAPER ce mot exact (vidage de
+  // corbeille et autres destructions de masse — le clic sur le bouton
+  // reste possible mais ne fait rien tant que le texte ne matche pas).
   requireText?: string;
 };
+
+//////// 2. Composant (busy, rendu) ////////////////////////////////////////
 
 export function ConfirmDialog({
   theme,

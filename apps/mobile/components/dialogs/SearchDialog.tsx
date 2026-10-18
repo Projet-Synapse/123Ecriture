@@ -12,21 +12,39 @@ import { useScrollIntoView } from '../../lib/ui/useScrollIntoView';
 import type { Theme } from '../../theme';
 import { errorMessage } from '../../lib/errorMessage';
 
-// Recherche globale — voir .claude/References/Sources.md §2 : "un petit
-// bouton en haut de la gestion de fichiers... chercher fichiers, pièces
-// jointes, mots-clés... bouton 'filtre' pour choisir par propriétés".
-// Même coquille modale que MoveDialog.tsx/EditPathDialog.tsx (backdrop
-// cliquable pour fermer, boîte centrale) — champ de requête en haut avec
-// debounce (même idiome `useRef<Timeout>` clear-and-reschedule que
-// l'autosave de NotesScreen.tsx/CanvasEditor.tsx/ChartEditor.tsx, première
-// UI "recherche en direct" du code), liste de résultats scrollable, filtre
-// par propriété replié par défaut. Toute la recherche vit côté Electron
-// (window.search — voir apps/desktop/electron/search.ts) : ce composant
-// n'est que l'UI, il ne parcourt jamais le coffre lui-même.
+// ✒️ 123ECRITURE — components/dialogs/SearchDialog.tsx — recherche globale (modale)
+//////////////////////////////////////////////////////////////////////////////
 //
-// Navigation clavier (↑↓ + Entrée, même idiome que CommandPalette.tsx),
-// compteur de résultats et surlignage des correspondances (titre + extrait
-// via splitMatchSegments) — les mains restent au clavier du début à la fin.
+// Recherche globale du coffre : fichiers, pièces jointes, textes, #tags,
+// tâches, évènements — avec filtre par propriété replié par défaut. Même
+// coquille modale que MoveDialog.tsx/EditPathDialog.tsx (backdrop cliquable
+// pour fermer, boîte centrale), champ de requête en haut avec debounce
+// (même idiome clear-and-reschedule que l'autosave des autres écrans),
+// liste de résultats scrollable avec compteur et surlignage des
+// correspondances (splitMatchSegments), navigation clavier ↑↓ + Entrée/
+// Échap — les mains restent au clavier du début à la fin. Toute la
+// recherche vit côté Electron (window.search — voir
+// apps/desktop/electron/search.ts) : ce composant n'est que l'UI, il ne
+// parcourt jamais le coffre lui-même.
+//
+// Invariants du fichier :
+//   • Ouvrir un résultat peut vouloir dire « basculer sur un autre écran »
+//     — l'appelant décide via `openSearchResult` : le callback reçoit le
+//     résultat complet, pas juste un relPath.
+//   • Seuls les résultats OUVRABLES réagissent à Entrée/clic
+//     (isSearchResultOpenable) ; les autres restent informatifs.
+//   • Le recalage de la sélection au premier résultat se fait PENDANT le
+//     rendu sur comparaison d'état (correctif documenté par React), pas
+//     dans un effet.
+//
+// SOMMAIRE :
+//   1. État, debounce de recherche et filtres
+//   2. Navigation clavier et ouverture de résultat
+//   3. Rendu (modale, filtres, résultats) et styles
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. État, debounce de recherche et filtres /////////////////////////
 const SEARCH_DEBOUNCE_MS = 300;
 
 type Props = {
@@ -94,6 +112,8 @@ export function SearchDialog({ theme, onOpenResult, onCancel }: Props) {
     };
   }, [query, selectedProperty, propertyValue, searchBridge, hasQuery]);
 
+//////// 2. Navigation clavier et ouverture de résultat ////////////////////
+
   // Recale la sélection au premier résultat à chaque nouvelle liste
   // (nouvelle recherche) — ajustement PENDANT le rendu sur comparaison
   // d'état, même correctif documenté par React que CommandPalette.tsx
@@ -116,9 +136,9 @@ export function SearchDialog({ theme, onOpenResult, onCancel }: Props) {
   useEffect(() => {
     if (Platform.OS !== 'web') return;
     const handleKeyDown = (event: KeyboardEvent) => {
-      // Échap ferme — même convention que CommandPalette.tsx (qui l'avait
-      // dès l'origine) : deux boîtes de recherche qui réagissent
-      // différemment à la même touche, ça se remarque vite au clavier.
+      // Échap ferme — même convention que CommandPalette.tsx : deux boîtes
+      // de recherche qui réagissent différemment à la même touche, ça se
+      // remarque vite au clavier.
       if (event.key === 'Escape') {
         if (!event.defaultPrevented) {
           event.preventDefault();
@@ -165,6 +185,8 @@ export function SearchDialog({ theme, onOpenResult, onCancel }: Props) {
         if (found) setSelectedProperty(found);
       });
   };
+
+//////// 3. Rendu (modale, filtres, résultats) et styles ///////////////////
 
   return (
     <Modal visible transparent animationType="fade" onRequestClose={onCancel}>

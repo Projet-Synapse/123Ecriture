@@ -5,23 +5,35 @@ import { getSeriesColor } from '../../lib/editor/chartPalette';
 import { maxSeriesValue, type ChartSeries } from '../../lib/editor/sheets';
 import type { Theme } from '../../theme';
 
-// Rendu des graphiques barres/lignes/camembert — voir la skill `dataviz`
-// (chargée avant d'écrire ce fichier) pour la méthode suivie : un seul axe
-// (jamais deux échelles), couleurs catégorielles en ordre FIXE (jamais
-// cyclées), traits fins, extrémités arrondies, légende dès 2 séries,
-// libellés directs sélectifs plutôt que sur chaque point, le texte des
-// libellés/légendes reste dans les couleurs de TEXTE du thème (jamais la
-// couleur de la série). "Vue tableau" : déjà satisfaite par construction —
-// le tableur lui-même (ChartEditor.tsx) reste visible à côté du
-// graphique, ce n'est pas un dashboard qui consomme des données opaques.
+// ✒️ 123ECRITURE — components/editors/ChartView.tsx — rendu SVG des graphiques (barres, lignes, camembert)
+//////////////////////////////////////////////////////////////////////////////
 //
-// Rendu en SVG injecté directement dans le DOM (même échappatoire que
-// `draggable`/le glisser-déposer délégué ailleurs dans l'app — RN n'a pas
-// de primitive de dessin vectoriel, et on évite une dépendance comme
-// react-native-svg pour un seul écran). Interaction : taper une barre/un
-// point/une part affiche sa valeur exacte sous le graphique — une
-// simplification assumée du "crosshair + tooltip" complet de la skill
-// (proportionnée à un panneau d'app, pas un dashboard).
+// Rendu des graphiques du ChartEditor : SVG construit à la main et
+// injecté dans le DOM (même échappatoire que `draggable`/le glisser-déposer
+// délégué ailleurs dans l'app — RN n'a pas de primitive de dessin
+// vectoriel, et on évite une dépendance type react-native-svg pour un seul
+// écran). Un seul axe (jamais deux échelles), couleurs catégorielles en
+// ordre FIXE (jamais cyclées), traits fins à extrémités arrondies, légende
+// dès 2 séries, libellés directs sélectifs plutôt que sur chaque point.
+// Interaction : taper une barre/un point/une part affiche sa valeur exacte
+// sous le graphique (simplification assumée du tooltip complet, proportionnée
+// à un panneau d'app). « Vue tableau » : déjà satisfaite par construction —
+// le tableur (ChartEditor.tsx) reste visible à côté du graphique.
+//
+// Invariants du fichier :
+//   • Le SVG est reconstruit de zéro à chaque exécution de l'effet
+//     (container.innerHTML = ''), y compris au nettoyage — aucun état DOM
+//     résiduel entre deux dessins.
+//   • Le texte (libellés, légende, pourcentages) n'utilise JAMAIS la
+//     couleur de la série — uniquement les couleurs de texte du thème.
+//
+// SOMMAIRE :
+//   1. Dessins SVG purs (axe, barres, lignes, camembert)
+//   2. Le composant (montage, légende, valeur sélectionnée)
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. Dessins SVG purs (axe, barres, lignes, camembert) //////////////
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const WIDTH = 560;
 const HEIGHT = 280;
@@ -184,6 +196,8 @@ function drawPie(svg: SVGSVGElement, series: ChartSeries[], ctx: DrawContext) {
     startAngle = endAngle;
   });
 }
+
+//////// 2. Le composant (montage, légende, valeur sélectionnée) ///////////
 
 type Props = {
   type: SheetChartType;

@@ -8,14 +8,39 @@ import { usePreferences } from '../../preferences/PreferencesContext';
 import { ChartView } from './ChartView';
 import { EditorToolbar } from './EditorToolbar';
 
-// Éditeur Graphiques — tableur intégré (lignes/colonnes, saisie manuelle,
-// pas de formules) d'où on génère un graphique barres/lignes/camembert.
-// Scopé à UN fichier `.chart` du vault (`relPath`), ouvert/fermé/renommé/
-// déplacé comme n'importe quel fichier de l'arborescence (voir
-// NotesScreen.tsx) — plus de registre multi-feuilles séparé (voir la
-// révision documentée dans le plan/la mémoire du projet; anciennement
-// ChartsScreen.tsx). Desktop uniquement pour l'instant (window.vault, comme
-// Notes/Tâches).
+// ✒️ 123ECRITURE — components/editors/ChartEditor.tsx — éditeur de graphiques (tableur + config)
+//////////////////////////////////////////////////////////////////////////////
+//
+// Éditeur d'un fichier `.chart` du coffre (scopé à `relPath`, ouvert/
+// fermé/renommé comme n'importe quel fichier de l'arborescence, voir
+// NotesScreen.tsx) : un tableur intégré (lignes/colonnes, saisie manuelle,
+// pas de formules) d'où est généré un graphique barres/lignes/camembert.
+// La série est recalculée par buildChartSeries (lib/editor/sheets.ts,
+// pur et testé) ; ce composant n'édite que les données et la config, et
+// rend via ChartView. Desktop uniquement pour l'instant (window.vault,
+// comme Notes/Tâches).
+//
+// Invariants du fichier :
+//   • Toute mutation passe par updateData : setState + sauvegarde
+//     débouncée (600 ms, même délai que l'autosave des notes) en un seul
+//     chemin.
+//   • `create-chart` n'existe dans la barre que s'il n'y a pas encore de
+//     graphique — le recréer écraserait silencieusement la config.
+//   • Camembert : UNE seule colonne de valeurs — le changement de type et
+//     le toggle tronquent la sélection plutôt que de laisser une config
+//     ambiguë.
+//   • Un graphique configuré sans lignes de données affiche un message
+//     dédié, jamais un rendu vide silencieux.
+//
+// SOMMAIRE :
+//   1. État, chargement et autosave
+//   2. Édition du tableau (colonnes, lignes, cellules)
+//   3. Config du graphique et barre d'outils
+//   4. Rendu (grille, carte graphique) et styles
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. État, chargement et autosave ///////////////////////////////////
 const AUTOSAVE_DELAY_MS = 600;
 const CELL_WIDTH = 130;
 
@@ -86,7 +111,7 @@ export function ChartEditor({ relPath }: Props) {
     [scheduleSave],
   );
 
-  // --- Édition du tableau ---
+//////// 2. Édition du tableau (colonnes, lignes, cellules) ////////////////
 
   const renameColumn = (columnId: string, name: string) => {
     updateData((prev) => ({
@@ -135,7 +160,7 @@ export function ChartEditor({ relPath }: Props) {
     }));
   };
 
-  // --- Config du graphique ---
+//////// 3. Config du graphique et barre d'outils //////////////////////////
 
   const createChart = () => {
     updateData((prev) => ({
@@ -356,12 +381,10 @@ export function ChartEditor({ relPath }: Props) {
             ) : data.rows.length === 0 ? (
               // `chartSeries` a bien une entrée par colonne de valeurs
               // choisie même sans AUCUNE ligne de données (buildChartSeries
-              // ne filtre pas sur `rows.length`, juste sur la config) — sans
-              // ce cas, le graphique se rendait silencieusement VIDE (un
-              // simple axe sans barre, ou rien du tout pour un camembert),
-              // ce qui donnait l'impression que "les graphiques ne
-              // marchent pas" alors qu'il manquait juste des lignes
-              // remplies dans le tableau du dessus.
+              // ne filtre pas sur `rows.length`, juste sur la config) — ce
+              // cas affiche un message dédié au lieu d'un graphique rendu
+              // vide silencieusement (un simple axe sans barre, ou rien du
+              // tout pour un camembert).
               <Text style={[styles.muted, { color: theme.textMuted }]}>
                 Le graphique est configuré — ajoute des lignes (« + Ligne » ci-dessus) et remplis-les pour
                 le voir apparaître.

@@ -4,15 +4,23 @@ import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { parseFrontmatter } from '../../lib/properties/frontmatter';
 import type { Theme } from '../../theme';
 
-// « Dataview-lite » (v0.4.44, demande : se baser sur Obsidian et ses
-// plugins) — une vue TABLE des notes du coffre par propriété frontmatter :
-// on choisit une propriété (ex. Statut, Modèle), on filtre par texte, les
-// notes correspondantes s'affichent cliquables. Version volontairement
-// simple du plugin Dataview : une propriété, un filtre, un tableau.
+// ✒️ 123ECRITURE — components/screens/TablesScreen.tsx — vue « Dataview-lite » des propriétés du coffre
+//////////////////////////////////////////////////////////////////////////////
 //
-// Lecture : TOUTES les notes .md/.mdx sont lues une fois à l'entrée (en
-// parallèle par paquets, comme la vue graphique — 200+ notes ≈ 20 s sur
-// SAF Android, instantané sur desktop), puis gardées en mémoire d'écran.
+// Vue TABLE des notes du coffre par propriété frontmatter : on choisit une
+// propriété (ex. Statut, Modèle), on filtre par texte, les notes
+// correspondantes s'affichent cliquables. Volontairement simple : une
+// propriété, un filtre, un tableau. TOUTES les notes .md/.mdx sont lues
+// une fois à l'entrée (en parallèle par paquets de 12, comme la vue
+// graphique), puis gardées en mémoire d'écran.
+//
+// SOMMAIRE :
+//   1. Lecture du coffre (paquets parallèles)
+//   2. Dérivés et rendu (propriétés, filtre, lignes)
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. Lecture du coffre (paquets parallèles) /////////////////////////
 
 type Row = { relPath: string; name: string; props: Record<string, string> };
 
@@ -79,6 +87,8 @@ export function TablesScreen({ theme, onOpenNote }: Props) {
       cancelled = true;
     };
   }, []);
+
+//////// 2. Dérivés et rendu (propriétés, filtre, lignes) //////////////////
 
   const propKeys = useMemo(() => {
     const keys = new Set<string>();

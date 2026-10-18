@@ -3,22 +3,31 @@ import { StyleSheet, Text, View } from 'react-native';
 
 import { usePreferences } from '../../preferences/PreferencesContext';
 
-// Éditeur Excalidraw — SQUELETTE seulement cette session (voir
-// .claude/References/Sources.md §3 « Les excalidraws » et le plan de cette
-// revue) : reconnaît le `kind` 'excalidraw' de bout en bout (extension
+// ✒️ 123ECRITURE — components/editors/ExcalidrawEditor.tsx — éditeur Excalidraw (squelette)
+//////////////////////////////////////////////////////////////////////////////
+//
+// Reconnaît le `kind` 'excalidraw' de bout en bout (extension
 // `.excalidraw`, icône, création depuis le menu contextuel, ouverture) et
-// LIT le fichier (avec repli sur une scène vide en cas d'erreur, même
-// pattern que ChartEditor.tsx/CanvasEditor.tsx), mais n'affiche pas encore
-// de vrai outil de dessin — `@excalidraw/excalidraw` n'est pas ajouté cette
-// session (aucune trace dans le repo, décision de scope explicite). Pas
-// d'autosauvegarde ici : rien à écrire tant qu'aucune interaction de dessin
-// n'existe — à ajouter (même délai `600ms` que les autres éditeurs de
-// fichiers) quand le vrai outil arrivera dans une session future.
+// LIT le fichier — avec repli sur une scène vide en cas d'erreur, même
+// pattern que ChartEditor.tsx/CanvasEditor.tsx. N'affiche pas encore de
+// vrai outil de dessin : `@excalidraw/excalidraw` n'est pas une dépendance
+// du dépôt. Pas d'autosauvegarde : rien à écrire tant qu'aucune
+// interaction de dessin n'existe.
+//
+// SOMMAIRE :
+//   1. Données (scène vide par défaut)
+//   2. Composant (lecture du fichier, écran d'attente)
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. Données (scène vide par défaut) /////////////////////////////////
 type Props = {
   relPath: string;
 };
 
 const EMPTY_DATA: ExcalidrawData = { type: 'excalidraw', version: 2, elements: [], appState: {} };
+
+//////// 2. Composant (lecture du fichier, écran d'attente) /////////////////
 
 export function ExcalidrawEditor({ relPath }: Props) {
   const { theme } = usePreferences();

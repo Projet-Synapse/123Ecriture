@@ -5,17 +5,39 @@ import Svg, { Circle, Line, Text as SvgText } from 'react-native-svg';
 import { SliderField } from '../properties/SliderField';
 import type { Theme } from '../../theme';
 
-// VUE GRAPHIQUE v2 (v0.4.38) — d'après les captures d'Obsidian fournies :
-// - graphe DANS la page (plus de scroll horizontal) : nœuds colorés +
-//   NOMS affichés, ZOOM boutons, arêtes épaisses rosées comme la capture ;
-// - PANNEAU DE RÉGLAGES à droite (comme Obsidian) : recherche, filtre
-//   orphelins, taille des nœuds, épaisseur des liens, seuil du texte, et
-//   les 4 FORCES (centrale, répulsion, liaison, distance) qui relancent le
-//   layout en direct ;
-// - clic sur le NOM d'un nœud = ouvrir la note.
+// ✒️ 123ECRITURE — components/editors/GraphView.tsx — vue graphique du coffre (graphe de liens)
+//////////////////////////////////////////////////////////////////////////////
 //
-// Layout : simulation de forces MAISON (répulsion + ressorts + centre),
-// relancée quand les curseurs de forces changent. Pure et testée.
+// Graphe de liens façon Obsidian : nœuds = notes (couleur par dossier,
+// rayon selon le nombre de liens), arêtes = [[liens internes]], clic sur
+// un nom = ouvrir la note. La construction (buildGraph) et la simulation
+// de forces (runForceLayout) sont des fonctions pures exportées et
+// testées ; le composant charge le coffre (lectures en parallèle par
+// paquets), relance le layout quand les curseurs changent (débouncés) et
+// rend le tout en react-native-svg, avec zoom (molette/boutons), pan au
+// glisser et panneau de réglages redimensionnable (recherche, filtre
+// orphelins, tailles, 4 forces).
+//
+// Invariants du fichier :
+//   • L'index des liens est DOUBLE (nom avec et sans extension) : un lien
+//     `[[Note]]` et un lien `[[Note.md]]` retrouvent la même note.
+//   • Les lectures de contenu sont limitées à 500 notes et concurrentes à
+//     12 : sur le pont SAF Android, une lecture ≈ une ouverture de document.
+//   • Le layout repart TOUJOURS d'une copie fraîche des positions de base
+//     (baseNodesRef) — les curseurs relancent une simulation, ils ne
+//     l'ajustent pas à chaud.
+//   • Le layout est purement synchrone et borné (iterations, refroidissement,
+//     pas borné) : jamais de boucle infinie sur un graphe dégénéré.
+//
+// SOMMAIRE :
+//   1. Construction du graphe (liens, index, dédoublonnage)
+//   2. Simulation de forces et couleur des dossiers
+//   3. État du composant et chargement du coffre
+//   4. Dérivés, zoom/pan et rendu (svg, poignée, panneau)
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. Construction du graphe (liens, index, dédoublonnage) ///////////
 
 export type GraphNode = {
   id: string;
@@ -50,14 +72,9 @@ export function buildGraph(
   const byName = new Map<string, string>();
 
   // Affichage et liens s'appuient sur le nom SANS extension (« Note » et
-  // non « Note.md ») — mais l'arbre natif Android a longtemps livré le nom
-  // AVEC extension (divergence avec le desktop corrigée dans
-  // nativeVaultAdapter), et certains liens l'écrivent explicitement
+  // non « Note.md ») — mais certains liens l'écrivent explicitement
   // (« [[Note.md]] ») : les DEUX formes sont indexées pour que les
-  // `[[liens internes]]` soient retrouvés dans tous les cas. Avant ce
-  // double index, les cibles sans extension ne matchaient jamais le nom
-  // indexé avec « .md » sur le téléphone : graphe chargé avec 0 liens
-  // (vécu A13, 2026-10-03).
+  // `[[liens internes]]` soient retrouvés dans tous les cas.
   const baseNameOf = (name: string): string => {
     const dot = name.lastIndexOf('.');
     return dot > 0 ? name.slice(0, dot) : name;
@@ -110,6 +127,8 @@ export function buildGraph(
   }
   return { nodes, edges };
 }
+
+//////// 2. Simulation de forces et couleur des dossiers ///////////////////
 
 export type ForceOptions = { centrale: number; repulsion: number; liaison: number; distance: number };
 
@@ -167,6 +186,8 @@ export function folderColor(folder: string): string {
   return FOLDER_PALETTE[Math.abs(hash) % FOLDER_PALETTE.length];
 }
 
+//////// 3. État du composant et chargement du coffre //////////////////////
+
 type Props = {
   theme: Theme;
   onOpenNote: (relPath: string) => void;
@@ -178,19 +199,18 @@ export function GraphView({ theme, onOpenNote }: Props) {
   const [loading, setLoading] = useState(true);
   const [recherche, setRecherche] = useState('');
   const { width, height } = useWindowDimensions();
-  // Sur téléphone, le panneau de réglages démarre REPLIÉ : à 300 px de
-  // large il masquait la moitié du graphe (constat 2026-10-03) — le bouton
-  // ⚙ permet de l'ouvrir. Sur grand écran : ouvert comme avant.
+  // Sur téléphone, le panneau de réglages démarre REPLIÉ (à 300 px il
+  // masquait la moitié du graphe) — le bouton ⚙ l'ouvre. Sur grand écran
+  // (≥ 720) : ouvert par défaut.
   const [panneau, setPanneau] = useState(width >= 720);
   // Sur un écran étroit (mobile), la largeur persistée du panneau (pensée
   // desktop, jusqu'à 520) masquait tout le graphe — plafond : la moitié de
   // l'écran. Le plafond se calcule sur la largeur MESURÉE du conteneur
   // (onLayout) et non sur useWindowDimensions : sur certains téléphones
-  // (zoom d'affichage Samsung, vécu A13 2026-10-04) les deux échelles
-  // DIFFÈRENT — le mélange rendait le panneau figé au plafond, insensible
-  // à la poignée dans les deux sens. `panneauWidth === null` = pas encore
-  // déplié/redimensionné : la valeur par défaut (300, pensée desktop)
-  // s'applique, plafonnée.
+  // (zoom d'affichage système) les deux échelles DIFFÈRENT — le mélange
+  // rend le panneau figé au plafond, insensible à la poignée dans les deux
+  // sens. `panneauWidth === null` = pas encore déplié/redimensionné : la
+  // valeur par défaut (300, pensée desktop) s'applique, plafonnée.
   const [rowWidth, setRowWidth] = useState(0);
   const panneauCap = rowWidth > 0 ? Math.round(rowWidth * 0.5) : Math.round(width * 0.5);
   const [panneauWidth, setPanneauWidth] = useState<number | null>(null);
@@ -219,9 +239,9 @@ export function GraphView({ theme, onOpenNote }: Props) {
 
   useEffect(() => {
     const load = async () => {
-      // Le garde est DANS le try : avant, un retour anticipé (pas de pont
-      // vault au montage) court-circuitait le finally et laissait
-      // « Construction du graphe… » à l'écran pour toujours.
+      // Le garde est DANS le try : un retour anticipé (pas de pont vault
+      // au montage) ne doit pas court-circuiter le finally, sinon
+      // « Construction du graphe… » reste à l'écran pour toujours.
       try {
         const vault = typeof window === 'undefined' ? undefined : window.vault;
         if (!vault) return;
@@ -236,11 +256,9 @@ export function GraphView({ theme, onOpenNote }: Props) {
         walk(tree);
         const contents: Record<string, string> = {};
         // Lectures en parallèle à concurrence fixe : sur le coffre natif
-        // Android (SAF), une lecture = une ouverture de document, ~0,4 s
-        // chacune — en séquentiel, 200+ notes tenaient l'écran sur
-        // « Construction du graphe… » pendant 1 à 2 minutes (vécu A13,
-        // 2026-10-03, lecture suivie comme un chargement infini). Un pool
-        // de 12 divise le temps par ~10 sans saturer le pont SAF.
+        // Android (SAF), une lecture = une ouverture de document (~0,4 s) —
+        // en séquentiel, 200+ notes figeaient l'écran 1 à 2 minutes. Un
+        // pool de 12 divise le temps par ~10 sans saturer le pont SAF.
         const queue = notes.slice(0, 500);
         await Promise.all(
           Array.from({ length: Math.min(12, queue.length) }, async () => {
@@ -264,6 +282,8 @@ export function GraphView({ theme, onOpenNote }: Props) {
     };
     void load();
   }, []);
+
+//////// 4. Dérivés, zoom/pan et rendu (svg, poignée, panneau) /////////////
 
   const recompute = (next: ForceOptions) => {
     setForces(next);
@@ -292,8 +312,8 @@ export function GraphView({ theme, onOpenNote }: Props) {
   const spanY = Math.max(1, bounds.maxY - bounds.minY);
   const fitScale = Math.min((width - (panneau ? panneauEffectif + 40 : 80)) / spanX, (height - 150) / spanY, 3);
   const [zoom, setZoom] = useState(1);
-  // PAN (v0.4.39) : décalage du graphe dans son cadre — molette = zoom vers
-  // le curseur, glisser = déplacer, boutons +/- conservés.
+  // PAN : décalage du graphe dans son cadre — molette = zoom, glisser =
+  // déplacer, boutons +/- conservés.
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const scale = fitScale * zoom;
   const toScreenX = (x: number) => (x - bounds.minX) * scale + 30 + pan.x;
@@ -328,10 +348,9 @@ export function GraphView({ theme, onOpenNote }: Props) {
         ) : (
           <View
             style={[styles.graphBox, { backgroundColor: `${theme.border}33`, marginHorizontal: 12 }]}
-            // MOLETTE = zoom (v0.4.39 — demande explicite), GLISSER = pan.
-            // wheel n'est pas une prop RN : transmis tel quel par
-            // react-native-web jusqu'au div (même échappatoire que
-            // draggable dans VaultTreeView).
+            // MOLETTE = zoom, GLISSER = pan. wheel n'est pas une prop RN :
+            // transmis tel quel par react-native-web jusqu'au div (même
+            // échappatoire que draggable dans VaultTreeView).
             // @ts-expect-error prop web-only (voir commentaire)
             onWheel={(e: WheelEvent) => {
               e.preventDefault();
@@ -409,9 +428,8 @@ export function GraphView({ theme, onOpenNote }: Props) {
       {panneau && (
         // View (PAS Pressable) : Pressable gère SES propres responders et
         // n'expose pas proprement onStartShouldSetResponder personnalisé —
-        // la poignée ne capte alors jamais le geste (vécu : « la poignée de
-        // la vue graphique ne fonctionne pas », 2026-10-04). Le pattern
-        // View+responders est celui de ResizeHandle.tsx, qui fonctionne.
+        // la poignée ne capte alors jamais le geste. Le pattern
+        // View+responders est celui de ResizeHandle.tsx.
         <View
           style={[
             styles.resizeHandle,
@@ -454,10 +472,10 @@ export function GraphView({ theme, onOpenNote }: Props) {
             {
               borderLeftColor: theme.border,
               width: panneauEffectif,
-              // Sur certains réglages d'affichage (zoom Samsung), la largeur
-              // fixe était ignorée au profit de la largeur du CONTENU
-              // (panneau figé à ~276 dp, insensible à la poignée — vécu
-              // A13, 2026-10-04) : flexGrow/Shrink à 0 force la largeur.
+              // Sur certains réglages d'affichage (zoom système), la largeur
+              // fixe est ignorée au profit de la largeur du CONTENU (panneau
+              // figé, insensible à la poignée) : flexGrow/Shrink à 0 force
+              // la largeur.
               flexGrow: 0,
               flexShrink: 0,
             },

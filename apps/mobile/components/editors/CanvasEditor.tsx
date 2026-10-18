@@ -18,23 +18,38 @@ import { DraggablePressable } from '../vault/VaultTreeView';
 import { EditorToolbar } from './EditorToolbar';
 import { SvgOverlay, type OverlayLine } from './SvgOverlay';
 
-// Éditeur Canvas — cartes (texte ou référence à une note) reliées par des
-// flèches sur un plan pannable. Scopé à UN fichier `.canvas` du vault
-// (`relPath`), ouvert/fermé/renommé/déplacé comme n'importe quel fichier de
-// l'arborescence (voir NotesScreen.tsx) — plus de registre multi-canvas
-// séparé (voir la révision documentée dans le plan/la mémoire du projet;
-// anciennement CanvasScreen.tsx). Dégraissé pour un v0 (voir le plan) — pas
-// de redimensionnement de carte, pas de zoom (panoramique seul), flèches en
-// ligne droite. Le "monde" est grand mais BORNÉ (WORLD_SIZE), pas
-// littéralement infini.
+// ✒️ 123ECRITURE — components/editors/CanvasEditor.tsx — éditeur de canvas (cartes reliées)
+//////////////////////////////////////////////////////////////////////////////
 //
-// Toutes les interactions (glisser une carte, tirer une connexion,
-// panoramiquer le fond) réutilisent le MÊME mécanisme HTML5
-// draggable + évènements délégués sur le conteneur que le reste de l'app
-// (voir VaultTreeView.tsx/NotesScreen.tsx) — la différence ici est qu'on
-// suit la position en continu via l'évènement `drag` (qui se répète
-// pendant tout le geste), pas seulement au `drop`, pour un retour visuel
-// fluide pendant qu'on glisse/panoramique.
+// Éditeur d'un fichier `.canvas` du coffre (scopé à `relPath`, ouvert/
+// fermé/renommé comme n'importe quel fichier de l'arborescence, voir
+// NotesScreen.tsx) : cartes — texte ou référence à une note — reliées par
+// des flèches sur un plan pannable. Volontairement un v0 : pas de
+// redimensionnement de carte, pas de zoom (panoramique seul), flèches en
+// ligne droite. Le "monde" est grand mais BORNÉ (WORLD_SIZE).
+//
+// Invariants du fichier :
+//   • Toutes les interactions (glisser une carte, tirer une connexion,
+//     panoramiquer le fond) réutilisent le mécanisme HTML5 draggable +
+//     évènements délégués sur le conteneur (voir VaultTreeView.tsx/
+//     NotesScreen.tsx) — en suivant la position en continu via `drag`,
+//     pas seulement au `drop`.
+//   • Le déplacement d'une carte ne sauvegarde PAS à chaque frame :
+//     updateData(..., false) pendant `drag`, scheduleSave au `drop`.
+//   • Un .canvas vide ou au JSON invalide ne fait JAMAIS crasher l'éditeur
+//     au montage — repli sur EMPTY_DATA.
+//   • Desktop/web uniquement (DOM draggable) — un écran de repli couvre
+//     l'absence de pont vault.
+//
+// SOMMAIRE :
+//   1. État du composant et persistance (chargement, autosave)
+//   2. Cartes et barre d'outils
+//   3. Glisser, panoramique et connexions (écouteurs délégués)
+//   4. Rendu (surface, monde, cartes) et styles
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. État du composant et persistance (chargement, autosave) ////////
 const AUTOSAVE_DELAY_MS = 600;
 const VIEWPORT_WIDTH = 800;
 const VIEWPORT_HEIGHT = 520;
@@ -93,10 +108,9 @@ export function CanvasEditor({ relPath, onOpenNote }: Props) {
     if (!vault) return;
     try {
       const content = await vault.readNote(relPath);
-      // Un .canvas vide ou au JSON sans nodes/edges (fichier tronqué, gabarit
-      // minimal, contenu hérité d'Obsidian) ne doit JAMAIS faire crasher
-      // l'éditeur au montage — écran blanc complet de l'app vécu v0.4.23
-      // quand ce fichier était rouvert automatiquement au démarrage.
+      // Un .canvas vide ou au JSON sans nodes/edges (fichier tronqué,
+      // gabarit minimal, contenu hérité d'Obsidian) ne doit JAMAIS faire
+      // crasher l'éditeur au montage — repli sur EMPTY_DATA.
       if (content.trim()) {
         try {
           const parsed = JSON.parse(content) as Partial<CanvasData> | null;
@@ -154,7 +168,7 @@ export function CanvasEditor({ relPath, onOpenNote }: Props) {
     [scheduleSave],
   );
 
-  // --- Cartes ---
+//////// 2. Cartes et barre d'outils ///////////////////////////////////////
 
   const addTextCard = () => {
     const jitter = () => (Math.random() - 0.5) * 120;
@@ -206,7 +220,7 @@ export function CanvasEditor({ relPath, onOpenNote }: Props) {
     }));
   };
 
-  // --- Glisser/panoramiquer/connecter — écouteurs délégués sur la surface ---
+//////// 3. Glisser, panoramique et connexions (écouteurs délégués) ////////
 
   useEffect(() => {
     const surface = surfaceRef.current as unknown as HTMLElement | null;
@@ -324,6 +338,8 @@ export function CanvasEditor({ relPath, onOpenNote }: Props) {
       surface.removeEventListener('dragend', handleDragEnd);
     };
   }, [updateData, scheduleSave]);
+
+//////// 4. Rendu (surface, monde, cartes) et styles ///////////////////////
 
   if (!vault) {
     return (

@@ -9,22 +9,37 @@ import { buildCodeLinter } from '../../lib/editor/codeLint';
 import { EDITOR_FONT_STACKS, enableOsEmojiInsertion } from './MdxEditor';
 import type { Theme } from '../../theme';
 
-// Éditeur de fichiers CODE (.py/.ts/.js/.json/…) — v0.4.46, demande de
-// l'utilisatrice : « lire n'importe quels fichiers code comme Visual Studio
-// Code, avec les soulignements rouges et jaunes des erreurs et
-// avertissements ». SÉPARÉ de MdxEditor : pas de Live Preview markdown, pas
-// d'autocomplétion [[liens]]/{{occurrences}}, pas de bloc Propriétés — un
-// CodeMirror brut avec :
-// - le LANGAGE du fichier (coloration syntaxique, voir lib/codeLanguages.ts ;
-//   langages dédiés = parseur Lezer complet, legacy = coloration seule) ;
+// ✒️ 123ECRITURE — components/editors/CodeEditor.tsx — éditeur de fichiers code (VS Code-like)
+//////////////////////////////////////////////////////////////////////////////
+//
+// Éditeur de fichiers CODE (.py/.ts/.js/.json/…) — lire n'importe quel
+// fichier code comme Visual Studio Code, avec les soulignements rouges et
+// jaunes des erreurs et avertissements. SÉPARÉ de MdxEditor : pas de Live
+// Preview markdown, pas d'autocomplétion [[liens]]/{{occurrences}}, pas de
+// bloc Propriétés — un CodeMirror brut avec :
+// - le LANGAGE du fichier (coloration syntaxique, voir
+//   lib/codeLanguages.ts ; langages dédiés = parseur Lezer complet,
+//   legacy = coloration seule) ;
 // - le LINT (soulignements rouges erreurs / jaunes avertissements, voir
-//   lib/codeLint.ts — pas de serveur de langage : c'est le choix assumé de
-//   cette app, trop lourd pour sa machine cible) ;
+//   lib/codeLint.ts — pas de serveur de langage : choix assumé, trop
+//   lourd pour la machine cible) ;
 // - numéros de ligne + repli + ligne active (VS Code-like), recherche
 //   Ctrl/Cmd+F, insertion emoji système débloquée (enableOsEmojiInsertion,
 //   le bug Chromium ne connaît pas le type de fichier).
 //
-// Même intégration react-native-web que MdxEditor (DOM pur dans l'arbre RN).
+// Invariants du fichier :
+//   • Le langage et le linter sont recalculés seulement si le fichier
+//     change de nom/extension (renommage) — JAMAIS à la frappe.
+//   • Même intégration react-native-web que MdxEditor (DOM pur dans
+//     l'arbre RN) ; le `style` anti-flexbug du wrapper est identique.
+//
+// SOMMAIRE :
+//   1. Props (le nom du fichier choisit le langage)
+//   2. Thème et extensions CodeMirror
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. Props (le nom du fichier choisit le langage) ///////////////////
 type Props = {
   value: string;
   onChange: (text: string) => void;
@@ -36,6 +51,8 @@ type Props = {
   fontFamily?: EditorFontFamily;
   onReady?: (ref: ReactCodeMirrorRef) => void;
 };
+
+//////// 2. Thème et extensions CodeMirror /////////////////////////////////
 
 export function CodeEditor({ value, onChange, fileName, theme, fontSize = 14, fontFamily = 'mono', onReady }: Props) {
   const editorTheme = useMemo(

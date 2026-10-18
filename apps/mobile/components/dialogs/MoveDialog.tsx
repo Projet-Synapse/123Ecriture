@@ -5,17 +5,36 @@ import { collectFolderOptions } from '../../lib/notes/vaultTree';
 import { useScrollIntoView } from '../../lib/ui/useScrollIntoView';
 import type { Theme } from '../../theme';
 
-// Boîte de dialogue "Déplacer vers…" — une liste de dossiers plutôt que du
-// glisser-déposer : plus simple et plus fiable à vérifier sans navigateur
-// réel sous la main. Le glisser-déposer reste possible plus tard si
-// vraiment souhaité.
+// ✒️ 123ECRITURE — components/dialogs/MoveDialog.tsx — dialogue « Déplacer vers… »
+//////////////////////////////////////////////////////////////////////////////
 //
-// Champ de filtre + navigation clavier (↓↑ + Entrée, même idiome que
-// CommandPalette.tsx/SearchDialog.tsx) : sur un vault à nombreux dossiers,
-// la liste dépassait vite sa hauteur maximale et se parcourait uniquement
-// à la molette — le filtre réduit, les flèches parcourent, Entrée déplace,
-// et la sélection reste dans la zone visible (useScrollIntoView). Échap
-// reste géré par le onRequestClose du Modal (react-native-web).
+// Déplacement par liste de dossiers plutôt que par glisser-déposer :
+// filtrable, navigable au clavier (↓↑ + Entrée, même idiome que
+// CommandPalette.tsx/SearchDialog.tsx), sélection gardée dans la zone
+// visible (useScrollIntoView) ; Échap reste géré par le onRequestClose du
+// Modal. Sert au déplacement SIMPLE d'un nœud (prop `node`) ET au
+// déplacement GROUPÉ de la multi-sélection de NotesScreen (prop
+// `multiCount`).
+//
+// Invariants du fichier :
+//   • Filtre et sélection sont recalés à chaque OUVERTURE (signature du
+//     dialogue : relPath du nœud ou compte multi) — le composant reste
+//     monté en permanence chez NotesScreen, aucun état « oublié » d'une
+//     ouverture précédente ne ressort.
+//   • Les destinations désactivées (racine déjà courante, parent actuel)
+//     sont sautées par les flèches — jamais d'Entrée sans effet.
+//   • Les recalages (ouverture, filtre) se font PENDANT le rendu sur
+//     comparaison d'état (correctif documenté par React), pas dans un
+//     effet.
+//
+// SOMMAIRE :
+//   1. État du dialogue et options de destination
+//   2. Filtre, sélection et navigation clavier
+//   3. Rendu (modale) et styles
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. État du dialogue et options de destination /////////////////////
 type MoveOption = {
   // undefined = la racine du vault, présentée en tête de liste
   relPath: string | undefined;
@@ -78,6 +97,8 @@ export function MoveDialog({ node, tree, theme, onSelect, onCancel, multiCount }
       disabled: option.relPath === currentParent,
     })),
   ];
+
+//////// 2. Filtre, sélection et navigation clavier ////////////////////////
 
   const needle = filter.trim().toLowerCase();
   // Le filtre porte sur le nom affiché OU le chemin complet : chercher
@@ -147,6 +168,8 @@ export function MoveDialog({ node, tree, theme, onSelect, onCancel, multiCount }
     return () => window.removeEventListener('keydown', handleKeyDown);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visibleOptions, selectedIndex, isOpen]);
+
+//////// 3. Rendu (modale) et styles ///////////////////////////////////////
 
   if (!isOpen) return null;
 

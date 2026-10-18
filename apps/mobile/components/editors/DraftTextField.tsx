@@ -3,15 +3,32 @@ import { TextInput } from 'react-native';
 
 import type { Theme } from '../../theme';
 
-// Champ texte "à commit différé" — un brouillon local (state contrôlé, pas
+// ✒️ 123ECRITURE — components/editors/DraftTextField.tsx — champ texte à commit différé
+//////////////////////////////////////////////////////////////////////////////
+//
+// Champ texte "à commit différé" : un brouillon local (state contrôlé, pas
 // `defaultValue`) mis à jour à chaque frappe, mais qui ne remonte au parent
 // (`onCommit`) qu'au blur/à la validation. Évite de resérialiser toute la
-// donnée parente à chaque caractère tapé, et évite surtout d'aller lire la
-// valeur courante d'un `<input>` DOM sous-jacent via l'évènement natif RN
-// (fragile côté react-native-web) — le brouillon EST la source de vérité
-// entre deux commits. Extrait de PropertiesPanel.tsx (où il est né) pour
-// être réutilisé tel quel par TasksScreen.tsx (texte de tâche, description,
-// sous-étapes) — même besoin, pas de raison d'avoir un 3e exemplaire.
+// donnée parente à chaque caractère tapé, et évite d'aller lire la valeur
+// courante d'un <input> DOM sous-jacent via l'évènement natif RN (fragile
+// côté react-native-web) — le brouillon EST la source de vérité entre deux
+// commits. Partagé par PropertiesPanel.tsx et TasksScreen.tsx (texte de
+// tâche, description, sous-étapes).
+//
+// Invariant du fichier :
+//   • Le brouillon se resynchronise quand `initialValue` change VRAIMENT
+//     (autre élément sélectionné, valeur changée ailleurs) — ajustement
+//     pendant le rendu (correctif documenté par React pour réinitialiser
+//     un état dérivé d'une prop) : ni flash d'ancienne valeur, ni
+//     setState dans un effet.
+//
+// SOMMAIRE :
+//   1. Brouillon local et resynchronisation
+//   2. Rendu du TextInput
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. Brouillon local et resynchronisation ///////////////////////////
 export function DraftTextField({
   initialValue,
   onCommit,
@@ -43,6 +60,8 @@ export function DraftTextField({
   const commit = () => {
     if (draft !== initialValue) onCommit(draft);
   };
+
+  //////// 2. Rendu du TextInput /////////////////////////////////////////////
 
   return (
     <TextInput

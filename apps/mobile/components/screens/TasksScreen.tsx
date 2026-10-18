@@ -16,11 +16,50 @@ import { ConfirmDialog } from '../dialogs/ConfirmDialog';
 import { DraftTextField } from '../editors/DraftTextField';
 import { errorMessage } from '../../lib/errorMessage';
 
+// ✒️ 123ECRITURE — components/screens/TasksScreen.tsx — l'écran Tâches : navigateur de listes + fiches de tâches
+//////////////////////////////////////////////////////////////////////////////
+//
+// Module de productivité stocké dans le coffre (.123ecriture/tasks.json +
+// tasklists.json via les ponts window.tasks / window.taskLists — voir
+// apps/desktop/electron/tasks.ts). L'écran est un NAVIGATEUR plein espace :
+// dossiers repliables contenant des listes, chaque liste affichant toujours
+// son champ de création et ses tâches « à plat » (checkbox + texte
+// éditable) avec leur aperçu (description grise + sous-étapes cochables) ;
+// le chevron d'une tâche déplie sa fiche complète (description, échéance +
+// raccourcis, déplacement vers une autre liste, sous-étapes, pièces
+// jointes). Tri par échéance, masquage des terminées et rappels natifs
+// sont des préférences persistées.
+//
+// Invariants du fichier :
+//   • Un rendu qui échoue n'emporte jamais l'écran : frontières d'erreur
+//     PAR SECTION (en-tête, navigateur) puis PAR TÂCHE
+//     (TaskSectionBoundary).
+//   • Toute mutation passe par runListAction/runTaskAction : appel bridge →
+//     setTaskLists/setTasks du résultat → erreur visible sous l'en-tête.
+//   • tasks.json est une liste PLATE de tâches avec listId : le
+//     regroupement par liste (tasksByList) est relu directement du
+//     fichier, sans dépendre de la liste active du pont.
+//   • Supprimer une LISTE est destructif (cascade sur ses tâches, « panier
+//     jetable ») → ConfirmDialog ; supprimer un DOSSIER est non destructif
+//     (ses enfants remontent).
+//   • Tout ce qui touche le DOM (clic droit délégué, drag & drop HTML5,
+//     querySelectorAll) est web uniquement — garde Platform.OS !== 'web'.
+//
+// SOMMAIRE :
+//   1. Frontière d'erreur, props et état du composant
+//   2. Chargement et effets (listes, tâches, révélations, rappels)
+//   3. Actions sur les listes et les tâches
+//   4. Navigateur : dossiers, glisser-déposer, menus contextuels
+//   5. Rendu (tâche, navigateur récursif, écran) et styles
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. Frontière d'erreur, props et état du composant /////////////////
+
 // Frontière d'erreur PAR SECTION puis PAR TÂCHE : un rendu qui échoue ne
-// doit jamais emporter l'écran entier (vécu : « undefined is not a
-// function » affiché en plein écran, v0.4.60). La section touchée affiche
-// le message, le reste de l'écran reste utilisable, et l'erreur part dans
-// les logs (logcat) pour rester diagnostiquable.
+// doit jamais emporter l'écran entier. La section touchée affiche le
+// message, le reste de l'écran reste utilisable, et l'erreur part dans les
+// logs (logcat) pour rester diagnostiquable.
 class TaskSectionBoundary extends Component<{ label: string; children: ReactNode }, { error: Error | null }> {
   state = { error: null as Error | null };
   static getDerivedStateFromError(error: Error) { return { error }; }
@@ -39,19 +78,12 @@ class TaskSectionBoundary extends Component<{ label: string; children: ReactNode
   }
 }
 
-// Écran Tâches — module de productivité (voir docs/ARCHITECTURE.md §8).
-// Stocké dans le vault (.123ecriture/tasks.json + tasklists.json, voir
-// apps/desktop/electron/tasks.ts) — chaque coffre a son propre jeu de
-// LISTES nommées, chaque liste ses propres tâches. Une seule liste "active"
-// à la fois, même logique que le coffre actif (voir VaultsContext).
-//
-// Refonte façon Microsoft To Do (voir .claude/References/Sources.md §3) :
-// chaque tâche peut porter une description, des sous-étapes cochables et
-// des pièces jointes, et son texte reste éditable après création — les 4
-// manques que documentait l'ancienne version de ce commentaire sont
-// comblés. Une tâche "à plat" (checkbox + texte) reste la vue par défaut ;
-// cliquer son chevron déplie une "fiche" avec le reste, même idée que
-// PropertiesPanel.tsx/OccurrencesPanel.tsx pour les notes.
+// Écran Tâches — chaque coffre a son propre jeu de LISTES nommées, chaque
+// liste ses propres tâches ; une seule liste "active" à la fois, même
+// logique que le coffre actif (voir VaultsContext). Une tâche "à plat"
+// (checkbox + texte) est la vue par défaut ; son chevron déplie une
+// "fiche" avec le reste, même idée que PropertiesPanel.tsx/
+// OccurrencesPanel.tsx pour les notes.
 type Props = {
   // Révélation d'une tâche demandée par un AUTRE écran (recherche globale,
   // palette de commandes — voir App.tsx, `requestOpenTask`) : bascule sur la
@@ -105,12 +137,12 @@ export function TasksScreen({
   // Masquage des tâches terminées + tri par échéance — PRÉFÉRENCES
   // persistées (tasksHideCompleted/tasksSortByDueDate, voir
   // PreferencesContext) : ce sont des préférences de lecture stables, au
-  // même titre que fileSortMode pour les fichiers — une utilisatrice qui
-  // trie toujours par échéance ou masque toujours les terminées ne devait
-  // pas re-configurer à chaque lancement (l'ancien état de session local
-  // datait d'avant l'infrastructure de préférences de cet écran).
+  // même titre que fileSortMode pour les fichiers — pas de re-configuration
+  // à chaque lancement.
   const hideCompleted = preferences.tasksHideCompleted;
   const sortByDueDate = preferences.tasksSortByDueDate;
+//////// 2. Chargement et effets (listes, tâches, révélations, rappels) ////
+
   // Filtre texte local (titre + description, insensible à la casse) —
   // non persisté volontairement : un besoin de session, pas une préférence.
   const [filterDraft, setFilterDraft] = useState('');
@@ -207,6 +239,8 @@ export function TasksScreen({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingNewTaskToken, activeListId]);
 
+//////// 3. Actions sur les listes et les tâches ///////////////////////////
+
   const handleChooseFolder = async () => {
     if (!vault) return;
     try {
@@ -248,9 +282,9 @@ export function TasksScreen({
     [taskListsBridge, runListAction],
   );
 
-  // v0.4.40 : alias sémantique pour la barre latérale (même mécanique que
-  // le sélecteur historique) + tâches de TOUTES les listes (l'arborescence
-  // latérale montre chaque liste avec ses tâches, pas seulement l'active).
+  // Alias sémantique pour le navigateur (même mécanique que
+  // handleSwitchList) : le navigateur montre chaque liste avec ses tâches,
+  // pas seulement l'active.
   const selectList = handleSwitchList;
   const [tasksByList, setTasksByList] = useState<Record<string, Task[]>>({});
   useEffect(() => {
@@ -476,12 +510,11 @@ export function TasksScreen({
     [tasksBridge, runTaskAction, tasks],
   );
 
-  // //x. 🗂️ NAVIGATEUR — dossiers, sections, glisser-déposer (v0.4.48,
-  // demandes utilisateur : navigateur collé à la barre latérale et élargi,
-  // aperçu cochable des sous-étapes sous chaque tâche, réorganisation par
-  // glisser-déposer, création par bouton « + » ou clic droit). Les items du
-  // navigateur sont des TaskList : une entrée `isFolder` est un DOSSIER de
-  // listes (voir types/global.d.ts — stockée dans le même tasklists.json).
+//////// 4. Navigateur : dossiers, glisser-déposer, menus contextuels //////
+
+  // Les items du navigateur sont des TaskList : une entrée `isFolder` est
+  // un DOSSIER de listes (voir types/global.d.ts — stockée dans le même
+  // tasklists.json).
   const [openFolderIds, setOpenFolderIds] = useState<string[]>([]);
   const toggleFolder = useCallback((id: string) => {
     setOpenFolderIds((prev) => (prev.includes(id) ? prev.filter((entry) => entry !== id) : [...prev, id]));
@@ -542,9 +575,8 @@ export function TasksScreen({
   // y déplace l'item, un dépôt SUR une liste réordonne avant elle.
   const navigatorRef = useRef<View>(null);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
-  // v0.4.61 — garde WEB obligatoire : ce code manipule le DOM (drag & drop
-  // HTML5) qui n'existe pas en natif — sur Android, l'effet plantait
-  // (« undefined is not a function » à l'ouverture de Tâches, vécu).
+  // Garde WEB obligatoire : ce code manipule le DOM (drag & drop HTML5)
+  // qui n'existe pas en natif — crash à l'ouverture sur Android sinon.
   useEffect(() => {
     if (Platform.OS !== 'web') return;
     const container = navigatorRef.current as unknown as HTMLElement | null;
@@ -599,7 +631,7 @@ export function TasksScreen({
 
   // Pose l'attribut HTML `draggable` réel sur chaque ligne — react-native-
   // web ne transmet pas `draggable` via les props (voir NotesScreen.tsx,
-  // même contournement documenté). WEB uniquement (v0.4.61) : sur natif,
+  // même contournement documenté). WEB uniquement : sur natif,
   // querySelectorAll n'existe pas sur les refs — crash à l'ouverture.
   useEffect(() => {
     if (Platform.OS !== 'web') return;
@@ -741,6 +773,8 @@ export function TasksScreen({
     );
   }
 
+//////// 5. Rendu (tâche, navigateur récursif, écran) et styles ////////////
+
   // Filtre global de l'en-tête : s'applique aux tâches de TOUTES les
   // listes (chaque liste filtre ses propres tâches au rendu, voir
   // renderScopeItems).
@@ -762,8 +796,7 @@ export function TasksScreen({
   };
 
   const renderTask = (task: Task) => {
-    // GARDE DÉFENSIVE (v0.4.69 — le crash « undefined is not a function »
-    // du rendu de tâche) : une tâche arrivant d'un fichier ou d'une version
+    // GARDE DÉFENSIVE : une tâche arrivant d'un fichier ou d'une version
     // sans ces champs ne doit JAMAIS faire crasher l'écran entier. Les
     // défauts reprennent ceux de normalizeTask des ponts.
     const safeTask: Task = {
@@ -1008,9 +1041,9 @@ export function TasksScreen({
     );
   };
 
-  // //y. 🌳 RENDU DU NAVIGATEUR — récursif : dossiers (repliables) puis
-  // listes ; chaque liste affiche TOUJOURS ses tâches : champ de création,
-  // aperçu cochable (description grise, sous-étapes) et fiche dépliable.
+  // Rendu RÉCURSIF du navigateur : dossiers (repliables) puis listes ;
+  // chaque liste affiche TOUJOURS ses tâches : champ de création, aperçu
+  // cochable (description grise, sous-étapes) et fiche dépliable.
   const renderScopeItems = (folderId: string | null, depth: number): ReactNode[] => {
     const items = sortNavigatorItems(taskLists.filter((entry) => (entry.folderId ?? null) === folderId));
     return items.map((item) => {
@@ -1178,10 +1211,9 @@ export function TasksScreen({
     });
   };
 
-  // v0.4.60-DIAG : frontières d'erreur par section — localise le crash
-  // Android « undefined is not a function » en affichant le message + la
-  // section à l'écran (le stack release est anonyme, illisible). À
-  // RETIRER après diagnostic.
+  // Frontières d'erreur par section : un crash dans l'en-tête ou dans le
+  // navigateur affiche le message + la section à l'écran au lieu de vider
+  // tout l'écran (le stack release est anonyme, illisible).
   return (
     <View style={[styles.container, styles.navigatorScreen]}>
       <TaskSectionBoundary label="en-tête">
@@ -1340,11 +1372,9 @@ export function TasksScreen({
 
 
 const styles = StyleSheet.create({
-  // v0.4.48 : l'écran est UN navigateur plein espace, collé à la barre
-  // latérale principale — l'ancien conteneur se centrait avec maxWidth 560
-  // (grand vide à gauche de la sidebar des tâches, capture rapportée) et
-  // la colonne d'édition à droite est remplacée par les fiches dépliables
-  // du navigateur lui-même.
+  // L'écran est UN navigateur plein espace, collé à la barre latérale
+  // principale ; la colonne d'édition d'origine est remplacée par les
+  // fiches dépliables du navigateur lui-même.
   navigatorScreen: {
     gap: 10,
     padding: 12,
