@@ -14,7 +14,7 @@ import { registerSyncHandlers } from './sync';
 import { registerTasksHandlers } from './tasks';
 import { checkOnStartup, registerUpdaterHandlers } from './updater';
 import { registerVaultHandlers } from './vault';
-import { registerVaultsHandlers } from './vaults';
+import { getActiveVaultPath, registerVaultsHandlers } from './vaults';
 
 // Phase 1 : fenêtre qui charge le renderer web d'Expo (partagé avec
 // apps/mobile) + le vault local (accès fs natif, voir vault.js et
@@ -168,6 +168,35 @@ if (!gotSingleInstanceLock) {
   app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') {
       app.quit();
+    }
+  });
+
+  // v0.4.81 — E1 de la spec (demande de l'utilisatrice) : « A chaque fois
+  // qu'on éteint 123Ecriture, le journal annonce "Déconnecté au serveur".
+  // Dans ce cas, nos données sont sauvegardées (même en cas de crash,
+  // cela est fait). » L'entrée est écrite PAR LE MAIN PROCESS au moment du
+  // quit : le renderer peut déjà être déchargé. Les données, elles, sont
+  // déjà sur disque (sync-state/journal/revue écrits à chaque cycle).
+  app.on('before-quit', () => {
+    try {
+      const vaultPath = getActiveVaultPath();
+      if (!vaultPath) return;
+      const journalPath = path.join(vaultPath, '.123ecriture', 'sync-journal.json');
+      let entries: unknown[] = [];
+      try {
+        entries = JSON.parse(fs.readFileSync(journalPath, 'utf-8'));
+        if (!Array.isArray(entries)) entries = [];
+      } catch {
+        entries = [];
+      }
+      entries.push({
+        t: new Date().toISOString(),
+        type: 'deconnexion',
+        detail: 'Déconnecté du serveur — données sauvegardées',
+      });
+      fs.writeFileSync(journalPath, JSON.stringify(entries, null, 2), 'utf-8');
+    } catch {
+      // La fermeture ne doit JAMAIS échouer à cause du journal.
     }
   });
 }

@@ -8,6 +8,13 @@
 > Compléter à chaque incident nouveau — une hypothèse démentie est une
 > information aussi précieuse qu'une cause trouvée.
 
+## 🎮 Règles du jeu (méthode imposée par Catelina, 18/10)
+
+1. **Inscription automatique** : chaque problème PERSISTANT annoncé par Catelina est inscrit ici, sans délai.
+2. **Élimination** : chaque problème a SA table d'hypothèses. **Une seule hypothèse peut être confirmée par problème** — les autres sont ÉLIMINÉES une à une par un test (une preuve, jamais une intuition). Plusieurs hypothèses cohabitent tant qu'elles ne sont pas départagées.
+3. **Le verdict final appartient à Catelina** : quand elle constate que le problème a DISPARU, l'hypothèse survivante est confirmée — **c'est GAGNÉ**.
+4. **Score de l'assistant** : 0 problème confirmé-résolu (le jeu commence le 18/10).
+
 ---
 
 ## 1. Coffres mélangés (contenu d'un coffre qui apparaît dans un autre)
@@ -129,3 +136,25 @@
 | 11.2 | Le journal PC 0.4.80 répétait « suppression distante appliquée (corbeille) » sur `.123ecriture/preferences.json` = BOUCLE : l'app recrée son fichier système à chaque lancement, le cloud (tombstone posée par le téléphone périmé) le re-supprime à chaque cycle | ✅ PROUVÉE | Journal 13:50→13:53 (3 cycles, suppression re-appliquée). FIX : les 4 tombstones système levées via API (204). 45 tombstones restantes (.trash, « à cacher », tests, MODÈLES — AUCUN fichier d'écriture) : la revue humaine tranchera, copies dans `rescue-1802\`. |
 | 11.3 | Le verrou du portable posé la veille n'avait PAS tenu (locked=False au 18/10) : l'UPDATE API d'alors visait le mauvais profil → 404 PGRST205 silencieux | ✅ PROUVÉE | Requêtes GET (Accept-Profile) 200 mais PATCH/DELETE 404 « public.vault_devices ». RÈGLE PostgREST : **lectures = `Accept-Profile`, écritures = `Content-Profile`** (leçon déjà apprise avec les DELETE de tombstones). Verrou re-posé avec Content-Profile → 200, locked=true. |
 | 11.4 | Le PULL ne répare PAS les fichiers vivants au cloud mais absents du disque quand le sync-state les croit présents : « disque absent + state présent + cloud identique » = « rien à faire » → l'absence devient PERMANENTE | ✅ PROUVÉE (mécanisme) | Le dossier GAMEPLAY sans NARRATION au disque pendant que ses 4 fichiers restaient vivants au cloud (17-18/10) — aucune re-téléchargement en plusieurs cycles. C'est l'écart E6 de la spec (zéro cache menteur) : la reconstruction disque+cloud à chaque indexation est LE fix. |
+
+## 12. « Les modifications sont perçues comme des conflits » — SYSTÉMATIQUE (18/10, demandé par l'utilisatrice)
+
+**Constat de l'utilisatrice : le conflit se produit À CHAQUE modification, de façon systématique. Reproduit par l'assistant le même jour en un seul cycle (15:20, fichier « Programme ∆.md »).**
+
+### La table d'élimination
+
+| # | Hypothèse | Statut | Comment elle entre ou sort du jeu |
+|---|-----------|--------|-----------------------------------|
+| 12.H1 | Un problème RÉSEAU fait échouer des pushes → conflits inventés au cycle suivant | ❌ **ÉLIMINÉE par Catelina** (18/10 : « Ce n'est pas un problème de réseau ! C'est systématique ») | Reproduction du 18/10 avec **0 erreur** réseau à aucun cycle. Le mécanisme code existe bien (state écrit même si le push échoue) mais il ne peut pas produire la SYSTÉMATICITÉ constatée. |
+| 12.H2 | **LA BOUCLE MTIME** : le classeur de décisions tranche « conflit » par mtime-fichier ≥ updated_at-cloud. Or (a) toute modification fraîche met le mtime du fichier DEVANT le dernier push du cloud, et (b) après chaque fusion, le fichier est réécrit APRÈS l'enregistrement cloud — donc le cycle suivant re-déclare un conflit, re-fusionne, re-réécrit… **à chaque modification, sans autre appareil** | 🎲 **SURVIVANTE — fix implémenté, à valider par Catelina** | Preuves accumulées : le diff ne consultait PAS le sync-state (diff.ts, classement mtime pur) ; reproduction 15:20 (« synchronisation différée » à 15:20:00, fusion à 15:20:01) ; un cas sain (création refroidie) ne produit PAS de conflit. Le fix : le diff 3-voies (une modification d'un fichier dont le cloud porte le hash connu = un PUSH, jamais un conflit) + garde chaud sur la fusion (un fichier ouvert est DIFFÉRÉ, jamais fusionné à chaud) |
+| 12.H3 | **LE STATE PRÉ-FUSION** : après une fusion, le sync-state enregistre le hash d'INDEXATION (pris avant la fusion) au lieu du hash du fichier fusionné réellement écrit et poussé → la divergence « résolue » est recréée à chaque cycle | 🔗 **Composante de H2 — même fix, même verdict** | Empreintes du 18/10 : disque = cloud = `d5a3635d…` (fusion) mais state = `9e22b78c…` (pré-fusion). Fix : `attemptConflictMerge` retourne le hash RÉEL du fichier fusionné → enregistré comme référence. Si H2 est confirmée, H3 l'est avec elle (même boucle) ; si le problème persiste, les deux retournent en test |
+| 12.✅ | **VERDICT À JOUER** : Catelina modifie un fichier (ouvert à l'écran), quitte, attend les cycles → **plus AUCUN « conflit » annoncé, seulement « modification »** | 🎲 en attente | Le fix vit dans la 0.4.81. Si le conflit revient : H2/H3 éliminées à leur tour et nouvelles hypothèses à poser |
+
+### Les faits établis (hors jeu — ils servent aux éliminations)
+
+| # | Fait | Preuve |
+|---|------|--------|
+| 12.F1 | Le garde chaud ne couvrait PAS le chemin `conflict-push-wins` : un fichier ouvert était listé « synchronisation différée » puis fusionné 1 seconde plus tard | `syncEngine.ts` : le pull (l.1410) et le conflit-inverse (l.1468) testent `hotPaths`, pas le conflit-push-wins. Journal du 18/10 15:20:00→01. FIX : garde chaud ajouté (conflit différé). |
+| 12.F2 | Le sync-state d'avant-fusion restait comme référence après une fusion | Empreintes du 18/10 (d5a3 vs 9e22). FIX : le hash réel du fichier fusionné est désormais enregistré. |
+| 12.F3 | Le cas sain marche (fichier connu, refroidi) : push simple, zéro conflit | Tests end-to-end du 18/10 : « modification +131/−0 », « 1 envoyé(s), 0 conflit(s) ». |
+| 12.F4 | L'annonce de conflit fusionné ne crée pas de snapshot `conflits/` (fusion = aucune version archivée) — le journal seul raconte | Aucun nouveau dossier `conflits/2026-10-18T15-2x` pendant la reproduction. |

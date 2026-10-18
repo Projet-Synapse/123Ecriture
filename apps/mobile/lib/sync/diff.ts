@@ -39,11 +39,23 @@ export type SyncDecision = { kind: SyncDecisionKind; relPath: string };
 // - seulement locale             → push
 // - seulement distante (non supprimée) → pull
 // - les deux, même hash          → rien à faire
-// - les deux, hash différent     → conflit, tranché par le timestamp le
-//   plus récent (le perdant est sauvegardé avant d'être écrasé — voir
-//   syncEngine.ts, jamais fait ici : cette fonction ne fait AUCUN effet de
-//   bord, juste des décisions).
-export function diffVault(local: LocalHashedNote[], remote: RemoteVaultFile[]): SyncDecision[] {
+// - les deux, hash différent     → tranché par la RÉFÉRENCE du dernier
+//   cycle (v0.4.81, `lastSynced` = le sync-state) : si le cloud porte
+//   encore le hash connu au dernier cycle, c'est une modification LOCALE
+//   pure → push (jamais un conflit — M.4 de la spec : « les modifications
+//   ne doivent PAS être perçues comme des conflits ») ; symétriquement,
+//   si le hash LOCAL est la référence connue, c'est la distante qui a
+//   bougé → pull. Seule une divergence des DEUX côtés depuis la référence
+//   reste un conflit, tranché alors par le timestamp le plus récent (le
+//   perdant est sauvegardé avant d'être écrasé — voir syncEngine.ts,
+//   jamais fait ici : cette fonction ne fait AUCUN effet de bord, juste
+//   des décisions). Sans référence connue (premier cycle, état jeté à
+//   vide), on retombe sur le classement historique par mtime.
+export function diffVault(
+  local: LocalHashedNote[],
+  remote: RemoteVaultFile[],
+  lastSynced?: Record<string, string>,
+): SyncDecision[] {
   const localByPath = new Map(local.map((note) => [note.relPath, note]));
   const remoteByPath = new Map(remote.filter((file) => !file.deleted).map((file) => [file.relPath, file]));
   const allPaths = new Set<string>([...localByPath.keys(), ...remoteByPath.keys()]);
@@ -61,12 +73,24 @@ export function diffVault(local: LocalHashedNote[], remote: RemoteVaultFile[]): 
       if (localNote.contentHash === remoteFile.contentHash) {
         decisions.push({ kind: 'noop', relPath });
       } else {
-        const localTime = localNote.modifiedAt;
-        const remoteTime = new Date(remoteFile.updatedAt).getTime();
-        decisions.push({
-          kind: localTime >= remoteTime ? 'conflict-push-wins' : 'conflict-pull-wins',
-          relPath,
-        });
+        const referenceHash = lastSynced?.[relPath];
+        if (referenceHash === remoteFile.contentHash) {
+          // Le cloud est exactement là où on l'avait laissé : tout le
+          // changement est chez nous → pousser (§12 du journal d'incidents :
+          // le classement mtime seul re-déclarait un conflit à chaque
+          // modification dès que l'horodatage du fichier passait devant
+          // celui du push précédent).
+          decisions.push({ kind: 'push', relPath });
+        } else if (referenceHash === localNote.contentHash) {
+          decisions.push({ kind: 'pull', relPath });
+        } else {
+          const localTime = localNote.modifiedAt;
+          const remoteTime = new Date(remoteFile.updatedAt).getTime();
+          decisions.push({
+            kind: localTime >= remoteTime ? 'conflict-push-wins' : 'conflict-pull-wins',
+            relPath,
+          });
+        }
       }
     }
   }
