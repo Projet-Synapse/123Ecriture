@@ -5,7 +5,7 @@ import { usePropertyDefinitions } from '../../lib/properties/usePropertyDefiniti
 import { TYPE_ICONS, TYPE_LABELS, TYPE_ORDER } from '../../lib/properties/propertyTypes';
 import { usePreferences } from '../../preferences/PreferencesContext';
 import type { Theme } from '../../theme';
-import { DraftTextField } from '../DraftTextField';
+import { DraftTextField } from '../editors/DraftTextField';
 import { settingsStyles as s } from './settingsStyles';
 
 // Paramètres → "Gestion des propriétés" — configuration du SCHÉMA global de

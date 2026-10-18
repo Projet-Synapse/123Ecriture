@@ -6,7 +6,7 @@ import { restoreFromTrash } from '../../lib/sync/syncEngine';
 import { useSyncStatus } from '../../lib/sync/SyncStatusContext';
 import { useVaults } from '../../lib/sync/VaultsContext';
 import { usePreferences } from '../../preferences/PreferencesContext';
-import { ConfirmDialog } from '../ConfirmDialog';
+import { ConfirmDialog } from '../dialogs/ConfirmDialog';
 import { settingsStyles as s } from './settingsStyles';
 
 type TrashItem = { relPath: string; sizeBytes: number; modifiedAt: string };

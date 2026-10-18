@@ -15,7 +15,7 @@ import {
 } from '../../lib/sync/syncEngine';
 import { useVaults } from '../../lib/sync/VaultsContext';
 import { usePreferences } from '../../preferences/PreferencesContext';
-import { ConfirmDialog } from '../ConfirmDialog';
+import { ConfirmDialog } from '../dialogs/ConfirmDialog';
 import { SettingsToggle } from './SettingsToggle';
 import { settingsStyles as s } from './settingsStyles';
 import { errorMessage } from '../../lib/errorMessage';

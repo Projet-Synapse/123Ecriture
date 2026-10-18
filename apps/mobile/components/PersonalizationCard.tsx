@@ -18,9 +18,9 @@ import {
 import { errorMessage } from '../lib/errorMessage';
 import { usePreferences } from '../preferences/PreferencesContext';
 import { useVaults } from '../lib/sync/VaultsContext';
-import { ColorField } from './ColorField';
-import { OptionCollapse } from './OptionCollapse';
-import { SliderField } from './SliderField';
+import { ColorField } from './properties/ColorField';
+import { OptionCollapse } from './properties/OptionCollapse';
+import { SliderField } from './properties/SliderField';
 
 // Section « Personnalisation » (v0.4.32) — RÈGLES (demandes de
 // l'utilisatrice, à respecter pour TOUT futur réglage) :

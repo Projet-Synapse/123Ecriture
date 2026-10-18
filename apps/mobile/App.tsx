@@ -4,13 +4,13 @@ import { Text, View } from 'react-native';
 import { useCallback, useRef, useState } from 'react';
 
 import { AppShell, type NotesActions } from './components/AppShell';
-import { CalendarScreen } from './components/CalendarScreen';
-import { GraphView } from './components/GraphView';
+import { CalendarScreen } from './components/screens/CalendarScreen';
+import { GraphView } from './components/editors/GraphView';
 import { usePreferences } from './preferences/PreferencesContext';
-import { NotesScreen } from './components/NotesScreen';
-import { TablesScreen } from './components/TablesScreen';
+import { NotesScreen } from './components/screens/NotesScreen';
+import { TablesScreen } from './components/screens/TablesScreen';
 import { SettingsScreen } from './components/SettingsScreen';
-import { TasksScreen } from './components/TasksScreen';
+import { TasksScreen } from './components/screens/TasksScreen';
 import { toIsoDate } from './lib/calendar/calendarDates';
 import { AuthProvider } from './lib/sync/AuthContext';
 import { SyncStatusProvider } from './lib/sync/SyncStatusContext';

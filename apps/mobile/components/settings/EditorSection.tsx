@@ -1,7 +1,7 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { CANVAS_TOOLBAR_DESCRIPTIONS } from '../../lib/editor/canvasToolbarActions';
-import { EDITOR_FONT_STACKS } from '../MdxEditor';
+import { EDITOR_FONT_STACKS } from '../editors/MdxEditor';
 import { CHART_TOOLBAR_DESCRIPTIONS } from '../../lib/editor/chartToolbarActions';
 import { NOTES_TOOLBAR_DESCRIPTIONS } from '../../lib/editor/notesToolbarActions';
 import { usePreferences } from '../../preferences/PreferencesContext';
