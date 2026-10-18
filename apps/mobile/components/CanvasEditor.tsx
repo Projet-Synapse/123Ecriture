@@ -9,9 +9,9 @@ import {
   removeNodeCascade,
   WORLD_CENTER,
   WORLD_SIZE,
-} from '../lib/canvas';
-import { CANVAS_TOOLBAR_ACTIONS, type CanvasToolbarActionId } from '../lib/canvasToolbarActions';
-import { flattenNotes } from '../lib/vaultTree';
+} from '../lib/editor/canvas';
+import { CANVAS_TOOLBAR_ACTIONS, type CanvasToolbarActionId } from '../lib/editor/canvasToolbarActions';
+import { flattenNotes } from '../lib/notes/vaultTree';
 import { useVaults } from '../lib/sync/VaultsContext';
 import { usePreferences } from '../preferences/PreferencesContext';
 import { DraggablePressable } from './VaultTreeView';

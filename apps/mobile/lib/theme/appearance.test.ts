@@ -16,7 +16,7 @@ import {
   type VaultAppearanceFile,
   FONT_STACKS,
 } from './appearance';
-import { darkTheme, lightTheme } from '../theme';
+import { darkTheme, lightTheme } from '../../theme';
 
 // Apparence par mode (v0.4.30) — résolution avec replis (config ancien,
 // champs corrompus), bornes des curseurs, construction du thème effectif.

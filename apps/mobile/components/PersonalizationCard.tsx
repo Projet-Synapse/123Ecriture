@@ -14,7 +14,7 @@ import {
   type AppearanceProfile,
   type AppFontFamily,
   type ButtonStyle,
-} from '../lib/appearance';
+} from '../lib/theme/appearance';
 import { errorMessage } from '../lib/errorMessage';
 import { usePreferences } from '../preferences/PreferencesContext';
 import { useVaults } from '../lib/sync/VaultsContext';

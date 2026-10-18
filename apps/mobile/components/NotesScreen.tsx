@@ -19,13 +19,13 @@ import {
   ensureTimestamps,
   parseFrontmatter,
   serializeFrontmatter,
-} from '../lib/frontmatter';
-import { applyPathChange, isPathAffected, mergeRestoredOpenTabs } from '../lib/openTabs';
-import type { FormattingResult, Selection } from '../lib/mdxFormatting';
-import { NOTES_TOOLBAR_ACTIONS, type ToolbarAction } from '../lib/notesToolbarActions';
-import { openSearchResult } from '../lib/searchResults';
-import { useResizablePanel } from '../lib/useResizablePanel';
-import { collectFolderRelPaths } from '../lib/treeExpansion';
+} from '../lib/properties/frontmatter';
+import { applyPathChange, isPathAffected, mergeRestoredOpenTabs } from '../lib/notes/openTabs';
+import type { FormattingResult, Selection } from '../lib/editor/mdxFormatting';
+import { NOTES_TOOLBAR_ACTIONS, type ToolbarAction } from '../lib/editor/notesToolbarActions';
+import { openSearchResult } from '../lib/notes/searchResults';
+import { useResizablePanel } from '../lib/ui/useResizablePanel';
+import { collectFolderRelPaths } from '../lib/notes/treeExpansion';
 import {
   findNodeByPath,
   flattenNotes,
@@ -33,8 +33,8 @@ import {
   getAncestorRelPaths,
   getChildrenAt,
   getParentRelPath,
-} from '../lib/vaultTree';
-import { countCharacters, countWords } from '../lib/wordCount';
+} from '../lib/notes/vaultTree';
+import { countCharacters, countWords } from '../lib/editor/wordCount';
 import { useSyncStatus } from '../lib/sync/SyncStatusContext';
 import { useVaults } from '../lib/sync/VaultsContext';
 import { usePreferences } from '../preferences/PreferencesContext';
@@ -57,8 +57,8 @@ import { ResizeHandle } from './ResizeHandle';
 import { RightSidebar, type SidebarTab } from './RightSidebar';
 import { OutlinePanel } from './OutlinePanel';
 import { SearchDialog } from './SearchDialog';
-import { lintMarkdown } from '../lib/markdownLinter';
-import { listTemplateNotes } from '../lib/templates';
+import { lintMarkdown } from '../lib/editor/markdownLinter';
+import { listTemplateNotes } from '../lib/notes/templates';
 import { VaultTreeView } from './VaultTreeView';
 import { NoteIconByKind } from './FileIcons';
 import { FolderPreview } from './FolderPreview';

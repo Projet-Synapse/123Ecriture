@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
-import { getSeriesColor } from '../lib/chartPalette';
-import { maxSeriesValue, type ChartSeries } from '../lib/sheets';
+import { getSeriesColor } from '../lib/editor/chartPalette';
+import { maxSeriesValue, type ChartSeries } from '../lib/editor/sheets';
 import type { Theme } from '../theme';
 
 // Rendu des graphiques barres/lignes/camembert — voir la skill `dataviz`

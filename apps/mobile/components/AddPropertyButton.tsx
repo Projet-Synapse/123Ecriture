@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { TYPE_ICONS, TYPE_LABELS, TYPE_ORDER } from '../lib/propertyTypes';
+import { TYPE_ICONS, TYPE_LABELS, TYPE_ORDER } from '../lib/properties/propertyTypes';
 import { usePreferences } from '../preferences/PreferencesContext';
 import type { Theme } from '../theme';
 
@@ -26,7 +26,7 @@ export function AddPropertyButton({ available, onAdd, onCreateNew, theme }: Prop
   // personnalisation des panneaux ; on recompose la couleur de panneau à
   // opacité 1 via la résolution du profil du mode actif.
   const { preferences, colorScheme } = usePreferences();
-  const { resolveAppearanceProfile } = require('../lib/appearance');
+  const { resolveAppearanceProfile } = require('../lib/theme/appearance');
   const opaqueSurface = resolveAppearanceProfile(preferences, colorScheme).surfaceColor;
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState('');

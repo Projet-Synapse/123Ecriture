@@ -4,8 +4,8 @@ import CodeMirror, { EditorView, type ReactCodeMirrorRef } from '@uiw/react-code
 import { search as searchExtension, searchKeymap } from '@codemirror/search';
 import { keymap } from '@codemirror/view';
 
-import { languageForFile } from '../lib/codeLanguages';
-import { buildCodeLinter } from '../lib/codeLint';
+import { languageForFile } from '../lib/editor/codeLanguages';
+import { buildCodeLinter } from '../lib/editor/codeLint';
 import { EDITOR_FONT_STACKS, enableOsEmojiInsertion } from './MdxEditor';
 import type { Theme } from '../theme';
 

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Platform } from 'react-native';
 
-import { usePreferences } from '../preferences/PreferencesContext';
+import { usePreferences } from '../../preferences/PreferencesContext';
 import { clampWidth, computeDragWidth, shouldCollapseOnRelease } from './resizablePanel';
 
 // Redimensionnement + repli au curseur d'une barre latérale (nav générale,

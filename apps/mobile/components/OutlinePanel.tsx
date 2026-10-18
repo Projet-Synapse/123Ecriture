@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { Pressable, Text, View } from 'react-native';
 
-import { extractOutline } from '../lib/outline';
+import { extractOutline } from '../lib/editor/outline';
 import type { Theme } from '../theme';
 
 // Panneau « Plan » (v0.4.44, demande : « Plan de la note (barre latérale) »)

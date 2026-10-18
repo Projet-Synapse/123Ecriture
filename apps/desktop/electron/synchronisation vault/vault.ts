@@ -12,11 +12,11 @@ import type { FileSortMode, VaultEntryKind, VaultOrder, VaultTreeNode } from '..
 // web (webVaultAdapter.ts) et le Live Preview, importée telle quelle comme
 // frontmatterMigration/propertyScanMerge (esbuild bundle l'import
 // cross-package, vérifié).
-import { matchesEmbedTarget } from '../../../mobile/lib/embedResolution';
+import { matchesEmbedTarget } from '../../../mobile/lib/notes/embedResolution';
 // Liste des extensions reconnues comme fichiers CODE (.py/.ts/.js/…) —
 // source de vérité unique partagée avec les adaptateurs web/natif (même
 // modèle d'import cross-package que embedResolution ci-dessus).
-import { CODE_FILE_EXTENSIONS, isCodeFile } from '../../../mobile/lib/codeLanguages';
+import { CODE_FILE_EXTENSIONS, isCodeFile } from '../../../mobile/lib/editor/codeLanguages';
 
 type GetWindow = () => BrowserWindow | null;
 

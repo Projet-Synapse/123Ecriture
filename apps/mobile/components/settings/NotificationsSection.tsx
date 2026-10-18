@@ -5,7 +5,7 @@ import {
   getNotificationsPermission,
   isValidNotifyTime,
   syncTaskDueNotifications,
-} from '../../lib/taskNotifications';
+} from '../../lib/tasks/taskNotifications';
 import { usePreferences } from '../../preferences/PreferencesContext';
 import { SettingsToggle } from './SettingsToggle';
 import { settingsStyles as s } from './settingsStyles';

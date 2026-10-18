@@ -2,7 +2,7 @@ import { useRef, useState } from 'react';
 import { Modal, Pressable, StyleSheet, Text, TextInput, View, type ViewStyle } from 'react-native';
 import Slider from '@react-native-community/slider';
 
-import { hexToHsv, hsvToHex } from '../lib/appearance';
+import { hexToHsv, hsvToHex } from '../lib/theme/appearance';
 import type { Theme } from '../theme';
 
 // RÈGLE UI (v0.4.32, demande de l'utilisatrice) : tout réglage de COULEUR

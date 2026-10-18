@@ -22,9 +22,9 @@
 // Les types des ponts (VaultBridge, VaultTreeNode...) sont GLOBAUX (voir
 // types/global.d.ts) — comme partout dans l'app, pas d'import nécessaire.
 
-import { parseFrontmatter } from '../frontmatter';
-import { matchesEmbedTarget } from '../embedResolution';
-import { CODE_FILE_EXTENSIONS, isCodeFile } from '../codeLanguages';
+import { parseFrontmatter } from '../properties/frontmatter';
+import { matchesEmbedTarget } from '../notes/embedResolution';
+import { CODE_FILE_EXTENSIONS, isCodeFile } from '../editor/codeLanguages';
 import {
   type FsaDirectoryHandleLike,
   type FsaFileHandleLike,

@@ -5,7 +5,7 @@ import {
   NOTES_TOOLBAR_ACTIONS,
   NOTES_TOOLBAR_DESCRIPTIONS,
   NOTES_TOOLBAR_SHORTCUT_LABELS,
-} from '../../lib/notesToolbarActions';
+} from '../../lib/editor/notesToolbarActions';
 import {
   fetchLatestRelease,
   installedAppVersion,

@@ -11,7 +11,7 @@ import { NotesScreen } from './components/NotesScreen';
 import { TablesScreen } from './components/TablesScreen';
 import { SettingsScreen } from './components/SettingsScreen';
 import { TasksScreen } from './components/TasksScreen';
-import { toIsoDate } from './lib/calendarDates';
+import { toIsoDate } from './lib/calendar/calendarDates';
 import { AuthProvider } from './lib/sync/AuthContext';
 import { SyncStatusProvider } from './lib/sync/SyncStatusContext';
 import { VaultsProvider } from './lib/sync/VaultsContext';

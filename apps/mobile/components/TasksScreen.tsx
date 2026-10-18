@@ -8,9 +8,9 @@ import {
   formatDueDate,
   isoDateFromOffset,
   normalizeDueDateInput,
-} from '../lib/taskDueDates';
-import { orderAfterDrop, pendingTaskCount, sortNavigatorItems } from '../lib/tasksNavigator';
-import { getNotificationsPermission, syncTaskDueNotifications } from '../lib/taskNotifications';
+} from '../lib/tasks/taskDueDates';
+import { orderAfterDrop, pendingTaskCount, sortNavigatorItems } from '../lib/tasks/tasksNavigator';
+import { getNotificationsPermission, syncTaskDueNotifications } from '../lib/tasks/taskNotifications';
 import { usePreferences } from '../preferences/PreferencesContext';
 import { ConfirmDialog } from './ConfirmDialog';
 import { DraftTextField } from './DraftTextField';

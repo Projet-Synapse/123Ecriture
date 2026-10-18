@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode, type RefObject } from 'react';
 import { Image, Platform, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
 import type { Section } from '../navigation';
-import { useResizablePanel } from '../lib/useResizablePanel';
+import { useResizablePanel } from '../lib/ui/useResizablePanel';
 import { useSyncStatus } from '../lib/sync/SyncStatusContext';
 import { usePreferences } from '../preferences/PreferencesContext';
 import { CommandPalette } from './CommandPalette';

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { errorMessage } from './errorMessage';
+import { errorMessage } from '../errorMessage';
 
 // Accès au schéma global de propriétés (`.123ecriture/properties.json`,
 // voir apps/desktop/electron/properties.ts) — partagé par

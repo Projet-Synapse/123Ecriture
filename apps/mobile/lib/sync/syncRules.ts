@@ -28,7 +28,7 @@
 //   1. 📇 Listes partagées
 //   2. ⚖️ La règle unique (isHashableRelPath)
 
-import { CODE_FILE_EXTENSIONS } from '../codeLanguages';
+import { CODE_FILE_EXTENSIONS } from '../editor/codeLanguages';
 
 //////// 1. 📇 LISTES PARTAGÉES ///////////
 

@@ -1,8 +1,8 @@
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import { usePropertyDefinitions } from '../lib/usePropertyDefinitions';
-import { usePropertyValues, type PropertyLine } from '../lib/usePropertyValues';
-import { TYPE_ICONS, makePropertyDefinition } from '../lib/propertyTypes';
+import { usePropertyDefinitions } from '../lib/properties/usePropertyDefinitions';
+import { usePropertyValues, type PropertyLine } from '../lib/properties/usePropertyValues';
+import { TYPE_ICONS, makePropertyDefinition } from '../lib/properties/propertyTypes';
 import type { Theme } from '../theme';
 import { AddPropertyButton } from './AddPropertyButton';
 import { DraftTextField } from './DraftTextField';

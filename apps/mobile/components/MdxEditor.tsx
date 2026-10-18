@@ -7,11 +7,11 @@ import { search as searchExtension, searchKeymap } from '@codemirror/search';
 import { ViewPlugin, keymap } from '@codemirror/view';
 import { Prec } from '@codemirror/state';
 
-import { createLivePreviewExtension } from '../lib/mdxLivePreview';
-import { occurrenceCompletionSource } from '../lib/occurrenceAutocomplete';
-import { wikilinkCompletionSource } from '../lib/wikilinkAutocomplete';
-import { editorHighlightExtensions } from '../lib/codemirrorHighlight';
-import type { FormattingResult, Selection } from '../lib/mdxFormatting';
+import { createLivePreviewExtension } from '../lib/editor/mdxLivePreview';
+import { occurrenceCompletionSource } from '../lib/editor/occurrenceAutocomplete';
+import { wikilinkCompletionSource } from '../lib/editor/wikilinkAutocomplete';
+import { editorHighlightExtensions } from '../lib/editor/codemirrorHighlight';
+import type { FormattingResult, Selection } from '../lib/editor/mdxFormatting';
 import type { Theme } from '../theme';
 
 // Panneau emoji Windows (Win+.) : avec `autocorrect="off"`/`autocapitalize=

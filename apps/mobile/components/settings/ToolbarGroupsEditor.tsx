@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import type { ToolbarActionId } from '../../lib/notesToolbarActions';
+import type { ToolbarActionId } from '../../lib/editor/notesToolbarActions';
 import type { Theme } from '../../theme';
 import { settingsStyles as s } from './settingsStyles';
 

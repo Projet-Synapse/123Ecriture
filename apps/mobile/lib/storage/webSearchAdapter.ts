@@ -11,7 +11,7 @@
 // - hashVaultTree = SHA-256 de chaque note (mêmes extensions que walkTree,
 //   voir le commentaire de sync.ts sur EXTENSION_TO_KIND).
 
-import { parseFrontmatter } from '../frontmatter';
+import { parseFrontmatter } from '../properties/frontmatter';
 import { type FsaDirectoryHandleLike, getFileByRelPath, listNoteRelPaths, readFileText } from './webFs';
 
 import { getActiveConfigDir, webVaultRegistry } from './webVaultRegistry';

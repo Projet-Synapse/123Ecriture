@@ -3,8 +3,8 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import { StorageAccessFramework } from 'expo-file-system/legacy';
 
-import { parseFrontmatter } from '../frontmatter';
-import { CODE_FILE_EXTENSIONS } from '../codeLanguages';
+import { parseFrontmatter } from '../properties/frontmatter';
+import { CODE_FILE_EXTENSIONS } from '../editor/codeLanguages';
 import { getActiveVaultRootUri, requestAndRegisterVault } from './nativeVaultsAdapter';
 import { vaultStorageObjectKey } from '../sync/storageKeys';
 

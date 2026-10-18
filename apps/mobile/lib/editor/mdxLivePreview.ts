@@ -1,7 +1,7 @@
 import { Decoration, type DecorationSet, EditorView, ViewPlugin, type ViewUpdate, WidgetType } from '@codemirror/view';
 import { EditorState, StateField } from '@codemirror/state';
 
-import { isImageEmbedTarget } from './embedResolution';
+import { isImageEmbedTarget } from '../notes/embedResolution';
 import { findBold, findItalic, findLiveMatches, findTableBlocks, type LiveMatch, type TokenType } from './liveDecorations';
 
 // Le vrai Live Preview inline (mode "Intermédiaire", voir components/

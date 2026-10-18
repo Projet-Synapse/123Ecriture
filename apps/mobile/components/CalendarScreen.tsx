@@ -9,7 +9,7 @@ import {
   normalizeTimeInput,
   shiftIsoDate,
   WEEKDAY_LABELS,
-} from '../lib/calendarDates';
+} from '../lib/calendar/calendarDates';
 import { useVaults } from '../lib/sync/VaultsContext';
 import { usePreferences } from '../preferences/PreferencesContext';
 import { ConfirmDialog } from './ConfirmDialog';

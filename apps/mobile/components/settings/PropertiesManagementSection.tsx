@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { usePropertyDefinitions } from '../../lib/usePropertyDefinitions';
-import { TYPE_ICONS, TYPE_LABELS, TYPE_ORDER } from '../../lib/propertyTypes';
+import { usePropertyDefinitions } from '../../lib/properties/usePropertyDefinitions';
+import { TYPE_ICONS, TYPE_LABELS, TYPE_ORDER } from '../../lib/properties/propertyTypes';
 import { usePreferences } from '../../preferences/PreferencesContext';
 import type { Theme } from '../../theme';
 import { DraftTextField } from '../DraftTextField';

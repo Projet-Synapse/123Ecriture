@@ -20,10 +20,10 @@ import { autocompletion } from '@codemirror/autocomplete';
 import { search as searchExtension, searchKeymap } from '@codemirror/search';
 import { keymap } from '@codemirror/view';
 
-import { createLivePreviewExtension } from '../lib/mdxLivePreview';
-import { occurrenceCompletionSource } from '../lib/occurrenceAutocomplete';
-import { wikilinkCompletionSource } from '../lib/wikilinkAutocomplete';
-import { editorHighlightExtensions } from '../lib/codemirrorHighlight';
+import { createLivePreviewExtension } from '../lib/editor/mdxLivePreview';
+import { occurrenceCompletionSource } from '../lib/editor/occurrenceAutocomplete';
+import { wikilinkCompletionSource } from '../lib/editor/wikilinkAutocomplete';
+import { editorHighlightExtensions } from '../lib/editor/codemirrorHighlight';
 import type { Theme } from '../theme';
 
 // Dupliqué volontairement de MdxEditor.tsx (qui vit dans un fichier

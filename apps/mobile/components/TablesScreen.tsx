@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 
-import { parseFrontmatter } from '../lib/frontmatter';
+import { parseFrontmatter } from '../lib/properties/frontmatter';
 import type { Theme } from '../theme';
 
 // « Dataview-lite » (v0.4.44, demande : se baser sur Obsidian et ses

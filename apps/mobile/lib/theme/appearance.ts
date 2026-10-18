@@ -11,7 +11,7 @@
 //   d'écran : les panneaux laissent deviner l'image).
 // - ROUE DES COULEURS : conversions HSV↔hex pour le sélecteur dédié.
 
-import { darkTheme, lightTheme, type Theme } from '../theme';
+import { darkTheme, lightTheme, type Theme } from '../../theme';
 
 export type AppFontFamily =
   | 'system'

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Image, Text } from 'react-native';
 import Markdown, { type ASTNode, type RenderRules } from 'react-native-markdown-display';
 
-import { createConfiguredMarkdownIt } from '../lib/markdownPlugins';
+import { createConfiguredMarkdownIt } from '../lib/editor/markdownPlugins';
 import type { Theme } from '../theme';
 import { AudioEmbed } from './AudioEmbed';
 

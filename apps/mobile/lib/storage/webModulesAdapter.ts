@@ -17,8 +17,8 @@
 //      dans tout le coffre au renommage)
 
 import { randomUUID } from './webUuid';
-import { parseFrontmatter } from '../frontmatter';
-import { createPropertyScanMerger } from '../propertyScanMerge';
+import { parseFrontmatter } from '../properties/frontmatter';
+import { createPropertyScanMerger } from '../properties/propertyScanMerge';
 import { type FsaDirectoryHandleLike, listNoteRelPaths, readFileText, writeFileText } from './webFs';
 
 import { getActiveConfigDir, webVaultRegistry } from './webVaultRegistry';
@@ -509,7 +509,7 @@ async function migrateRenamedProperty(
   oldName: string,
   newName: string,
 ): Promise<PropertyRenameMigrationSummary> {
-  const { migrateFrontmatterKey } = await import('../frontmatterMigration');
+  const { migrateFrontmatterKey } = await import('../properties/frontmatterMigration');
   const summary: PropertyRenameMigrationSummary = { migratedCount: 0, skippedCount: 0, errorCount: 0 };
 
   for (const relPath of await listNoteRelPaths(root, ['.mdx', '.md'])) {

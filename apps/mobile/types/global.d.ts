@@ -2,7 +2,7 @@
 // contextBridge. N'existent que côté Electron desktop (window.vault,
 // window.updater, window.preferences, window.contextMenu sont undefined
 // sur web/mobile — Phase 2 pour ces plateformes).
-import type { NotesToolbarGroup as SharedNotesToolbarGroup } from '../lib/notesToolbarActions';
+import type { NotesToolbarGroup as SharedNotesToolbarGroup } from '../lib/editor/notesToolbarActions';
 export {};
 
 declare global {
@@ -587,8 +587,8 @@ declare global {
     // partiels volontairement (une ancienne config n'a aucun des deux : les
     // défauts de lib/appearance.ts s'appliquent, avec migration de
     // l'ancienne accentColor unique vers le mode clair).
-    appearanceLight?: import('../lib/appearance').AppearanceProfile;
-    appearanceDark?: import('../lib/appearance').AppearanceProfile;
+    appearanceLight?: import('../lib/theme/appearance').AppearanceProfile;
+    appearanceDark?: import('../lib/theme/appearance').AppearanceProfile;
   }
 
   interface SidebarPanelLayout {

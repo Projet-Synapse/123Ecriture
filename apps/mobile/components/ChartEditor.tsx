@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { getSeriesColor } from '../lib/chartPalette';
-import { CHART_TOOLBAR_ACTIONS, type ChartToolbarActionId } from '../lib/chartToolbarActions';
-import { buildChartSeries } from '../lib/sheets';
+import { getSeriesColor } from '../lib/editor/chartPalette';
+import { CHART_TOOLBAR_ACTIONS, type ChartToolbarActionId } from '../lib/editor/chartToolbarActions';
+import { buildChartSeries } from '../lib/editor/sheets';
 import { usePreferences } from '../preferences/PreferencesContext';
 import { ChartView } from './ChartView';
 import { EditorToolbar } from './EditorToolbar';

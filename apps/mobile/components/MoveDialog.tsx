@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput } from 'react-native';
 
-import { collectFolderOptions } from '../lib/vaultTree';
-import { useScrollIntoView } from '../lib/useScrollIntoView';
+import { collectFolderOptions } from '../lib/notes/vaultTree';
+import { useScrollIntoView } from '../lib/ui/useScrollIntoView';
 import type { Theme } from '../theme';
 
 // Boîte de dialogue "Déplacer vers…" — une liste de dossiers plutôt que du

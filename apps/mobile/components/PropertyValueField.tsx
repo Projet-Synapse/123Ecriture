@@ -1,8 +1,8 @@
 import { useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { collectPathOptions } from '../lib/vaultTree';
-import { formatValueForInput, parseInputForType } from '../lib/propertyTypes';
+import { collectPathOptions } from '../lib/notes/vaultTree';
+import { formatValueForInput, parseInputForType } from '../lib/properties/propertyTypes';
 import type { Theme } from '../theme';
 import { DraftTextField } from './DraftTextField';
 

@@ -8,8 +8,8 @@ import {
   SEARCH_RESULT_ICON,
   searchResultKey,
   splitMatchSegments,
-} from '../lib/searchResults';
-import { useScrollIntoView } from '../lib/useScrollIntoView';
+} from '../lib/notes/searchResults';
+import { useScrollIntoView } from '../lib/ui/useScrollIntoView';
 import type { Section } from '../navigation';
 import { usePreferences } from '../preferences/PreferencesContext';
 import type { Theme } from '../theme';
