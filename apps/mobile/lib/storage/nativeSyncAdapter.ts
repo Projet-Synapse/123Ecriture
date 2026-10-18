@@ -1,56 +1,103 @@
-//////////
-// ✒️ 123ECRITURE — nativeSyncAdapter.ts
-// PONT SYNC NATIF (ANDROID) : hachage VÉRIDIQUE du coffre (refonte v0.4.76)
-//////////
-
-// INTRODUCTION — Implémentation de SyncBridge (types/global.d.ts), pendant
-// de `sync:hash-vault` côté Electron (apps/desktop/electron/sync.ts,
-// walkAndHash) : le moteur de synchro (lib/sync/syncEngine.ts) compare ces
-// hashes aux métadonnées du coffre distant Supabase pour décider
-// push/pull/conflit.
-//
-// POURQUOI « VÉRIDIQUE » : l'ancien pont (SAF) s'appuyait sur un index
-// persisté et une baseline qui pouvaient décrire des fichiers fantômes —
-// le diff concluait « rien à faire » sur un dossier vide (vécu 17/10). Le
-// socle en fichiers ordinaires permet de relire le disque à chaque cycle,
-// comme le desktop : la vérité vient TOUJOURS du disque.
-//
-// RÈGLES DE HACHAGE (mêmes que walkAndHash desktop — À MAINTENIR ENSEMBLE) :
-//   - segments cachés exclus (`.123ecriture`, `.obsidian`…) — SAUF la liste
-//     blanche SYNCED_META_FILES (tâches/préférences synchronisées) ;
-//   - `.trash/` INCLUS (corbeille du coffre, synchronisée v0.4.26) ;
-//   - noms contenant un `\` jamais hachés (résidus de contamination) ;
-//   - extensions de contenu (.mdx/.md/.canvas/.chart/.excalidraw/.base) et
-//     pièces jointes (SYNC_ATTACHMENT_EXTENSIONS) ;
-//   - le hash porte sur les OCTETS UTF-8 du texte (identique desktop).
-//
-// Coût : lecture intégrale du coffre à chaque cycle — c'est le prix de la
-// véridicité ; à mesurer sur le coffre réel et optimiser (cache par
-// mtime+taille validée par stat) UNIQUEMENT si le besoin s'en fait sentir.
-//
-// SOMMAIRE :
-//   1. 📏 Règles de hachage (hashableRelPath)
-//   2. 🔢 Décodage base64 (pièces jointes)
-//   3. 🔌 hashVaultTree (l'opération exposée au moteur)
-
 import * as FileSystem from 'expo-file-system/legacy';
 
 import { getActiveVaultRootUri } from './nativeVaultsAdapter';
-import { nativeVaultAdapter } from './nativeVaultAdapter';
-import { isHashableRelPath } from '../sync/syncRules';
-import { SYNC_ATTACHMENT_EXTENSIONS } from './nativeVaultAdapter';
+import {
+  ensureVaultIndexed,
+  getVaultIndexEntry,
+  getVaultIndexKeys,
+  nativeVaultAdapter,
+  SYNC_ATTACHMENT_EXTENSIONS,
+  SYNCED_META_FILES,
+  takeDirtyPathsForRoot,
+} from './nativeVaultAdapter';
 import { sha256Hex, utf8Bytes } from '../sync/nativeSha256';
 
-//////// 1. 📏 RÈGLES DE HACHAGE — SOURCE UNIQUE : syncRules.ts ///////////
+// Pont sync natif (Android) — implémentation de SyncBridge (types/
+// global.d.ts), pendant de `sync:hash-vault` côté Electron
+// (apps/desktop/electron/sync.ts, walkAndHash) : le hachage du coffre actif
+// est LA seule opération lourde du moteur de synchro (lib/sync/syncEngine.ts
+// compare ces hashes aux métadonnées du coffre distant Supabase pour
+// décider push/pull/conflit).
+//
+// ⚠️ HACHAGE INCRÉMENTAL — SAF rend un parcours complet ruineux (~1 requête
+// par entrée : ~340 notes = plus d'une minute, l'UI gèle ; vécu en
+// 0.4.41-fix6 : « la synchro charge indéfiniment »). Une BASELINE
+// (relPath -> hash/size) est persistée hors du coffre ; chaque cycle ne
+// relit que les fichiers marqués modifiés (file dirty de
+// nativeVaultAdapter), les autres resservent leur hash. Première exécution
+// seulement : passe complète (une fois par coffre).
+//
+// MÊMES RÈGLES que walkAndHash desktop pour ce qui est HACHÉ :
+// - fichiers cachés exclus — métadonnées .123ecriture, .obsidian… — SAUF
+//   `.trash`, la corbeille du coffre, volontairement synchronisée (v0.4.26) ;
+// - seules les extensions de contenu comptent : .mdx/.md/.canvas/.chart/
+//   .excalidraw/.base (EXTENSION_TO_KIND desktop, vault.ts) — .base est
+//   indexé par l'arborescence même si elle ne l'affiche pas.
+// Le hash porte sur les OCTETS UTF-8 du texte lu (voir nativeSha256.ts) :
+// identique au desktop (createHash sur les octets) pour du texte UTF-8.
+// modifiedAt n'est PAS fiable en SAF → Date.now() : il ne départage que la
+// DIRECTION d'un conflit (local gagne les égalités), jamais push/pull.
+const SYNC_EXTENSIONS = ['.mdx', '.md', '.canvas', '.chart', '.excalidraw', '.base'];
 
-//////// 2. 🔢 DÉCODAGE BASE64 (pièces jointes) ///////////
+// Baseline hors coffre (documentDirectory), clé par URI racine : changer de
+// coffre actif ou reconnecter un dossier invalide l'ancienne.
+const BASELINE_PATH = `${FileSystem.documentDirectory}sync-hash-baseline.json`;
+type BaselineEntries = Record<string, { hash: string; size: number }>;
+type BaselineFile = { rootUri: string | null; entries: BaselineEntries };
 
-function base64ToBytes(base64: string): number[] {
+async function loadBaseline(): Promise<BaselineFile> {
+  try {
+    const raw = await FileSystem.readAsStringAsync(BASELINE_PATH);
+    const parsed = JSON.parse(raw) as BaselineFile;
+    return { rootUri: parsed.rootUri ?? null, entries: parsed.entries ?? {} };
+  } catch {
+    return { rootUri: null, entries: {} }; // première exécution / corrompu
+  }
+}
+
+async function saveBaseline(rootUri: string, entries: BaselineEntries): Promise<void> {
+  const payload: BaselineFile = { rootUri, entries };
+  try {
+    await FileSystem.writeAsStringAsync(BASELINE_PATH, JSON.stringify(payload));
+  } catch (error) {
+    // La baseline est un cache : un échec d'écriture dégrade juste le
+    // cycle suivant (passe complète), jamais la justesse du cycle courant.
+    console.error('[sync] échec d’écriture de la baseline de hachage :', error);
+  }
+}
+
+// Quels relPaths appartiennent à l'arbre synchronisé — mêmes règles que
+// walkAndHash desktop (segments cachés exclus, .trash excepté), plus les
+// MÉTADONNÉES SYNCHRONISÉES (SYNCED_META_FILES, importée de
+// nativeVaultAdapter : apparence, tâches/listes, préférences — cf. la
+// définition pour l'historique).
+function hashableRelPath(relPath: string): boolean {
+  if (SYNCED_META_FILES.includes(relPath)) return true;
+  // ANTI-CONTAMINATION (v0.4.67) : un nom contenant un `\` est un FICHIER
+  // PLAT créé par un ancien pull d'une ligne backslashed du mélange (le `\`
+  // est légal dans un nom Android, pas dans un vrai arbre) — le pousser
+  // re-imbriquerait la contamination dans le cloud (vécu WORLDBUILDING
+  // 16-17/10 : dossiers « PROGRAMMATION » fantômes). Jamais hachés, jamais
+  // poussés ; ils restent locaux jusqu'à purge manuelle.
+  if (relPath.includes('\\')) return false;
+  const segments = relPath.split('/');
+  if (segments[0] !== '.trash' && segments.some((segment) => segment.startsWith('.'))) return false;
+  const name = segments[segments.length - 1].toLowerCase();
+  // Pièces jointes synchronisées (v0.4.66) : images/PDF/audio — la taille
+  // par fichier est plafonnée côté desktop (25 Mo) ; le mobile hache ce que
+  // son index connaît.
+  if (SYNC_ATTACHMENT_EXTENSIONS.some((ext) => name.endsWith(ext))) return true;
+  return SYNC_EXTENSIONS.some((ext) => name.endsWith(ext));
+}
+
+// Décodage base64 → octets (pur JS : Hermes n'a pas `atob` garanti) —
+// utilisé par le hachage des pièces jointes binaires.
+function base64ToBytes(base64: string): Uint8Array {
   const table = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
   const clean = base64.replace(/[^A-Za-z0-9+/=]/g, '');
   const padding = clean.endsWith('==') ? 2 : clean.endsWith('=') ? 1 : 0;
-  const totalLength = Math.floor(clean.length / 4) * 3 - padding;
-  const bytes: number[] = [];
+  const bytes = new Uint8Array(Math.floor(clean.length / 4) * 3);
+  let out = 0;
   let buffer = 0;
   let bits = 0;
   for (let i = 0; i < clean.length; i += 1) {
@@ -60,70 +107,74 @@ function base64ToBytes(base64: string): number[] {
     bits += 6;
     if (bits >= 8) {
       bits -= 8;
-      if (bytes.length < totalLength) bytes.push((buffer >> bits) & 0xff);
+      if (out < bytes.length) bytes[out] = (buffer >> bits) & 0xff;
+      out += 1;
     }
   }
-  return bytes;
-}
-
-//////// 3. 🔌 HASHVAULTTREE (l'opération exposée au moteur) ///////////
-
-function fileUri(plainPath: string): string {
-  return plainPath.startsWith('file://') ? plainPath : `file://${plainPath}`;
-}
-
-// Parcours récursif du coffre — collecte les relPaths hachables.
-async function collectHashable(root: string, dir: string, relPrefix: string, out: string[], depth = 0): Promise<void> {
-  if (depth > 40) return;
-  const dirUri = fileUri(dir);
-  const names = await FileSystem.readDirectoryAsync(dirUri).catch(() => [] as string[]);
-  for (const raw of names) {
-    const name = raw.includes('/') ? decodeURIComponent(raw.slice(raw.lastIndexOf('/') + 1)) : raw;
-    const relPath = relPrefix ? `${relPrefix}/${name}` : name;
-    const childPath = `${dir}/${name}`;
-    const info = await FileSystem.getInfoAsync(fileUri(childPath)).catch(() => null);
-    if (!info || !info.exists) continue;
-    if (info.isDirectory) {
-      await collectHashable(root, childPath, relPath, out, depth + 1);
-      continue;
-    }
-    if (isHashableRelPath(relPath)) out.push(relPath);
-  }
+  return bytes.subarray(0, Math.floor(clean.length / 4) * 3 - padding);
 }
 
 export const nativeSyncAdapter = {
   hashVaultTree: async (): Promise<HashedNote[]> => {
-    const root = await getActiveVaultRootUri();
-    if (!root) return []; // pas de coffre actif : rien à hacher
-    const relPaths: string[] = [];
-    await collectHashable(root, root, '', relPaths);
+    const rootUri = await getActiveVaultRootUri();
+    if (!rootUri) return []; // pas de coffre actif : rien à hacher
+    await ensureVaultIndexed();
 
-    const out: HashedNote[] = [];
-    for (const relPath of relPaths) {
+    const baseline = await loadBaseline();
+    const entries: BaselineEntries = baseline.rootUri === rootUri ? { ...baseline.entries } : {};
+    const dirty = await takeDirtyPathsForRoot(rootUri);
+
+    // Première exécution pour ce coffre (baseline vide) : passe complète
+    // sur tout l'index. Sinon : uniquement les fichiers marqués modifiés.
+    const targets = new Set(dirty);
+    if (Object.keys(entries).length === 0) {
+      for (const relPath of getVaultIndexKeys()) {
+        if (hashableRelPath(relPath)) targets.add(relPath);
+      }
+    }
+
+    for (const relPath of targets) {
+      const entry = getVaultIndexEntry(relPath);
+      if (!entry || entry.isDirectory) {
+        delete entries[relPath]; // supprimé/déplacé depuis le dernier cycle
+        continue;
+      }
+      if (!hashableRelPath(relPath)) {
+        delete entries[relPath];
+        continue;
+      }
       try {
-        const target = fileUri(`${root}/${relPath}`);
-        let bytes: number[];
+        let bytes: number[] | Uint8Array;
         if (SYNC_ATTACHMENT_EXTENSIONS.some((ext) => relPath.toLowerCase().endsWith(ext))) {
           // Binaire (image/PDF/audio…) : hachage sur les OCTETS décodés du
           // base64 — le fichier lu « en texte » donnerait un hash différent
           // du hachage desktop (octets bruts) et des faux conflits.
-          const base64 = await FileSystem.readAsStringAsync(target, {
+          const base64 = await FileSystem.readAsStringAsync(entry.uri, {
             encoding: FileSystem.EncodingType.Base64,
           });
           bytes = base64ToBytes(base64);
         } else {
-          bytes = utf8Bytes(await nativeVaultAdapter.readNote(relPath));
+          const content = await nativeVaultAdapter.readNote(relPath);
+          bytes = utf8Bytes(content);
         }
-        const info = await FileSystem.getInfoAsync(target).catch(() => null);
-        const modifiedAt = info && info.exists && info.modificationTime ? info.modificationTime * 1000 : Date.now();
-        out.push({ relPath, contentHash: sha256Hex(bytes), sizeBytes: bytes.length, modifiedAt });
+        entries[relPath] = { hash: sha256Hex(bytes), size: bytes.length };
       } catch {
         // v0.4.72 — « LECTURE ÉCHOUÉE = NE RIEN SYNCHRONISER » (garde repris
-        // de 123Promptez) : un fichier qu'on n'a pas su lire est simplement
-        // ABSENT du résultat — le diff le verra inchangé, aucune tombstone
-        // ne partira, et le prochain cycle retentera.
+        // de 123Promptez, demandé par Catelina) : un fichier qui EXISTE dans
+        // l'index mais qu'on n'a pas su LIRE garde son hash précédent — le
+        // diff le verra inchangé, aucune tombstone ne partira, et le
+        // prochain cycle retentera. On ne retire du hachage que les fichiers
+        // que l'INDEX déclare disparus (suppression réelle).
+        if (!entries[relPath]) delete entries[relPath];
       }
     }
-    return out;
+
+    await saveBaseline(rootUri, entries);
+    return Object.entries(entries).map(([relPath, value]) => ({
+      relPath,
+      contentHash: value.hash,
+      sizeBytes: value.size,
+      modifiedAt: Date.now(),
+    }));
   },
 };
