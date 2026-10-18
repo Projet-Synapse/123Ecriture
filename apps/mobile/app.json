@@ -2,7 +2,7 @@
   "expo": {
     "name": "123Ecriture",
     "slug": "123ecriture",
-    "version": "0.4.78",
+    "version": "0.4.79",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
