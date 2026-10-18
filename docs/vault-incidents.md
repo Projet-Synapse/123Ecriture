@@ -114,11 +114,18 @@
 | 9.4 | Aucune observabilité croisée : chaque appareil ne voit que SON journal ; impossible de savoir de loin qui fait quoi (ni sa version d'app) | ✅ CONSTAT (demande de l'utilisatrice 17/10) | La carte « Appareils connectés » existe (vault_devices, heartbeat) mais sans version d'app ni activité. FIX 0.4.71 : ajouter app_version + résumé du dernier cycle par appareil sur la carte. |
 | 9.5 | Les données étaient-elles perdues ? | ❌ NON — VÉRIFIÉ CLOUD | SQL 17/10 : chemin complet VIVANT dans le cloud (dont « Anecdotes… » maj 22:43) ; 980 vivants / 20 tombstones ; la version LA PLUS RÉCENTE (01:37, 1111 o) est sur le PC vivant ; snapshots dans conflits/. Seul « Sans titre.mdx » est tombstoné (copies conservées). |
 
-## 10. État courant (dernière mise à jour : 2026-10-17, 02:00)
+## 10. État courant (dernière mise à jour : 2026-10-18, voir §11 pour les faits récents)
 
-1. **PC principal** : app ARRÊTÉE (17/10 01:38, gel de l'incident §9) — coffre vivant `Documents\Obsidian\✒️ WORLDBUILDING`, contient la version la plus récente du fichier en conflit (01:37). Redémarrer UNIQUEMENT après la mise à jour du PORTABLE (ordre §9.2). La 0.4.70 arrive par auto-update au relancement.
-2. **PORTABLE** : à mettre à jour en PREMIER (0.4.70 — casse la boucle §9.2) ; ouvrir ensuite et vérifier le chemin ; si absent → « Déconnecter… » puis « Connecter sur cet appareil… » → pull propre (le cloud est sain).
-3. **TÉLÉPHONE** : 0.4.69 installée (17/10 00:54, écran Tâches vérifié sans crash) ; 0.4.70 à installer quand disponible ; la re-connexion du coffre cloud attend la 0.4.70 (pull via écriture SAF troncature-sûre).
-4. **Journal de sync mobile** : FONCTIONNEL (onglet « Journal de synchronisation » des Paramètres).
-5. **Tâches** : crash de rendu réglé (0.4.69, vu à l'écran) ; « Ajouter sans effet » réglé (§8) ; reste : ajout + persistance à re-tester sur 0.4.70 après re-connexion.
-6. **Chantiers 0.4.71 (demandes de l'utilisatrice du 17/10)** : (a) ne JAMAIS synchroniser un fichier ouvert à l'écran ; (b) observabilité croisée : version d'app + activité de sync par appareil sur la carte « Appareils connectés ».
+1. **PC principal 0.4.80** : app fermée. Disque vérifié COMPLET le 18/10 (§11.1) : les 1 053 fichiers vivants du cloud existent au disque, dates intactes. Redémarrage possible : le disjoncteur + la revue 0.4.77+ protègent le cycle.
+2. **PORTABLE (LORDI)** : 0.4.77 = le dernier vieux moteur. Verrou à distance RE-POSÉ le 18/10 via API (§11.3) — installer 0.4.80 puis déverrouiller (réglages → appareils).
+3. **TÉLÉPHONE** : 0.4.79 installée, app fermée, disjoncteur bloqué (911 erreurs SAF refonte). À faire : installer 0.4.80, reconnecter le coffre sur le dossier (le grant SAF persiste).
+4. **Cloud** : 1 053 vivants + 45 tombstones (les 49 du §11.2 moins 4 système levées). Copies de sûreté de TOUTES les tombstones : `rescue-1802\` (hors dépôt).
+
+## 11. Fausses disparitions + tombstones en boucle + verrou qui ne tenait pas (18/10)
+
+| # | Fait | Statut | Preuve / Conséquence |
+|---|------|--------|---------------------|
+| 11.1 | « Les fichiers restaurés ont re-disparu du PC » = FAUSSE ALERTE : le `find` de contrôle cherchait les mauvais noms (« Projet L'Enchanteresse », « Secrets ») alors que les vrais chemins (`🦹🏻‍♀️ L'Enchanteresse.md`, `📖 NARRATION/`, les catalogues) étaient intacts au disque, dates de septembre | ✅ PROUVÉE | Pull honnête manuel (18/10) : **0 fichier vivant du cloud absent du disque** sur 1 053. NARRATION : 4 fichiers dates 07-10/09 ; L'Enchanteresse.md 3 738 o (même taille que le cloud) ; 6 catalogues présents. |
+| 11.2 | Le journal PC 0.4.80 répétait « suppression distante appliquée (corbeille) » sur `.123ecriture/preferences.json` = BOUCLE : l'app recrée son fichier système à chaque lancement, le cloud (tombstone posée par le téléphone périmé) le re-supprime à chaque cycle | ✅ PROUVÉE | Journal 13:50→13:53 (3 cycles, suppression re-appliquée). FIX : les 4 tombstones système levées via API (204). 45 tombstones restantes (.trash, « à cacher », tests, MODÈLES — AUCUN fichier d'écriture) : la revue humaine tranchera, copies dans `rescue-1802\`. |
+| 11.3 | Le verrou du portable posé la veille n'avait PAS tenu (locked=False au 18/10) : l'UPDATE API d'alors visait le mauvais profil → 404 PGRST205 silencieux | ✅ PROUVÉE | Requêtes GET (Accept-Profile) 200 mais PATCH/DELETE 404 « public.vault_devices ». RÈGLE PostgREST : **lectures = `Accept-Profile`, écritures = `Content-Profile`** (leçon déjà apprise avec les DELETE de tombstones). Verrou re-posé avec Content-Profile → 200, locked=true. |
+| 11.4 | Le PULL ne répare PAS les fichiers vivants au cloud mais absents du disque quand le sync-state les croit présents : « disque absent + state présent + cloud identique » = « rien à faire » → l'absence devient PERMANENTE | ✅ PROUVÉE (mécanisme) | Le dossier GAMEPLAY sans NARRATION au disque pendant que ses 4 fichiers restaient vivants au cloud (17-18/10) — aucune re-téléchargement en plusieurs cycles. C'est l'écart E6 de la spec (zéro cache menteur) : la reconstruction disque+cloud à chaque indexation est LE fix. |
