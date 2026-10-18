@@ -1,12 +1,6 @@
-import { ipcMain } from 'electron';
-import crypto from 'crypto';
-import fs from 'fs/promises';
-import fsSync from 'fs';
-import path from 'path';
-
-import * as vaults from './synchronisation vault/vaults';
-import type { CalendarEvent, CalendarEventInput } from './types';
-
+//////////////////////////////////////////////////////////////////////////////
+//                                📅 calendar.ts                           //  
+//////////////////////////////////////////////////////////////////////////////
 // Module "Calendrier" — évènements horodatés (voir docs/ARCHITECTURE.md §8
 // et apps/mobile/components/CalendarScreen.tsx). Les notes JOURNALIÈRES,
 // elles, vivent comme de vraies notes .mdx (voir vault:ensure-daily-note
@@ -15,6 +9,15 @@ import type { CalendarEvent, CalendarEventInput } from './types';
 // une note. Même schéma que tasks.js : un fichier caché scopé au coffre
 // actif, pas de multi-listes ici (un seul calendrier par coffre a du sens,
 // contrairement aux tâches).
+
+import { ipcMain } from 'electron';
+import crypto from 'crypto';
+import fs from 'fs/promises';
+import fsSync from 'fs';
+import path from 'path';
+
+import * as vaults from './synchronisation vault/vaults';
+import type { CalendarEvent, CalendarEventInput } from './types';
 
 function getVaultPath(): string | null {
   return vaults.getActiveVaultPath();

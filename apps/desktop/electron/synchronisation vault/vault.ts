@@ -1,26 +1,6 @@
-import { dialog, ipcMain, type BrowserWindow } from 'electron';
-import crypto from 'crypto';
-import fs from 'fs/promises';
-import fsSync from 'fs';
-import path from 'path';
-
-import { readConfig } from '../config';
-import * as vaults from './vaults';
-import type { FileSortMode, VaultEntryKind, VaultOrder, VaultTreeNode } from '../types';
-// Critères de résolution des cibles d'embed façon Obsidian (chemin exact →
-// suffixe → nom seul, casse ignorée) — fonction PURE partagée avec le port
-// web (webVaultAdapter.ts) et le Live Preview, importée telle quelle comme
-// frontmatterMigration/propertyScanMerge (esbuild bundle l'import
-// cross-package).
-import { matchesEmbedTarget } from '../../../mobile/lib/notes/embedResolution';
-// Liste des extensions reconnues comme fichiers CODE (.py/.ts/.js/…) —
-// source de vérité unique partagée avec les adaptateurs web/natif (même
-// modèle d'import cross-package que embedResolution ci-dessus).
-import { CODE_FILE_EXTENSIONS, isCodeFile } from '../../../mobile/lib/editor/codeLanguages';
-
-type GetWindow = () => BrowserWindow | null;
-
-// ✒️ 123ECRITURE — synchronisation vault/vault.ts — backend IPC du coffre actif (fichiers et dossiers)
+//////////////////////////////////////////////////////////////////////////////
+//                                 vault.ts                                 //  
+//////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////
 //
 // Backend PROCESS MAIN de tout ce qui touche aux fichiers du coffre actif :
@@ -63,6 +43,28 @@ type GetWindow = () => BrowserWindow | null;
 //   8. Handlers IPC — organisation (renommer/déplacer/supprimer)
 //
 //////////////////////////////////////////////////////////////////////////////
+
+import { dialog, ipcMain, type BrowserWindow } from 'electron';
+import crypto from 'crypto';
+import fs from 'fs/promises';
+import fsSync from 'fs';
+import path from 'path';
+
+import { readConfig } from '../config';
+import * as vaults from './vaults';
+import type { FileSortMode, VaultEntryKind, VaultOrder, VaultTreeNode } from '../types';
+// Critères de résolution des cibles d'embed façon Obsidian (chemin exact →
+// suffixe → nom seul, casse ignorée) — fonction PURE partagée avec le port
+// web (webVaultAdapter.ts) et le Live Preview, importée telle quelle comme
+// frontmatterMigration/propertyScanMerge (esbuild bundle l'import
+// cross-package).
+import { matchesEmbedTarget } from '../../../mobile/lib/notes/embedResolution';
+// Liste des extensions reconnues comme fichiers CODE (.py/.ts/.js/…) —
+// source de vérité unique partagée avec les adaptateurs web/natif (même
+// modèle d'import cross-package que embedResolution ci-dessus).
+import { CODE_FILE_EXTENSIONS, isCodeFile } from '../../../mobile/lib/editor/codeLanguages';
+
+type GetWindow = () => BrowserWindow | null;
 
 //////// 1. Types de fichiers et gabarits //////////////////////////////////
 

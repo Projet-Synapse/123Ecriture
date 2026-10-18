@@ -1,18 +1,6 @@
-import { dialog, ipcMain, type BrowserWindow } from 'electron';
-import crypto from 'crypto';
-import fs from 'fs/promises';
-import fsSync from 'fs';
-import os from 'os';
-import path from 'path';
-
-import { readConfig, writeConfig } from '../config';
-import type { AppConfig, DeviceInfo, VaultIdentity, VaultRegistryEntry } from '../types';
-
-type GetWindow = () => BrowserWindow | null;
-
-// ✒️ 123ECRITURE — synchronisation vault/vaults.ts — registre des coffres locaux (multi-coffres)
 //////////////////////////////////////////////////////////////////////////////
-//
+//                                 vaults.ts                                //  
+//////////////////////////////////////////////////////////////////////////////
 // Registre PROCESS MAIN des coffres (vaults) locaux : liste persistée dans
 // config.json sous la forme `{ vaults: [...], activeVaultId }`, coffre
 // actif, identité par coffre, bascule, renommage, liaison cloud, santé des
@@ -53,6 +41,18 @@ type GetWindow = () => BrowserWindow | null;
 //   8. Handlers IPC
 //
 //////////////////////////////////////////////////////////////////////////////
+
+import { dialog, ipcMain, type BrowserWindow } from 'electron';
+import crypto from 'crypto';
+import fs from 'fs/promises';
+import fsSync from 'fs';
+import os from 'os';
+import path from 'path';
+
+import { readConfig, writeConfig } from '../config';
+import type { AppConfig, DeviceInfo, VaultIdentity, VaultRegistryEntry } from '../types';
+
+type GetWindow = () => BrowserWindow | null;
 
 //////// 1. Identité des coffres (.123ecriture/vault.json) /////////////////
 

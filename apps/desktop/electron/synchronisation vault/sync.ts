@@ -1,14 +1,6 @@
-import { ipcMain, type BrowserWindow } from 'electron';
-import crypto from 'crypto';
-import fs from 'fs/promises';
-import fsSync from 'fs';
-import path from 'path';
-
-import * as vaults from './vaults';
-import type { HashedNote } from '../types';
-import { isHashableRelPath } from '../../../mobile/lib/sync/syncRules';
-
-// ✒️ 123ECRITURE — synchronisation vault/sync.ts — hachage du coffre + surveillance du système de fichiers
+//////////////////////////////////////////////////////////////////////////////
+//                                 sync.ts                                  //  
+//////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////
 //
 // Partie PROCESS MAIN de la synchronisation. La seule opération qui a
@@ -34,6 +26,16 @@ import { isHashableRelPath } from '../../../mobile/lib/sync/syncRules';
 //   2. La surveillance du coffre (watcher pausable + handlers watch-*)
 //
 //////////////////////////////////////////////////////////////////////////////
+
+import { ipcMain, type BrowserWindow } from 'electron';
+import crypto from 'crypto';
+import fs from 'fs/promises';
+import fsSync from 'fs';
+import path from 'path';
+
+import * as vaults from './vaults';
+import type { HashedNote } from '../types';
+import { isHashableRelPath } from '../../../mobile/lib/sync/syncRules';
 
 // Ce module duplique volontairement une petite partie du parcours de
 // vault.ts (walkTree) : vault.ts retourne une arborescence imbriquée
