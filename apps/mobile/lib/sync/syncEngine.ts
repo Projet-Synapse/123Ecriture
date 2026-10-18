@@ -969,22 +969,26 @@ export async function restoreFromTrash(
 }
 
 // Tentative de fusion à trois voix d'un conflit (v0.4.29, diff-match-patch
-// comme Obsidian Sync). Retourne true si le conflit est RÉSOLU par fusion :
-// les deux versions sont réunies (modifications de parties différentes),
-// écrites localement ET poussées — les deux appareils convergent. Retourne
-// false quand il n'y a pas de base de fusion ou que les modifications se
-// chevauchent réellement : l'appelant retombe sur le comportement
-// gagnant/perdant archivé d'avant.
+// comme Obsidian Sync). Retourne le hash du fichier FUSIONNÉ écrit et
+// poussé si le conflit est RÉSOLU par fusion : les deux versions sont
+// réunies (modifications de parties différentes), écrites localement ET
+// poussées — les deux appareils convergent. Retourne null quand il n'y a
+// pas de base de fusion ou que les modifications se chevauchent réellement
+// : l'appelant retombe sur le comportement gagnant/perdant archivé d'avant.
+// (v0.4.81 : le retour est le hash RÉEL du fichier fusionné re-haché —
+// l'appelant en enregistre la référence dans le sync-state, sinon le cycle
+// suivant re-détectait la divergence déjà résolue et re-annonçait le
+// conflit, boucle systématique du 18/10, §12.2 du journal d'incidents.)
 async function attemptConflictMerge(
   remoteVaultId: string,
   ownerId: string,
   relPath: string,
   remoteObjectPath: string | undefined,
   journal: SyncJournalEntry[],
-): Promise<boolean> {
-  if (isBinaryAttachmentRelPath(relPath)) return false; // jamais de fusion binaire
+): Promise<string | null> {
+  if (isBinaryAttachmentRelPath(relPath)) return null; // jamais de fusion binaire
   const base = await loadSyncBase(relPath);
-  if (base === null) return false;
+  if (base === null) return null;
   let local: string;
   let remote: string;
   try {
@@ -992,10 +996,10 @@ async function attemptConflictMerge(
     local = await vault.readNote(relPath);
     remote = await downloadRemoteText(remoteVaultId, relPath, remoteObjectPath);
   } catch {
-    return false;
+    return null;
   }
   const merged = tryThreeWayMerge(base, local, remote);
-  if (merged.kind !== 'merged') return false;
+  if (merged.kind !== 'merged') return null;
   // Garde JSON (v0.4.65) : les métadonnées synchronisées sont du JSON
   // (tasks/tasklists/preferences) — une fusion par caractères peut produire
   // du texte inanalysable. Si le résultat ne se parse pas, on retombe sur
@@ -1004,7 +1008,7 @@ async function attemptConflictMerge(
     try {
       JSON.parse(merged.text);
     } catch {
-      return false;
+      return null;
     }
   }
 
@@ -1012,7 +1016,7 @@ async function attemptConflictMerge(
   await vault.writeNote(relPath, merged.text);
   const tree = await sync.hashVaultTree();
   const note = tree.find((n) => n.relPath === relPath);
-  if (!note) return false;
+  if (!note) return null;
   await pushFile(remoteVaultId, ownerId, note, journal);
   journal.push(
     makeJournalEntry('conflict', {
@@ -1020,8 +1024,12 @@ async function attemptConflictMerge(
       detail: 'fusion automatique des deux versions (diff-match-patch)',
     }),
   );
-  return true;
+  return note.contentHash;
 }
+
+// v0.4.81 — horodatage de la dernière annonce « connexion » (anti-spam :
+// une seule annonce par session, ou après ≥5 min sans cycle).
+let lastConnexionAnnouncedAt = 0;
 
 // Lance une synchro complète (push + pull + résolution de conflit) pour le
 // coffre ACTIF (v0.4.28). `trigger` (v0.4.27) alimente le journal : d'où
@@ -1137,7 +1145,16 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   // cycle ne produit AUCUNE action (aucun changement), il est RETIRÉ du
   // journal à la fin : un cycle à vide ne laisse rien (pas de spam de
   // « 0 envoyée(s) » à chaque minute — demande utilisateur explicite).
-  const journal: SyncJournalEntry[] = [makeJournalEntry('connexion')];
+  // v0.4.81 — ANTI-SPAM : « connexion » n'est annoncé qu'à la VRAIE
+  // reprise (démarrage de l'app, reconnexion après ≥5 min sans cycle) —
+  // les cycles de surveillance d'un même run ne ré-annoncent plus la
+  // connexion à chaque fois (vécu : « la connexion au serveur se fait sans
+  // aucune raison toutes les 2 minutes »).
+  const journal: SyncJournalEntry[] = [];
+  if (Date.now() - lastConnexionAnnouncedAt > 5 * 60_000) {
+    journal.push(makeJournalEntry('connexion'));
+    lastConnexionAnnouncedAt = Date.now();
+  }
   const journalStartLength = await journalLength();
   await appendJournalEntries(journal);
 
@@ -1356,11 +1373,15 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   }
 
   // 3) Diff SUR LES ENSEMBLES FILTRÉS : ni les tombestones (jamais de
-  //    pull, jamais de push — push les réactiverait), ni les fichiers
-  //    supprimés localement (absents du disque).
+  //    pull, jamais de push — push les réactiveraient), ni les fichiers
+  //    supprimés localement (absents du disque). v0.4.81 : le sync-state
+  //    sert de RÉFÉRENCE au diff (3 voies) — une modification d'un fichier
+  //    dont le cloud porte encore le hash connu est un push, pas un
+  //    conflit (M.4 de la spec, §12 du journal d'incidents).
   const diffLocalFiles = localFiles.filter((note) => !tombstonedPaths.has(note.relPath));
   const diffRemoteFiles = activeRemoteFiles.filter((file) => !tombstonedPaths.has(file.relPath));
-  const decisions = diffVault(diffLocalFiles, diffRemoteFiles);
+  const decisions = diffVault(diffLocalFiles, diffRemoteFiles, syncState.files);
+  const mergedHashes: Record<string, string> = {};
 
   // Les étapes réseau (demande utilisateur : le journal raconte comme
   // Obsidian Sync — « upload en cours », « upload terminé »).
@@ -1418,18 +1439,31 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
           journal.push(makeJournalEntry('pull', { path: decision.relPath }));
           break;
         case 'conflict-push-wins': {
+          // v0.4.81 — M.4/E3 : un fichier EN COURS D'ÉDITION ne fusionne
+          // JAMAIS à chaud : le conflit est DIFFÉRÉ au cycle suivant,
+          // symétrique du garde du pull (ci-dessus). Vécu §12.1 du journal
+          // d'incidents : le fichier était listé « synchronisation
+          // différée » à 15:20:00 et fusionné à 15:20:01 — la fusion
+          // réécrivait le fichier ouvert, ce qui relançait le conflit à
+          // chaque cycle.
+          if (hotPaths.has(decision.relPath)) {
+            journal.push(
+              makeJournalEntry('info', { path: decision.relPath, detail: 'conflit différé : fichier en cours d’édition sur cet appareil' }),
+            );
+            break;
+          }
           // v0.4.29 : fusion à trois voix d'abord (diff-match-patch) — deux
           // modifications de parties différentes sont réunies, aucune des
           // deux n'est archivée. Repli : gagnant local + perdant archivé.
-          if (
-            await attemptConflictMerge(
-              remoteVaultId,
-              ownerId,
-              decision.relPath,
-              remoteByPath.get(decision.relPath)?.storageObjectPath,
-              journal,
-            )
-          ) {
+          const mergedPushHash = await attemptConflictMerge(
+            remoteVaultId,
+            ownerId,
+            decision.relPath,
+            remoteByPath.get(decision.relPath)?.storageObjectPath,
+            journal,
+          );
+          if (mergedPushHash) {
+            mergedHashes[decision.relPath] = mergedPushHash;
             summary.conflicts += 1;
             break;
           }
@@ -1450,15 +1484,15 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
           break;
         }
         case 'conflict-pull-wins': {
-          if (
-            await attemptConflictMerge(
-              remoteVaultId,
-              ownerId,
-              decision.relPath,
-              remoteByPath.get(decision.relPath)?.storageObjectPath,
-              journal,
-            )
-          ) {
+          const mergedPullHash = await attemptConflictMerge(
+            remoteVaultId,
+            ownerId,
+            decision.relPath,
+            remoteByPath.get(decision.relPath)?.storageObjectPath,
+            journal,
+          );
+          if (mergedPullHash) {
+            mergedHashes[decision.relPath] = mergedPullHash;
             summary.conflicts += 1;
             break;
           }
@@ -1504,6 +1538,15 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
     if (decision.kind !== 'pull' && decision.kind !== 'conflict-pull-wins') continue;
     const remote = remoteByPath.get(decision.relPath);
     if (remote) nextFiles[decision.relPath] = remote.contentHash;
+  }
+  // v0.4.81 — §12.2 du journal d'incidents : le fichier FUSIONNÉ est la
+  // nouvelle vérité locale ET distante (il vient d'être écrit et poussé).
+  // Le state enregistre le hash RÉEL du fichier écrit, pas celui de
+  // l'indexation d'avant la fusion — sinon le cycle suivant re-détectait
+  // une divergence déjà résolue et re-annonçait le conflit (boucle
+  // systématique du 18/10).
+  for (const [relPath, mergedHash] of Object.entries(mergedHashes)) {
+    nextFiles[relPath] = mergedHash;
   }
   try {
     await saveSyncState({ files: nextFiles, rootPath: vaultRootPath });
