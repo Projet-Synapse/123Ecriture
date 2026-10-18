@@ -1,36 +1,38 @@
-//////////
-// ✒️ 123ECRITURE — syncRules.ts
-// RÈGLES DE SYNCHRONISATION PARTAGÉES (desktop + mobile) : ce qui est haché
-//////////
-
-// INTRODUCTION — Source UNIQUE des règles « qu'est-ce qui entre dans la
+// ✒️ 123ECRITURE — lib/sync/syncRules.ts — règles de synchronisation partagées (desktop + mobile)
+//////////////////////////////////////////////////////////////////////////////
+//
+// Source UNIQUE de la règle « qu'est-ce qui entre dans la
 // synchronisation », consommée par LES DEUX marcheurs : le pont desktop
 // (apps/desktop/electron/sync.ts — fs Node) et le pont mobile
-// (lib/storage/nativeSyncAdapter.ts — fichiers ordinaires Android). Avant
-// cette extraction, les règles étaient dupliquées de part et d'autre avec
-// des divergences (les fichiers code dans .trash n'étaient hachés que d'un
-// côté ; la liste blanche des métadonnées était du code mort côté desktop) —
-// c'est exactement l'écart qui entretient des boucles de sync. Pur :
-// aucune dépendance de plateforme (codeLanguages est déjà partagé).
+// (lib/storage/nativeSyncAdapter.ts — fichiers ordinaires Android). Des
+// règles dupliquées de part et d'autre divergent fatalement (fichiers code
+// dans .trash hachés d'un seul côté, liste blanche des métadonnées morte
+// côté desktop) — c'est exactement l'écart qui entretient des boucles de
+// synchronisation.
 //
-// RÈGLES :
-//   - un nom contenant un `\` n'est JAMAIS haché (résidus de contamination
-//     — légal dans un nom Android, jamais dans un arbre) ;
-//   - SYNCED_META_FILES : liste blanche de métadonnées .123ecriture/** qui
-//     VOYAGENT avec le coffre (le reste du sous-arbre caché reste local) ;
-//   - un segment caché exclut le fichier — SAUF `.trash/` (corbeille du
-//     coffre, synchronisée) et SAUF la liste blanche ci-dessus ;
-//   - extensions : contenu (.mdx/.md/.canvas/.chart/.excalidraw/.base +
-//     fichiers code, même source CODE_FILE_EXTENSIONS que l'arborescence)
-//     et pièces jointes (images/documents/audio).
+// Invariants du fichier :
+//   • Toute évolution de la règle se fait ICI, jamais dans une liste
+//     locale d'un marcheur — les tests de parité verrouillent l'égalité
+//     des deux côtés.
+//   • Un nom contenant un `\` n'est JAMAIS haché (résidus de contamination
+//     — légal dans un nom Android, jamais dans un arbre).
+//   • SYNCED_META_FILES : liste blanche de métadonnées .123ecriture/**
+//     qui VOYAGENT avec le coffre (le reste du sous-arbre caché reste
+//     local).
+//   • Un segment caché exclut le fichier — SAUF `.trash/` (corbeille du
+//     coffre, synchronisée) et SAUF la liste blanche ; extensions de
+//     contenu (même source CODE_FILE_EXTENSIONS que l'arborescence) et
+//     pièces jointes (images/documents/audio) incluses.
 //
 // SOMMAIRE :
-//   1. 📇 Listes partagées
-//   2. ⚖️ La règle unique (isHashableRelPath)
+//   1. Les listes partagées (métadonnées voyageantes, extensions)
+//   2. La règle unique (isHashableRelPath)
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. Les listes partagées (métadonnées voyageantes, extensions) ///////////
 
 import { CODE_FILE_EXTENSIONS } from '../editor/codeLanguages';
-
-//////// 1. 📇 LISTES PARTAGÉES ///////////
 
 export const SYNCED_META_FILES = [
   '.123ecriture/appearance.json',
@@ -45,12 +47,15 @@ export const SYNC_ATTACHMENT_EXTENSIONS = [
   '.mp3', '.wav', '.ogg', '.m4a', '.mp4', '.webm',
 ];
 
+// Les extensions de contenu partagent la même source CODE_FILE_EXTENSIONS
+// que l'arborescence de l'éditeur : un fichier affiché dans l'app est
+// toujours un fichier synchronisable, et réciproquement.
 export const SYNC_CONTENT_EXTENSIONS = [
   '.mdx', '.md', '.canvas', '.chart', '.excalidraw', '.base',
   ...CODE_FILE_EXTENSIONS,
 ];
 
-//////// 2. ⚖️ LA RÈGLE UNIQUE (isHashableRelPath) ///////////
+//////// 2. La règle unique (isHashableRelPath) ///////////
 
 export function isHashableRelPath(relPath: string): boolean {
   // Résidus de contamination (le `\` est légal dans un nom Android, pas

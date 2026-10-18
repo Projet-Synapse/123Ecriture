@@ -1,19 +1,21 @@
-//////////
-// ✒️ 123ECRITURE — deviceGateway.ts
-// PASSERELLE À DISTANCE (v0.4.76) : exécution des commandes adressées à
-// CET appareil via le cloud — les yeux et les mains, sans adb
-//////////
-
-// INTRODUCTION — Demande de Catelina : « une passerelle alternative au
-// câble USB et au débogage sans fil qui te permet de contrôler si
-// nécessaire mon téléphone Android ». Chaque appareil exécute, à chaque
-// cycle de synchro, les commandes `pending` de la table
-// app_123ecriture.device_commands qui lui sont adressées, et publie le
-// résultat (audit conservé dans la table). Le canal est Supabase, déjà
-// authentifié (RLS owner) — aucun câble, aucun débogage sans fil.
+// ✒️ 123ECRITURE — lib/sync/deviceGateway.ts — passerelle à distance (commandes cloud adressées à cet appareil)
+//////////////////////////////////////////////////////////////////////////////
 //
-// LIMITATION HONNÊTE : les commandes s'exécutent quand l'app tourne un
-// cycle (app ouverte ou réveillée). Aucun réveil à distance en v1.
+// Exécution des commandes adressées à CET appareil via le cloud — les yeux
+// et les mains, passerelle alternative au câble USB et au débogage sans
+// fil. À chaque cycle de synchro, l'appareil traite les commandes `pending`
+// de la table app_123ecriture.device_commands qui lui sont adressées, et
+// publie le résultat (audit conservé dans la table). Le canal est Supabase,
+// déjà authentifié (RLS owner) — aucun câble, aucun débogage sans fil.
+//
+// Invariants du fichier :
+//   • La passerelle ne doit JAMAIS faire échouer un cycle de synchro :
+//     tout échec est attrapé, tracé en console, et le cycle continue.
+//   • LIMITATION HONNÊTE : les commandes s'exécutent quand l'app tourne un
+//     cycle (app ouverte ou réveillée) — aucun réveil à distance.
+//   • Aucun import de syncEngine : le chemin du journal et la résolution
+//     des ponts sont repris localement, car syncEngine importe cette
+//     passerelle (un cycle d'import casserait le bundle).
 //
 // Commandes v1 :
 //   - dump-diagnostics  → rapport complet (diagnostics.ts) en résultat
@@ -22,9 +24,13 @@
 //   - unlock-sync       → lève le bloc local
 //
 // SOMMAIRE :
-//   1. 📥 processDeviceCommands — la boucle d'exécution
-//   2. 🛠️ Exécution unitaire (executeCommand)
-//   3. 📤 queueDeviceCommand (pose d'une commande, pour l'UI)
+//   1. La boucle d'exécution (processDeviceCommands, buildLocalDiagnostics, setRemoteRowsDeleted)
+//   2. Exécution unitaire (executeCommand)
+//   3. Pose d'une commande (queueDeviceCommand, pour l'UI « Appareils connectés »)
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. La boucle d'exécution (processDeviceCommands, buildLocalDiagnostics, setRemoteRowsDeleted) ///////////
 
 import { Platform } from 'react-native';
 
@@ -63,8 +69,6 @@ async function myAppVersion(): Promise<string | null> {
     return null;
   }
 }
-
-//////// 1. 📥 LA BOUCLE D'EXÉCUTION ///////////
 
 export async function processDeviceCommands(remoteVaultId: string, ownerId: string): Promise<void> {
   try {
@@ -111,8 +115,8 @@ export async function processDeviceCommands(remoteVaultId: string, ownerId: stri
   }
 }
 
-// v0.4.76 — RAPPORT DE DIAGNOSTIC LOCAL : assemblé depuis les ponts de la
-// fenêtre — réutilisé par la passerelle (dump-diagnostics) ET par le bouton
+// RAPPORT DE DIAGNOSTIC LOCAL : assemblé depuis les ponts de la fenêtre —
+// réutilisé par la passerelle (dump-diagnostics) ET par le bouton
 // « copier le diagnostic » de l'UI.
 export async function buildLocalDiagnostics(): Promise<DiagnosticsReport> {
   const collectionErrors: string[] = [];
@@ -186,7 +190,7 @@ export async function setRemoteRowsDeleted(
   }
 }
 
-//////// 2. 🛠️ EXÉCUTION UNITAIRE ///////////
+//////// 2. Exécution unitaire (executeCommand) ///////////
 
 async function executeCommand(
   remoteVaultId: string,
@@ -234,7 +238,7 @@ function requireBridges(): { vault: VaultBridge } {
   return { vault: window.vault };
 }
 
-//////// 3. 📤 POSE D'UNE COMMANDE (pour l'UI « Appareils connectés ») ///////////
+//////// 3. Pose d'une commande (queueDeviceCommand, pour l'UI « Appareils connectés ») ///////////
 
 export async function queueDeviceCommand(
   ownerId: string,

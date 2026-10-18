@@ -1,23 +1,28 @@
-//////////
-// ✒️ 123ECRITURE — diagnostics.ts
-// RAPPORT DE DIAGNOSTIC D'UN APPAREIL (v0.4.76) : la vérité locale, lisible
-// et transportable
-//////////
-
-// INTRODUCTION — Réponse structurelle à des semaines d'aveuglement : « je
-// ne vois jamais l'application en train de mal fonctionner ». Ce module
+// ✒️ 123ECRITURE — lib/sync/diagnostics.ts — rapport de diagnostic d'un appareil
+//////////////////////////////////////////////////////////////////////////////
+//
+// La vérité locale d'un appareil, lisible et transportable : ce module
 // FORME (pur, testé) le rapport que la passerelle (deviceGateway.ts)
-// collecte sur chaque appareil et publie dans le cloud : version, coffres,
-// permission de stockage, état de synchro, file de revue, fin du journal —
-// avec les erreurs de COLLECTE elles-mêmes listées (jamais silencieuses).
-// Le rapport est du texte copiable : depuis l'app (bouton prévu) ou via la
-// passerelle, il se lit tel quel.
+// collecte et publie dans le cloud — version, coffres, permission de
+// stockage, état de synchro, file de revue, fin du journal. Réponse
+// structurelle à l'aveuglement « je ne vois jamais l'application en train
+// de mal fonctionner » : un appareil à distance décrit exactement son état.
+//
+// Invariants du fichier :
+//   • Pur : ce module ne collecte rien, il forme et met en forme — la
+//     collecte vit dans la passerelle (deviceGateway.ts).
+//   • Les erreurs de COLLECTE elles-mêmes figurent dans le rapport
+//     (collectionErrors) — jamais silencieuses.
+//   • Le rapport est du TEXTE copiable : il se lit tel quel, depuis l'app
+//     ou via la passerelle, sans outil.
 //
 // SOMMAIRE :
-//   1. 📋 Forme du rapport (DiagnosticsReport)
-//   2. 🖋️ Mise en forme lisible (formatDiagnosticsReport)
+//   1. Forme du rapport (DiagnosticsReport)
+//   2. Mise en forme lisible (formatDiagnosticsReport)
+//
+//////////////////////////////////////////////////////////////////////////////
 
-//////// 1. 📋 FORME DU RAPPORT (DiagnosticsReport) ///////////
+//////// 1. Forme du rapport (DiagnosticsReport) ///////////
 
 export type DiagnosticsJournalEntry = {
   t: string;
@@ -40,7 +45,7 @@ export type DiagnosticsReport = {
   collectionErrors: string[];
 };
 
-//////// 2. 🖋️ MISE EN FORME LISIBLE (formatDiagnosticsReport) ///////////
+//////// 2. Mise en forme lisible (formatDiagnosticsReport) ///////////
 
 export function formatDiagnosticsReport(report: DiagnosticsReport): string {
   const lines: string[] = [];
