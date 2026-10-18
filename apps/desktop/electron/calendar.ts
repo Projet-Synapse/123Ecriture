@@ -4,7 +4,7 @@ import fs from 'fs/promises';
 import fsSync from 'fs';
 import path from 'path';
 
-import * as vaults from './vaults';
+import * as vaults from './synchronisation vault/vaults';
 import type { CalendarEvent, CalendarEventInput } from './types';
 
 // Module "Calendrier" — évènements horodatés (voir docs/ARCHITECTURE.md §8

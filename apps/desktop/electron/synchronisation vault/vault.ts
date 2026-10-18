@@ -4,19 +4,19 @@ import fs from 'fs/promises';
 import fsSync from 'fs';
 import path from 'path';
 
-import { readConfig } from './config';
+import { readConfig } from '../config';
 import * as vaults from './vaults';
-import type { FileSortMode, VaultEntryKind, VaultOrder, VaultTreeNode } from './types';
+import type { FileSortMode, VaultEntryKind, VaultOrder, VaultTreeNode } from '../types';
 // Critères de résolution des cibles d'embed façon Obsidian (chemin exact →
 // suffixe → nom seul, casse ignorée) — fonction PURE partagée avec le port
 // web (webVaultAdapter.ts) et le Live Preview, importée telle quelle comme
 // frontmatterMigration/propertyScanMerge (esbuild bundle l'import
 // cross-package, vérifié).
-import { matchesEmbedTarget } from '../../mobile/lib/embedResolution';
+import { matchesEmbedTarget } from '../../../mobile/lib/embedResolution';
 // Liste des extensions reconnues comme fichiers CODE (.py/.ts/.js/…) —
 // source de vérité unique partagée avec les adaptateurs web/natif (même
 // modèle d'import cross-package que embedResolution ci-dessus).
-import { CODE_FILE_EXTENSIONS, isCodeFile } from '../../mobile/lib/codeLanguages';
+import { CODE_FILE_EXTENSIONS, isCodeFile } from '../../../mobile/lib/codeLanguages';
 
 type GetWindow = () => BrowserWindow | null;
 

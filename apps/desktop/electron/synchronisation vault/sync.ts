@@ -5,14 +5,14 @@ import fsSync from 'fs';
 import path from 'path';
 
 import * as vaults from './vaults';
-import type { HashedNote } from './types';
+import type { HashedNote } from '../types';
 // v0.4.76 — SOURCE UNIQUE des règles de hachage (partagé avec le pont
 // mobile nativeSyncAdapter.ts) : isHashableRelPath. Avant, les règles
 // étaient dupliquées avec des divergences (fichiers code dans .trash
 // hachés d'un côté seulement ; liste blanche des métadonnées côté desktop
 // morte — le `continue` sur les noms cachés s'exécutait AVANT le test de
 // liste blanche).
-import { isHashableRelPath } from '../../mobile/lib/sync/syncRules';
+import { isHashableRelPath } from '../../../mobile/lib/sync/syncRules';
 
 // Partie "synchro" (voir docs/ARCHITECTURE.md §6) : la seule opération qui a
 // vraiment besoin du process principal est de hasher le vault actif en une

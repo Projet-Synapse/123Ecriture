@@ -4,7 +4,7 @@ import fsSync from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 
-import * as vaults from './vaults';
+import * as vaults from './synchronisation vault/vaults';
 import type { PropertyDefinition, PropertyPatch, PropertyRenameMigrationSummary, PropertyType } from './types';
 // Fonction pure de migration de clé de frontmatter — voir
 // apps/mobile/lib/frontmatterMigration.ts (testée par Vitest côté

@@ -5,8 +5,8 @@ import fsSync from 'fs';
 import os from 'os';
 import path from 'path';
 
-import { readConfig, writeConfig } from './config';
-import type { AppConfig, DeviceInfo, VaultIdentity, VaultRegistryEntry } from './types';
+import { readConfig, writeConfig } from '../config';
+import type { AppConfig, DeviceInfo, VaultIdentity, VaultRegistryEntry } from '../types';
 
 type GetWindow = () => BrowserWindow | null;
 
