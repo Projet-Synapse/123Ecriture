@@ -24,7 +24,10 @@ const FILTERS: { id: FilterId; label: string; types?: SyncJournalEntryType[] }[]
   { id: 'tout', label: 'Tout' },
   { id: 'envois', label: 'Envois', types: ['push', 'modification'] },
   { id: 'receptions', label: 'Réceptions', types: ['pull'] },
-  { id: 'suppressions', label: 'Suppressions', types: ['delete', 'restore'] },
+  // v0.4.81 (§13) : « corbeille » = le continu d'un déplacement en corbeille
+  // (le push du chemin `.trash/…`) — lu avec les suppressions, pas avec les
+  // envois, pour raconter UN geste et non deux.
+  { id: 'suppressions', label: 'Suppressions', types: ['delete', 'restore', 'corbeille'] },
   { id: 'conflits', label: 'Conflits', types: ['conflict'] },
   { id: 'erreurs', label: 'Erreurs', types: ['error'] },
 ];
@@ -34,6 +37,7 @@ const ICON_BY_TYPE: Record<SyncJournalEntryType, string> = {
   'cycle-end': '✅',
   push: '⬆️',
   modification: '✏️',
+  corbeille: '🗑️',
   pull: '⬇️',
   delete: '🗑️',
   conflict: '⚠️',

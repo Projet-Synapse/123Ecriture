@@ -54,6 +54,12 @@ export type SyncSummary = {
   // cloud (pierres tombales) + suppressions DISTantes appliquées ici
   // (v0.4.17).
   deleted: number;
+  // v0.4.81 (§13) : pushes dont le chemin vit sous `.trash/` — le continu
+  // d'un déplacement en corbeille. Comptés À PART (ni « envoyé(s) » ni
+  // « modifié(s) ») pour que le résumé ne compte pas deux fois le même
+  // geste (le journal d'incidents : « 4 envoyé(s), 4 supprimé(s) » pour un
+  // seul déplacement).
+  trashed: number;
   conflicts: number;
   errors: string[];
 };
@@ -798,13 +804,24 @@ async function pushFile(
   // le changement, pas un « envoyé » aveugle). Best-effort : un échec de
   // statistique n'est JAMAIS un échec de push. Les binaires gardent
   // l'entrée « push » simple (pas de comparaison de texte).
+  // v0.4.81 — §13 : un push dont le chemin vit sous `.trash/` est le
+  // CONTINU d'un déplacement en corbeille (la corbeille est synchronisée) :
+  // il se raconte « Corbeille : … » — jamais « Modifié : … », sinon le
+  // même geste se lisait « supprimé PUIS modifié » sur le même fichier.
   if (isBinaryAttachmentRelPath(relPath)) {
-    journal.push(makeJournalEntry('push', { path: relPath }));
+    journal.push(
+      makeJournalEntry(relPath.startsWith('.trash/') ? 'corbeille' : 'push', { path: relPath }),
+    );
   } else {
     try {
       const stats = textChangeStats(previousRemoteContent ?? null, String(uploadBody));
       journal.push(
-        makeJournalEntry('modification', { path: relPath, detail: textChangeDetail(stats) }),
+        relPath.startsWith('.trash/')
+          ? makeJournalEntry('corbeille', {
+              path: relPath,
+              detail: `déplacement synchronisé (${textChangeDetail(stats)})`,
+            })
+          : makeJournalEntry('modification', { path: relPath, detail: textChangeDetail(stats) }),
       );
     } catch {
       journal.push(makeJournalEntry('push', { path: relPath }));
@@ -1047,7 +1064,7 @@ let lastConnexionAnnouncedAt = 0;
 // moteur peut au pire synchroniser l'ANCIEN coffre actif un cycle de trop,
 // jamais deux coffres entremêlés.
 export async function runSync(ownerId: string, trigger = 'automatique'): Promise<SyncSummary> {
-  const summary: SyncSummary = { pushed: 0, pulled: 0, deleted: 0, conflicts: 0, errors: [] };
+  const summary: SyncSummary = { pushed: 0, pulled: 0, deleted: 0, trashed: 0, conflicts: 0, errors: [] };
   let bridges;
   try {
     bridges = requireBridges();
@@ -1410,7 +1427,13 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
             ).catch(() => null);
           }
           await pushFile(remoteVaultId, ownerId, note, journal, previousRemoteContent);
-          summary.pushed += 1;
+          // v0.4.81 (§13) : un push sous `.trash/` est le continu d'un
+          // déplacement en corbeille — compté À PART, pas dans « envoyé(s) ».
+          if (decision.relPath.startsWith('.trash/')) {
+            summary.trashed += 1;
+          } else {
+            summary.pushed += 1;
+          }
           break;
         }
         case 'pull':
