@@ -1,9 +1,31 @@
-// Logique PURE du navigateur de tâches (v0.4.48 — demandes utilisateur :
-// « réorganiser les listes et dossiers par glisser-déposer », « aperçu
-// cochable des sous-étapes sous le titre ») — séparée de TasksScreen.tsx
-// pour rester testable sans dépendance lourde, comme les autres fichiers
-// de lib/. Un item du navigateur est une TaskList (une entrée `isFolder`
-// est un DOSSIER de listes — voir types/global.d.ts).
+// ✒️ 123ECRITURE — lib/tasks/tasksNavigator.ts — navigateur de tâches (logique pure)
+//////////////////////////////////////////////////////////////////////////////
+//
+// Logique PURE du navigateur de tâches — séparée de TasksScreen.tsx pour
+// rester testable sans dépendance lourde, comme les autres fichiers de
+// lib/. Un item du navigateur est une TaskList (une entrée `isFolder` est
+// un DOSSIER de listes — voir types/global.d.ts) ; le glisser-déposer
+// réorganise listes et dossiers au sein d'un même scope (les items d'un
+// même dossier).
+//
+// Invariants du fichier :
+//   • L'ordre d'affichage d'un scope est `order` croissant (les items sans
+//     ordre passent en fin), puis nom en repli — déterministe et stable
+//     pour le glisser-déposer.
+//   • orderAfterDrop renumérote le scope 0..n à chaque dépôt : l'ordre
+//     persisté reste dense, jamais troué.
+//   • Entrées dégénérées (draggedId absent du scope, beforeId introuvable)
+//     ne plantent pas : repli en fin de scope, ou liste vide si l'item
+//     déplacé n'existe pas.
+//
+// SOMMAIRE :
+//   1. Tri d'un scope — sortNavigatorItems
+//   2. Dépôt du glisser-déposer — orderAfterDrop
+//   3. Compte à faire — pendingTaskCount
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. Tri d'un scope — sortNavigatorItems //////////////////////////////
 
 // Tri d'un SCOPE (les items d'un même dossier) : `order` croissant (les
 // items sans ordre, ex. créés par une ancienne version, passent en fin),
@@ -16,6 +38,8 @@ export function sortNavigatorItems(items: TaskList[]): TaskList[] {
     return a.name.localeCompare(b.name, 'fr');
   });
 }
+
+//////// 2. Dépôt du glisser-déposer — orderAfterDrop ////////////////////////
 
 // Ordre FINAL à persister après un dépôt AVANT l'item `beforeId` (null =
 // fin de scope) : renvoie les paires {id, order} du scope recomposées
@@ -37,6 +61,8 @@ export function orderAfterDrop(
 
   return ids.map((id, index) => ({ id, order: index }));
 }
+
+//////// 3. Compte à faire — pendingTaskCount ////////////////////////////////
 
 // Compte à faire d'un scope de tâches (pour le badge d'une liste) —
 // nombre de tâches non cochées.

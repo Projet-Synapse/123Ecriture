@@ -1,14 +1,35 @@
 import { parseFrontmatter, serializeFrontmatter, type FrontmatterData } from './frontmatter';
 
+// ✒️ 123ECRITURE — lib/properties/frontmatterMigration.ts — migration de clé de frontmatter
+//////////////////////////////////////////////////////////////////////////////
+//
 // Migration de la CLÉ de frontmatter d'une note quand une propriété est
 // renommée dans le schéma (voir apps/desktop/electron/properties.ts,
 // `properties:update`). Contrairement au reste de properties.ts (qui ne
-// touche jamais aux notes — voir le commentaire d'en-tête de ce fichier),
-// un renommage de propriété doit migrer la VALEUR déjà écrite sous
-// l'ancienne clé, sans quoi elle devient orpheline du point de vue de
-// l'UI (qui lit désormais le nouveau nom). Fonction pure et testable
-// (comme lib/sync/diff.ts) plutôt qu'une logique enfouie dans le handler
-// IPC — celui-ci l'appelle une fois par note du coffre.
+// touche jamais aux notes), un renommage de propriété doit migrer la
+// VALEUR déjà écrite sous l'ancienne clé, sans quoi elle devient
+// orpheline du point de vue de l'UI (qui lit désormais le nouveau nom).
+// Fonction pure et testable (comme lib/sync/diff.ts) — le handler IPC
+// l'appelle une fois par note du coffre.
+//
+// Invariants du fichier :
+//   • JAMAIS d'écrasement silencieux d'une valeur existante : si la
+//     nouvelle clé porte déjà une valeur sur la note, la note reste telle
+//     quelle et le cas remonte comme `skipped` pour être compté côté
+//     appelant.
+//   • La clé renommée est remplacée À SA PLACE d'origine (pas de
+//     suppression + rajout en fin) : l'ordre des propriétés dans le YAML
+//     sérialisé reste proche de l'original.
+//   • `changed` faux → contenu identique à l'entrée : rien à réécrire sur
+//     disque.
+//   • `oldKey`/`newKey` sont supposés non-vides et différents — l'appelant
+//     ne migre que si le nom a réellement changé.
+//
+// SOMMAIRE :
+//   1. migrateFrontmatterKey — renommage d'une clé de frontmatter
+//
+//////////////////////////////////////////////////////////////////////////////
+
 export interface FrontmatterKeyMigrationResult {
   // Contenu final du fichier — identique à `content` d'entrée si
   // `changed` est faux (rien à réécrire sur disque dans ce cas).
@@ -21,6 +42,8 @@ export interface FrontmatterKeyMigrationResult {
   // données").
   skipped: boolean;
 }
+
+//////// 1. migrateFrontmatterKey — renommage d'une clé de frontmatter ///////
 
 // `oldKey`/`newKey` supposés non-vides et différents — l'appelant (ici
 // `properties:update`) ne migre que si le nom a réellement changé.

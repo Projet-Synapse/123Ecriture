@@ -1,14 +1,33 @@
-// Fonctions pures sur l'arborescence du vault — séparées des composants
-// pour rester testables sans RN, comme lib/mdxFormatting.ts.
+// ✒️ 123ECRITURE — lib/notes/vaultTree.ts — fonctions pures sur l'arborescence du coffre
+//////////////////////////////////////////////////////////////////////////////
 //
-// //1. Recherche — findNodeByPath, getParentRelPath, getAncestorRelPaths.
-// //2. Listes dérivées — flattenNotes, getChildrenAt.
-// //3. Dossiers destination — collectFolderOptions (voir MoveDialog.tsx).
-// //4. Chemins (fichiers + dossiers) — collectPathOptions.
-// //5. Multi-sélection — flattenVisibleNotes (voir NotesScreen.tsx).
+// Fonctions PURES sur l'arborescence du vault — séparées des composants
+// React pour rester testables sans React Native (comme
+// lib/mdxFormatting.ts). Chaque section sert un consommateur précis
+// (NotesScreen, MoveDialog, CanvasEditor, PropertyValueField) sans
+// dupliquer la logique de parcours de l'arbre.
+//
+// Invariants du fichier :
+//   • Toutes les fonctions sont pures : l'arbre entre, une valeur dérivée
+//     sort — aucun effet de bord, aucun accès à l'état React ni au DOM.
+//   • flattenVisibleNotes suit l'ordre d'AFFICHAGE réel (dossiers d'abord
+//     puis notes, à chaque niveau) et exclut les descendants d'un dossier
+//     replié : la multi-sélection étend sur ce que l'utilisatrice voit à
+//     l'écran, pas sur l'arbre en mémoire.
+//   • collectFolderOptions retire le dossier déplacé ET tous ses
+//     descendants : un dossier ne peut pas être déplacé dans lui-même ni
+//     dans l'un de ses propres sous-dossiers.
+//
+// SOMMAIRE :
+//   1. Recherche — findNodeByPath, getParentRelPath, getAncestorRelPaths
+//   2. Listes dérivées — flattenNotes, getChildrenAt
+//   3. Dossiers destination — collectFolderOptions (voir MoveDialog.tsx)
+//   4. Chemins (fichiers + dossiers) — collectPathOptions
+//   5. Multi-sélection — flattenVisibleNotes (voir NotesScreen.tsx)
+//
+//////////////////////////////////////////////////////////////////////////////
 
-// //1. 🔎 RECHERCHE
-// ////////////////////////////////////////////////////////////////////////
+//////// 1. Recherche — findNodeByPath, getParentRelPath, getAncestorRelPaths ///
 
 // Retrouve un nœud (note ou dossier) par son relPath, en profondeur.
 // Utilisé par NotesScreen pour retrouver l'élément visé par un clic droit
@@ -49,8 +68,7 @@ export function getAncestorRelPaths(relPath: string): string[] {
   return ancestors;
 }
 
-// //2. 📋 LISTES DÉRIVÉES
-// ////////////////////////////////////////////////////////////////////////
+//////// 2. Listes dérivées — flattenNotes, getChildrenAt ////////////////////
 
 // Liste plate de toutes les NOTES de l'arborescence (pas les dossiers) —
 // utilisé par CanvasEditor.tsx pour proposer un choix de note à référencer
@@ -76,8 +94,7 @@ export function getChildrenAt(tree: VaultTreeNode[], parentRelPath: string | und
   return parent && parent.type === 'folder' ? parent.children : [];
 }
 
-// //3. 📁 DOSSIERS DESTINATION
-// ////////////////////////////////////////////////////////////////////////
+//////// 3. Dossiers destination — collectFolderOptions (voir MoveDialog.tsx) ///
 
 export type FolderOption = { relPath: string; label: string; depth: number };
 
@@ -105,8 +122,7 @@ export function collectFolderOptions(
   return options;
 }
 
-// //4. 🗺️ CHEMINS (fichiers + dossiers)
-// ////////////////////////////////////////////////////////////////////////
+//////// 4. Chemins (fichiers + dossiers) — collectPathOptions ///////////////
 
 export type PathOption = { relPath: string; label: string; depth: number; kind: 'folder' | 'note' };
 
@@ -126,8 +142,7 @@ export function collectPathOptions(nodes: VaultTreeNode[], depth = 0, options: P
   return options;
 }
 
-// //5. 🖱️ MULTI-SÉLECTION
-// ////////////////////////////////////////////////////////////////////////
+//////// 5. Multi-sélection — flattenVisibleNotes (voir NotesScreen.tsx) /////
 
 // Liste plate des NOTES actuellement VISIBLES dans l'explorateur, dans
 // l'ordre d'affichage réel (comme walkTree côté main process : dossiers

@@ -1,18 +1,44 @@
-// Dates d'échéance des tâches — logique pure, sans React ni Electron,
-// testée comme lib/calendarDates.ts (même convention d'extraction).
+// ✒️ 123ECRITURE — lib/tasks/taskDueDates.ts — dates d'échéance des tâches (logique pure)
+//////////////////////////////////////////////////////////////////////////////
 //
-// //1. Normalisation de la saisie (normalizeDueDateInput) — le champ reste
-//      un TextInput libre, même choix assumé que l'heure des évènements
-//      (voir calendarDates.ts, normalizeTimeInput) : pas de date-picker
-//      natif multiplateforme satisfaisant, on normalise au commit.
-// //2. Statut vis-à-vis d'aujourd'hui (dueDateStatus) — pilote la couleur
-//      du badge d'échéance dans TasksScreen.
-// //3. Format court français (formatDueDate).
-// //4. Tri (compareByDueDate) — "trier par échéance" de TasksScreen.
-// //5. Raccourcis de saisie (isoDateFromOffset) — boutons "Aujourd'hui/
-//      Demain/+7 j" de la fiche tâche, qui contournent la saisie libre.
+// Dates d'échéance des tâches — logique pure, sans React ni Electron,
+// testée comme lib/calendarDates.ts (même convention d'extraction). Le
+// champ d'échéance reste un TextInput libre (pas de date-picker natif
+// multiplateforme satisfaisant, même choix assumé que l'heure des
+// évènements — voir calendarDates.ts, normalizeTimeInput) : la
+// normalisation se fait au commit, et les boutons de raccourci de la fiche
+// tâche contournent la saisie libre.
+//
+// Invariants du fichier :
+//   • normalizeDueDateInput vérifie les PLAGES RÉELLES, pas seulement le
+//     format ("2026-02-31" est refusé via l'aller-retour Date).
+//   • Les comparaisons (via toComparable) se font sur la date ISO
+//     (lexicographique = chronologique pour AAAA-MM-JJ), jamais sur des
+//     Date partielles (heures/minutes) : une échéance est un JOUR, pas un
+//     instant. Sans échéance ou valeur malformée → statut null et fin de
+//     tri.
+//   • Les formats courts utilisent des tableaux internes (pas
+//     Intl.DateTimeFormat) : déterministes et testables quel que soit
+//     l'environnement.
+//   • Les décalages de jours passent par le constructeur Date (y, m,
+//     day+n), pas par un ajout de millisecondes : immunisés contre les
+//     heures d'été/hiver (un offset de 24 h saute une heure de trop deux
+//     jours par an).
+//   • `today` est un paramètre (pas un `new Date()` interne) partout où il
+//     influe sur le résultat : tests déterministes.
+//
+// SOMMAIRE :
+//   1. Normalisation de la saisie — normalizeDueDateInput
+//   2. Statut vis-à-vis d'aujourd'hui — dueDateStatus
+//   3. Format court français — formatDueDate
+//   4. Tri — compareByDueDate
+//   5. Raccourcis de saisie — isoDateFromOffset
+//
+//////////////////////////////////////////////////////////////////////////////
 
 export type DueDateStatus = 'overdue' | 'today' | 'upcoming';
+
+//////// 1. Normalisation de la saisie — normalizeDueDateInput ///////////////
 
 // Accepte "AAAA-MM-JJ", "JJ/MM/AAAA" et "JJ-MM-AAAA" (séparateurs / ou -,
 // année 4 chiffres) — retourne "AAAA-MM-JJ", ou null si ça ne ressemble à
@@ -38,6 +64,10 @@ function toComparable(dueDate: string | null | undefined): string | null {
   return typeof dueDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dueDate) ? dueDate : null;
 }
 
+//////// 2. Statut vis-à-vis d'aujourd'hui — dueDateStatus ///////////////////
+
+// Pilote la couleur du badge d'échéance dans TasksScreen — null si la date
+// est absente ou malformée (rien à signaler).
 export function dueDateStatus(
   dueDate: string | null | undefined,
   today: Date = new Date(),
@@ -49,6 +79,8 @@ export function dueDateStatus(
   if (comparable === todayIso) return 'today';
   return 'upcoming';
 }
+
+//////// 3. Format court français — formatDueDate ////////////////////////////
 
 // "12 sept. 2026" (ou "12 sept." si l'année est celle de `today` — une
 // échéance de l'année en cours n'a pas besoin de l'année pour être lue).
@@ -65,6 +97,8 @@ export function formatDueDate(dueDate: string, today: Date = new Date()): string
   return `${day} ${MONTHS_SHORT[month - 1]}${withYear ? ` ${year}` : ''}`;
 }
 
+//////// 4. Tri — compareByDueDate ///////////////////////////////////////////
+
 // Tri croissant, sans échéance en fin de liste — stable (compare 0 entre
 // égaux) pour ne pas mélanger l'ordre d'ajout des tâches non planifiées.
 export function compareByDueDate(a: string | null | undefined, b: string | null | undefined): number {
@@ -75,6 +109,8 @@ export function compareByDueDate(a: string | null | undefined, b: string | null 
   if (cb === null) return -1;
   return ca < cb ? -1 : ca > cb ? 1 : 0;
 }
+
+//////// 5. Raccourcis de saisie — isoDateFromOffset /////////////////////////
 
 // Date ISO (AAAA-MM-JJ) décalée de `days` jours par rapport à `today` —
 // pilote les boutons de raccourci d'échéance de TasksScreen ("Aujourd'hui",

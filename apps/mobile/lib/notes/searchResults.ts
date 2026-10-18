@@ -1,10 +1,37 @@
+// ✒️ 123ECRITURE — lib/notes/searchResults.ts — affichage et ouverture d'un résultat de recherche
+//////////////////////////////////////////////////////////////////////////////
+//
 // Logique partagée autour d'un `SearchResult` (voir
-// apps/desktop/electron/search.ts) — icône/libellé d'affichage, "ce résultat
-// est-il cliquable ?", clé de rendu stable, et "comment l'ouvrir" une fois
-// cliqué. Utilisé par SearchDialog.tsx (recherche de l'explorateur, bouton
-// 🔍) ET CommandPalette.tsx (Ctrl/Cmd+K) — regroupé ici pour que les deux
-// UI restent visuellement/comportementalement identiques sans dupliquer
+// apps/desktop/electron/search.ts) : icône/libellé d'affichage, « ce
+// résultat est-il cliquable ? », clé de rendu stable, découpage des
+// extraits à surligner et aiguillage vers le bon handler d'ouverture.
+// Utilisé par SearchDialog.tsx (recherche de l'explorateur, bouton 🔍) ET
+// CommandPalette.tsx (Ctrl/Cmd+K) — regroupé ici pour que les deux UI
+// restent visuellement et comportementalement identiques sans dupliquer
 // cette logique.
+//
+// Invariants du fichier :
+//   • Seuls markdown/canvas/graphique/excalidraw/code (ouverts dans Notes)
+//     et tâche/évènement (ouverts dans Tâches/Calendrier) sont ouvrables —
+//     dossiers et pièces jointes n'ont pas d'éditeur dédié, la ligne reste
+//     donc informative plutôt que de prétendre à un clic qui ne ferait
+//     rien (règle CLAUDE.md : un bouton doit faire ce qu'il annonce).
+//   • splitMatchSegments marque TOUTES les occurrences, insensibles à la
+//     casse ; une requête vide/absente produit un seul segment non marqué
+//     (rien à surligner, état initial d'une recherche pas encore tapée).
+//   • searchResultKey retombe sur l'identifiant propre au kind quand
+//     `relPath` est vide (tâche/évènement) : clé de rendu toujours
+//     définie.
+//
+// SOMMAIRE :
+//   1. Affichage — icônes, libellés, ouvrabilité, clé de rendu
+//   2. Handlers d'ouverture — SearchResultOpenHandlers
+//   3. Surlignage — MatchSegment, splitMatchSegments
+//   4. Aiguillage — openSearchResult
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. Affichage — icônes, libellés, ouvrabilité, clé de rendu //////////
 
 // Icône par type de résultat — ✅/📅 pour tâche/évènement, cohérent avec les
 // icônes de section (voir navigation.ts, SECTIONS).
@@ -52,6 +79,8 @@ export function searchResultKey(result: SearchResult): string {
   return `${result.kind}:${result.relPath || result.taskId || result.eventId || result.name}`;
 }
 
+//////// 2. Handlers d'ouverture — SearchResultOpenHandlers //////////////////
+
 // Ce qu'un appelant doit savoir faire pour ouvrir chaque famille de
 // résultat — une note s'ouvre "sur place" (voir openNoteByRelPath dans
 // NotesScreen.tsx), une tâche/un évènement basculent sur un AUTRE écran ET
@@ -62,6 +91,8 @@ export type SearchResultOpenHandlers = {
   openTask: (taskListId: string, taskId: string) => void;
   openCalendarEvent: (date: string) => void;
 };
+
+//////// 3. Surlignage — MatchSegment, splitMatchSegments ////////////////////
 
 // Segment de texte avec drapeau "c'est ici que la requête matche" —
 // consommé par SearchDialog.tsx/CommandPalette.tsx pour surligner les
@@ -91,6 +122,8 @@ export function splitMatchSegments(text: string, query: string): MatchSegment[] 
   if (cursor < text.length) segments.push({ text: text.slice(cursor), isMatch: false });
   return segments;
 }
+
+//////// 4. Aiguillage — openSearchResult ////////////////////////////////////
 
 // Aiguille un résultat cliqué vers le bon handler — le seul point commun
 // entre SearchDialog.tsx (déjà sur l'écran Notes, ouvre directement) et

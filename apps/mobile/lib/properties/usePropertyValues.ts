@@ -3,21 +3,40 @@ import { useCallback, useMemo } from 'react';
 import { parseFrontmatter, reorderFrontmatterData, serializeFrontmatter, type FrontmatterData } from './frontmatter';
 import { defaultValueForType } from './propertyTypes';
 
-// Logique partagée d'édition des VALEURS de propriétés d'une note (lecture/
-// écriture de son frontmatter) — utilisée par PropertiesPanel.tsx (barre
-// latérale) ET PropertiesBlock.tsx (bloc en haut de note), pour rester
-// synchronisées sur les mêmes données sans dupliquer parseFrontmatter/
-// serializeFrontmatter à deux endroits (voir lib/frontmatter.ts).
+// ✒️ 123ECRITURE — lib/properties/usePropertyValues.ts — édition des valeurs de propriétés d'une note
+//////////////////////////////////////////////////////////////////////////////
 //
-// Le FRONTMATTER est la source de vérité (demande utilisateur : « les trois
-// modes doivent détenir les mêmes informations ») : `lines` expose TOUTES
-// les clés présentes entre les ---, dans leur ordre réel du fichier — pas
-// seulement celles déclarées dans le schéma (une clé inconnue comme `tags`
-// s'affiche donc partout, avec un champ texte tant qu'aucune définition du
-// même nom n'existe dans Paramètres → Gestion des propriétés). Les clés
-// système `created`/`modified` (matérialisées à la sauvegarde, voir
-// NotesScreen.tsx) sont marquées `isSystemDate` : lecture seule dans les
-// vues, puisque leur valeur est réécrite par l'app.
+// Logique partagée d'édition des VALEURS de propriétés d'une note
+// (lecture/écriture de son frontmatter) — utilisée par PropertiesPanel.tsx
+// (barre latérale) ET PropertiesBlock.tsx (bloc en haut de note), pour
+// rester synchronisées sur les mêmes données sans dupliquer
+// parseFrontmatter/serializeFrontmatter à deux endroits (voir
+// lib/properties/frontmatter.ts).
+//
+// Invariants du fichier :
+//   • Le FRONTMATTER est la source de vérité (les trois modes détiennent
+//     les mêmes informations) : `lines` expose TOUTES les clés présentes
+//     entre les ---, dans leur ordre réel du fichier — pas seulement
+//     celles déclarées dans le schéma. Une clé inconnue comme `tags`
+//     s'affiche donc partout, avec un champ texte tant qu'aucune
+//     définition du même nom n'existe dans Paramètres → Gestion des
+//     propriétés.
+//   • Les clés système `created`/`modified` (matérialisées à la
+//     sauvegarde, voir NotesScreen.tsx) sont marquées `isSystemDate` :
+//     lecture seule dans les vues, puisque leur valeur est réécrite par
+//     l'app.
+//   • reorder conserve les clés absentes de la liste demandée (jamais de
+//     perte de donnée sur une liste périmée, voir
+//     reorderFrontmatterData).
+//
+// SOMMAIRE :
+//   1. PropertyLine — une ligne du frontmatter vue par l'UI
+//   2. usePropertyValues — lecture/écriture/réordonnancement
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. PropertyLine — une ligne du frontmatter vue par l'UI /////////////
+
 export type PropertyLine = {
   name: string;
   value: unknown;
@@ -28,6 +47,8 @@ export type PropertyLine = {
   // lecture seule (une édition manuelle serait écrasée).
   isSystemDate: boolean;
 };
+
+//////// 2. usePropertyValues — lecture/écriture/réordonnancement ////////////
 
 export function usePropertyValues(
   content: string,

@@ -1,3 +1,6 @@
+// ✒️ 123ECRITURE — lib/notes/embedResolution.ts — résolution des cibles d'embeds/liens internes
+//////////////////////////////////////////////////////////////////////////////
+//
 // Résolution des cibles d'embeds/liens internes façon Obsidian — fonctions
 // PURES partagées par les deux ports de lecture des pièces jointes
 // (vault:read-attachment-data-url côté desktop, PropertiesBridge/
@@ -6,17 +9,27 @@
 // frontmatterMigration.ts/propertyScanMerge.ts : une seule implémentation
 // testée, importée telle quelle par apps/desktop (esbuild la bundle).
 //
-// Comportement Obsidian attendu par l'utilisatrice : `![[image.png]]` doit
-// s'afficher même quand l'image n'est PAS dans le dossier attachments/ de
-// l'app (coffres importés d'Obsidian : les pièces jointes vivent où elles
-// vivent — « Pièces jointes/ », sous-dossiers, à côté des notes…). Ordre de
-// résolution, du plus précis au plus permissif :
-// 1. chemin relatif complet (tel que référencé) ;
-// 2. `attachments/<nom>` (convention de l'app, voir import-attachment) ;
-// 3. RECHERCHE PAR NOM dans tout le coffre — un fichier dont le nom (ou le
-//    suffixe de chemin) correspond, casse ignorée ; la première trouvée
-//    gagne (deux images homonymes dans des dossiers différents : cas
-//    marginal, Obsidian fait pareil).
+// Invariants du fichier :
+//   • `![[image.png]]` s'affiche même quand l'image n'est PAS dans le
+//     dossier attachments/ de l'app (coffres importés d'Obsidian : les
+//     pièces jointes vivent où elles vivent — « Pièces jointes/ »,
+//     sous-dossiers, à côté des notes…). Ordre de résolution, du plus
+//     précis au plus permissif : 1) chemin relatif complet tel que
+//     référencé ; 2) `attachments/<nom>` (convention de l'app, voir
+//     import-attachment) ; 3) recherche par nom/suffixe de chemin dans
+//     tout le coffre, casse ignorée — la première trouvée gagne (deux
+//     images homonymes dans des dossiers différents : cas marginal,
+//     Obsidian fait pareil).
+//   • Toute comparaison normalise séparateurs (`\` → `/`) et casse, jamais
+//     le contenu des fichiers.
+//
+// SOMMAIRE :
+//   1. Extensions et cibles d'image
+//   2. Correspondance cible-fichier — matchesEmbedTarget
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. Extensions et cibles d'image /////////////////////////////////////
 
 export const IMAGE_EMBED_EXTENSIONS = new Set([
   '.png',
@@ -48,6 +61,8 @@ function basename(posixPath: string): string {
 function normalize(posixPath: string): string {
   return posixPath.replace(/\\/g, '/').toLowerCase().trim();
 }
+
+//////// 2. Correspondance cible-fichier — matchesEmbedTarget ////////////////
 
 // Un fichier du coffre répond-il à une cible `[[...]]` ? Trois façons, dans
 // l'ordre de précision : chemin exact (casse/séparateurs ignorés), suffixe

@@ -1,12 +1,36 @@
-// Calcul de la grille d'un mois pour le Calendrier — logique pure, sans
-// React ni Electron, testée comme lib/sync/diff.ts.
+// ✒️ 123ECRITURE — lib/calendar/calendarDates.ts — grille du mois et heures d'évènement
+//////////////////////////////////////////////////////////////////////////////
 //
-// //1. Grille du mois (buildMonthGrid + helpers de format).
-// //2. Heures d'évènement (normalizeTimeInput, compareTimes) et décalage
-//      de jour (shiftIsoDate) — introduits avec l'édition d'évènements de
-//      CalendarScreen.tsx : l'heure y était un champ texte libre où "9:00"
-//      passait, s'affichait mal ET cassait le tri (comparaison lexicale
-//      où "9:00" > "10:00").
+// Calculs purs de la grille d'un mois pour le Calendrier — sans React ni
+// Electron, testée comme lib/sync/diff.ts. Couvre la grille 6×7 de
+// CalendarScreen, les libellés français déterministes et les heures
+// d'évènement de CalendarScreen.tsx : l'heure y est un champ texte libre
+// où "9:00" doit passer, s'afficher juste ET trier correctement (une
+// comparaison lexicale mettrait "9:00" après "10:00").
+//
+// Invariants du fichier :
+//   • buildMonthGrid rend TOUJOURS 42 cases (6 semaines × 7 jours,
+//     semaines commençant le lundi) : même hauteur visuelle d'un mois à
+//     l'autre.
+//   • `today` est un paramètre (pas un `new Date()` interne) dans
+//     buildMonthGrid : tests déterministes quel que soit l'environnement ;
+//     les libellés passent par des tableaux internes (pas
+//     Intl.DateTimeFormat) pour la même raison.
+//   • normalizeTimeInput n'extrait que des heures valides (0-23 h,
+//     0-59 min), normalisées en "HH:MM" : plus rien d'invalide n'entre
+//     dans calendar.json ; compareTimes compare NUMÉRIQUEMENT, sans heure
+//     (null) passe en dernier, une valeur malformée (vieille donnée
+//     d'avant la normalisation) passe après toute heure valide mais avant
+//     null.
+//   • Les calculs de dates passent par le constructeur Date LOCAL (jamais
+//     UTC ni un ajout de millisecondes) : années bissextiles et
+//     changements d'heure ne décalent jamais un jour.
+//
+// SOMMAIRE :
+//   1. Grille du mois — buildMonthGrid + helpers de format
+//   2. Heures d'évènement et décalage de jour
+//
+//////////////////////////////////////////////////////////////////////////////
 
 export type CalendarDay = {
   dateIso: string; // AAAA-MM-JJ
@@ -45,9 +69,11 @@ export function monthLabel(year: number, month: number): string {
 
 const WEEKDAYS_FULL = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche'];
 
-// "Vendredi 12 septembre 2026" — titre du panneau du jour (avant : la date
-// ISO brute, lisible mais peu naturelle). Même tableaux internes que
-// monthLabel : déterministe et testable quel que soit l'environnement.
+//////// 1. Grille du mois — buildMonthGrid + helpers de format //////////////
+
+// "Vendredi 12 septembre 2026" — titre du panneau du jour. Mêmes tableaux
+// internes que monthLabel : déterministe et testable quel que soit
+// l'environnement.
 export function dayLabel(dateIso: string): string {
   const [year, month, day] = dateIso.split('-').map(Number);
   const date = new Date(year, month - 1, day);
@@ -81,8 +107,7 @@ export function buildMonthGrid(year: number, month: number, today: Date = new Da
   return days;
 }
 
-// //2. ⏰ HEURES D'ÉVÈNEMENT + DÉCALAGE DE JOUR
-// //////////////////////////////////////////////////////////////////////
+//////// 2. Heures d'évènement et décalage de jour ///////////////////////////
 
 // Normalise une saisie d'heure libre en "HH:MM" 24h — accepte "9:00",
 // "09:00", "9h05", "9 5"… et retourne null si ça ne ressemble à aucune
@@ -106,11 +131,10 @@ function timeToMinutes(time: string): number | null {
 }
 
 // Compare deux heures "HH:MM" NUMÉRIQUEMENT (pas lexicalement) — "9:00"
-// doit passer avant "10:00". null = pas d'heure : passe en dernier ; une
-// valeur malformée (vieille donnée écrite avant la normalisation) passe
-// avant null mais après toute heure valide. `a.time ?? ''` + localeCompare
-// restait l'ancien comportement : conservé ici en repli, corrigé pour
-// tout le reste.
+// passe avant "10:00". null = pas d'heure : passe en dernier ; une valeur
+// malformée (vieille donnée écrite avant la normalisation) passe après
+// toute heure valide mais avant null (repli : localeCompare entre deux
+// malformées).
 export function compareTimes(a: string | null, b: string | null): number {
   if (a === null && b === null) return 0;
   if (a === null) return 1;

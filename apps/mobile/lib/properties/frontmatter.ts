@@ -1,20 +1,48 @@
 import { dump, load } from 'js-yaml';
 
-// Découpe/recompose le frontmatter YAML d'une note (`---\n...\n---\n\n`,
-// gabarit déjà écrit par vault.js à la création — voir
-// defaultContentForKind) — jamais parsé nulle part avant ce fichier
-// (confirmé en explorant le repo avant d'écrire ceci). Sert de base au
-// panneau Propriétés (PropertiesPanel.tsx) : lit/écrit les valeurs typées
-// dans ce même bloc, à côté de `title`/`created` déjà présents.
+// ✒️ 123ECRITURE — lib/properties/frontmatter.ts — découpe/recomposition du frontmatter YAML
+//////////////////////////////////////////////////////////////////////////////
 //
-// `js-yaml` choisi plutôt qu'un parseur maison : le YAML admet assez de
-// subtilités (guillemets, indentation de listes, échappement) pour qu'une
-// regex ligne-à-ligne se fasse vite piéger — même raisonnement que pour
-// markdown-it côté rendu des notes.
+// Découpe et recompose le frontmatter YAML d'une note
+// (`---\n...\n---\n\n`, gabarit écrit à la création de la note — voir
+// defaultContentForKind) : ce fichier est le SEUL à parser ce bloc. Sert de
+// base au panneau Propriétés (PropertiesPanel.tsx, PropertiesBlock.tsx via
+// usePropertyValues) : lit/écrit les valeurs typées dans ce même bloc, à
+// côté de `title`/`created` déjà présents. `js-yaml` plutôt qu'un parseur
+// maison : le YAML admet assez de subtilités (guillemets, indentation de
+// listes, échappement) pour qu'une regex ligne-à-ligne se fasse vite
+// piéger — même raisonnement que markdown-it côté rendu des notes.
+//
+// Invariants du fichier :
+//   • parseFrontmatter est TOLÉRANT AUX ERREURS : un bloc présent mais non
+//     parsable comme objet YAML renvoie un objet vide et le corps tel quel
+//     — le texte reste visible en mode Source, l'éditeur ne plante jamais.
+//   • serializeFrontmatter n'écrit AUCUN bloc si `data` est vide (une note
+//     sans propriété n'a pas de `---\n---\n\n` vide) et normalise un
+//     séparateur `\n\n` entre bloc et corps : un aller-retour
+//     parse→édition→sérialisation répété reste stable.
+//   • reorderFrontmatterData conserve à la fin, dans leur ordre d'origine,
+//     les clés absentes de la liste demandée : jamais de perte de donnée
+//     sur un réordonnancement.
+//   • ensureTimestamps n'écrit `created` QUE s'il manque (jamais
+//     d'écrasement d'une date de création déjà là, quelle que soit sa
+//     valeur) ; `modified` est actualisé à chaque sauvegarde ; rien à
+//     changer → le même objet est rendu (idempotence : un double appel ne
+//     réécrit pas le fichier).
+//
+// SOMMAIRE :
+//   1. parseFrontmatter — lecture (tolérante) du bloc + corps
+//   2. serializeFrontmatter — recomposition du contenu complet
+//   3. reorderFrontmatterData — réordonnancement sans perte
+//   4. ensureTimestamps — dates système created/modified
+//
+//////////////////////////////////////////////////////////////////////////////
 
 export type FrontmatterData = Record<string, unknown>;
 
 const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/;
+
+//////// 1. parseFrontmatter — lecture (tolérante) du bloc + corps ///////////
 
 // Renvoie les propriétés du frontmatter (objet vide si absent OU si le bloc
 // existe mais ne parse pas comme un objet YAML valide — ex. l'utilisatrice
@@ -41,6 +69,8 @@ export function parseFrontmatter(content: string): { data: FrontmatterData; body
   }
 }
 
+//////// 2. serializeFrontmatter — recomposition du contenu complet //////////
+
 // Recompose le contenu complet à partir des propriétés + du corps. Pas de
 // bloc frontmatter du tout si `data` est vide (une note sans propriété n'a
 // pas besoin d'un `---\n---\n\n` vide). Normalise toujours un séparateur
@@ -56,6 +86,8 @@ export function serializeFrontmatter(data: FrontmatterData, body: string): strin
   const yamlBlock = dump(data).trimEnd();
   return `---\n${yamlBlock}\n---\n\n${trimmedBody}`;
 }
+
+//////// 3. reorderFrontmatterData — réordonnancement sans perte /////////////
 
 // Réordonne les clés du frontmatter selon `orderedNames` (glisser-déposer du
 // bloc Propriétés en mode Intermédiaire — l'ordre écrit dans le fichier est
@@ -73,13 +105,14 @@ export function reorderFrontmatterData(data: FrontmatterData, orderedNames: stri
   return next;
 }
 
+//////// 4. ensureTimestamps — dates système created/modified ////////////////
+
 // Matérialise les dates système `created`/`modified` DANS le frontmatter
-// (choix utilisateur : les lignes « Créé/Modifié » des vues deviennent de
-// vraies clés, cf. la demande de cohérence entre les modes). `created` n'est
-// écrit QUE s'il manque (jamais d'écrasement d'une date de création déjà
-// là, quelle que soit sa valeur) ; `modified` est actualisé à chaque
-// sauvegarde. Retourne le même objet si rien à changer (idempotence : un
-// double appel ne réécrit pas le fichier).
+// (les lignes « Créé/Modifié » des vues sont de vraies clés, partagées par
+// les trois modes). `created` n'est écrit QUE s'il manque (jamais
+// d'écrasement d'une date de création déjà là, quelle que soit sa valeur) ;
+// `modified` est actualisé à chaque sauvegarde. Retourne le même objet si
+// rien à changer (idempotence : un double appel ne réécrit pas le fichier).
 export function ensureTimestamps(
   data: FrontmatterData,
   fallbackCreatedAtMs: number,

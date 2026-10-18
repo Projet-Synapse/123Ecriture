@@ -1,9 +1,34 @@
-// Constantes et helpers partagés pour le système de propriétés typées (voir
-// PropertyDefinition dans types/global.d.ts) — utilisés par
+// ✒️ 123ECRITURE — lib/properties/propertyTypes.ts — types de propriétés : constantes et helpers
+//////////////////////////////////////////////////////////////////////////////
+//
+// Constantes et helpers partagés pour le système de propriétés typées
+// (voir PropertyDefinition dans types/global.d.ts) — utilisés par
 // PropertiesPanel.tsx (barre latérale), PropertiesBlock.tsx (bloc en haut
 // de note) et settings/PropertiesManagementSection.tsx (Paramètres →
-// Gestion des propriétés), pour ne pas dupliquer 3 fois la même logique de
-// formatage/parsing des valeurs par type.
+// Gestion des propriétés), pour ne pas dupliquer 3 fois la même logique
+// de formatage/parsing des valeurs par type.
+//
+// Invariants du fichier :
+//   • inferPropertyType déduit le type d'après UNE valeur échantillon
+//     (tableau → Liste, nombre → Nombre, booléen → Case à cocher, tout le
+//     reste → Texte) : si des notes différentes portent des types
+//     hétérogènes, la première clé vue gagne.
+//   • Tout littéral PropertyDefinition construit côté renderer passe par
+//     makePropertyDefinition — le cast est localisé là, nulle part
+//     ailleurs (voir le commentaire de la fonction : collision avec
+//     l'interface DOM globale du même nom).
+//   • Une clé de BUBBLE_PROPERTY_NAMES reçoit le type 'bubbles' même si sa
+//     valeur (un tableau) aurait été devinée 'list'.
+//
+// SOMMAIRE :
+//   1. Libellés, icônes et ordre des types
+//   2. Déduction de type et construction de définition
+//   3. Formatage/parsing des valeurs
+//   4. Propriétés built-in en bulles
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. Libellés, icônes et ordre des types //////////////////////////////
 
 export const TYPE_LABELS: Record<PropertyType, string> = {
   text: 'Texte',
@@ -18,8 +43,8 @@ export const TYPE_LABELS: Record<PropertyType, string> = {
   bubbles: 'Bulles',
 };
 
-// Icône affichée devant chaque propriété (voir la capture de référence
-// .claude/References/image-4.png — une icône par ligne, façon Obsidian).
+// Icône affichée devant chaque propriété — une icône par ligne, façon
+// Obsidian.
 export const TYPE_ICONS: Record<PropertyType, string> = {
   text: '≡',
   list: '☰',
@@ -53,6 +78,8 @@ export function defaultValueForType(type: PropertyType): unknown {
   return '';
 }
 
+//////// 2. Déduction de type et construction de définition //////////////////
+
 // Devine le type d'une propriété à partir d'une valeur de frontmatter
 // (auto-enregistrement des clés trouvées dans les fichiers, voir
 // properties:scan-vault) : tableau → Liste, nombre → Nombre, booléen →
@@ -81,6 +108,8 @@ export function makePropertyDefinition(
   return { id, name, type, createdAt } as unknown as PropertyDefinition;
 }
 
+//////// 3. Formatage/parsing des valeurs ////////////////////////////////////
+
 export function formatValueForInput(type: PropertyType, value: unknown): string {
   if (type === 'list' || type === 'multi-options' || type === 'bubbles') {
     return Array.isArray(value) ? value.join(', ') : String(value ?? '');
@@ -103,8 +132,9 @@ export function parseInputForType(type: PropertyType, text: string): unknown {
   return text;
 }
 
-// Propriétés BUILT-IN rendues en bulles (v0.4.50, demande : « les tags et
-// les aliases, par exemple, sont des propriétés à bulles ») — quand le
-// scan du coffre découvre ces clés, elles reçoivent ce type même si leur
-// valeur (un tableau) aurait été devinée 'list'.
+//////// 4. Propriétés built-in en bulles ////////////////////////////////////
+
+// Propriétés BUILT-IN rendues en bulles (tags et aliases) — quand le scan
+// du coffre découvre ces clés, elles reçoivent ce type même si leur valeur
+// (un tableau) aurait été devinée 'list'.
 export const BUBBLE_PROPERTY_NAMES = new Set(['tags', 'tag', 'aliases', 'alias']);
