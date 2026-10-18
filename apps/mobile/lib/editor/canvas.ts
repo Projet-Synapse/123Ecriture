@@ -1,23 +1,36 @@
-// Logique pure du module Canvas (cartes + connexions) — séparée du rendu
+// ✒️ 123ECRITURE — lib/editor/canvas.ts — logique du module Canvas (cartes + connexions)
+//////////////////////////////////////////////////////////////////////////////
+//
+// Logique PURE du module Canvas (cartes + connexions) — séparée du rendu
 // pour rester testable, comme lib/sync/diff.ts.
 //
-// Champs alignés sur JSON Canvas (spec ouverte publiée par Obsidian,
-// https://jsoncanvas.org) : `type: 'text' | 'file'`, `file` (pas `relPath`)
-// pour une carte-note, arêtes en `fromNode`/`toNode` (+ `fromSide`/`toSide`,
-// fixés à une valeur par défaut en v0 — pas encore de choix du côté
-// d'ancrage). Choisi puisque l'utilisatrice a explicitement nommé
-// l'extension `.canvas` et que le reste de l'app suit "façon Obsidian" —
-// autant s'aligner sur le vrai format plutôt qu'inventer le nôtre.
+// Invariants du fichier :
+//   • Champs alignés sur JSON Canvas (spec ouverte publiée par Obsidian,
+//     https://jsoncanvas.org) : `type: 'text' | 'file'`, `file` (pas
+//     `relPath`) pour une carte-note, arêtes en `fromNode`/`toNode` avec
+//     `fromSide`/`toSide` fixés à une valeur par défaut (pas encore de
+//     choix du côté d'ancrage).
+//   • Le "monde" du canvas est grand mais BORNÉ : les nouvelles cartes
+//     apparaissent près du centre de cet espace, le panoramique ne
+//     déplace que la fenêtre visible dessus.
+//   • Jamais d'arête "pendante" : supprimer un nœud supprime toute arête
+//     qui le référence, et une paire de nœuds reste connectée au plus une
+//     fois, dans un sens comme dans l'autre.
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. Constantes du monde ///////////////////////////////////////////////
 
 export const DEFAULT_NODE_WIDTH = 220;
 export const DEFAULT_NODE_HEIGHT = 120;
 
-// Le "monde" du canvas est grand mais BORNÉ (pas un plan littéralement
-// infini — simplification assumée pour le v0, voir le plan) : les nouvelles
-// cartes apparaissent près du centre de cet espace, le panoramique déplace
-// juste la fenêtre visible dessus.
+// Le "monde" du canvas est grand mais BORNÉ : les nouvelles cartes
+// apparaissent près du centre de cet espace, le panoramique ne déplace
+// que la fenêtre visible dessus.
 export const WORLD_SIZE = 4000;
 export const WORLD_CENTER = WORLD_SIZE / 2;
+
+//////// 2. Création des nœuds ////////////////////////////////////////////////
 
 export function createTextNode(id: string, x: number, y: number): CanvasNode {
   return { id, type: 'text', x, y, width: DEFAULT_NODE_WIDTH, height: DEFAULT_NODE_HEIGHT, text: '' };
@@ -26,6 +39,8 @@ export function createTextNode(id: string, x: number, y: number): CanvasNode {
 export function createFileNode(id: string, x: number, y: number, file: string, title: string): CanvasNode {
   return { id, type: 'file', x, y, width: DEFAULT_NODE_WIDTH, height: DEFAULT_NODE_HEIGHT, file, title };
 }
+
+//////// 3. Suppression en cascade et arêtes ///////////////////////////////////
 
 // Supprime un nœud ET toute arête qui le référence — jamais d'arête
 // "pendante" vers un nœud qui n'existe plus.

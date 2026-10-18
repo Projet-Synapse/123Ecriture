@@ -1,14 +1,52 @@
+// ✒️ 123ECRITURE — lib/editor/markdownPlugins.ts — règles inline markdown-it maison
+//////////////////////////////////////////////////////////////////////////////
+//
+// Extensions maison au-dessus de markdown-it (voir NoteRenderer.tsx pour
+// le rendu) — trois règles INLINE, chacune poussant un token à un seul
+// niveau (`nesting: 0`, via `state.push(type, '', 0)`) plutôt qu'une paire
+// ouverture/fermeture : c'est ce qui permet à react-native-markdown-display
+// de les traiter comme des feuilles de l'arbre au même titre que ses types
+// intégrés (`text`, `link`...), sans rien connaître de plus sur elles —
+// voir son `tokensToAST.js` (chaque token devient un nœud
+// `{ type: token.type, ... }`) et `getTokenTypeByToken.js` (aucun
+// traitement spécial en dehors des titres).
+//
+// Les règles :
+//   • `[[Cible]]` / `[[Cible|Alias]]` — lien interne, façon Obsidian.
+//   • `![[Pièce jointe]]` — embed (image/audio/fichier), DISTINCT de
+//     `[[lien]]` : ce n'est pas une image markdown `![alt](url)`, gardée
+//     intacte (la règle rend la main si elle ne voit pas `![[`).
+//   • `{{mot}}` — occurrence, émise SEULEMENT si le mot existe dans le
+//     dictionnaire personnel (`knownWords`).
+//   • `#tag` — doit être précédé d'un début de ligne/espace pour ne pas
+//     capturer un "#" au milieu d'un mot (ex. un identifiant CSS collé
+//     dans du texte).
+//
+// Invariants du fichier :
+//   • Nouvelle instance markdown-it à chaque appel (pas de singleton
+//     module-level) : aucun partage d'état mutable entre deux notes
+//     ouvertes/rendues en parallèle. `html: false` délibéré — pas
+//     d'injection HTML brut depuis le contenu d'une note.
+//
+// SOMMAIRE :
+//   1. Contrat InlineRuleState minimal
+//   2. Les règles inline (wikilink, embed, occurrence, tag)
+//   3. createConfiguredMarkdownIt — assemblage et ordre des règles
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. Contrat InlineRuleState minimal ///////////////////////////////////
+
 import MarkdownIt from 'markdown-it';
 
 // API minimale de `StateInline` effectivement utilisée par les règles
 // ci-dessous (src/pos/push) — plutôt que d'importer le vrai type : le
-// .d.ts de markdown-it le regroupe sous un namespace (`MarkdownIt.StateInline`),
-// pas atteignable proprement en `import type` classique avec la version
-// installée, et risqué à contourner avec `import = require(...)` (syntaxe
-// TS spécifique, pas garantie de bien passer par le bundler Metro utilisé
-// par Expo). Une interface structurelle minimale suffit : TypeScript
-// accepte sans problème qu'on lui passe le VRAI `StateInline` (plus riche)
-// là où cette forme plus étroite est attendue (typage structurel).
+// .d.ts de markdown-it le regroupe sous un namespace
+// (`MarkdownIt.StateInline`), pas atteignable proprement en `import type`
+// classique avec la version installée. Une interface structurelle minimale
+// suffit : TypeScript accepte sans problème qu'on lui passe le VRAI
+// `StateInline` (plus riche) là où cette forme plus étroite est attendue
+// (typage structurel).
 interface InlineRuleState {
   src: string;
   pos: number;
@@ -16,24 +54,7 @@ interface InlineRuleState {
 }
 type StateInline = InlineRuleState;
 
-// Extensions maison au-dessus de markdown-it (voir NoteRenderer.tsx pour le
-// rendu) — trois règles INLINE, chacune poussant un token à un seul niveau
-// (`nesting: 0`, via `state.push(type, '', 0)`) plutôt qu'une paire
-// ouverture/fermeture : c'est ce qui permet à react-native-markdown-display
-// de les traiter comme des feuilles de l'arbre au même titre que ses types
-// intégrés (`text`, `link`...), sans rien connaître de plus sur elles — voir
-// son `tokensToAST.js` (chaque token devient un nœud `{ type: token.type,
-// ... }`) et `getTokenTypeByToken.js` (aucun traitement spécial en dehors
-// des titres). Confirmé en lisant ces deux fichiers avant d'écrire ceci
-// plutôt que de deviner.
-//
-// `[[Cible]]` / `[[Cible|Alias]]` — lien interne, façon Obsidian.
-// `![[Pièce jointe]]` — embed (image/audio/fichier), syntaxe Obsidian,
-// DISTINCTE de `[[lien]]` (pas juste une image markdown `![alt](url)`,
-// gardée intacte : la règle rend la main si elle ne voit pas `![[`).
-// `#tag` — tag, doit être précédé d'un début de ligne/espace pour ne pas
-// capturer un "#" au milieu d'un mot (ex. un identifiant CSS collé dans du
-// texte).
+//////// 2. Les règles inline (wikilink, embed, occurrence, tag) ///////////////
 
 function wikilinkRule(state: StateInline, silent: boolean): boolean {
   const { src, pos } = state;
@@ -77,10 +98,10 @@ function embedRule(state: StateInline, silent: boolean): boolean {
 // mélange lien interne/mot-clé, un mot choisi à l'avance dans un
 // dictionnaire personnel (`.123ecriture/occurrences.json`, voir
 // apps/desktop/electron/occurrences.js). N'émet un token QUE si le mot
-// existe dans `knownWords` (passé à createConfiguredMarkdownIt) — sinon la
-// règle rend la main et le texte reste brut, cohérent avec "ce sont des
-// mots qu'on choisit", pas une création à la volée à la simple frappe
-// (contrairement à `[[lien]]`, qui lui crée la note cible au clic).
+// existe dans `knownWords` (passé à createConfiguredMarkdownIt) — sinon
+// la règle rend la main et le texte reste brut : ce sont des mots qu'on
+// choisit, pas une création à la volée à la simple frappe (contrairement
+// à `[[lien]]`, qui lui crée la note cible au clic).
 function makeOccurrenceRule(knownWords: Set<string>) {
   return function occurrenceRule(state: StateInline, silent: boolean): boolean {
     const { src, pos } = state;
@@ -122,6 +143,8 @@ function tagRule(state: StateInline, silent: boolean): boolean {
   return true;
 }
 
+//////// 3. createConfiguredMarkdownIt — assemblage et ordre des règles /////////
+
 // Nouvelle instance à chaque appel (pas de singleton module-level) : évite
 // tout partage d'état mutable entre deux notes ouvertes/rendues en
 // parallèle (peu probable dans cette app, mais ne coûte rien à éviter).
@@ -129,7 +152,7 @@ function tagRule(state: StateInline, silent: boolean): boolean {
 // d'une note.
 // `knownWords` : mots du dictionnaire personnel connus au moment du rendu
 // (voir NoteRenderer.tsx) — insensible à la casse (comparé en minuscules
-// dans occurrenceRule). Vide par défaut : aucune `{{...}}` ne sera stylée
+// dans occurrenceRule). Vide par défaut : aucune `{{...}}` n'est stylée
 // tant que l'appelant·e ne fournit pas le dictionnaire réel.
 export function createConfiguredMarkdownIt(knownWords: Set<string> = new Set()): MarkdownIt {
   const md = new MarkdownIt({ html: false, linkify: true, breaks: false });

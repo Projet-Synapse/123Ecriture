@@ -1,11 +1,18 @@
-// Linter markdown conservateur (v0.4.44, demande : « Linter » façon
-// Obsidian) — NE touche JAMAIS au contenu des lignes de prose : seulement
-// des normalisations sans risque de sens :
+// ✒️ 123ECRITURE — lib/editor/markdownLinter.ts — linter markdown conservateur
+//////////////////////////////////////////////////////////////////////////////
+//
+// Linter markdown conservateur, façon Obsidian : ne touche JAMAIS au
+// contenu des lignes de prose — seulement des normalisations sans risque
+// de sens :
 // 1. espaces/fins de ligne en fin de ligne supprimés ;
 // 2. 3+ lignes vides consécutives réduites à une seule ligne vide ;
 // 3. le fichier se termine par exactement une nouvelle ligne.
-// Les blocs de code clôturés (``` … ```) sont préservés tels quels (les
-// espaces de fin y sont parfois significatifs, ex. ASCII art).
+//
+// Invariants du fichier :
+//   • Les blocs de code clôturés (``` … ```) sont préservés tels quels —
+//     les espaces de fin y sont parfois significatifs (ex. ASCII art).
+//
+//////////////////////////////////////////////////////////////////////////////
 
 export function lintMarkdown(text: string): string {
   const lines = text.split('\n');

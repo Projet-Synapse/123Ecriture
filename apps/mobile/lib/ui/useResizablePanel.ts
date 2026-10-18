@@ -4,16 +4,45 @@ import { Platform } from 'react-native';
 import { usePreferences } from '../../preferences/PreferencesContext';
 import { clampWidth, computeDragWidth, shouldCollapseOnRelease } from './resizablePanel';
 
-// Redimensionnement + repli au curseur d'une barre latérale (nav générale,
-// explorateur de fichiers, panneau droit — voir AppShell.tsx/
-// NotesScreen.tsx/RightSidebar.tsx). Aucun précédent dans le repo pour un
-// drag `mousedown`/`mousemove`/`mouseup` continu (tout le drag existant est
-// du HTML5 natif `draggable`, pensé pour déplacer un élément — voir
-// NotesScreen.tsx §glisser pour réordonner — pas pour un curseur de
-// redimensionnement) : nouveau pattern, écrit une fois ici et réutilisé 3
-// fois. Écoute sur `document` (pas juste la poignée) le temps du glisser :
-// le curseur sort forcément de la poignée (large de quelques pixels)
-// pendant qu'on tire.
+// ✒️ 123ECRITURE — lib/ui/useResizablePanel.ts — hook de redimensionnement des barres latérales
+//////////////////////////////////////////////////////////////////////////////
+//
+// Redimensionnement + repli au curseur d'une barre latérale (nav
+// générale, explorateur de fichiers, panneau droit — voir AppShell.tsx/
+// NotesScreen.tsx/RightSidebar.tsx). Le drag continu
+// `mousedown`/`mousemove`/`mouseup` est écrit une fois ici et réutilisé
+// pour chaque panneau (tout le reste du drag de l'app est du HTML5 natif
+// `draggable`, pensé pour déplacer un élément — pas pour un curseur de
+// redimensionnement).
+//
+// Invariants du fichier :
+//   • Écoute sur `document` (pas juste la poignée) le temps du glisser :
+//     le curseur sort forcément de la poignée (large de quelques pixels)
+//     pendant qu'on tire. Écouteurs souris = WEB UNIQUEMENT (`document`
+//     n'existe pas sous Hermes) ; le drag natif vit dans les callbacks
+//     touch appelés directement par les responders.
+//   • La largeur "live" du glisser est séparée de `stored` : la
+//     persistance (IPC + écriture disque) n'a lieu qu'au relâchement,
+//     pas à chaque pixel parcouru par `mousemove`.
+//   • Pendant le glisser, la largeur est bornée à [0, max] — PAS
+//     [min, max] : il faut voir le panneau se rétrécir sous `min` pour
+//     percevoir le repli qui approche.
+//   • Une seule notion de "fermé" par panneau : pour le panneau droit,
+//     dont la visibilité est déjà pilotée par `sidebarOpen` (bouton dans
+//     l'en-tête de l'éditeur), le repli appelle `onCollapseIntent` au lieu
+//     de persister `collapsed`/une largeur à 0 ; la largeur mémorisée
+//     reste celle d'avant le glisser, réutilisable telle quelle à la
+//     réouverture.
+//
+// SOMMAIRE :
+//   1. Glisser à la souris (web) et état du drag
+//   2. Largeur effective et geste tactile (natif)
+//   3. Repli explicite et retour du hook
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. Glisser à la souris (web) et état du drag //////////////////////////
+
 export function useResizablePanel(
   id: SidebarPanelId,
   options: {
@@ -40,11 +69,9 @@ export function useResizablePanel(
   useEffect(() => {
     if (liveWidth === null) return;
     // Écouteurs souris = WEB UNIQUEMENT — `document` n'existe pas sous
-    // Hermes : dès que le drag tactile a pu démarrer en natif (poignée
-    // touch, 2026-10-03), cet effet plantait (« Property 'document'
-    // doesn't exist ») — même famille que window.addEventListener
-    // (v0.4.41). Le drag natif ne passe PAS ici : il vit dans les
-    // callbacks touch appelés directement par les responders.
+    // Hermes : cet effet ne doit jamais courir en natif. Le drag natif ne
+    // passe PAS ici : il vit dans les callbacks touch appelés directement
+    // par les responders.
     if (Platform.OS !== 'web') return;
 
     // Un unique calcul de largeur pour souris ET doigt : mêmes bornes
@@ -58,8 +85,8 @@ export function useResizablePanel(
     // Au relâchement (souris ou doigt) : repli si sous le seuil (avec
     // onCollapseIntent pour le panneau droit), sinon largeur clampée
     // persistée — la persistance passe par setSidebarPanelLayout, donc
-    // par les préférences (désormais écrites sur disque aussi en natif,
-    // voir nativePreferencesAdapter.ts).
+    // par les préférences (écrites sur disque aussi en natif, voir
+    // nativePreferencesAdapter.ts).
     const finishDrag = () => {
       setLiveWidth((current) => {
         if (current === null) return null;
@@ -96,6 +123,8 @@ export function useResizablePanel(
     [stored.width],
   );
 
+//////// 2. Largeur effective et geste tactile (natif) /////////////////////////
+
   // Geste TACTILE (natif) — même mécanique que la souris, en trois appels
   // explicites depuis les responders de ResizeHandle.tsx : x absolu
   // (nativeEvent.pageX, l'équivalent de clientX). Sans document ni
@@ -108,18 +137,16 @@ export function useResizablePanel(
   // reste monté mais invisible plutôt que démonté, pour ne pas perdre son
   // état interne le temps du repli, sauf le panneau droit qui, lui, se
   // démonte réellement via `sidebarOpen` dans NotesScreen.tsx). Pendant le
-  // glisser, PAS clampée à `min` (même raison que dans handleMouseMove
-  // ci-dessus : il faut voir le panneau se rétrécir sous `min` pour
-  // percevoir le repli qui approche) — seulement à `max`.
+  // glisser, PAS clampée à `min` (il faut voir le panneau se rétrécir
+  // sous `min` pour percevoir le repli qui approche) — seulement à `max`.
   const width = liveWidth !== null ? clampWidth(liveWidth, 0, options.max) : stored.collapsed ? 0 : stored.width;
 
   const onHandleTouchStart = (x: number) => {
     // Départ = la largeur EFFECTIVE affichée (celle calculée ci-dessus,
     // plafond d'écran compris) — PAS `stored.width` : sur téléphone la
-    // largeur stockée peut dépasser le plafond d'affichage (403 stockés
-    // pour 230 affichés, vécu A13) — partir des stockés mangeait le
-    // parcours du glisser dans le plafond : les premiers drags ne
-    // changeait RIEN à l'écran.
+    // largeur stockée peut dépasser le plafond d'affichage, et partir
+    // des stockées mangeait le parcours du glisser dans le plafond
+    // (les premiers drags ne changeaient rien à l'écran).
     dragState.current = { startX: x, startWidth: width };
     setLiveWidth(width);
   };
@@ -146,6 +173,8 @@ export function useResizablePanel(
     });
     dragState.current = null;
   };
+
+//////// 3. Repli explicite et retour du hook //////////////////////////////////
 
   const toggleCollapsed = useCallback(() => {
     void setSidebarPanelLayout(id, { width: stored.width, collapsed: !stored.collapsed });

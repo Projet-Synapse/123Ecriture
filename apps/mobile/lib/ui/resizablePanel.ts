@@ -1,7 +1,24 @@
+// ✒️ 123ECRITURE — lib/ui/resizablePanel.ts — calculs purs du redimensionnement des panneaux
+//////////////////////////////////////////////////////////////////////////////
+//
 // Logique PURE (sans DOM ni React) du redimensionnement au curseur des
 // barres latérales (voir components/ResizeHandle.tsx,
 // lib/useResizablePanel.ts) — séparée pour rester testable simplement,
 // même esprit que lib/liveDecorations.ts / lib/mdxFormatting.ts.
+//
+// Invariants du fichier :
+//   • La largeur ne dépasse jamais les bornes pendant le glisser
+//     (clampWidth) ; `edge` inverse le sens du delta selon le bord qui
+//     porte la poignée — l'explorateur s'élargit vers la DROITE quand on
+//     tire la poignée vers la droite (edge=1), le panneau droit s'élargit
+//     vers la GAUCHE (edge=-1).
+//   • Repli automatique "au curseur" : relâcher la poignée avec une
+//     largeur sous la moitié du minimum signifie masquer le panneau
+//     (shouldCollapseOnRelease) — un simple clic sur le chevron reste le
+//     chemin explicite pour replier/déplier sans viser ce seuil au pixel
+//     près.
+//
+//////////////////////////////////////////////////////////////////////////////
 
 // Empêche la largeur de dépasser les bornes pendant le glisser.
 export function clampWidth(width: number, min: number, max: number): number {

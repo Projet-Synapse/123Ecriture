@@ -1,26 +1,43 @@
-// Soulignements d'erreurs et d'avertissements de l'éditeur de code (v0.4.46,
-// demande utilisateur : « les soulignements rouges et jaunes concernant les
-// erreurs et les avertissements », comme VS Code) — branché sur le framework
-// @codemirror/lint (underline rouge = error, jaune = warning, panneau à côté
-// de la barre de défilement).
+// ✒️ 123ECRITURE — lib/editor/codeLint.ts — soulignements d'erreurs et d'avertissements du code
+//////////////////////////////////////////////////////////////////////////////
 //
-// Deux sources, sans serveur de langage (trop lourd pour cette app, en
-// particulier sur la machine de l'utilisatrice) :
+// Soulignements d'erreurs et d'avertissements de l'éditeur de code, façon
+// VS Code — branché sur le framework @codemirror/lint (underline rouge =
+// error, jaune = warning, panneau à côté de la barre de défilement).
+//
+// Deux sources, sans serveur de langage (trop lourd pour cette app) :
 // - ROUGE (error) : nœuds d'erreur du parseur Lezer du langage ACTIF
 //   (syntaxTree, voir buildCodeLinter) — disponible pour tous les langages
 //   « dédiés » de lib/codeLanguages.ts (JS/TS/JSX/TSX, Python, JSON, HTML,
 //   CSS, XML, SQL, PHP) ; les langages legacy (coloration seule) n'ont pas
 //   d'arbre, donc pas de soulignement ;
-// - JAUNE (warning) : marqueurs TODO/FIXME/XXX/HACK en début de commentaire
-//   (findTodoWarnings, fonction pure testée) — heuristic simple mais
-//   universelle, tous langages.
+// - JAUNE (warning) : marqueurs TODO/FIXME/XXX/HACK en début de
+//   commentaire (findTodoWarnings, fonction pure testée) — heuristique
+//   simple mais universelle, tous langages.
+//
+// Invariants du fichier :
+//   • Au-delà de MAX_LINT_CHARS, pas de lint : le parseur travaillerait
+//     sur tout le document au premier lancement (même philosophie que le
+//     garde-fou du Live Preview, lib/mdxLivePreview.ts).
+//   • Chaque diagnostic d'erreur reste borné à sa ligne : les nœuds
+//     d'erreur du parseur avec recovery sont souvent des PLAGES larges
+//     (tout ce qui suit un token inattendu).
+//   • findTodoWarnings est PURE : positions absolues (from/to) prêtes
+//     pour un Diagnostic CodeMirror, nombre de résultats borné pour ne
+//     pas noyer le panneau de lint.
+//
+// SOMMAIRE :
+//   1. Constantes et détection pure des marqueurs TODO
+//   2. buildCodeLinter — linter générique
+//
+//////////////////////////////////////////////////////////////////////////////
+
 import { syntaxTree } from '@codemirror/language';
 import { linter, type Diagnostic } from '@codemirror/lint';
 import type { EditorView } from '@codemirror/view';
 
-// Au-delà de cette taille, pas de lint : le parseur travaillerait sur tout
-// le document au premier lancement (même philosophie que le garde-fou du
-// Live Preview, lib/mdxLivePreview.ts).
+//////// 1. Constantes et détection pure des marqueurs TODO ////////////////////
+
 export const MAX_LINT_CHARS = 500_000;
 
 // Marqueurs d'intention reconnus en commentaire — jaunes (avertissements).
@@ -53,6 +70,8 @@ export function findTodoWarnings(text: string, limit = 100): TodoWarning[] {
   }
   return warnings;
 }
+
+//////// 2. buildCodeLinter — linter générique /////////////////////////////////
 
 // Linter générique branché sur l'arbre du langage ACTIF : pas besoin de
 // connaître le langage — `syntaxTree` rend l'arbre du parseur monté (Lezer

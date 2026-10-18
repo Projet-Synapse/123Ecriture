@@ -1,21 +1,33 @@
-import { type Completion, type CompletionContext, type CompletionResult } from '@codemirror/autocomplete';
-
+// ✒️ 123ECRITURE — lib/editor/wikilinkAutocomplete.ts — autocomplétion des [[liens internes]]
+//////////////////////////////////////////////////////////////////////////////
+//
 // Autocomplétion des [[liens internes]] dans MdxEditor.tsx — se déclenche
-// dès `[[`, propose les NOMS des notes du coffre (résolution par nom, comme
-// handleOpenWikilink dans NotesScreen.tsx — le lien n'a jamais porté de
-// chemin complet). Valider (clic ou Entrée) referme le lien (`]]`) et
-// avance le curseur juste après, comme l'autocomplétion des {{occurrences}}
-// (lib/occurrenceAutocomplete.ts, même idiome).
+// dès `[[`, propose les NOMS des notes du coffre (résolution par nom,
+// comme handleOpenWikilink dans NotesScreen.tsx — le lien n'a jamais
+// porté de chemin complet). Valider (clic ou Entrée) referme le lien
+// (`]]`) et avance le curseur juste après, comme l'autocomplétion des
+// {{occurrences}} (lib/occurrenceAutocomplete.ts, même idiome).
 //
-// `getNoteNames` est une fonction (pas une valeur figée) : l'extension est
-// construite UNE FOIS et relit l'arborescence à jour à chaque frappe —
-// une note créée/renommée pendant la session apparaît à la suggestion
-// suivante sans reconstruire l'extension (qui perturberait le popup en
-// cours d'utilisation).
+// Invariants du fichier :
+//   • `getNoteNames` est une fonction (pas une valeur figée) : l'extension
+//     est construite UNE FOIS et relit l'arborescence à jour à chaque
+//     frappe — une note créée/renommée pendant la session apparaît à la
+//     suggestion suivante sans reconstruire l'extension (qui perturberait
+//     le popup en cours d'utilisation).
+//   • Cas de l'alias `[[Nom|alias]]` : la complétion porte sur la partie
+//     NOM (avant `|`), et la partie alias déjà tapée est conservée telle
+//     quelle — `[[Rap|brouillon` complété en `[[Rapport mars|brouillon]]`.
+//   • La source est combinée par MdxEditor.tsx avec celle des occurrences
+//     dans un SEUL `autocompletion()` (extension singleton côté
+//     CodeMirror : jamais deux instances).
 //
-// Cas de l'alias `[[Nom|alias]]` : la complétion porte sur la partie NOM
-// (avant `|`), et la partie alias déjà tapée est conservée telle quelle —
-// `[[Rap|brouillon` complété en `[[Rapport mars|brouillon]]`.
+// SOMMAIRE :
+//   1. buildWikilinkCandidates — partie pure (testée)
+//   2. wikilinkCompletionSource — source CodeMirror
+//
+//////////////////////////////////////////////////////////////////////////////
+
+import { type Completion, type CompletionContext, type CompletionResult } from '@codemirror/autocomplete';
 
 export type WikilinkCandidate = {
   name: string;
@@ -24,12 +36,15 @@ export type WikilinkCandidate = {
   applyText: string;
 };
 
+//////// 1. buildWikilinkCandidates — partie pure (testée) /////////////////////
+
 // Partie pure (testée) : quelles notes proposer pour un fragment tapé
 // après `[[` — filtre par sous-chaîne insensible à la casse, exclut le
 // nom déjà tapé EXACTEMENT (rien à compléter), dédoublonne (deux notes de
 // dossiers différents peuvent porter le même nom — le wikilink ne les
 // distingue de toute façon pas), préfixe d'abord puis ordre alphabétique
-// (le plus "proche" en tête, ce que le tri alphabétique seul ne donne pas).
+// (le plus "proche" en tête, ce que le tri alphabétique seul ne donne
+// pas).
 export function buildWikilinkCandidates(noteNames: string[], typed: string): WikilinkCandidate[] {
   const pipeIndex = typed.indexOf('|');
   const nameQuery = (pipeIndex === -1 ? typed : typed.slice(0, pipeIndex)).trim().toLowerCase();
@@ -55,6 +70,8 @@ export function buildWikilinkCandidates(noteNames: string[], typed: string): Wik
 
   return matching.map((name) => ({ name, applyText: `${name}${aliasSuffix}]]` }));
 }
+
+//////// 2. wikilinkCompletionSource — source CodeMirror ///////////////////////
 
 // Source CodeMirror proprement dite — retournée à MdxEditor.tsx, qui la
 // combine avec celle des occurrences dans un SEUL `autocompletion()`

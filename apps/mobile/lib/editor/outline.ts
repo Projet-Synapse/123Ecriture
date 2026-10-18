@@ -1,8 +1,15 @@
-// Extraction du PLAN d'une note (v0.4.44 — panneau « Plan » de la barre
-// latérale, demande : « Plan de la note (barre latérale) ») : les titres
-// H1–H6 avec leur position dans le texte, pour navigation clic = saut.
-// Les titres DANS un bloc de code clôturé sont ignorés (faux positifs
-// récurrents dans les notes d'exemples).
+// ✒️ 123ECRITURE — lib/editor/outline.ts — extraction du plan d'une note
+//////////////////////////////////////////////////////////////////////////////
+//
+// Extraction du PLAN d'une note (panneau « Plan » de la barre latérale) :
+// les titres H1–H6 avec leur position dans le texte, pour une navigation
+// clic = saut.
+//
+// Invariants du fichier :
+//   • Les titres DANS un bloc de code clôturé sont ignorés (faux positifs
+//     récurrents dans les notes d'exemples).
+//
+//////////////////////////////////////////////////////////////////////////////
 
 export type OutlineEntry = { level: number; title: string; offset: number };
 

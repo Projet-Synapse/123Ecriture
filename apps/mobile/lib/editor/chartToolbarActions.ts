@@ -1,7 +1,23 @@
-// Registre des actions de la barre d'outils Graphiques — voir le
-// commentaire en tête de canvasToolbarActions.ts (même principe, pas de
-// `run` : `addColumn`/`addRow`/`createChart` restent des closures locales à
-// ChartEditor.tsx).
+// ✒️ 123ECRITURE — lib/editor/chartToolbarActions.ts — registre des actions de la barre d'outils Graphiques
+//////////////////////////////////////////////////////////////////////////////
+//
+// Registre des actions de la barre d'outils Graphiques — même principe
+// que canvasToolbarActions.ts (pas de `run` : `addColumn`/`addRow`/
+// `createChart` restent des closures locales à ChartEditor.tsx, qui fait
+// la correspondance id → handler).
+//
+// Invariants du fichier :
+//   • La barre ne liste que les actions globales du `headerRow` (+ Colonne
+//     / + Ligne / Créer un graphique) ; le type de graphique, la colonne
+//     d'étiquettes/valeurs et "Supprimer le graphique" restent des
+//     contrôles contextuels (ils n'ont de sens qu'une fois un graphique
+//     créé), pas des entrées de barre d'outils.
+//   • Masquer une entrée de la barre d'outils n'enlève pas l'action : les
+//     raccourcis déjà présents en ligne (fin et sous la grille) restent
+//     en secours.
+//
+//////////////////////////////////////////////////////////////////////////////
+
 export type ChartToolbarActionId = 'add-column' | 'add-row' | 'create-chart';
 
 export type ChartToolbarAction = {
@@ -10,12 +26,7 @@ export type ChartToolbarAction = {
 };
 
 // Les boutons du `headerRow` actuel (+ Colonne / + Ligne) plus "Créer un
-// graphique". Les raccourcis déjà présents en ligne (fin d'en-tête de
-// grille, sous la grille) restent inchangés en secours — masquer l'entrée
-// de la barre d'outils n'enlève pas la seule façon de faire l'action. Le
-// type de graphique, la colonne d'étiquette/valeurs et "Supprimer le
-// graphique" restent des contrôles contextuels (n'ont de sens qu'une fois un
-// graphique créé), pas des entrées de barre d'outils.
+// graphique".
 export const CHART_TOOLBAR_ACTIONS: ChartToolbarAction[] = [
   { id: 'add-column', label: '+ Colonne' },
   { id: 'add-row', label: '+ Ligne' },

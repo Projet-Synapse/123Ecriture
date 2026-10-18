@@ -1,23 +1,28 @@
-import { type Completion, type CompletionContext, type CompletionResult } from '@codemirror/autocomplete';
+// ✒️ 123ECRITURE — lib/editor/occurrenceAutocomplete.ts — autocomplétion des {{occurrences}}
+//////////////////////////////////////////////////////////////////////////////
+//
+// Autocomplétion des {{occurrences}} dans MdxEditor.tsx — se déclenche
+// dès `{{`, ne propose QUE les mots déjà dans le dictionnaire personnel
+// (voir OccurrencesPanel.tsx) plus une option "Créer" en dernier si le
+// texte tapé ne correspond à aucun mot connu. Valider (clic ou Entrée)
+// ferme le token (`}}`) et avance le curseur juste après.
+//
+// Invariants du fichier :
+//   • `getKnownWords`/`onCreateWord` sont des fonctions (pas des valeurs
+//     figées) : l'extension CodeMirror est construite UNE FOIS (voir
+//     MdxEditor.tsx) et lit les données les plus récentes à chaque
+//     frappe — des refs mutables plutôt qu'une reconstruction de
+//     l'extension à chaque changement du dictionnaire, qui perturberait
+//     l'état interne du popup d'autocomplétion en cours d'utilisation.
+//   • On exporte la SOURCE (pas une extension `autocompletion()`
+//     complète) : `autocompletion()` est singleton côté CodeMirror, or
+//     l'éditeur propose AUSSI les [[wikilinks]] (lib/
+//     wikilinkAutocomplete.ts) — MdxEditor.tsx monte les deux sources
+//     dans une seule et même instance.
+//
+//////////////////////////////////////////////////////////////////////////////
 
-// Autocomplétion des {{occurrences}} dans MdxEditor.tsx — se déclenche dès
-// `{{`, ne propose QUE les mots déjà dans le dictionnaire personnel (voir
-// OccurrencesPanel.tsx) plus une option "Créer" en dernier si le texte tapé
-// ne correspond à aucun mot connu. Valider (clic ou Entrée) ferme le token
-// (`}}`) et avance le curseur juste après — comportement demandé
-// explicitement, voir le plan.
-//
-// `getKnownWords`/`onCreateWord` sont des fonctions (pas des valeurs
-// figées) : l'extension CodeMirror est construite UNE FOIS (voir
-// MdxEditor.tsx) et doit lire les données les plus récentes à chaque
-// frappe — passer des refs mutables plutôt que reconstruire l'extension à
-// chaque changement du dictionnaire, qui perturberait l'état interne du
-// popup d'autocomplétion en cours d'utilisation.
-//
-// On exporte la SOURCE (pas une extension `autocompletion()` complète) :
-// `autocompletion()` est singleton côté CodeMirror, or l'éditeur propose
-// AUSSI les [[wikilinks]] (lib/wikilinkAutocomplete.ts) — MdxEditor.tsx
-// monte les deux sources dans une seule et même instance.
+import { type Completion, type CompletionContext, type CompletionResult } from '@codemirror/autocomplete';
 
 export type OccurrenceAutocompleteOptions = {
   getKnownWords: () => string[];

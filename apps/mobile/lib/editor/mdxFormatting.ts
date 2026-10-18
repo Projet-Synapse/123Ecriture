@@ -1,7 +1,27 @@
-// Fonctions pures de transformation de texte pour la barre de formatage de
-// l'éditeur MDX (components/NotesScreen.tsx). Volontairement séparées du
-// composant pour rester testables sans RN — voir le script de vérification
-// utilisé lors du développement dans le message de commit associé.
+// ✒️ 123ECRITURE — lib/editor/mdxFormatting.ts — transformations de texte de la barre de formatage
+//////////////////////////////////////////////////////////////////////////////
+//
+// Fonctions pures de transformation de texte pour la barre de formatage
+// de l'éditeur MDX (components/NotesScreen.tsx). Volontairement séparées
+// du composant pour rester testables sans React Native.
+//
+// Invariants du fichier :
+//   • Aucune fonction ne mute son entrée : chacune renvoie un nouveau
+//     texte ET la nouvelle sélection, prêts à être appliqués d'un seul
+//     coup côté éditeur.
+//   • Les lignes vides ne sont jamais préfixées (listes, citations).
+//   • Une bascule détecte d'abord si TOUTES les lignes non vides portent
+//     déjà le préfixe : dans ce cas elle le retire, sinon elle l'ajoute.
+//
+// SOMMAIRE :
+//   1. Types et bornes de ligne
+//   2. Mise en forme en ligne (wrapSelection, applyHeading)
+//   3. Blocs et listes en bascule (toggleLinePrefix, toggleNumberedList)
+//   4. Insertions (insertLink, insertTable)
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. Types et bornes de ligne //////////////////////////////////////////
 
 export type Selection = { start: number; end: number };
 export type FormattingResult = { text: string; selection: Selection };
@@ -12,6 +32,8 @@ function getLineRange(text: string, index: number): { lineStart: number; lineEnd
   const lineEnd = nextBreak === -1 ? text.length : nextBreak;
   return { lineStart, lineEnd };
 }
+
+//////// 2. Mise en forme en ligne (wrapSelection, applyHeading) ///////////////
 
 // Entoure la sélection d'un marqueur (ex. **gras**, _italique_, `code`).
 // Sans sélection, insère juste une paire de marqueurs avec le curseur entre
@@ -42,6 +64,8 @@ export function applyHeading(text: string, selection: Selection, level: 1 | 2 | 
     selection: { start: selection.start + delta, end: selection.end + delta },
   };
 }
+
+//////// 3. Blocs et listes en bascule (toggleLinePrefix, toggleNumberedList) //
 
 // Ajoute (ou retire, en bascule) un préfixe (ex. "- ", "> ") sur chaque
 // ligne couverte par la sélection — les lignes vides ne sont pas touchées.
@@ -98,6 +122,8 @@ export function toggleNumberedList(text: string, selection: Selection): Formatti
     selection: { start: selection.start, end: selection.end + delta },
   };
 }
+
+//////// 4. Insertions (insertLink, insertTable) ///////////////////////////////
 
 // Insère un lien Markdown. Avec une sélection, elle devient le texte du
 // lien ; sinon un texte par défaut est inséré. Dans les deux cas, "url"

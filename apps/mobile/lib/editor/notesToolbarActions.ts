@@ -1,3 +1,32 @@
+// ✒️ 123ECRITURE — lib/editor/notesToolbarActions.ts — registre de la barre de formatage Notes
+//////////////////////////////////////////////////////////////////////////////
+//
+// Registre unique des actions de la barre de formatage Notes — utilisé à
+// la fois par l'éditeur (components/NotesScreen.tsx, pour exécuter
+// l'action et câbler les raccourcis clavier) et par Paramètres
+// (components/settings/EditorSection.tsx, pour proposer de réordonner/
+// masquer chaque bouton).
+//
+// Invariants du fichier :
+//   • Les préférences ne stockent que des ids (voir
+//     apps/desktop/electron/preferences.ts) ; ce fichier est la seule
+//     source de vérité sur ce qu'un id représente concrètement.
+//   • Les actions SANS transformation de texte (attach/undo/redo/
+//     template/lint) gardent un `run` identitaire pour le type — l'id est
+//     branché sur le vrai handler côté NotesScreen.
+//   • Toute normalisation d'ordre ou de groupes ajoute en bout les
+//     actions inconnues de la préférence stockée, VISIBLES : un futur
+//     bouton doit apparaître plutôt que manquer, et une action existante
+//     ne disparaît jamais en silence.
+//
+// SOMMAIRE :
+//   1. Le registre des actions (ids, run, raccourcis clavier)
+//   2. Libellés et raccourcis lisibles pour Paramètres
+//   3. Normalisation de l'ordre plat (migration 'heading-group')
+//   4. Groupes de la barre d'outils (conteneurs ordonnés)
+//
+//////////////////////////////////////////////////////////////////////////////
+
 import {
   applyHeading,
   insertLink,
@@ -9,13 +38,7 @@ import {
   type Selection,
 } from './mdxFormatting';
 
-// Registre unique des actions de la barre de formatage Notes — utilisé à la
-// fois par l'éditeur (components/NotesScreen.tsx, pour exécuter l'action et
-// câbler les raccourcis clavier, voir `shortcut` ci-dessous) et par
-// Paramètres (components/settings/EditorSection.tsx, pour proposer de
-// réordonner/masquer chaque bouton). Les préférences ne stockent que des
-// ids (voir apps/desktop/electron/preferences.ts) ; ce fichier est la seule
-// source de vérité sur ce qu'un id représente concrètement.
+//////// 1. Le registre des actions (ids, run, raccourcis clavier) /////////////
 
 export type ToolbarActionId =
   | 'h1'
@@ -48,13 +71,13 @@ export type ToolbarAction = {
   shortcut?: string;
 };
 
-// Historique : les 6 niveaux de titre vivaient sous un seul bouton "H" qui
-// déployait un sous-menu (voir EditorToolbar.tsx, mécanisme `subItems`,
-// encore utilisé par ce composant mais plus par Notes). Éclatés en 6 actions
-// individuelles pour que chaque niveau soit réordonnable/masquable à part
-// dans Paramètres (ex. quelqu'un qui n'utilise jamais H5/H6) — voir aussi
-// `normalizeNotesToolbarOrder` plus bas pour la migration d'un ordre déjà
-// enregistré avec l'ancien id 'heading-group'.
+// Les 6 niveaux de titre sont des actions INDIVIDUELLES (pas un bouton
+// "H" à sous-menu — le mécanisme `subItems` d'EditorToolbar.tsx reste
+// utilisé par ce composant mais plus par Notes) pour que chaque niveau
+// soit réordonnable/masquable à part dans Paramètres (ex. quelqu'un qui
+// n'utilise jamais H5/H6) — voir `normalizeNotesToolbarOrder` plus bas
+// pour la migration d'un ordre déjà enregistré avec l'ancien id
+// 'heading-group'.
 const HEADING_ACTIONS: ToolbarAction[] = ([1, 2, 3, 4, 5, 6] as const).map((level) => ({
   id: `h${level}` as ToolbarActionId,
   label: `H${level}`,
@@ -73,10 +96,10 @@ export const NOTES_TOOLBAR_ACTIONS: ToolbarAction[] = [
   { id: 'bullet', label: '•', run: (text, sel) => toggleLinePrefix(text, sel, '- '), shortcut: 'Mod-Shift-8' },
   { id: 'numbered', label: '1.', run: (text, sel) => toggleNumberedList(text, sel), shortcut: 'Mod-Shift-7' },
   { id: 'link', label: '🔗', run: (text, sel) => insertLink(text, sel), shortcut: 'Mod-k' },
-  // Mod-Shift-T : T comme Tableau — dernier inséré, aucun conflit avec la
-  // suite Mod-Shift-7/8/9 ni avec les raccourcis navigateur utiles (web,
-  // Ctrl+T ouvre un onglet MAIS l'éditeur intercepte via Prec.highest /
-  // preventDefault avant ; en Electron, fenêtre de l'app, pas d'onglets).
+  // Mod-Shift-T : T comme Tableau — aucun conflit avec la suite
+  // Mod-Shift-7/8/9 ni avec les raccourcis navigateur utiles : l'éditeur
+  // intercepte via Prec.highest / preventDefault avant (en Electron,
+  // fenêtre de l'app, pas d'onglets).
   { id: 'table', label: '▦', run: (text, sel) => insertTable(text, sel), shortcut: 'Mod-Shift-t' },
   // Pièce jointe : PAS une transformation de texte (ouvre le sélecteur de
   // fichier et insère ![[nom]] au curseur) — NotesScreen branche l'id sur
@@ -93,6 +116,8 @@ export const NOTES_TOOLBAR_ACTIONS: ToolbarAction[] = [
   // branché sur handleChangeContent(lintMarkdown(...)) côté NotesScreen.
   { id: 'lint', label: '✨', run: (text, sel) => ({ text, selection: sel }) },
 ];
+
+//////// 2. Libellés et raccourcis lisibles pour Paramètres ////////////////////
 
 // Libellés lisibles pour la liste de réorganisation dans Paramètres (plus
 // explicites que les glyphes courts affichés sur les boutons eux-mêmes).
@@ -139,22 +164,25 @@ export const NOTES_TOOLBAR_SHORTCUT_LABELS: Partial<Record<ToolbarActionId, stri
 export const DEFAULT_NOTES_TOOLBAR_ORDER: { id: ToolbarActionId; visible: boolean }[] =
   NOTES_TOOLBAR_ACTIONS.map((action) => ({ id: action.id, visible: true }));
 
-// Migration d'un ordre déjà enregistré sur disque (voir PreferencesContext,
-// chargé via window.preferences) : une préférence sauvegardée AVANT
-// l'éclatement du groupe "H" contient encore l'id 'heading-group' au lieu
-// des 6 ids h1..h6. Sans cette conversion, ce bouton disparaîtrait
-// silencieusement de la barre (NOTES_TOOLBAR_ACTIONS ne le connaît plus) —
-// on le remplace par les 6 niveaux, à la même position, avec la même
-// visibilité. Ajoute aussi en fin de liste toute action absente de l'ordre
-// stocké (même logique que le merge `{...DEFAULT_PREFERENCES, ...stored}` :
-// un futur nouveau bouton doit apparaître visible plutôt que masqué).
+//////// 3. Normalisation de l'ordre plat (migration 'heading-group') //////////
+
+// Migration d'un ordre déjà enregistré sur disque (voir
+// PreferencesContext, chargé via window.preferences) : une préférence
+// sauvegardée avant l'éclatement du groupe "H" contient encore l'id
+// 'heading-group' au lieu des 6 ids h1..h6. Sans cette conversion, ce
+// bouton disparaîtrait silencieusement de la barre
+// (NOTES_TOOLBAR_ACTIONS ne le connaît plus) — il est remplacé par les 6
+// niveaux, à la même position, avec la même visibilité. Ajoute aussi en
+// fin de liste toute action absente de l'ordre stocké (même logique que
+// le merge `{...DEFAULT_PREFERENCES, ...stored}` : un futur nouveau
+// bouton doit apparaître visible plutôt que masqué).
 //
-// Dédoublonnage : un ordre réel observé en prod contenait les niveaux
-// individuels ET le groupe restant en fin ([h1, h3, h2, …, heading-group]) —
-// l'expansion dupliquait alors h1/h2/h3 (boutons en double dans la barre +
+// Dédoublonnage obligatoire : un ordre contenant à la fois les niveaux
+// individuels ET le groupe restant ([h1, h3, h2, …, heading-group])
+// dupliquerait h1/h2/h3 à l'expansion (boutons en double dans la barre +
 // warning React "two children with the same key"). On garde la PREMIÈRE
-// occurrence (celle que l'utilisatrice a positionnée elle-même), la
-// position du groupe n'apportant rien par définition.
+// occurrence (celle que l'utilisateur a positionnée), la position du
+// groupe n'apportant rien par définition.
 export function normalizeNotesToolbarOrder(order: ToolbarItemConfig[]): ToolbarItemConfig[] {
   const expanded: ToolbarItemConfig[] = [];
   // Set<string> (pas ToolbarActionId) : `item.id` vient du disque, qui
@@ -182,14 +210,14 @@ export function normalizeNotesToolbarOrder(order: ToolbarItemConfig[]): ToolbarI
 }
 
 
-// //3. 🗂️ GROUPES DE LA BARRE D'OUTILS (v0.4.43)
-// ////////////////////////////////////////////////////////////////////////
+//////// 4. Groupes de la barre d'outils (conteneurs ordonnés) //////////////////
+
 // La barre est composée de CONTENEURS ordonnés : chaque groupe a un nom,
 // peut être dépliant (un bouton qui déploie ses boutons au survol/appui)
-// ou déplié en permanence (boutons côte à côte), et porte ses boutons dans
-// l'ordre. Un boutonAbsent des groupes = masqué de la barre (choix façon
-// Obsidian : on choisit ce qui est présent) — il reste proposé dans la
-// réserve de Paramètres pour être (re)placé par glisser-déposer.
+// ou déplié en permanence (boutons côte à côte), et porte ses boutons
+// dans l'ordre. Un bouton absent des groupes = masqué de la barre (choix
+// façon Obsidian : on choisit ce qui est présent) — il reste proposé
+// dans la réserve de Paramètres pour être (re)placé par glisser-déposer.
 
 export type NotesToolbarGroup = {
   id: string;
@@ -208,11 +236,11 @@ export const DEFAULT_NOTES_TOOLBAR_GROUPS: NotesToolbarGroup[] = [
 ];
 
 // Migration : construit les groupes depuis l'ANCIEN ordre plat ({id,
-// visible, group?}) en respectant les choix de l'utilisatrice — boutons
-// masqués restés hors barre, noms de groupes d'alors devenus de vrais
-// groupes dépliants, boutons nouveaux (attach/undo/redo) ajoutés au
-// dernier groupe. Appelée par PreferencesContext quand la préférence
-// notesToolbarGroups n'existe pas encore sur disque.
+// visible, group?}) — boutons masqués restés hors barre, noms de groupes
+// d'alors devenus de vrais groupes dépliants, boutons nouveaux
+// (attach/undo/redo) ajoutés au dernier groupe. Appelée par
+// PreferencesContext quand la préférence notesToolbarGroups n'existe pas
+// encore sur disque.
 export function migrateNotesToolbarGroups(order: ToolbarItemConfig[] | undefined): NotesToolbarGroup[] {
   if (!order || order.length === 0) return DEFAULT_NOTES_TOOLBAR_GROUPS.map((group) => ({ ...group, buttons: [...group.buttons] }));
   const groups: NotesToolbarGroup[] = [];

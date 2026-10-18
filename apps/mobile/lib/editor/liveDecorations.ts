@@ -1,18 +1,39 @@
-// Repérage pur (regex, sans DOM ni CodeMirror) des syntaxes MDX qu'on veut
-// décorer en mode "Intermédiaire" (Live Preview inline, voir
-// components/MdxEditor.tsx / lib/mdxLivePreview.ts) — séparé du module
-// CodeMirror pour rester testable sans dépendance lourde, comme les autres
-// fichiers de lib/. Ces règles sont volontairement DUPLIQUÉES (pas
-// réutilisées) par rapport à lib/markdownPlugins.ts : markdown-it produit
-// un flux de tokens pour tout le document orienté rendu final HTML, alors
-// qu'ici on doit repérer des PLAGES dans le texte source pour les décorer
-// pendant la frappe (masquer/révéler selon la position du curseur) — deux
-// besoins différents, même si les syntaxes reconnues sont les mêmes.
+// ✒️ 123ECRITURE — lib/editor/liveDecorations.ts — repérage pur des syntaxes MDX à décorer
+//////////////////////////////////////////////////////////////////////////////
 //
-// Portée : gras `**...**` et `__...__`, italique `_..._` et `*...*` (pas
-// `***…***` triple — ambigu en pur regex sans un vrai parseur, cut assumé :
-// le dédoublonnage ci-dessous lui fait quand même rendre quelque chose de
-// lisible).
+// Repérage pur (regex, sans DOM ni CodeMirror) des syntaxes MDX décorées
+// en mode "Intermédiaire" (Live Preview inline, voir components/
+// MdxEditor.tsx / lib/mdxLivePreview.ts) — séparé du module CodeMirror
+// pour rester testable sans dépendance lourde, comme les autres fichiers
+// de lib/.
+//
+// Invariants du fichier :
+//   • Ces règles sont volontairement DUPLIQUÉES (pas réutilisées) par
+//     rapport à lib/markdownPlugins.ts : markdown-it produit un flux de
+//     tokens pour tout le document orienté rendu final HTML, alors qu'ici
+//     on repère des PLAGES dans le texte source pour les décorer pendant
+//     la frappe (masquer/révéler selon la position du curseur) — deux
+//     besoins différents, mêmes syntaxes reconnues.
+//   • Toute plage qui traverse un retour à la ligne est écartée :
+//     CodeMirror interdit les Decoration.replace multilignes (crash de
+//     tout l'éditeur).
+//   • Un token (wikilink/tag/occurrence/embed) gagne TOUJOURS sur la mise
+//     en forme qui l'entoure — le mark est DÉCOUPÉ autour de lui, pas
+//     l'inverse.
+//   • Portée : gras `**...**` et `__...__`, italique `_..._` et `*...*`
+//     — pas le triple `***…***`, ambigu en pur regex sans un vrai
+//     parseur.
+//
+// SOMMAIRE :
+//   1. Types des correspondances (mark, titre, token)
+//   2. Détection des marks (gras, italique, titres)
+//   3. Détection des tokens (wikilinks/embeds, tags, occurrences)
+//   4. Dédoublonnage et découpage (subtractSpans, findLiveMatches)
+//   5. Tableaux GFM (findTableBlocks)
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. Types des correspondances (mark, titre, token) ////////////////////
 
 export type MarkMatch = {
   kind: 'mark';
@@ -20,13 +41,13 @@ export type MarkMatch = {
   from: number;
   to: number;
   markerLength: number;
-  // Segments du CONTENU (entre les marqueurs) qui ne recouvrent aucun token
-  // retenu — v2 « les liens internes doivent TOUJOURS être détectés » : un
-  // token gagne toujours sur la mise en forme qui l'entoure, le mark est
-  // donc DÉCOUPÉ autour de lui (les marqueurs **/_ restent masqués, le texte
-  // hors token reste stylé, la plage du token appartient à sa propre
-  // décoration). Ex. `**texte [[lien]] suite**` → marqueurs remplacés,
-  // spans = [texte] et [suite], le wikilink vit de son côté.
+  // Segments du CONTENU (entre les marqueurs) qui ne recouvrent aucun
+  // token retenu — un token gagne toujours sur la mise en forme qui
+  // l'entoure : le mark est DÉCOUPÉ autour de lui (les marqueurs **/_
+  // restent masqués, le texte hors token reste stylé, la plage du token
+  // appartient à sa propre décoration). Ex. `**texte [[lien]] suite**` →
+  // marqueurs remplacés, spans = [texte] et [suite], le wikilink vit de
+  // son côté.
   contentSpans: { from: number; to: number }[];
 };
 
@@ -55,16 +76,16 @@ export type TokenMatch = {
 
 export type LiveMatch = MarkMatch | HeadingMatch | TokenMatch;
 
+//////// 2. Détection des marks (gras, italique, titres) ///////////////////////
+
 // Exportés pour le découpage des titres en segments stylés
 // (lib/mdxLivePreview.ts, mode Intermédiaire natif).
 export function findBold(text: string): MarkMatch[] {
   const matches: MarkMatch[] = [];
   // Deux syntaxes de gras : `**…**` ET `__…__` (gras-underscore, style
-  // Obsidian — vécu : les `__` restaient visibles autour du gras dans les
-  // notes importées, ex. `__** Corbeaux **__`). L'italique `_…_` ne doit
-  // PAS matcher l'intérieur des `__…__` : le dédoublonnage de
-  // findLiveMatches (premier match trié gagne) s'en charge, le gras étant
-  // toujours positionné avant.
+  // Obsidian). L'italique `_…_` ne doit PAS matcher l'intérieur des
+  // `__…__` : le dédoublonnage de findLiveMatches (premier match trié
+  // gagne) s'en charge, le gras étant toujours positionné avant.
   for (const re of [/\*\*([^*\n]+?)\*\*/g, /__([^_\n]+?)__/g]) {
     let match: RegExpExecArray | null;
     while ((match = re.exec(text))) {
@@ -84,21 +105,18 @@ export function findBold(text: string): MarkMatch[] {
 // Exporté pour le découpage des titres en segments stylés (voir findBold).
 export function findItalic(text: string): MarkMatch[] {
   const matches: MarkMatch[] = [];
-  // Deux syntaxes d'italique : `_…_` et `*…*` (la seconde ajoutée
-  // 2026-10-03 : les notes importées usent surtout de l'italique-étoile et
-  // les `*` restaient visibles). Le contenu exige un caractère NON espace
-  // en fin (`[^*\n]*\S`) et pas d'espace juste après l'étoile ouvrante —
-  // `2 * 3 * 4` (multiplication) ne doit pas se déguiser en italique, même
-  // règle de bordure que le rendu markdown réel. Lookahead seulement (pas
-  // de lookbehind) : ce fichier est parsé par Hermes en natif, qui ne le
-  // supporte pas.
+  // Deux syntaxes d'italique : `_…_` et `*…*`. Le contenu exige un
+  // caractère NON espace en fin (`[^*\n]*\S`) et pas d'espace juste après
+  // l'étoile ouvrante — `2 * 3 * 4` (multiplication) ne doit pas se
+  // déguiser en italique, même règle de bordure que le rendu markdown
+  // réel. Lookahead seulement (pas de lookbehind) : ce fichier est parsé
+  // par Hermes en natif, qui ne le supporte pas.
   //
-  // Garde anti-clignotement (rapporté : « l'apparition de la mise en forme
-  // est très chaotique ») : un italique ACCOLÉ au même délimiteur à
+  // Garde anti-clignotement : un italique ACCOLÉ au même délimiteur à
   // l'extérieur (`**gras*` produit un faux `*gras*` intérieur, `__mot_` un
-  // faux `_mot_`) est un GRAS EN COURS DE FRAPPE. Le laisser stylé faisait
-  // basculer l'affichage italique → gras au dernier caractère tapé ; on
-  // l'ignore — texte brut pendant la frappe, puis le gras complet se
+  // faux `_mot_`) est un GRAS EN COURS DE FRAPPE — le laisser stylé fait
+  // basculer l'affichage italique → gras au dernier caractère tapé, il est
+  // donc ignoré : texte brut pendant la frappe, puis le gras complet se
   // stylise d'un seul mouvement. (`**gras**` COMPLET reste couvert par le
   // gras, qui gagne au dédoublonnage de findLiveMatches.)
   const patterns: { re: RegExp; delimiter: string }[] = [
@@ -141,6 +159,8 @@ function findHeadings(text: string): HeadingMatch[] {
   return matches;
 }
 
+//////// 3. Détection des tokens (wikilinks/embeds, tags, occurrences) /////////
+
 // `[[lien]]`/`[[lien|alias]]` et `![[embed]]` en une seule passe (l'embed
 // est juste un lien précédé de `!`) — évite qu'un scan séparé des liens ne
 // re-matche la partie `[[...]]` d'un embed comme un lien à part entière.
@@ -149,8 +169,7 @@ function findWikilinksAndEmbeds(text: string): TokenMatch[] {
   // Un retour à la ligne exclu de la classe : un `[[` non refermé avalerait
   // des lignes entières et produirait une décoration multiligne — interdite
   // par CodeMirror (« Decorations.replace line breaks… », crash de tout
-  // l'éditeur, vécu sur un sommaire `{{…}}` multiligne de 3 Mo — voir
-  // findOccurrences).
+  // l'éditeur — voir findOccurrences).
   const re = /(!)?\[\[([^\]\n]+?)\]\]/g;
   let match: RegExpExecArray | null;
   while ((match = re.exec(text))) {
@@ -194,8 +213,7 @@ function findTags(text: string): TokenMatch[] {
 function findOccurrences(text: string): TokenMatch[] {
   const matches: TokenMatch[] = [];
   // Un retour à la ligne exclu — même raison que findWikilinksAndEmbeds :
-  // un `{{` de déco/sommaire fermé bien plus loin avalait tout le bloc
-  // (3,1 Mo, crash CodeMirror vécu sur le desktop).
+  // un `{{` de déco/sommaire fermé bien plus loin avalerait tout le bloc.
   const re = /\{\{([^}\n]+?)\}\}/g;
   let match: RegExpExecArray | null;
   while ((match = re.exec(text))) {
@@ -212,6 +230,8 @@ function findOccurrences(text: string): TokenMatch[] {
   }
   return matches;
 }
+
+//////// 4. Dédoublonnage et découpage (subtractSpans, findLiveMatches) ////////
 
 // Retire de [from, to) les plages de tokens retenues qui la chevauchent —
 // renvoie les segments restants (troncature, jamais de suppression du
@@ -236,31 +256,27 @@ function subtractSpans(from: number, to: number, blockers: TokenMatch[]): { from
 }
 
 // Toutes les correspondances du document, triées par position, SANS
-// chevauchement : mdxLivePreview.ts alimente un RangeSetBuilder CodeMirror
-// qui exige des plages ajoutées dans l'ordre strictement croissant — deux
-// correspondances imbriquées (ex. `**[[lien]]**` : gras contenant un
-// wikilink) faisaient ajouter les morceaux du gras PUIS revenir en arrière
-// pour le wikilink → "Ranges must be added sorted by `from` position and
-// `startSide`" → CodeMirror désactive le ViewPlugin ENTIERS et en silence
-// pour tout le document : le mode "Intermédiaire" retombait visuellement
-// en mode "Source" sans explication (bug observé au lancement réel, même
-// famille que celui documenté dans mdxLivePreview.ts pour l'ordre
-// intra-correspondance).
+// chevauchement : le RangeSetBuilder de mdxLivePreview.ts exige des plages
+// ajoutées dans l'ordre strictement croissant — deux correspondances
+// imbriquées (ex. `**[[lien]]**` : gras contenant un wikilink) feraient
+// revenir en arrière et déclencheraient « Ranges must be added sorted by
+// `from` position and `startSide` », qui désactive le ViewPlugin ENTIERS
+// et en silence pour tout le document : le mode "Intermédiaire" retombe
+// alors visuellement en mode "Source" sans explication.
 //
-// RÉSOLUTION v2 (demande utilisateur : « même s'il y a de la mise en forme
-// autour, les liens internes doivent TOUJOURS être détectés ») — les TOKENS
-// (wikilink/embed/tag/occurrence) gagnent sur la mise en forme : deux
-// passes, 1) on retient les tokens sans chevauchement ENTRE eux, 2) les
-// marks/titres survivants sont DÉCOUPÉS autour des tokens (marqueurs masqués,
-// contenu restant stylé via contentSpans) plutôt que d'éliminer le token.
-// Marks entre eux : premier trié gagne (inchangé — `_**gras**_` garde
-// l'italique seul, comme avant).
+// Priorité des TOKENS (wikilink/embed/tag/occurrence) sur la mise en
+// forme : les liens internes sont TOUJOURS détectés, même entourés de mise
+// en forme. Deux passes : 1) on retient les tokens sans chevauchement
+// ENTRE eux, 2) les marks/titres survivants sont DÉCOUPÉS autour des
+// tokens (marqueurs masqués, contenu restant stylé via contentSpans)
+// plutôt que d'éliminer le token. Marks entre eux : premier trié gagne
+// (`_**gras**_` garde l'italique seul).
 export function findLiveMatches(text: string): LiveMatch[] {
   const tokens = [...findWikilinksAndEmbeds(text), ...findTags(text), ...findOccurrences(text)];
   tokens.sort((a, b) => a.from - b.from);
 
-  // Passe 1 — tokens entre eux : premier trié gagne (aucun cas réel connu
-  // de tokens imbriqués ; la garde reste le garde-fou anti-crash).
+  // Passe 1 — tokens entre eux : premier trié gagne (garde-fou anti-crash :
+  // aucun chevauchement ne doit survivre entre tokens).
   const keptTokens: TokenMatch[] = [];
   let lastTokenTo = -1;
   for (const token of tokens) {
@@ -290,8 +306,8 @@ export function findLiveMatches(text: string): LiveMatch[] {
     if (keptTokens.some((token) => token.from < match.to && token.to > match.from)) {
       // Chevauche un token retenu : on ne le garde PAS comme plage stylée
       // entière (elle recouvrirait le token), il est découpé ci-dessous —
-      // mais ses MARQUEURS restent masqués, il vit donc quand même, en
-      // morceaux : on pousse une copie avec contentSpans calculées, hors
+      // mais ses MARQUEURS restent masqués : il vit donc quand même, en
+      // morceaux. On pousse une copie avec contentSpans calculées, hors
       // du classement anti-chevauchement des plages entières.
       const contentFrom = match.kind === 'mark' ? match.from + match.markerLength : match.contentFrom;
       const contentTo = match.kind === 'mark' ? match.to - match.markerLength : match.to;
@@ -312,8 +328,7 @@ export function findLiveMatches(text: string): LiveMatch[] {
   return matches;
 }
 
-// //8. 📊 TABLES (v0.4.50)
-// ////////////////////////////////////////////////////////////////////////
+//////// 5. Tableaux GFM (findTableBlocks) /////////////////////////////////////
 
 export type TableBlock = {
   /** Décalage absolu du DÉBUT de la première ligne du tableau. */
@@ -325,7 +340,7 @@ export type TableBlock = {
   source: string;
 };
 
-// Ligne de séparation GFM : `| --- | :---: | ...` — tirets/ deux-points et
+// Ligne de séparation GFM : `| --- | :---: | ...` — tirets/deux-points et
 // barres uniquement (au moins un tiret), espaces tolérés.
 function isTableDelimiterLine(line: string): boolean {
   const trimmed = line.trim();
@@ -343,8 +358,8 @@ function lineContainsPipe(line: string): boolean {
 // dans le texte : un tableau = suite de lignes consécutives contenant une
 // barre, dont la DEUXIÈME est une ligne de séparation. Les blocs sans
 // séparateur (une liste de barres quelconque) ne sont PAS des tableaux —
-// ils restent en texte brut. Renvoie des plages en décalabs absolus, triées,
-// sans chevauchement (un bloc commence après la fin du précédent).
+// ils restent en texte brut. Renvoie des plages en décalages absolus,
+// triées, sans chevauchement (un bloc commence après la fin du précédent).
 export function findTableBlocks(text: string): TableBlock[] {
   const lines = text.split('\n');
   const blocks: TableBlock[] = [];

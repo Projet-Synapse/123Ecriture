@@ -1,16 +1,34 @@
-// Langages de code de l'éditeur (v0.4.46, demande utilisateur : « lire
-// n'importe quels fichiers code comme VS Code ») — la liste des extensions
-// reconnues est ICI et SEULEMENT ICI : les trois adaptateurs (desktop
-// vault.ts, web webVaultAdapter.ts, natif nativeVaultAdapter.ts) l'importent
-// au lieu de maintenir trois copies divergentes (même modèle de partage que
+// ✒️ 123ECRITURE — lib/editor/codeLanguages.ts — langages de code reconnus par l'éditeur
+//////////////////////////////////////////////////////////////////////////////
+//
+// Langages de code de l'éditeur : la liste des extensions reconnues vit
+// ICI et SEULEMENT ICI — les trois adaptateurs (desktop vault.ts, web
+// webVaultAdapter.ts, natif nativeVaultAdapter.ts) l'importent au lieu de
+// maintenir trois copies divergentes (même modèle de partage que
 // frontmatterMigration.ts — esbuild bundle l'import cross-package).
 //
 // Deux niveaux de support :
 // - langages « dédiés » (@codemirror/lang-*) : parseur Lezer complet →
-//   COLORATION + SOULIGNEMENTS ROUGES des erreurs de syntaxe via le linter
-//   générique (lib/codeLint.ts, qui lit l'arbre d'erreur du parseur actif) ;
+//   COLORATION + SOULIGNEMENTS ROUGES des erreurs de syntaxe via le
+//   linter générique (lib/codeLint.ts, qui lit l'arbre d'erreur du
+//   parseur actif) ;
 // - langages « legacy » (@codemirror/legacy-modes, StreamLanguage) :
 //   COLORATION seulement — pas d'arbre, donc pas de soulignements.
+//
+// Invariants du fichier :
+//   • CODE_FILE_EXTENSIONS est la source unique des extensions reconnues
+//     comme CODE, partout (explorateur, création, sync, éditeurs) — tout
+//     en minuscules, AVEC le point.
+//   • Le cast `unknown → LegacyMode` reste localisé dans la fonction
+//     `legacy()` : les modes legacy fonctionnent tels quels au runtime.
+//
+// SOMMAIRE :
+//   1. Registre des extensions de fichiers code
+//   2. Pont des modes legacy (cast TypeScript localisé)
+//   3. Résolution du langage par extension
+//
+//////////////////////////////////////////////////////////////////////////////
+
 import { StreamLanguage, type LanguageSupport } from '@codemirror/language';
 import { javascript } from '@codemirror/lang-javascript';
 import { python } from '@codemirror/lang-python';
@@ -33,6 +51,8 @@ import { toml } from '@codemirror/legacy-modes/mode/toml';
 import { yaml } from '@codemirror/legacy-modes/mode/yaml';
 import { dockerFile } from '@codemirror/legacy-modes/mode/dockerfile';
 import { powerShell } from '@codemirror/legacy-modes/mode/powershell';
+
+//////// 1. Registre des extensions de fichiers code ///////////////////////////
 
 export type CodeLanguageSupport = {
   language: LanguageSupport | StreamLanguage<unknown>;
@@ -112,6 +132,8 @@ export function extensionKindFor(fileName: string): 'code' | null {
   return isCodeFile(fileName) ? 'code' : null;
 }
 
+//////// 2. Pont des modes legacy (cast TypeScript localisé) ///////////////////
+
 // Modes legacy (@codemirror/legacy-modes) — StreamLanguage, coloration seule.
 // ⚠️ Les .d.ts des modes référencent le type StreamParser de
 // @codemirror/streamparser, tandis que StreamLanguage.define attend celui de
@@ -123,6 +145,8 @@ type LegacyMode = Parameters<typeof StreamLanguage.define>[0];
 function legacy(parser: unknown): StreamLanguage<unknown> {
   return StreamLanguage.define(parser as LegacyMode);
 }
+
+//////// 3. Résolution du langage par extension ////////////////////////////////
 
 // Renvoie le support de langage CodeMirror pour une extension de fichier
 // (AVEC le point, casse ignorée), ou null si ce n'est pas du code reconnu.

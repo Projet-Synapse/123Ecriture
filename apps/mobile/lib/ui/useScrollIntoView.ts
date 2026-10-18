@@ -2,25 +2,39 @@ import { useCallback, useRef } from 'react';
 import type { LayoutChangeEvent, NativeScrollEvent, ScrollView } from 'react-native';
 import type { RefObject } from 'react';
 
+// ✒️ 123ECRITURE — lib/ui/useScrollIntoView.ts — scroll-into-view des listes navigables au clavier
+//////////////////////////////////////////////////////////////////////////////
+//
 // Scroll-into-view pour les listes navigables au clavier (palette de
 // commandes, recherche globale, MoveDialog) : sans lui, la sélection
-// flèches ↓↑ continue "en coulisses" dès qu'elle dépasse la hauteur visible
-// de la liste — l'Entrée qui suit active alors un élément qu'on n'a jamais
-// vu surligné. Chaque élément mesure sa position via onLayout (hauteurs
-// variables : ligne avec/sans extrait), et le ScrollView garde son offset +
-// son viewport dans des refs pour recalculer SANS re-render — seule la
-// sélection (déjà un state chez l'appelant) re-render la liste.
+// flèches ↓↑ continue "en coulisses" dès qu'elle dépasse la hauteur
+// visible de la liste — l'Entrée qui suit active alors un élément qu'on
+// n'a jamais vu surligné.
 //
-// Hook (pas logique pure testée comme calendarDates.ts) : il n'y a rien à
-// tester sans un vrai ScrollView — le cœur calculatoire `scrollTargetForItem`
-// est quand même isolé en fonction pure en bas de ce fichier.
+// Invariants du fichier :
+//   • Chaque élément mesure sa position via onLayout (hauteurs variables :
+//     ligne avec/sans extrait) ; le ScrollView garde son offset et son
+//     viewport dans des refs pour recalculer SANS re-render — seule la
+//     sélection (déjà un state chez l'appelant) re-render la liste.
+//   • Le cœur calculatoire `scrollTargetForItem` est une fonction pure en
+//     bas de fichier : le reste n'est pas testable sans un vrai
+//     ScrollView.
+//   • API en `recordItemLayout(index, event)` plutôt qu'en factory
+//     `onItemLayout(index)(event)` : la règle react-hooks/refs (React
+//     Compiler) refuse tout APPEL de fonction susceptible de toucher une
+//     ref PENDANT le rendu — les composants l'utilisent donc toujours via
+//     des handlers inline `onLayout={(e) => recordItemLayout(index, e)}`,
+//     jamais en l'appelant eux-mêmes pendant le rendu.
+//   • Au plus juste : pas de recentrage systématique — la liste ne
+//     "saute" pas quand tout tient déjà dans le viewport.
 //
-// API en `recordItemLayout(index, event)` plutôt qu'en factory
-// `onItemLayout(index)(event)` : la règle react-hooks/refs (React Compiler)
-// refuse tout APPEL de fonction susceptible de toucher une ref PENDANT le
-// rendu — les composants l'utilisent donc toujours via des handlers inline
-// `onLayout={(e) => recordItemLayout(index, e)}`, jamais en l'appelant
-// eux-mêmes pendant le rendu.
+// SOMMAIRE :
+//   1. Le hook useScrollIntoView
+//   2. scrollTargetForItem — calcul pur de la position de scroll
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. Le hook useScrollIntoView //////////////////////////////////////////
 
 export type ScrollIntoViewController = {
   scrollRef: RefObject<ScrollView | null>;
@@ -61,6 +75,8 @@ export function useScrollIntoView(): ScrollIntoViewController {
 
   return { scrollRef, recordItemLayout, handleListLayout, handleListScroll, ensureVisible };
 }
+
+//////// 2. scrollTargetForItem — calcul pur de la position de scroll ///////////
 
 // Position de scroll à appliquer pour que l'élément soit entièrement
 // visible, ou null s'il l'est déjà — au plus juste (pas de recentrage

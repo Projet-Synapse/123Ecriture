@@ -1,5 +1,28 @@
+// ✒️ 123ECRITURE — lib/editor/sheets.ts — logique du module Graphiques (tableur → séries)
+//////////////////////////////////////////////////////////////////////////////
+//
 // Logique pure du module Graphiques (tableur → séries de graphique) —
 // séparée du rendu pour rester testable, comme lib/sync/diff.ts.
+//
+// Invariants du fichier :
+//   • Une cellule non numérique dans une colonne utilisée comme VALEURS
+//     vaut 0, pas une erreur — un tableur a légitimement des cellules
+//     vides ou du texte pendant qu'on le remplit ; la virgule décimale
+//     (convention française) est acceptée en plus du point.
+//   • buildChartSeries renvoie un tableau VIDE si la config est incomplète
+//     (pas encore de colonne étiquettes/valeurs choisie) plutôt que de
+//     planter.
+//   • maxSeriesValue sert à l'échelle commune des barres/lignes : UN SEUL
+//     axe, jamais un axe par série.
+//
+// SOMMAIRE :
+//   1. Types des séries
+//   2. Lecture des cellules et construction des séries
+//   3. Échelle commune (maxSeriesValue)
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. Types des séries //////////////////////////////////////////////////
 
 export type ChartPoint = {
   label: string;
@@ -11,6 +34,8 @@ export type ChartSeries = {
   seriesName: string;
   points: ChartPoint[];
 };
+
+//////// 2. Lecture des cellules et construction des séries ////////////////////
 
 // Une cellule non numérique dans une colonne utilisée comme VALEURS est
 // traitée comme 0, pas une erreur — un tableur a légitimement des cellules
@@ -45,6 +70,8 @@ export function buildChartSeries(data: SheetData): ChartSeries[] {
       };
     });
 }
+
+//////// 3. Échelle commune (maxSeriesValue) ///////////////////////////////////
 
 // Plus grande valeur toutes séries confondues — sert à l'échelle commune
 // des barres/lignes (UN SEUL axe, jamais un axe par série).

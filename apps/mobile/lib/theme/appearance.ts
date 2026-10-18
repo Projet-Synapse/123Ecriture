@@ -1,15 +1,35 @@
-// Apparence de l'interface — pur et testé.
+// ✒️ 123ECRITURE — lib/theme/appearance.ts — apparence de l'interface (profils, couleurs, thème)
+//////////////////////////////////////////////////////////////////////////////
 //
-// v0.4.30 : un profil complet PAR MODE (clair/sombre) — police, échelle,
-// accent, fond, boutons. v0.4.32 (demandes de l'utilisatrice) :
-// - PAR COFFRE : chaque coffre possède SON apparence dans
-//   `.123ecriture/appearance.json` (dossier caché, jamais synchronisé) ;
-//   chaîne de résolution : profil du coffre → profil global (config) →
-//   défauts. « La personnalisation de PROGRAMMATION ne sera pas impactée
-//   sur DIVERS. »
-// - PANNEAUX : couleur + translucidité des surfaces (superbe sur un fond
-//   d'écran : les panneaux laissent deviner l'image).
-// - ROUE DES COULEURS : conversions HSV↔hex pour le sélecteur dédié.
+// Apparence de l'interface — pur et testé. Un profil complet PAR MODE
+// (clair/sombre) : police, échelle, couleur des boutons, fond, panneaux,
+// bordures, texte.
+//
+// Invariants du fichier :
+//   • Résolution PAR COFFRE : chaque coffre possède SON apparence dans
+//     `.123ecriture/appearance.json` (dossier caché, jamais synchronisé)
+//     ; chaîne de résolution : profil du coffre → profil global (config)
+//     → défauts — la personnalisation d'un coffre n'impacte pas les
+//     autres.
+//   • PANNEAUX : couleur + translucidité des surfaces (les panneaux
+//     laissent deviner le fond d'écran).
+//   • ROUE DES COULEURS : conversions HSV↔hex pour le sélecteur dédié —
+//     la roue n'est qu'une projection géométrique de ces fonctions.
+//   • Toute valeur lue d'une préférence passe par son clamp : une config
+//     ancienne ou incomplète retombe sur des défauts sûrs, champ par
+//     champ.
+//
+// SOMMAIRE :
+//   1. Types du profil et options
+//   2. Bornes et clamp
+//   3. Couleurs : HSV ↔ hex et dérivés
+//   4. Profils par défaut et résolution
+//   5. Fichier d'apparence par coffre
+//   6. Tokens et thème
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. Types du profil et options ////////////////////////////////////////
 
 import { darkTheme, lightTheme, type Theme } from '../../theme';
 
@@ -26,8 +46,8 @@ export type AppFontFamily =
 export type ButtonStyle = 'filled' | 'outline' | 'ghost';
 
 export type AppearanceProfile = {
-  // v0.4.35 : « couleur des BOUTONS » (ex-accent) — hierarchie de
-  // conteneurs demandee : fond d'ecran > carte > conteneurs (titre) > boutons.
+  // Couleur des BOUTONS — hiérarchie de conteneurs : fond d'écran >
+  // carte > conteneurs (titre) > boutons.
   buttonColor: string;
   fontFamily: AppFontFamily;
   // Échelle globale de l'interface (1 = 100 %) — zoom CSS racine.
@@ -37,12 +57,12 @@ export type AppearanceProfile = {
   backgroundMode: 'color' | 'image';
   // Voile d'assombrissement AU-DESSUS de l'image (0 = aucun).
   backgroundDim: number;
-  // PANNEAUX (v0.4.32) : couleur des surfaces (cartes, barres) et
+  // PANNEAUX : couleur des surfaces (cartes, barres) et
   // translucidité (1 = opaque ; 0.6 = l'image transparaît).
   surfaceColor: string;
   surfaceOpacity: number;
-  // v0.4.34 (demandes de l'utilisatrice) : bordures, couleur du TEXTE, et
-  // fond de l'ÉDITEUR de notes réglables comme tout le reste.
+  // Bordures, couleur du TEXTE et fond de l'ÉDITEUR de notes réglables
+  // comme tout le reste.
   borderColor: string;
   textColor: string;
   editorBackgroundColor: string;
@@ -79,6 +99,8 @@ export const BUTTON_OPTIONS: { value: ButtonStyle; label: string }[] = [
   { value: 'ghost', label: 'Discret' },
 ];
 
+//////// 2. Bornes et clamp ////////////////////////////////////////////////////
+
 export const FONT_SCALE_MIN = 0.85;
 export const FONT_SCALE_MAX = 1.3;
 export const BACKGROUND_DIM_MAX = 0.6;
@@ -105,7 +127,8 @@ export function clampSurfaceOpacity(value: number): number {
   return Math.min(1, Math.max(SURFACE_OPACITY_MIN, value));
 }
 
-// ---- Couleurs : HSV ↔ hex (roue des couleurs) --------------------------
+//////// 3. Couleurs : HSV ↔ hex et dérivés ////////////////////////////////////
+
 // hsv : h en degrés [0, 360), s/v en [0, 1]. Pur et testé — la roue du
 // sélecteur (ColorField) n'est qu'une projection géométrique de ces
 // fonctions : angle = teinte, distance au centre = saturation.
@@ -167,7 +190,7 @@ export function mixHex(a: string, b: string, ratio: number): string {
   return '#' + [r, g, bl].map((n) => n.toString(16).padStart(2, '0')).join('');
 }
 
-// ---- Profils -----------------------------------------------------------
+//////// 4. Profils par défaut et résolution ///////////////////////////////////
 
 export const DEFAULT_LIGHT_PROFILE: AppearanceProfile = {
   buttonColor: lightTheme.accent,
@@ -236,8 +259,8 @@ export function resolveAppearanceProfile(
     buttonStyle: partial.buttonStyle && BUTTON_OPTIONS.some((o) => o.value === partial.buttonStyle) ? partial.buttonStyle : base.buttonStyle,
     buttonRadius: clampRadius(partial.buttonRadius ?? base.buttonRadius),
   };
-  // Migration v0.4.35 : l'ancien accentColor unique, puis l'ancien champ
-  // accentColor des profils v0.4.30-34, deviennent la couleur des boutons.
+  // Migration : l'ancien accentColor global unique, puis l'ancien champ
+  // accentColor des anciens profils, deviennent la couleur des boutons.
   const legacyProfileAccent = (partial as { accentColor?: unknown }).accentColor;
   if (typeof prefs.accentColor === 'string' && partial.buttonColor === undefined) {
     if (typeof legacyProfileAccent === 'string') merged.buttonColor = legacyProfileAccent;
@@ -246,7 +269,8 @@ export function resolveAppearanceProfile(
   return merged;
 }
 
-// ---- Fichier d'apparence PAR COFFRE (v0.4.32) --------------------------
+//////// 5. Fichier d'apparence par coffre /////////////////////////////////////
+
 // `.123ecriture/appearance.json` : { light?: Partial, dark?: Partial }.
 // Partiels : chaque champ absent retombe sur le profil GLOBAL du mode puis
 // sur les défauts — un coffre peut n'override que la police, par exemple.
@@ -283,10 +307,10 @@ export function resolveProfileWithVault(
   } as AppearanceProfile;
 }
 
-// ---- Tokens + thème ----------------------------------------------------
+//////// 6. Tokens et thème ////////////////////////////////////////////////////
 
 export type AppearanceTokens = {
-  // Fond de l'éditeur de notes (v0.4.34) — absent = fond du mode.
+  // Fond de l'éditeur de notes — absent = fond du mode.
   editorBackground?: string;
   fontStack: string;
   fontScale: number;
@@ -320,8 +344,9 @@ export function buildTheme(base: Theme, profile: AppearanceProfile, wallpaper?: 
     // Les panneaux deviennent TRANSLUCIDES quand l'opacité baisse : le fond
     // d'écran (ou la couleur de fond) transparaît sous les cartes/barres.
     surface: hexToRgba(profile.surfaceColor, profile.surfaceOpacity),
-    // v0.4.34 : bordures et texte réglables ; le texte SECONDAIRE est dérivé
-    // (60 % textColor + 40 % fond) pour rester lisible sans réglage de plus.
+    // Bordures et texte réglables ; le texte SECONDAIRE est dérivé
+    // (60 % textColor + 40 % fond) pour rester lisible sans réglage de
+    // plus.
     border: profile.borderColor,
     text: profile.textColor,
     textMuted: mixHex(profile.textColor, profile.backgroundColor, 0.6),
