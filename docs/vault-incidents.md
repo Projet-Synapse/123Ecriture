@@ -13,7 +13,7 @@
 1. **Inscription automatique** : chaque problème PERSISTANT annoncé par Catelina est inscrit ici, sans délai.
 2. **Élimination** : chaque problème a SA table d'hypothèses. **Une seule hypothèse peut être confirmée par problème** — les autres sont ÉLIMINÉES une à une par un test (une preuve, jamais une intuition). Plusieurs hypothèses cohabitent tant qu'elles ne sont pas départagées.
 3. **Le verdict final appartient à Catelina** : quand elle constate que le problème a DISPARU, l'hypothèse survivante est confirmée — **c'est GAGNÉ**.
-4. **Score de l'assistant** : 0 problème confirmé-résolu (le jeu commence le 18/10).
+4. **Score de l'assistant** : **1** problème confirmé-résolu (§12 — verdict Catelina du 18/10 : « Plus d'histoire de conflits dès la modification ! »).
 
 ---
 
@@ -148,7 +148,7 @@
 | 12.H1 | Un problème RÉSEAU fait échouer des pushes → conflits inventés au cycle suivant | ❌ **ÉLIMINÉE par Catelina** (18/10 : « Ce n'est pas un problème de réseau ! C'est systématique ») | Reproduction du 18/10 avec **0 erreur** réseau à aucun cycle. Le mécanisme code existe bien (state écrit même si le push échoue) mais il ne peut pas produire la SYSTÉMATICITÉ constatée. |
 | 12.H2 | **LA BOUCLE MTIME** : le classeur de décisions tranche « conflit » par mtime-fichier ≥ updated_at-cloud. Or (a) toute modification fraîche met le mtime du fichier DEVANT le dernier push du cloud, et (b) après chaque fusion, le fichier est réécrit APRÈS l'enregistrement cloud — donc le cycle suivant re-déclare un conflit, re-fusionne, re-réécrit… **à chaque modification, sans autre appareil** | 🎲 **SURVIVANTE — fix implémenté, à valider par Catelina** | Preuves accumulées : le diff ne consultait PAS le sync-state (diff.ts, classement mtime pur) ; reproduction 15:20 (« synchronisation différée » à 15:20:00, fusion à 15:20:01) ; un cas sain (création refroidie) ne produit PAS de conflit. Le fix : le diff 3-voies (une modification d'un fichier dont le cloud porte le hash connu = un PUSH, jamais un conflit) + garde chaud sur la fusion (un fichier ouvert est DIFFÉRÉ, jamais fusionné à chaud) |
 | 12.H3 | **LE STATE PRÉ-FUSION** : après une fusion, le sync-state enregistre le hash d'INDEXATION (pris avant la fusion) au lieu du hash du fichier fusionné réellement écrit et poussé → la divergence « résolue » est recréée à chaque cycle | 🔗 **Composante de H2 — même fix, même verdict** | Empreintes du 18/10 : disque = cloud = `d5a3635d…` (fusion) mais state = `9e22b78c…` (pré-fusion). Fix : `attemptConflictMerge` retourne le hash RÉEL du fichier fusionné → enregistré comme référence. Si H2 est confirmée, H3 l'est avec elle (même boucle) ; si le problème persiste, les deux retournent en test |
-| 12.✅ | **VERDICT À JOUER** : Catelina modifie un fichier (ouvert à l'écran), quitte, attend les cycles → **plus AUCUN « conflit » annoncé, seulement « modification »** | 🎲 en attente | Le fix vit dans la 0.4.81. Si le conflit revient : H2/H3 éliminées à leur tour et nouvelles hypothèses à poser |
+| 12.✅ | **VERDICT RENDU (18/10, 19h — Catelina)** : « Plus d'histoire de conflits dès la modification ! » → **H2/H3 CONFIRMÉES — GAGNÉ (score 1)** | ✅ **CONFIRMÉES** | L'utilisatrice a modifié des fichiers sur la 0.4.81 : plus AUCUN conflit annoncé. Le diff à trois voies + le garde chaud + le hash réel post-fusion sont les fixes confirmés. |
 
 ### Les faits établis (hors jeu — ils servent aux éliminations)
 
@@ -158,3 +158,15 @@
 | 12.F2 | Le sync-state d'avant-fusion restait comme référence après une fusion | Empreintes du 18/10 (d5a3 vs 9e22). FIX : le hash réel du fichier fusionné est désormais enregistré. |
 | 12.F3 | Le cas sain marche (fichier connu, refroidi) : push simple, zéro conflit | Tests end-to-end du 18/10 : « modification +131/−0 », « 1 envoyé(s), 0 conflit(s) ». |
 | 12.F4 | L'annonce de conflit fusionné ne crée pas de snapshot `conflits/` (fusion = aucune version archivée) — le journal seul raconte | Aucun nouveau dossier `conflits/2026-10-18T15-2x` pendant la reproduction. |
+
+## 13. « L'application confond modifications et suppressions dans ses rapports » (18/10 soir, annoncé par Catelina — capture du journal 18:49)
+
+**Constat de Catelina (capture)** : après avoir enlevé ses fichiers doublons, le journal raconte pour CHACUN « Supprimé : <chemin> (suppression locale propagée) » PUIS « Modifié : .trash/<chemin> — +16577 / −0 » — et le résumé annonce « 4 envoyé(s), 4 supprimé(s) » pour un seul et même geste.
+
+### La table d'élimination
+
+| # | Hypothèse | Statut | Comment elle entre ou sort du jeu |
+|---|-----------|--------|-----------------------------------|
+| 13.H1 | **LE DÉPLACEMENT RACONTÉ EN DEUX ACTES** : la corbeille est synchronisée (choix validé) — supprimer un fichier = sa tombstone (« Supprimé : <chemin> ») + le push de sa copie en corbeille (« Modifié : .trash/<chemin> »). Le MOTEUR fait le bon travail ; c'est le RAPPORT qui raconte deux fois le même geste et le résumé qui compte les deux visages | 🎲 **SURVIVANTE — fix implémenté (0.4.82), à valider par Catelina** | Preuve (capture + code) : TOUS les « Modifié » de la rafale visent des chemins `.trash/…` ; les tombstones visent les chemins vifs correspondants ; aucun fichier vivant n'a été touché. FIX : type de journal `corbeille` (« Corbeille : … — déplacement synchronisé »), compteur séparé `trashed` (les pushes `.trash/` ne gonflent plus « envoyé(s) »), filtre UI « Suppressions » inclut « corbeille ». |
+| 13.H2 | Le moteur traite DEUX FOIS le même fichier vivant (tombstone + push du fichier vivant) — un vrai double traitement destructeur | ❌ **ÉLIMINÉE par les faits** | Les « Modifié » ne visent QUE des chemins `.trash/…` (jamais les chemins vifs) ; les fichiers vifs correspondants sont bien partis en corbeille, pas recréés. La capture + l'état cloud du 18/10 (aucun doublon vif réapparu) l'excluent. |
+| 13.✅ | **VERDICT À JOUER** : Catelina supprime un fichier → le journal raconte « Supprimé : X » + « Corbeille : .trash/X » (jamais « Modifié »), et le résumé ne compte plus le geste en double | 🎲 en attente | Le fix vit dans la 0.4.82. |

@@ -42,5 +42,9 @@ describe('makeJournalEntry / journalEntryLabel', () => {
     expect(journalEntryLabel(makeJournalEntry('delete', { path: 'a.md', detail: 'corbeille' }))).toContain('Supprimé : a.md');
     expect(journalEntryLabel(makeJournalEntry('error', { detail: 'boom' }))).toContain('Erreur : boom');
     expect(journalEntryLabel(makeJournalEntry('restore', { path: 'a.md' }))).toContain('Restauré : a.md');
+    // v0.4.81 (§13) : le push du chemin `.trash/…` se raconte « Corbeille »,
+    // jamais « Modifié » — un déplacement en corbeille est UN geste.
+    expect(journalEntryLabel(makeJournalEntry('corbeille', { path: '.trash/a.md', detail: 'déplacement synchronisé' }))).toContain('Corbeille : .trash/a.md');
+    expect(journalEntryLabel(makeJournalEntry('corbeille', { path: '.trash/a.md' }))).not.toContain('Modifié');
   });
 });
