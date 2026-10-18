@@ -45,7 +45,7 @@ export function AddPropertyButton({ available, onAdd, onCreateNew, theme }: Prop
   // la personnalisation des panneaux ; on recompose la couleur de panneau à
   // opacité 1 via la résolution du profil du mode actif.
   const { preferences, colorScheme } = usePreferences();
-  const { resolveAppearanceProfile } = require('../lib/theme/appearance');
+  const { resolveAppearanceProfile } = require('../../lib/theme/appearance');
   const opaqueSurface = resolveAppearanceProfile(preferences, colorScheme).surfaceColor;
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState('');
