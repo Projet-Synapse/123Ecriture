@@ -311,7 +311,12 @@ export const nativeVaultAdapter: VaultBridge = {
     await requireStorageAccess();
     // AUCUN coffre actif : créer directement le dossier par défaut (pas de
     // sélecteur) — si le nom est pris, findAvailableName-like numérote.
-    let name = '✒️ 123Ecriture';
+    // v0.4.79 — nom ASCII SANS emoji ni espace : les chemins avec emoji
+    // (sélecteur de variante FE0F inclus) traversent mal la conversion
+    // JS→Java d'expo-file-system (« isn't writable » sur des dossiers qui
+    // existent, vécu A13 18/10 — le shell écrivait, l'app non). Obsidian
+    // mobile ouvre n'importe quel dossier : un nom ASCII ne perd rien.
+    let name = '123Ecriture-vault';
     let candidate = `${PRIMARY_ROOT}/${name}`;
     let n = 2;
     while (await FileSystem.getInfoAsync(fileUri(candidate)).then((i) => i.exists).catch(() => false)) {
