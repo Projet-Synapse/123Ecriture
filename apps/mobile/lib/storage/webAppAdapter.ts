@@ -1,21 +1,36 @@
-// //1. ⚙️ PRÉFÉRENCES + CONNEXION (web) — window.preferences / window.auth
-// ////////////////////////////////////////////////////////////////////////
+// ✒️ 123ECRITURE — lib/storage/webAppAdapter.ts — préférences + connexion web
+//////////////////////////////////////////////////////////////////////////////
 //
-// Préférences : côté desktop elles vivent dans config.json (userData
-// Electron, apps/desktop/electron/preferences.ts) — en navigateur
-// l'équivalent app-level est localStorage (même clé que webVaultAdapter
-// lit pour fileSortMode/attachmentsFolder). Même fusion superficielle que
-// getPreferences() desktop, y compris mergeToolbarOrder (un nouveau bouton
-// par défaut doit apparaître sur les configs stockées plus anciennes).
+// window.preferences et window.auth côté navigateur. Préférences : côté
+// desktop elles vivent dans config.json (userData Electron,
+// apps/desktop/electron/preferences.ts) — en navigateur l'équivalent
+// app-level est localStorage (même clé que webVaultAdapter lit pour
+// fileSortMode/attachmentsFolder). Connexion : le desktop passe par
+// navigateur système + protocole app123ecriture:// ; en web, on EST le
+// navigateur.
 //
-// Connexion : le desktop passe par navigateur système + protocole
-// app123ecriture:// (apps/desktop/electron/auth.ts). En web, on EST le
-// navigateur : openExternal redirige la page elle-même, et le retour OAuth
-// (?code=...) est échangé par supabase-js au chargement suivant
-// (detectSessionInUrl, activé seulement sans pont Electron — voir
-// supabaseClient.ts). AuthContext construit alors redirectTo avec l'URL du
-// site. onCallback n'a donc rien à relayer ici, mais reste branché pour
-// honorer le contrat AuthBridge.
+// Invariants du fichier :
+//   • Même fusion superficielle que getPreferences() desktop, y compris
+//     mergeToolbarOrder : une config stockée avant l'ajout d'un bouton
+//     doit quand même voir ce bouton (visible et fonctionnel, pas juste
+//     présent dans le code).
+//   • autoSyncEnabled = false par défaut, à ne JAMAIS inverser ici
+//     (synchronisation manuelle, choix tranché — voir CLAUDE.md).
+//   • set résout APRÈS l'écriture effective : des appelants dépendent de
+//     cette garantie contre les races lecture-après-écriture.
+//   • OAuth web = redirection de la page elle-même ; le retour (?code=...)
+//     est échangé par supabase-js au chargement suivant (detectSessionInUrl,
+//     activé seulement sans pont Electron — voir supabaseClient.ts).
+//     onCallback n'a rien à relayer mais reste branché pour honorer le
+//     contrat AuthBridge.
+//
+// SOMMAIRE :
+//   1. Préférences web (localStorage, défauts, fusion des barres d'outils)
+//   2. Connexion web (openExternal, onCallback)
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. Préférences web (localStorage, défauts, fusion des barres d'outils) ////////
 
 import { WEB_PREFERENCES_KEY } from './webVaultAdapter';
 
@@ -139,6 +154,8 @@ export const webPreferencesAdapter = {
   // silencieux (le chemin affiché dans Paramètres l'explique déjà).
   revealConfigFolder: async (): Promise<void> => undefined,
 } satisfies PreferencesBridge;
+
+//////// 2. Connexion web (openExternal, onCallback) ///////////////////////////////////
 
 export const webAuthAdapter = {
   openExternal: async (url: string): Promise<void> => {

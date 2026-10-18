@@ -12,31 +12,44 @@ import {
 } from './nativeVaultAdapter';
 import { sha256Hex, utf8Bytes } from '../sync/nativeSha256';
 
-// Pont sync natif (Android) — implémentation de SyncBridge (types/
-// global.d.ts), pendant de `sync:hash-vault` côté Electron
-// (apps/desktop/electron/sync.ts, walkAndHash) : le hachage du coffre actif
-// est LA seule opération lourde du moteur de synchro (lib/sync/syncEngine.ts
-// compare ces hashes aux métadonnées du coffre distant Supabase pour
-// décider push/pull/conflit).
+// ✒️ 123ECRITURE — lib/storage/nativeSyncAdapter.ts — hachage de sync natif (Android)
+//////////////////////////////////////////////////////////////////////////////
 //
-// ⚠️ HACHAGE INCRÉMENTAL — SAF rend un parcours complet ruineux (~1 requête
-// par entrée : ~340 notes = plus d'une minute, l'UI gèle ; vécu en
-// 0.4.41-fix6 : « la synchro charge indéfiniment »). Une BASELINE
-// (relPath -> hash/size) est persistée hors du coffre ; chaque cycle ne
-// relit que les fichiers marqués modifiés (file dirty de
-// nativeVaultAdapter), les autres resservent leur hash. Première exécution
-// seulement : passe complète (une fois par coffre).
+// Implémentation de SyncBridge (types/global.d.ts), pendant de
+// `sync:hash-vault` côté Electron (apps/desktop/electron/sync.ts,
+// walkAndHash) : le hachage du coffre actif est LA seule opération lourde
+// du moteur de synchro (lib/sync/syncEngine.ts compare ces hashes aux
+// métadonnées du coffre distant Supabase pour décider push/pull/conflit).
 //
-// MÊMES RÈGLES que walkAndHash desktop pour ce qui est HACHÉ :
-// - fichiers cachés exclus — métadonnées .123ecriture, .obsidian… — SAUF
-//   `.trash`, la corbeille du coffre, volontairement synchronisée (v0.4.26) ;
-// - seules les extensions de contenu comptent : .mdx/.md/.canvas/.chart/
-//   .excalidraw/.base (EXTENSION_TO_KIND desktop, vault.ts) — .base est
-//   indexé par l'arborescence même si elle ne l'affiche pas.
-// Le hash porte sur les OCTETS UTF-8 du texte lu (voir nativeSha256.ts) :
-// identique au desktop (createHash sur les octets) pour du texte UTF-8.
-// modifiedAt n'est PAS fiable en SAF → Date.now() : il ne départage que la
-// DIRECTION d'un conflit (local gagne les égalités), jamais push/pull.
+// Invariants du fichier :
+//   • HACHAGE INCRÉMENTAL : SAF rend un parcours complet ruineux (~1
+//     requête par entrée, l'UI gèle) — une BASELINE (relPath → hash/size)
+//     est persistée HORS du coffre (documentDirectory, clé par URI racine)
+//     et chaque cycle ne relit que les fichiers marqués modifiés (file
+//     dirty de nativeVaultAdapter) ; première exécution seulement = passe
+//     complète.
+//   • MÊMES RÈGLES que walkAndHash desktop pour ce qui est HACHÉ —
+//     fichiers cachés exclus SAUF `.trash` (corbeille volontairement
+//     synchronisée), extensions de contenu, pièces jointes et métadonnées
+//     synchronisées. Tout écart de règles entre plateformes produit des
+//     conflits fantômes à chaque cycle.
+//   • Le hash porte sur les OCTETS (UTF-8 du texte, octets décodés du
+//     base64 pour les binaires) : identique au desktop, sinon le même
+//     fichier paraît modifié selon l'appareil.
+//   • LECTURE ÉCHOUÉE = NE RIEN SYNCHRONISER : un fichier présent dans
+//     l'index mais illisible garde son hash précédent — aucune tombstone
+//     ne part sur une erreur de lecture, le prochain cycle retente.
+//   • modifiedAt n'est PAS fiable en SAF (→ Date.now()) : il ne départage
+//     que la DIRECTION d'un conflit (local gagne les égalités), jamais
+//     push/pull.
+//
+// SOMMAIRE :
+//   1. Règles de hachage et baseline hors coffre
+//   2. hashVaultTree — le hachage incrémental du coffre actif
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. Règles de hachage et baseline hors coffre //////////////////////////////////
 const SYNC_EXTENSIONS = ['.mdx', '.md', '.canvas', '.chart', '.excalidraw', '.base'];
 
 // Baseline hors coffre (documentDirectory), clé par URI racine : changer de
@@ -69,23 +82,22 @@ async function saveBaseline(rootUri: string, entries: BaselineEntries): Promise<
 // Quels relPaths appartiennent à l'arbre synchronisé — mêmes règles que
 // walkAndHash desktop (segments cachés exclus, .trash excepté), plus les
 // MÉTADONNÉES SYNCHRONISÉES (SYNCED_META_FILES, importée de
-// nativeVaultAdapter : apparence, tâches/listes, préférences — cf. la
-// définition pour l'historique).
+// nativeVaultAdapter : apparence, tâches/listes, préférences).
 function hashableRelPath(relPath: string): boolean {
   if (SYNCED_META_FILES.includes(relPath)) return true;
-  // ANTI-CONTAMINATION (v0.4.67) : un nom contenant un `\` est un FICHIER
-  // PLAT créé par un ancien pull d'une ligne backslashed du mélange (le `\`
-  // est légal dans un nom Android, pas dans un vrai arbre) — le pousser
-  // re-imbriquerait la contamination dans le cloud (vécu WORLDBUILDING
-  // 16-17/10 : dossiers « PROGRAMMATION » fantômes). Jamais hachés, jamais
-  // poussés ; ils restent locaux jusqu'à purge manuelle.
+  // ANTI-CONTAMINATION : un nom contenant un `\` est un FICHIER PLAT créé
+  // par un ancien pull d'une ligne backslashed (le `\` est légal dans un
+  // nom Android, pas dans un vrai arbre) — le pousser re-imbriquerait la
+  // contamination dans le cloud (dossiers fantômes chez les autres
+  // appareils). Jamais hachés, jamais poussés ; ils restent locaux jusqu'à
+  // purge manuelle.
   if (relPath.includes('\\')) return false;
   const segments = relPath.split('/');
   if (segments[0] !== '.trash' && segments.some((segment) => segment.startsWith('.'))) return false;
   const name = segments[segments.length - 1].toLowerCase();
-  // Pièces jointes synchronisées (v0.4.66) : images/PDF/audio — la taille
-  // par fichier est plafonnée côté desktop (25 Mo) ; le mobile hache ce que
-  // son index connaît.
+  // Pièces jointes synchronisées : images/PDF/audio — la taille par
+  // fichier est plafonnée côté desktop ; le mobile hache ce que son index
+  // connaît.
   if (SYNC_ATTACHMENT_EXTENSIONS.some((ext) => name.endsWith(ext))) return true;
   return SYNC_EXTENSIONS.some((ext) => name.endsWith(ext));
 }
@@ -113,6 +125,8 @@ function base64ToBytes(base64: string): Uint8Array {
   }
   return bytes.subarray(0, Math.floor(clean.length / 4) * 3 - padding);
 }
+
+//////// 2. hashVaultTree — le hachage incrémental du coffre actif //////////////////////
 
 export const nativeSyncAdapter = {
   hashVaultTree: async (): Promise<HashedNote[]> => {
@@ -159,12 +173,11 @@ export const nativeSyncAdapter = {
         }
         entries[relPath] = { hash: sha256Hex(bytes), size: bytes.length };
       } catch {
-        // v0.4.72 — « LECTURE ÉCHOUÉE = NE RIEN SYNCHRONISER » (garde repris
-        // de 123Promptez, demandé par Catelina) : un fichier qui EXISTE dans
-        // l'index mais qu'on n'a pas su LIRE garde son hash précédent — le
-        // diff le verra inchangé, aucune tombstone ne partira, et le
-        // prochain cycle retentera. On ne retire du hachage que les fichiers
-        // que l'INDEX déclare disparus (suppression réelle).
+        // « LECTURE ÉCHOUÉE = NE RIEN SYNCHRONISER » : un fichier qui EXISTE
+        // dans l'index mais qu'on n'a pas su LIRE garde son hash précédent —
+        // le diff le voit inchangé, aucune tombstone ne part, et le prochain
+        // cycle retente. On ne retire du hachage que les fichiers que
+        // l'INDEX déclare disparus (suppression réelle).
         if (!entries[relPath]) delete entries[relPath];
       }
     }

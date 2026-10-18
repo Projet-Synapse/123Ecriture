@@ -1,19 +1,37 @@
+// ✒️ 123ECRITURE — lib/storage/nativeAuthBridge.ts — pont auth natif (deep link Android)
+//////////////////////////////////////////////////////////////////////////////
+//
+// Équivalent React Native de apps/desktop/electron/auth.js : l'INTERFACE
+// attendue par AuthContext.tsx (window.auth, voir types/global.d.ts) est
+// exactement ce que `Linking` sait faire.
+//
+// Invariants du fichier :
+//   • openExternal → Linking.openURL (navigateur système) ; onCallback →
+//     Linking.addEventListener('url') : le retour OAuth arrive par le deep
+//     link app123ecriture://auth-callback (intent-filter du manifest) ;
+//     takePendingUrl → Linking.getInitialURL pour l'app lancée À FROID par
+//     le callback — même contrat que l'argv Electron.
+//   • Seules les URLs du schéma app123ecriture:// sont considérées
+//     pending : un lancement ordinaire n'est jamais un callback OAuth
+//     (exchangeCallbackUrl ignore de toute façon les URLs sans code).
+//   • Jamais posé sur web, jamais un pont existant écrasé (même garde
+//     que installNativeBridges).
+//
+// SOMMAIRE :
+//   1. Garde d'installation
+//   2. Le pont Linking (openExternal / onCallback / takePendingUrl)
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. Garde d'installation ////////////////////////////////////////////////////////
+
 import { Linking, Platform } from 'react-native';
 
-// Pont auth natif (Android) — l'équivalent React Native de
-// apps/desktop/electron/auth.js : l'INTERFACE attendue par AuthContext.tsx
-// (window.auth, voir types/global.d.ts) est exactement ce que `Linking`
-// sait faire :
-// - openExternal  → Linking.openURL (le navigateur système ouvre Google) ;
-// - onCallback    → Linking.addEventListener('url') : le retour OAuth
-//   arrive par le deep link app123ecriture://auth-callback (intent-filter
-//   dans AndroidManifest.xml) ;
-// - takePendingUrl → Linking.getInitialURL : l'app lancée À FROID par le
-//   callback (elle était fermée au retour Google) reçoit l'URL de
-//   lancement — même contrat que l'argv Electron (voir AuthContext).
-// Les URLs hors schéma app123ecriture:// (lancement ordinaire) sont
-// ignorées : seul le callback OAuth intéresse exchangeCallbackUrl, qui
-// ignore de toute façon les URLs sans code (voir authCallback.ts).
+// Pont auth natif (Android) — la table de correspondance interface ↔ Linking
+// est décrite dans l'en-tête du fichier.
+
+//////// 2. Le pont Linking (openExternal / onCallback / takePendingUrl) ////////////////
+
 export function installNativeAuthBridge(): void {
   if (Platform.OS === 'web') return;
   if (typeof window === 'undefined') return;

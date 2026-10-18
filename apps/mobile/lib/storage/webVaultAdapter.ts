@@ -1,23 +1,37 @@
-// //1. 📖 SOMMAIRE — window.vault web (File System Access API)
-// ////////////////////////////////////////////////////////////////////////
-// Port de apps/desktop/electron/vault.ts sur des handles FSA. Même contrat
-// que le pont Electron (types/global.d.ts), mêmes conventions :
-// - //2. Types de fichiers et gabarits (EXTENSION_TO_KIND, gabarits)
-// - //3. Lecture (listTree, readNote, state.json)
-// - //4. Création/écriture (writeNote, createNote/-folder, duplicate,
-//      note journalière, pièces jointes)
-// - //5. Organisation (rename, move, set-path, delete)
-// - //6. Choix de dossier (chooseFolder → showDirectoryPicker)
+// ✒️ 123ECRITURE — lib/storage/webVaultAdapter.ts — le coffre dans le navigateur (FSA)
+//////////////////////////////////////////////////////////////////////////////
 //
-// Écarts assumés par rapport au desktop (documentés) :
-// - PAS de rename natif dans la FSA : renommer/déplacer = copier puis
-//   supprimer. lastModified n'est pas préservable → une note renommée
-//   remonte au tri « Plus récent d'abord ».
-// - La confirmation de suppression est window.confirm (native desktop =
-//   dialog.showMessageBox) — même garantie : jamais de suppression
-//   silencieuse.
-// - `path` du registre/getCurrentPath = NOM du dossier choisi (le navigateur
-//   n'expose jamais le chemin disque réel).
+// Port de apps/desktop/electron/vault.ts sur la File System Access API :
+// le coffre est un dossier choisi par l'utilisatrice (showDirectoryPicker)
+// et manipulé via des handles FSA. Même contrat que le pont Electron
+// (types/global.d.ts), mêmes conventions, mêmes fichiers de métadonnées
+// (.123ecriture/state.json, order.json) pour qu'un coffre reste
+// interopérable entre plateformes.
+//
+// Invariants du fichier :
+//   • Le handle racine du coffre actif vient du REGISTRE
+//     (webVaultRegistry) ; `getCurrentPath` retourne le NOM du dossier —
+//     le navigateur n'expose jamais le chemin disque réel.
+//   • La FSA n'a pas de rename natif : renommer/déplacer = COPIER puis
+//     supprimer, la suppression seulement une fois la copie réussie.
+//     `lastModified` n'est pas préservable → une note renommée remonte au
+//     tri « Plus récent d'abord ».
+//   • Jamais de suppression silencieuse : confirmation hors mode `silent`
+//     (réservé au moteur de synchro), corbeille `.trash/` DANS le coffre,
+//     miroir du chemin d'origine.
+//   • Les préférences web vivent dans localStorage (WEB_PREFERENCES_KEY,
+//     partagée avec webAppAdapter) — le tri des fichiers (walkTree) et le
+//     dossier de pièces jointes (importAttachment) la lisent ici
+//     directement, comme le desktop lit son config.json.
+//
+// SOMMAIRE :
+//   1. Types de fichiers, gabarits et préférences web
+//   2. Lecture — arborescence, contenu, état par coffre
+//   3. Création / écriture (notes, dossiers, pièces jointes)
+//   4. Organisation (rename / move / setPath / delete)
+//   5. Utilitaires locaux (handles enfants, déplacements, liste des notes)
+//
+//////////////////////////////////////////////////////////////////////////////
 
 // Les types des ponts (VaultBridge, VaultTreeNode...) sont GLOBAUX (voir
 // types/global.d.ts) — comme partout dans l'app, pas d'import nécessaire.
@@ -57,8 +71,7 @@ type VaultOrder = Record<string, string[]>;
 // la lisent directement, comme le desktop lit son config.json.
 export const WEB_PREFERENCES_KEY = '123ecriture.preferences';
 
-// //2. 🗺️ TYPES DE FICHIERS ET GABARITS
-// ////////////////////////////////////////////////////////////////////////
+//////// 1. Types de fichiers, gabarits et préférences web ////////////////////////////
 
 // Port direct des tables de vault.ts — un fichier `.md` importé d'Obsidian
 // est reconnu en LECTURE, mais les nouvelles notes restent en `.mdx`.
@@ -196,8 +209,7 @@ export function readWebAttachmentsFolder(): string {
   }
 }
 
-// //3. 📖 LECTURE — arborescence, contenu, état par coffre
-// ////////////////////////////////////////////////////////////////////////
+//////// 2. Lecture — arborescence, contenu, état par coffre //////////////////////////
 
 async function walkTree(
   dir: FsaDirectoryHandleLike,
@@ -284,8 +296,7 @@ async function readOrder(root: FsaDirectoryHandleLike): Promise<VaultOrder> {
   }
 }
 
-// //4. ✍️ CRÉATION / ÉCRITURE
-// ////////////////////////////////////////////////////////////////////////
+//////// 3. Création / écriture (notes, dossiers, pièces jointes) /////////////////////
 
 function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -510,12 +521,11 @@ export const webVaultAdapter = {
     return readAttachmentFileAsDataUrl(root, found);
   },
 
-  // //5. 🔀 ORGANISATION (rename / move / set-path / delete)
-  ////////////////////////////////////////////////////////////////////////
+  //////// 4. Organisation (rename / move / setPath / delete) ///////////////////////////
 
   // Renomme dans le même dossier, jamais de séparateur dans le nom,
-  // extension réelle préservée (`.canvas` reste `.canvas` — le bug desktop
-  // historique documenté dans vault:rename). FSA : copier puis supprimer.
+  // extension réelle préservée (`.canvas` reste `.canvas`, convention
+  // vault:rename du desktop). FSA : copier puis supprimer.
   rename: async (relPath: string, newName: string) => {
     const root = await requireActiveRoot();
     const segments = splitRelPath(relPath);
@@ -651,13 +661,12 @@ export const webVaultAdapter = {
 
   // Confirmation window.confirm avant toute suppression MANUELLE (équivalent
   // de la boîte native desktop — jamais de suppression silencieuse).
-  // `options.silent` (v0.4.25) : réservé au moteur de synchro — pas de
-  // confirmation par fichier (une synchro à 100 suppressions = 100 boîtes,
-  // inutilisable), et élagage des dossiers parents devenus vides.
-  // v0.4.26 : supprimer = DÉPLACER vers `.trash/` (miroir du chemin, comme
-  // sur desktop — ici la corbeille est LOCALE, le web n'a pas de moteur de
-  // synchro) ; `options.permanent` (ou cible déjà dans .trash) détruit
-  // réellement.
+  // `options.silent` : réservé au moteur de synchro — pas de confirmation
+  // par fichier (une synchro à 100 suppressions = 100 boîtes, inutilisable),
+  // et élagage des dossiers parents devenus vides. Supprimer = DÉPLACER vers
+  // `.trash/` (miroir du chemin, comme sur desktop — ici la corbeille est
+  // LOCALE, le web n'a pas de moteur de synchro) ; `options.permanent` (ou
+  // cible déjà dans .trash) détruit réellement.
   delete: async (relPath: string, options?: { silent?: boolean; permanent?: boolean }) => {
     const root = await requireActiveRoot();
     const segments = splitRelPath(relPath);
@@ -784,8 +793,7 @@ export const webVaultAdapter = {
   },
 } satisfies VaultBridge;
 
-// //6. 🔧 UTILITAIRES LOCAUX (handles enfants, déplacement)
-// ////////////////////////////////////////////////////////////////////////
+//////// 5. Utilitaires locaux (handles enfants, déplacements, liste des notes) ///////
 
 async function getChildHandle(
   parent: FsaDirectoryHandleLike,

@@ -1,22 +1,30 @@
-// //1. 🌉 INSTALLATION DES PONTS WEB — l'équivalent navigateur du preload
-// ////////////////////////////////////////////////////////////////////////
+// ✒️ 123ECRITURE — lib/storage/installWebBridges.ts — installation des ponts web
+//////////////////////////////////////////////////////////////////////////////
 //
-// Pose window.vault/vaults/preferences/tasks/taskLists/calendar/properties/
-// occurrences/search/sync/auth sur des implémentations File System Access
-// API (voir webVaultAdapter/webModulesAdapter/webSearchAdapter/webAppAdapter)
-// AVANT le premier rendu React — même contrat de timing que
-// installNativeBridges (appelée depuis index.ts) : les contextes lisent
-// `window.<domain>` de façon synchrone au montage, l'objet doit exister
-// tout de suite (l'état IndexedDB se charge ensuite de façon asynchrone,
-// chaque méthode du registre attendant whenReady()).
+// Équivalent navigateur du preload : pose window.vault/vaults/preferences/
+// tasks/taskLists/calendar/properties/occurrences/search/sync/auth sur des
+// implémentations File System Access API (voir webVaultAdapter,
+// webModulesAdapter, webSearchAdapter, webAppAdapter), appelée depuis
+// index.ts.
 //
-// Ne pose RIEN si :
-// - un pont Electron existe déjà (le renderer d'apps/desktop exécute ce
-//   même bundle web — le preload a déjà tout câblé via IPC) ;
-// - le navigateur ne supporte pas la File System Access API (Firefox,
-//   Safari) : les écrans gardent alors leur message « disponible sur
-//   desktop pour l'instant » existant, comme aujourd'hui.
+// Invariants du fichier :
+//   • L'installation a lieu AVANT le premier rendu React : les contextes
+//     lisent `window.<domain>` de façon synchrone au montage — l'objet
+//     doit exister tout de suite (l'état IndexedDB se charge ensuite, en
+//     asynchrone, chaque méthode du registre attendant whenReady()).
+//   • Ne pose RIEN si un pont Electron existe déjà (le renderer d'apps/
+//     desktop exécute ce même bundle — le preload a déjà tout câblé par
+//     IPC) ni si le navigateur ne supporte pas la FSA (Firefox, Safari) :
+//     les écrans gardent leur dégradation « disponible sur desktop ».
+//   • Les points d'entrée au sélecteur natif retournent l'état inchangé
+//     si l'utilisatrice annule — jamais de coffre fantôme.
 //
+// SOMMAIRE :
+//   1. Garde d'installation (plateforme, preload Electron, FSA)
+//   2. Le câblage des ponts window.*
+//
+//////////////////////////////////////////////////////////////////////////////
+
 // updater/contextMenu restent volontairement sans équivalent web (mise à
 // jour auto et menu natif n'ont pas de sens en navigateur) — les
 // consommateurs dégradent déjà proprement en leur absence.
@@ -28,6 +36,8 @@ import { webSearchAdapter, webSyncAdapter } from './webSearchAdapter';
 import { webAuthAdapter, webPreferencesAdapter } from './webAppAdapter';
 import { webVaultAdapter } from './webVaultAdapter';
 import { webVaultRegistry } from './webVaultRegistry';
+
+//////// 1. Garde d'installation (plateforme, preload Electron, FSA) ////////////////////
 
 export function installWebBridges(): void {
   if (Platform.OS !== 'web') return;
@@ -89,6 +99,8 @@ export function installWebBridges(): void {
   window.search = webSearchAdapter;
   window.sync = webSyncAdapter;
   window.auth = webAuthAdapter;
+
+  //////// 2. Le câblage des ponts window.* — suite et amorçage IndexedDB ////////////////
 
   // Lance le chargement IndexedDB maintenant (chaque méthode y attend de
   // toute façon whenReady(), le lancer tôt épargne un aller-retour au

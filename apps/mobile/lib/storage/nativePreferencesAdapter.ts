@@ -2,25 +2,37 @@ import * as FileSystem from 'expo-file-system/legacy';
 
 import { DEFAULT_PREFERENCES } from '../../preferences/PreferencesContext';
 
+// ✒️ 123ECRITURE — lib/storage/nativePreferencesAdapter.ts — préférences natives (Android)
+//////////////////////////////////////////////////////////////////////////////
+//
 // Pont `window.preferences` NATIF (Android) — même interface que
 // webPreferencesAdapter (lib/storage/webAppAdapter.ts) et le preload
-// Electron. Avant lui, PreferencesContext tournait sans bridge sur mobile :
-// toute la personnalisation (thème, accent, polices, apparence, largeurs
-// de panneaux…) restait en mémoire et se réinitialisait à chaque relance
-// de l'app (vécu A13, 2026-10-03 — demande : « mes modifications dans
-// paramètres doivent être sauvegardées »).
+// Electron. Sans lui, toute la personnalisation (thème, accent, polices,
+// apparence, largeurs de panneaux…) reste en mémoire et se perd à chaque
+// relance de l'app.
 //
-// Stockage : un JSON dans le stockage privé de l'app
-// (documentDirectory, même emplacement que les onglets ouverts dans
-// nativeVaultAdapter — survit aux relances ; effacé par la désinstallation).
+// Invariants du fichier :
+//   • Stockage : un JSON dans le stockage privé de l'app
+//     (documentDirectory) — survit aux relances, effacé par la
+//     désinstallation.
+//   • DEFAULT_PREFERENCES est IMPORTÉ de PreferencesContext (et non
+//     dupliqué comme le fait webAppAdapter pour le web) : une copie
+//     finirait par dériver et un défaut divergent écraserait la vraie
+//     valeur mobile au premier lancement, puisque get() fusionne les
+//     défauts dans le stocké. Aucun cycle : le contexte n'importe aucun
+//     module de lib/storage.
+//   • Fusion fine des 3 barres d'outils : une config stockée avant
+//     l'ajout d'un bouton doit quand même voir ce bouton (CLAUDE.md).
+//   • set résout APRÈS l'écriture disque : garantie anti-course
+//     lecture-après-écriture (même contrat que le web).
 //
-// ⚠️ DEFAULT_PREFERENCES est IMPORTÉ de PreferencesContext (et non
-// dupliqué comme le fait webAppAdapter pour le web) : ici react-native
-// est disponible et une copie finirait par dériver (déjà le cas entre
-// les copies desktop/web sur accentColor) — un défaut divergent
-// écraserait la vraie valeur mobile au premier lancement, puisque
-// get() fusionne les défauts dans le stocké. Aucun cycle : le contexte
-// n'importe aucun module de lib/storage.
+// SOMMAIRE :
+//   1. Fusion des barres d'outils et cache de lecture
+//   2. nativePreferencesAdapter (get / set / reset)
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. Fusion des barres d'outils et cache de lecture /////////////////////////////
 
 const PREFS_PATH = `${FileSystem.documentDirectory}123ecriture-preferences.json`;
 
@@ -63,6 +75,8 @@ async function readAll(): Promise<Preferences> {
   }
   return cache;
 }
+
+//////// 2. nativePreferencesAdapter (get / set / reset) ///////////////////////////////
 
 export const nativePreferencesAdapter = {
   get: readAll,

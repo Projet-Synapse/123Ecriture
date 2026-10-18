@@ -14,11 +14,37 @@ import {
 // Sélecteur de dossier système (voir requestAndRegisterVault ci-dessous).
 const { StorageAccessFramework } = FileSystem;
 
-// v0.4.67 — DÉCONNEXION SUR MOBILE : vide le CONTENU du coffre (tous les
-// enfants SAF, récursivement) avant que VaultsContext ne retire le coffre du
-// registre. Avant cette implémentation, « Déconnecter… » levait
-// « Déconnexion indisponible sur cette plateforme » sur Android —
-// impossible de réinitialiser un coffre pollué (vécu WORLDBUILDING 17/10).
+// ✒️ 123ECRITURE — lib/storage/nativeVaultsAdapter.ts — registre des coffres natif (Android/SAF)
+//////////////////////////////////////////////////////////////////////////////
+//
+// Implémentation native (Android) de VaultsBridge — voir
+// nativeVaultRegistry.ts pour le modèle de stockage du registre. C'est ici
+// que se résout l'URI racine du coffre actif, consommée par tout le pont
+// SAF (nativeVaultAdapter.ts).
+//
+// Invariants du fichier :
+//   • `path` du registre = URI SAF racine (content://...) ; une entrée à
+//     chemin ordinaire (/storage/emulated/0/…) est reconvertie en arbre
+//     SAF à la lecture (le grant persiste côté OS depuis le choix
+//     original : aucune redemande de permission).
+//   • SAF ne permet que de CHOISIR un dossier existant : `createNew`
+//     délègue au même sélecteur système (Android y propose déjà « Nouveau
+//     dossier »), puis enregistre le dossier choisi sous le nom donné.
+//   • Déconnecter un coffre vide son CONTENU, jamais le dossier racine —
+//     la permission SAF est liée à ce dossier et doit rester valide.
+//   • La synchronisation cloud reste desktop : setCloudLink n'enregistre
+//     que le drapeau local, sans déclencher de vraie synchro.
+//
+// SOMMAIRE :
+//   1. Sélection SAF et déconnexion (choix, enregistrement, vidage)
+//   2. VaultsBridge natif (registre, identité d'appareil, coffre actif)
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. Sélection SAF et déconnexion (choix, enregistrement, vidage) ///////////////
+
+// Déconnexion : vide le CONTENU du coffre (tous les enfants SAF,
+// récursivement) avant que VaultsContext ne retire le coffre du registre.
 // Le dossier racine lui-même est conservé (permission SAF persistante).
 async function viderContenuCoffre(rootUri: string): Promise<void> {
   let enfants: string[] = [];
@@ -79,6 +105,8 @@ function decodeFolderNameFromUri(uri: string): string {
   }
 }
 
+//////// 2. VaultsBridge natif (registre, identité d'appareil, coffre actif) ////////////
+
 export const nativeVaultsAdapter: VaultsBridge = {
   clearVaultContent: async (id: string): Promise<void> => {
     const registry = await readRegistry();
@@ -91,9 +119,8 @@ export const nativeVaultsAdapter: VaultsBridge = {
   getActive: async () => (await readRegistry()).activeVaultId,
 
   addExisting: () => requestAndRegisterVault('Nouveau coffre'),
-  // v0.4.68 : variante exportée pour les ponts qui doivent CRÉER un coffre
-  // quand aucun n'existe (chooseFolder du pont vault sur l'écran Tâches sans
-  // vault — le bouton était inopérant, vécu 17/10).
+  // Variante exportée pour les ponts qui doivent CRÉER un coffre quand
+  // aucun n'existe (chooseFolder du pont vault sans coffre actif).
 
   // SAF ne permet pas de créer un sous-dossier à l'endroit choisi : le
   // dossier est choisi/créé depuis le sélecteur système lui-même, puis
@@ -142,10 +169,9 @@ export const nativeVaultsAdapter: VaultsBridge = {
 
 // Utilisé par nativeVaultAdapter.ts pour résoudre le coffre actif — pas
 // exposé dans VaultsBridge (pas dans son contrat), donc exporté à part.
-// v0.4.80 — COMPATIBILITÉ REGISTRE : les coffres enregistrés pendant la
-// refonte fichiers ordinaires portent des CHEMINS ORDINAIRES — ils sont
-// reconvertis en arbre SAF (le grant de l'arbre persiste côté OS depuis le
-// choix original : aucune redemande de permission).
+// Les coffres enregistrés avec un CHEMIN ORDINAIRE (registre antérieur à la
+// convention SAF) sont reconverti en arbre SAF ici : le grant de l'arbre
+// persiste côté OS depuis le choix original, aucune redemande de permission.
 export async function getActiveVaultRootUri(): Promise<string | null> {
   const entry = await getActiveVaultEntry();
   if (!entry) return null;

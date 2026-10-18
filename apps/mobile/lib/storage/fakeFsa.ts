@@ -1,7 +1,22 @@
-// Faux système de fichiers File System Access API en mémoire — utilisé par
-// les tests des ponts web (webFs.test.ts, webVaultAdapter.test.ts). Mêmes
-// sémantiques que la vraie API : getFileHandle/getDirectoryHandle lèvent si
-// absent (sauf {create:true}), removeEntry récursif, itération des enfants.
+// ✒️ 123ECRITURE — lib/storage/fakeFsa.ts — faux système de fichiers FSA en mémoire
+//////////////////////////////////////////////////////////////////////////////
+//
+// Faux système de fichiers File System Access API — outillage des tests
+// des ponts web (webFs.test.ts, webVaultAdapter.test.ts).
+//
+// Invariants du fichier :
+//   • Mêmes sémantiques que la vraie API : getFileHandle/getDirectoryHandle
+//     lèvent si absent (sauf {create:true}), removeEntry récursif,
+//     itération des enfants — les ponts sont testés contre le CONTRAT de
+//     la FSA, pas contre une API complaisante.
+//
+// SOMMAIRE :
+//   1. FakeFs — le stockage en mémoire (outillage de test)
+//   2. Les handles FSA factices (FakeDirHandle, FakeFileHandle)
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. FakeFs — le stockage en mémoire (outillage de test) /////////////////////////
 
 import type { FsaDirectoryHandleLike, FsaFileHandleLike } from './webFs';
 
@@ -43,6 +58,8 @@ export class FakeFs {
     return new FakeDirHandle(this, '', name);
   }
 }
+
+//////// 2. Les handles FSA factices (FakeDirHandle, FakeFileHandle) ////////////////////
 
 class FakeDirHandle implements FsaDirectoryHandleLike {
   kind = 'directory' as const;

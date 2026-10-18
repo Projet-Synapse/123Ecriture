@@ -1,19 +1,33 @@
 import * as FileSystem from 'expo-file-system/legacy';
 
-// Registre des coffres sur Android natif — équivalent du config.json
-// app-level d'Electron (`vaults: VaultRegistryEntry[]` + `activeVaultId`,
-// voir apps/desktop/electron/vaults.ts) mais stocké dans le stockage privé
-// de l'app (documentDirectory), PAS dans le dossier du coffre lui-même :
-// contrairement à Electron où c'est un chemin fs classique, un "coffre" ici
-// est une autorisation SAF (Storage Access Framework) sur un dossier
-// externe — `path` porte l'URI SAF racine (content://...), pas un vrai
-// chemin de fichier. Ce registre est ce qui permet de retrouver/re-choisir
-// entre plusieurs coffres déjà autorisés sans redemander la permission SAF
-// à chaque fois (l'autorisation elle-même persiste côté OS Android une fois
-// accordée par `requestDirectoryPermissionsAsync`).
+// ✒️ 123ECRITURE — lib/storage/nativeVaultRegistry.ts — fichier du registre des coffres natif
+//////////////////////////////////////////////////////////////////////////////
 //
-// //1. 📄 Lecture/écriture du fichier registre
-// //2. 🔔 Écouteurs de changement (miroir de VaultsBridge.onChanged)
+// Registre des coffres sur Android natif — équivalent du config.json
+// app-level d'Electron (`vaults` + `activeVaultId`, voir
+// apps/desktop/electron/vaults.ts) mais stocké dans le stockage privé de
+// l'app (documentDirectory), PAS dans le dossier du coffre lui-même :
+// contrairement à Electron où c'est un chemin fs classique, un « coffre »
+// ici est une autorisation SAF sur un dossier externe — `path` porte l'URI
+// SAF racine (content://...), pas un vrai chemin de fichier.
+//
+// Invariants du fichier :
+//   • Le registre vit HORS du coffre (stockage privé) : c'est lui qui
+//     permet de retrouver/re-choisir entre plusieurs coffres déjà
+//     autorisés sans redemander la permission SAF — l'autorisation
+//     persiste côté OS une fois accordée.
+//   • Un registre absent ou corrompu ne bloque jamais le démarrage :
+//     lecture tolérante, retour à vide.
+//   • Toute mutation réécrit le fichier PUIS notifie les écouteurs — les
+//     écrans ne voient jamais un état non persisté.
+//
+// SOMMAIRE :
+//   1. Lecture/écriture du fichier registre
+//   2. Écouteurs de changement et mutations du registre
+//
+//////////////////////////////////////////////////////////////////////////////
+
+//////// 1. Lecture/écriture du fichier registre ///////////////////////////////////////
 
 const REGISTRY_PATH = `${FileSystem.documentDirectory}123ecriture-vaults.json`;
 
@@ -47,14 +61,13 @@ async function writeRegistry(registry: Registry): Promise<void> {
   notifyListeners(registry.vaults);
 }
 
-// v0.4.76 — migration des coffres SAF (URI content://) vers des chemins
-// ordinaires : réservée au registre lui-même (nativeVaultsAdapter).
+// Migration des coffres SAF (URI content://) vers des chemins ordinaires :
+// réservée au registre lui-même (nativeVaultsAdapter).
 export async function saveRegistry(registry: Registry): Promise<void> {
   await writeRegistry(registry);
 }
 
-// //2. 🔔 ÉCOUTEURS DE CHANGEMENT
-// ////////////////////////////////////////////////////////////////////////
+//////// 2. Écouteurs de changement et mutations du registre ///////////////////////////
 
 const listeners = new Set<(vaults: VaultRegistryEntry[]) => void>();
 
