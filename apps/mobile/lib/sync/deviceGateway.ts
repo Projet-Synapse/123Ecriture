@@ -204,6 +204,14 @@ async function executeCommand(
       const report = await buildLocalDiagnostics();
       return JSON.stringify(report, null, 2).slice(0, 30_000);
     }
+    case 'export-diagnostics': {
+      // §16 : l'export des états privés dans le coffre
+      // (.123ecriture/diagnostic-export.json) — lisible par le câble ou le
+      // PC sans passer par le résultat de commande.
+      const { exporterDiagnosticDansCoffre } = await import('./diagnosticExport');
+      const chemin = await exporterDiagnosticDansCoffre();
+      return 'diagnostic exporté : ' + chemin;
+    }
     case 'clear-sync-block':
       await clearPendingReviewSyncBlock(vault);
       return 'disjoncteur levé';

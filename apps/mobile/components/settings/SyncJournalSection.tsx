@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, TextInput, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, ScrollView, TextInput, Text, View } from 'react-native';
 
 import { journalEntryLabel, type SyncJournalEntry, type SyncJournalEntryType } from '../../lib/sync/journal';
 import { SYNC_JOURNAL_READ_PATH } from '../../lib/sync/syncEngine';
 import { buildLocalDiagnostics } from '../../lib/sync/deviceGateway';
 import { formatDiagnosticsReport } from '../../lib/sync/diagnostics';
 import { useVaults } from '../../lib/sync/VaultsContext';
+import { exporterDiagnosticDansCoffre } from '../../lib/sync/diagnosticExport';
 import { usePreferences } from '../../preferences/PreferencesContext';
 import { SyncReviewSection } from './SyncReviewSection';
 import { settingsStyles as s } from './settingsStyles';
@@ -151,6 +152,7 @@ export function SyncJournalSection() {
   // l'état complet (version, coffres, permission, revue, journal) dans le
   // presse-papiers, prêt à transmettre.
   const [diagCopied, setDiagCopied] = useState(false);
+  const [diagExporté, setDiagExporté] = useState(false);
   const copyDiagnostic = async () => {
     try {
       const report = await buildLocalDiagnostics();
@@ -159,6 +161,20 @@ export function SyncJournalSection() {
       setTimeout(() => setDiagCopied(false), 2000);
     } catch {
       // Presse-papiers indisponible — silencieux.
+    }
+  };
+
+  // §16 : l'export des états privés (registre, index, session masquée,
+  // sync-state, revue) dans le coffre — lisible par le câble (adb) et par
+  // le PC, jamais synchronisé (hors liste blanche).
+  const exporterDiagnostic = async () => {
+    try {
+      const chemin = await exporterDiagnosticDansCoffre();
+      setDiagExporté(true);
+      setTimeout(() => setDiagExporté(false), 2500);
+      Alert.alert('Diagnostic exporté', 'Écrit dans le coffre : ' + chemin);
+    } catch (error) {
+      Alert.alert('Export impossible', String((error as Error)?.message ?? error));
     }
   };
 
@@ -203,6 +219,13 @@ export function SyncJournalSection() {
           style={[s.modeButton, { borderColor: theme.border, paddingHorizontal: 12, paddingVertical: 8 }]}
         >
           <Text style={{ color: theme.text, fontSize: 16 }}>{diagCopied ? '✅' : '🩺'}</Text>
+        </Pressable>
+        <Pressable
+          onPress={() => void exporterDiagnostic()}
+          accessibilityLabel="Exporter le diagnostic complet dans le coffre"
+          style={[s.modeButton, { borderColor: theme.border, paddingHorizontal: 12, paddingVertical: 8 }]}
+        >
+          <Text style={{ color: theme.text, fontSize: 16 }}>{diagExporté ? '✅' : '🗄️'}</Text>
         </Pressable>
         <Pressable
           onPress={() => void copyJournal()}
