@@ -305,23 +305,7 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
   // Synchro continue (v0.4.20) : le dossier du coffre actif est surveillé —
   // chaque modification de contenu déclenche une synchro ~2 s après la
   // dernière écriture (un cycle déjà en cours verra la modification).
-      // v0.4.84 — CYCLE DE FOND PÉRIODIQUE : le filet qui rattrape TOUT ce
-    // que les événements peuvent rater — le watcher fsSync qui meurt
-    // silencieusement sous Windows (vécu §15 : plus aucun cycle après
-    // 00:36), une édition externe sans événement, un fichier raté par un
-    // parcours. Toutes les 2 minutes : relancer la surveillance (idempotent)
-    // puis lancer un cycle. Les cycles à vide ne laissent rien au journal.
-    useEffect(() => {
-      if (!preferences.autoSyncEnabled || !cloudSyncConfigured) return;
-      const t = setInterval(() => {
-        if (syncingRef.current || syncPausedRef.current) return;
-        void window.sync?.watchRestart?.().catch(() => undefined);
-        void runSync('périodique (2 min)');
-      }, 2 * 60_000);
-      return () => clearInterval(t);
-    }, [preferences.autoSyncEnabled, cloudSyncConfigured, runSync]);
-
-useEffect(() => {
+  useEffect(() => {
     const sync = typeof window !== 'undefined' ? window.sync : undefined;
 
     if (!preferences.autoSyncEnabled || !cloudSyncConfigured || !sync?.onLocalChanged) return;
@@ -384,6 +368,23 @@ useEffect(() => {
       if (supabase) void supabase.removeChannel(channel);
     };
   }, [preferences.autoSyncEnabled, userId, runSync]);
+
+
+    // v0.4.84 — CYCLE DE FOND PÉRIODIQUE : le filet qui rattrape TOUT ce
+    // que les événements peuvent rater — le watcher fsSync qui meurt
+    // silencieusement sous Windows (§15 du journal d'incidents), une
+    // édition externe sans événement, un fichier raté par un parcours.
+    // Toutes les 2 minutes : relancer la surveillance (idempotent) puis
+    // lancer un cycle. Les cycles à vide ne laissent rien au journal.
+    useEffect(() => {
+      if (!preferences.autoSyncEnabled || !cloudSyncConfigured) return;
+      const t = setInterval(() => {
+        if (syncingRef.current || syncPausedRef.current) return;
+        void window.sync?.watchRestart?.().catch(() => undefined);
+        void runSync('périodique (2 min)');
+      }, 2 * 60_000);
+      return () => clearInterval(t);
+    }, [preferences.autoSyncEnabled, cloudSyncConfigured, runSync]);
 
   const value = useMemo<SyncStatusContextValue>(
     () => ({
