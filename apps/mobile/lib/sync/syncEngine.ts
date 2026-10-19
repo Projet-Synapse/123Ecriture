@@ -926,6 +926,28 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
     }),
   );
 
+  // v0.4.89 — PUBLICATION DU JOURNAL (sync_journals) : chaque appareil
+  // publie les entrées de SON dernier cycle dans la table cloud — le plugin
+  // Obsidian « Sync Views » et les autres appareils lisent LES TROIS
+  // journaux à un seul endroit (l'objectif : ne plus jamais interpréter la
+  // situation de sync). Best-effort : l'échec de publication n'est jamais
+  // une erreur de synchronisation.
+  try {
+    const device = (await bridges.vaults.deviceInfo?.()) ?? { id: remoteVaultId, name: 'appareil' };
+    const { supabase: client } = requireBridges();
+    const { installedAppVersion: versionInstallée } = await import('../updaterAndroid');
+    await client.from('sync_journals').upsert({
+      vault_id: remoteVaultId,
+      device_id: device.id,
+      device_name: device.name ?? 'appareil',
+      app_version: versionInstallée(),
+      entries: journal,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'vault_id,device_id' });
+  } catch (error) {
+    console.error('[sync] publication du journal (sync_journals) :', error);
+  }
+
   // Cycle SANS aucune action : la « Connexion au serveur » est retirée — le
   // journal ne garde que les cycles qui ont réellement fait quelque chose
   // (pas de spam de cycles à vide).
