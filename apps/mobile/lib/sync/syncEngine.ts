@@ -1,29 +1,23 @@
-import { Platform } from 'react-native';
-import * as FileSystem from 'expo-file-system/legacy';
 
-import {
-  APP_SCHEMA,
-  SUPABASE_ANON_KEY,
-  SUPABASE_URL,
-  supabase,
-  VAULT_DEVICES_TABLE,
-  VAULT_FILES_BUCKET,
-  VAULT_FILES_TABLE,
-  VAULTS_TABLE,
-} from './supabaseClient';
-import { diffVault, type LocalHashedNote, type RemoteVaultFile } from './diff';
+import { diffVault } from './diff';
 import { splitEditHot } from './editQuiet';
-import { installedAppVersion } from '../updaterAndroid';
 import { errorMessage } from '../errorMessage';
-import { sortDevicesByLastSeen, type RemoteVaultDevice } from './devices';
-import { fetchRemoteFiles, downloadRemoteText, downloadRemoteBinary, pushFile, pullFile, isBinaryAttachmentRelPath, loadSyncBase } from './cloud';
-import { fetchDevicesByVault, heartbeatDevice, fetchMyDeviceLock } from './cloud';
+import { APP_SCHEMA, VAULT_FILES_TABLE } from './supabaseClient';
+import {
+  fetchRemoteFiles,
+  downloadRemoteText,
+    pushFile,
+  pullFile,
+  isBinaryAttachmentRelPath,
+  loadSyncBase,
+} from './cloud';
+import { heartbeatDevice, fetchMyDeviceLock } from './cloud';
 import { requireBridges } from './bridges';
 
+import { type SyncSummary } from './syncTypes';
 // Le compte de lignes backslashed signalé au cycle précédent : le signal
 // « N lignes ignorées » ne se répète que si le nombre change.
 let lastBackslashReport = -1;
-import { type SyncSummary, type RemoteVaultSummary } from './syncTypes';
 import { computeLocalDeletions, isMassiveDeletion, remoteDeletionAction } from './deletions';
 import {
   loadPendingReview,
@@ -39,14 +33,10 @@ import {
   type SyncJournalEntry,
 } from './journal';
 import { tryThreeWayMerge } from './merge';
-import { textChangeStats, textChangeDetail } from './changeStats';
 import { processDeviceCommands } from './deviceGateway';
-import { vaultStorageObjectKey } from './storageKeys';
 // Liste des pièces jointes synchronisées (source unique : nativeVaultAdapter).
-import { SYNC_ATTACHMENT_EXTENSIONS } from '../storage/nativeVaultAdapter';
 // randomUUID portable — crypto.randomUUID n'existe pas sous Hermes natif
 // (le helper web tombe sur Math.random), voir lib/storage/webUuid.ts.
-import { randomUUID as uuid } from '../storage/webUuid';
 
 // ✒️ 123ECRITURE — lib/sync/syncEngine.ts — le moteur du cycle de synchronisation
 //////////////////////////////////////////////////////////////////////////////
@@ -116,11 +106,6 @@ type SyncState = {
 // Helper qui renvoie le signal quand il existe, sinon undefined (pas
 // d'abandon — le délai d'attente strict reste un chantier pour une
 // polyfill dédiée).
-function abortAfter(ms: number): AbortSignal | undefined {
-  const ctor = globalThis.AbortSignal as { timeout?: (ms: number) => AbortSignal } | undefined;
-  return typeof ctor?.timeout === 'function' ? ctor.timeout(ms) : undefined;
-}
-
 async function loadSyncState(): Promise<SyncState> {
   const { vault } = requireBridges();
   try {
