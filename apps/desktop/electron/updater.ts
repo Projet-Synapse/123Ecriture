@@ -24,7 +24,12 @@ const RELEASES_PAGE_URL = 'https://github.com/Projet-Synapse/123Ecriture/release
 //     l'installeur NSIS à CHAQUE fermeture tant que la version installée
 //     restait en deçà du flux GitHub, perçu comme une réinstallation
 //     permanente ; autant laisser l'utilisateur l'activer explicitement.
-let autoUpdateEnabled = readConfig().autoUpdate ?? false;
+// v0.4.87 — DEMANDE DE L'UTILISATRICE : « dès que j'ouvre l'appli, les
+// mises à jour sont forcées ». Le drapeau est FORCÉ à true (le réglage
+// manuel de l'écran Paramètres ne peut plus laisser un appareil en retard :
+// le retard de version d'un appareil créait les conflits vus sur les
+// autres — §12). checkForUpdates part déjà au lancement (main.ts).
+let autoUpdateEnabled = true;
 
 function applyAutoFlags(): void {
   autoUpdater.autoDownload = autoUpdateEnabled;

@@ -12,6 +12,7 @@ import { TablesScreen } from './components/screens/TablesScreen';
 import { SettingsScreen } from './components/SettingsScreen';
 import { TasksScreen } from './components/screens/TasksScreen';
 import { toIsoDate } from './lib/calendar/calendarDates';
+import { UpdateGate } from './components/UpdateGate';
 import { AuthProvider } from './lib/sync/AuthContext';
 import { SyncStatusProvider } from './lib/sync/SyncStatusContext';
 import { VaultsProvider } from './lib/sync/VaultsContext';
@@ -240,6 +241,7 @@ export default function App() {
     // (PreferencesContext) lit le coffre ACTIF pour charger
     // `.123ecriture/appearance.json` du coffre. VaultsContext ne consomme
     // aucune préférence (vérifié) — l'inversion est sûre.
+    <UpdateGate>
     <VaultsProvider>
       <AuthProvider>
         <PreferencesProvider>
@@ -254,5 +256,6 @@ export default function App() {
         </PreferencesProvider>
       </AuthProvider>
     </VaultsProvider>
+    </UpdateGate>
   );
 }
