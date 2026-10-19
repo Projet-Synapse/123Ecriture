@@ -186,19 +186,21 @@ if (!gotSingleInstanceLock) {
       const vaultPath = getActiveVaultPath();
       if (!vaultPath) return;
       const journalPath = path.join(vaultPath, '.123ecriture', 'sync-journal.json');
-      let entries: unknown[] = [];
+      // Le journal est un OBJET { entries: [...] } (jamais une liste brute) —
+      // une écriture en liste écrase le format que l'app lit au cycle suivant.
+      let journal: { entries: unknown[] };
       try {
-        entries = JSON.parse(fs.readFileSync(journalPath, 'utf-8'));
-        if (!Array.isArray(entries)) entries = [];
+        const parsed = JSON.parse(fs.readFileSync(journalPath, 'utf-8'));
+        journal = parsed && Array.isArray(parsed.entries) ? parsed : { entries: [] };
       } catch {
-        entries = [];
+        journal = { entries: [] };
       }
-      entries.push({
+      journal.entries.push({
         t: new Date().toISOString(),
         type: 'deconnexion',
         detail: 'Déconnecté du serveur — données sauvegardées',
       });
-      fs.writeFileSync(journalPath, JSON.stringify(entries, null, 2), 'utf-8');
+      fs.writeFileSync(journalPath, JSON.stringify(journal, null, 2), 'utf-8');
     } catch {
       // La fermeture ne doit JAMAIS échouer à cause du journal.
     }

@@ -763,6 +763,22 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
             );
             break;
           }
+          // v0.4.84 (§15 du journal d'incidents) : un pull sur un fichier
+          // ABSENT du parcours local peut écraser une édition fraîche que le
+          // parcours a ratée (fichier écrit pendant l'indexation) — la
+          // relecture directe AVANT tout pull : si le fichier répond, on
+          // diffère et le cycle suivant le verra dans le parcours.
+          if (!localByPath.has(decision.relPath)) {
+            try {
+              await bridges.vault.readNote(decision.relPath);
+              journal.push(
+                makeJournalEntry('info', { path: decision.relPath, detail: 'pull différé : le fichier répond localement (parcours du cycle non fiable)' }),
+              );
+              break;
+            } catch {
+              // réellement absent du disque : le pull est légitime
+            }
+          }
           await pullFile(remoteVaultId, decision.relPath, remoteByPath.get(decision.relPath)?.storageObjectPath);
           summary.pulled += 1;
           journal.push(makeJournalEntry('pull', { path: decision.relPath }));

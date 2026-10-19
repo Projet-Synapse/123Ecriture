@@ -75,7 +75,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   favoriteRelPaths: [],
   // Sync manuelle par défaut — choix déjà tranché (voir CLAUDE.md), ne
   // JAMAIS passer à `true` ici.
-  autoSyncEnabled: false,
+  autoSyncEnabled: true,
 };
 
 type PreferencesContextValue = {
