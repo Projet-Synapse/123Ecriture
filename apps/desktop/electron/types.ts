@@ -1,3 +1,7 @@
+//////////////////////////////////////////////////////////////////////////////
+//                                 types.ts                                  //  
+//////////////////////////////////////////////////////////////////////////////
+
 // Types partagés entre les fichiers du process principal Electron —
 // regroupés ici pour éviter de les redéclarer dans chaque module (ex.
 // `VaultRegistryEntry` utilisé par vaults.js ET vault.js). PAS partagés

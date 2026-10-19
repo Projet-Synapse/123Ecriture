@@ -1,3 +1,7 @@
+//////////////////////////////////////////////////////////////////////////////
+//                             preferences.ts                               //  
+//////////////////////////////////////////////////////////////////////////////
+
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import fsSync from 'fs';
 import path from 'path';
@@ -74,7 +78,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   favoriteRelPaths: [],
   // Sync manuelle par défaut — choix déjà tranché (voir CLAUDE.md), ne
   // JAMAIS passer à `true` ici.
-  autoSyncEnabled: false,
+  autoSyncEnabled: true,
 };
 
 // Les 3 listes `*ToolbarOrder` (Notes/Canvas/Graphiques) ont besoin d'une

@@ -1,10 +1,6 @@
-import { app, ipcMain, shell, type BrowserWindow } from 'electron';
-import { spawnSync } from 'child_process';
-import path from 'path';
-
-type GetWindow = () => BrowserWindow | null;
-
-// ✒️ 123ECRITURE — synchronisation vault/auth.ts — pont OAuth Google (protocole personnalisé Electron)
+//////////////////////////////////////////////////////////////////////////////
+//                                 auth.ts                                  //  
+//////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////
 //
 // Connexion Google via Supabase Auth, côté process main. Le client Supabase
@@ -42,6 +38,12 @@ type GetWindow = () => BrowserWindow | null;
 //   2. La livraison du callback OAuth au renderer
 //
 //////////////////////////////////////////////////////////////////////////////
+
+import { app, ipcMain, shell, type BrowserWindow } from 'electron';
+import { spawnSync } from 'child_process';
+import path from 'path';
+
+type GetWindow = () => BrowserWindow | null;
 
 //////// 1. Le protocole personnalisé et son enregistrement ////////////////
 

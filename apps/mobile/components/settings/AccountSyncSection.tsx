@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { useAuth } from '../../lib/sync/AuthContext';
-import { setDeviceRemoteLock } from '../../lib/sync/syncEngine';
+import { setDeviceRemoteLock } from '../../lib/sync/cloud';
 import { useSyncStatus } from '../../lib/sync/SyncStatusContext';
 import { formatLastCycle, formatLastSeen } from '../../lib/sync/devices';
 import {
@@ -10,9 +10,8 @@ import {
   linkVaultToCloud,
   listRemoteVaults,
   renameRemoteVault,
-  type RemoteVaultSummary,
-  type SyncSummary,
-} from '../../lib/sync/syncEngine';
+} from '../../lib/sync/cloud';
+import type { RemoteVaultSummary, SyncSummary } from '../../lib/sync/syncTypes';
 import { useVaults } from '../../lib/sync/VaultsContext';
 import { usePreferences } from '../../preferences/PreferencesContext';
 import { ConfirmDialog } from '../dialogs/ConfirmDialog';

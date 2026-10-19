@@ -1,20 +1,24 @@
+//////////////////////////////////////////////////////////////////////////////
+//                                 main.ts                                  //  
+//////////////////////////////////////////////////////////////////////////////
+
 import { app, BrowserWindow, Menu, net, protocol } from 'electron';
 import fs from 'fs';
 import path from 'path';
 import { pathToFileURL, URL } from 'url';
 
-import { registerAuthHandlers, registerAuthProtocol } from './synchronisation vault/auth';
+import { registerAuthHandlers, registerAuthProtocol } from './ponts-desktop/auth';
 import { registerCalendarHandlers } from './calendar';
 import { registerContextMenuHandlers } from './contextMenu';
 import { registerOccurrencesHandlers } from './occurrences';
 import { registerPreferencesHandlers } from './preferences';
 import { registerPropertiesHandlers } from './properties';
 import { registerSearchHandlers } from './search';
-import { registerSyncHandlers } from './synchronisation vault/sync';
+import { registerSyncHandlers } from './ponts-desktop/sync';
 import { registerTasksHandlers } from './tasks';
 import { checkOnStartup, registerUpdaterHandlers } from './updater';
-import { registerVaultHandlers } from './synchronisation vault/vault';
-import { getActiveVaultPath, registerVaultsHandlers } from './synchronisation vault/vaults';
+import { registerVaultHandlers } from './ponts-desktop/vault';
+import { getActiveVaultPath, registerVaultsHandlers } from './ponts-desktop/vaults';
 
 // Phase 1 : fenêtre qui charge le renderer web d'Expo (partagé avec
 // apps/mobile) + le vault local (accès fs natif, voir vault.js et
@@ -182,19 +186,21 @@ if (!gotSingleInstanceLock) {
       const vaultPath = getActiveVaultPath();
       if (!vaultPath) return;
       const journalPath = path.join(vaultPath, '.123ecriture', 'sync-journal.json');
-      let entries: unknown[] = [];
+      // Le journal est un OBJET { entries: [...] } (jamais une liste brute) —
+      // une écriture en liste écrase le format que l'app lit au cycle suivant.
+      let journal: { entries: unknown[] };
       try {
-        entries = JSON.parse(fs.readFileSync(journalPath, 'utf-8'));
-        if (!Array.isArray(entries)) entries = [];
+        const parsed = JSON.parse(fs.readFileSync(journalPath, 'utf-8'));
+        journal = parsed && Array.isArray(parsed.entries) ? parsed : { entries: [] };
       } catch {
-        entries = [];
+        journal = { entries: [] };
       }
-      entries.push({
+      journal.entries.push({
         t: new Date().toISOString(),
         type: 'deconnexion',
         detail: 'Déconnecté du serveur — données sauvegardées',
       });
-      fs.writeFileSync(journalPath, JSON.stringify(entries, null, 2), 'utf-8');
+      fs.writeFileSync(journalPath, JSON.stringify(journal, null, 2), 'utf-8');
     } catch {
       // La fermeture ne doit JAMAIS échouer à cause du journal.
     }
