@@ -7,18 +7,18 @@ import fs from 'fs';
 import path from 'path';
 import { pathToFileURL, URL } from 'url';
 
-import { registerAuthHandlers, registerAuthProtocol } from './synchronisation vault/auth';
+import { registerAuthHandlers, registerAuthProtocol } from './ponts-desktop/auth';
 import { registerCalendarHandlers } from './calendar';
 import { registerContextMenuHandlers } from './contextMenu';
 import { registerOccurrencesHandlers } from './occurrences';
 import { registerPreferencesHandlers } from './preferences';
 import { registerPropertiesHandlers } from './properties';
 import { registerSearchHandlers } from './search';
-import { registerSyncHandlers } from './synchronisation vault/sync';
+import { registerSyncHandlers } from './ponts-desktop/sync';
 import { registerTasksHandlers } from './tasks';
 import { checkOnStartup, registerUpdaterHandlers } from './updater';
-import { registerVaultHandlers } from './synchronisation vault/vault';
-import { getActiveVaultPath, registerVaultsHandlers } from './synchronisation vault/vaults';
+import { registerVaultHandlers } from './ponts-desktop/vault';
+import { getActiveVaultPath, registerVaultsHandlers } from './ponts-desktop/vaults';
 
 // Phase 1 : fenêtre qui charge le renderer web d'Expo (partagé avec
 // apps/mobile) + le vault local (accès fs natif, voir vault.js et

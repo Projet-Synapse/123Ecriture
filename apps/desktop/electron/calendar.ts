@@ -16,7 +16,7 @@ import fs from 'fs/promises';
 import fsSync from 'fs';
 import path from 'path';
 
-import * as vaults from './synchronisation vault/vaults';
+import * as vaults from './ponts-desktop/vaults';
 import type { CalendarEvent, CalendarEventInput } from './types';
 
 function getVaultPath(): string | null {

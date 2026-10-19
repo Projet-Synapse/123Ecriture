@@ -9,7 +9,7 @@ import { load } from 'js-yaml';
 
 import { readEvents } from './calendar';
 import { getTaskLists, readTasks } from './tasks';
-import * as vaults from './synchronisation vault/vaults';
+import * as vaults from './ponts-desktop/vaults';
 import type { SearchOptions, SearchResult, SearchResultKind, TagGroup, VaultEntryKind } from './types';
 
 // Module "Recherche globale" (voir .claude/References/Sources.md §2,
