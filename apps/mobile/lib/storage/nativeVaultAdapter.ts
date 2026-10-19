@@ -796,6 +796,30 @@ async function writeNoteBinaryInternal(relPath: string, base64: string): Promise
 
 //////// 6. VaultBridge — coffre actif, arbre et contenu des notes ////////////////////
 
+// ===== LE GARDE-FOU ONEUI (§15 du journal d'incidents) =================
+// OneUI rejette makeSAFDirectoryAsync et certaines écritures SAF (« isn't
+// writable » sur des dossiers à émojis, 19/10) même avec l'octroi
+// All-Files. Chaque échec SAF des opérations critiques est RETENTÉ par le
+// CHEMIN DIRECT (/storage/emulated/0/...) qui fonctionne avec l'octroi.
+// Après 3 replis réussis, le direct devient prioritaire (le SAF redevient
+// le repli) — une panne OneUI ne bloque plus jamais l'app.
+let repliDirectConsecutifs = 0;
+
+function estRejetOneUI(error: unknown): boolean {
+  const message = String((error as Error)?.message ?? error);
+  return /makeSAFDirectoryAsync|isn't writable|ERR_UNEXPECTED|UnsupportedOperationException|rejected/i.test(message);
+}
+
+function cheminDirect(rootUri: string, relPath: string): string | null {
+  const idx = rootUri.indexOf('/tree/');
+  if (idx < 0) return null;
+  let docId: string;
+  try { docId = decodeURIComponent(rootUri.slice(idx + '/tree/'.length)); } catch { return null; }
+  const prefixe = 'primary:';
+  if (!docId.startsWith(prefixe)) return null;
+  return '/storage/emulated/0/' + docId.slice(prefixe.length) + '/' + relPath;
+}
+
 export const nativeVaultAdapter: VaultBridge = {
   // Délègue au coffre actif (voir nativeVaultsAdapter.ts) — même relation
   // que côté Electron, où vault:choose-folder appelle en interne
@@ -842,6 +866,16 @@ export const nativeVaultAdapter: VaultBridge = {
   },
 
   readNote: async (relPath) => {
+    const rootUriPourRepli = await getActiveVaultRootUri().catch(() => null);
+    const direct = rootUriPourRepli ? cheminDirect(rootUriPourRepli, relPath) : null;
+    if (repliDirectConsecutifs >= 3 && direct) {
+      try {
+        return await FileSystem.readAsStringAsync(direct);
+      } catch {
+        repliDirectConsecutifs = 0;
+      }
+    }
+    try {
     // Garde anti-mélange : si le coffre actif a changé depuis le dernier
     // index, l'invalider AVANT de résoudre — sinon les relPath continuent
     // de pointer vers l'ANCIEN coffre jusqu'au prochain listTree.
@@ -870,9 +904,28 @@ export const nativeVaultAdapter: VaultBridge = {
     const { uri, isDirectory } = resolveIndexed(relPath);
     if (isDirectory) throw new Error(`« ${relPath} » est un dossier, pas une note.`);
     return readSafFileText(uri);
+    } catch (error) {
+      if (!direct || !estRejetOneUI(error)) throw error;
+      repliDirectConsecutifs += 1;
+      return await FileSystem.readAsStringAsync(direct);
+    }
   },
 
   writeNote: async (relPath, content) => {
+    const rootUriPourRepli = await getActiveVaultRootUri().catch(() => null);
+    const direct = rootUriPourRepli ? cheminDirect(rootUriPourRepli, relPath) : null;
+    const dossierDirect = direct ? direct.slice(0, direct.lastIndexOf('/')) : null;
+    if (repliDirectConsecutifs >= 3 && direct && dossierDirect) {
+      try {
+        await FileSystem.makeDirectoryAsync(dossierDirect, { intermediates: true });
+        await FileSystem.writeAsStringAsync(direct, content);
+        markVaultFileDirty(relPath);
+        return;
+      } catch {
+        repliDirectConsecutifs = 0; // le direct rate à son tour : retour SAF
+      }
+    }
+    try {
     invalidateIndexIfRootChanged(await getActiveVaultRootUri().catch(() => null));
     const cached = pathIndex.get(relPath);
     if (cached) {
@@ -925,6 +978,13 @@ export const nativeVaultAdapter: VaultBridge = {
     if (relPath.startsWith('.123ecriture/')) await persistIndex();
     else invalidateTree();
     markVaultFileDirty(relPath);
+    } catch (error) {
+      if (!direct || !dossierDirect || !estRejetOneUI(error)) throw error;
+      await FileSystem.makeDirectoryAsync(dossierDirect, { intermediates: true });
+      await FileSystem.writeAsStringAsync(direct, content);
+      repliDirectConsecutifs += 1;
+      markVaultFileDirty(relPath);
+    }
   },
 
   readNoteBinary: async (relPath) => {
