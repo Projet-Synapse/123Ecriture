@@ -305,9 +305,7 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
   // Synchro continue (v0.4.20) : le dossier du coffre actif est surveillé —
   // chaque modification de contenu déclenche une synchro ~2 s après la
   // dernière écriture (un cycle déjà en cours verra la modification).
-  useEffect(() => {
-    const sync = typeof window !== 'undefined' ? window.sync : undefined;
-    // v0.4.84 — CYCLE DE FOND PÉRIODIQUE : le filet qui rattrape TOUT ce
+      // v0.4.84 — CYCLE DE FOND PÉRIODIQUE : le filet qui rattrape TOUT ce
     // que les événements peuvent rater — le watcher fsSync qui meurt
     // silencieusement sous Windows (vécu §15 : plus aucun cycle après
     // 00:36), une édition externe sans événement, un fichier raté par un
@@ -322,6 +320,9 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
       }, 2 * 60_000);
       return () => clearInterval(t);
     }, [preferences.autoSyncEnabled, cloudSyncConfigured, runSync]);
+
+useEffect(() => {
+    const sync = typeof window !== 'undefined' ? window.sync : undefined;
 
     if (!preferences.autoSyncEnabled || !cloudSyncConfigured || !sync?.onLocalChanged) return;
     void sync.watchRestart?.().catch(() => undefined);
