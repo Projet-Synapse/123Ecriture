@@ -5,7 +5,7 @@
 import { app, ipcMain, shell, type BrowserWindow } from 'electron';
 import { autoUpdater } from 'electron-updater';
 
-import { readConfig, writeConfig } from './config';
+import { writeConfig } from './config';
 import type { UpdaterStatus } from './types';
 
 type GetWindow = () => BrowserWindow | null;
