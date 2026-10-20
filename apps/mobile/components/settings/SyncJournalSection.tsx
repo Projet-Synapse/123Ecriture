@@ -61,6 +61,7 @@ const ICON_BY_TYPE: Record<SyncJournalEntryType, string> = {
   'cycle-end': '✅',
   push: '⬆️',
   modification: '✏️',
+  'modification-reçue': '✏️',
   corbeille: '🗑️',
   pull: '⬇️',
   delete: '🗑️',

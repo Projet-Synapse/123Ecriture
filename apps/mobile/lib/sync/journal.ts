@@ -36,6 +36,7 @@ export type SyncJournalEntryType =
   // ajoutés/supprimés et total, calculés par comparaison avec la version
   // distante précédente (voir changeStats.ts).
   | 'modification'
+  | 'modification-reçue'
   // Le push d'un chemin `.trash/…` est le CONTINU d'un déplacement en
   // corbeille (la corbeille est synchronisée) — il se raconte « Corbeille :
   // … », pas « Modifié : … », sinon le même geste se lit « supprimé PUIS
@@ -117,6 +118,8 @@ export function journalEntryLabel(entry: SyncJournalEntry): string {
       return `Corbeille : ${entry.path ?? ''}${entry.detail ? ` — ${entry.detail}` : ''}`;
     case 'pull':
       return `Reçu : ${entry.path ?? ''}`;
+    case 'modification-reçue':
+      return `Modifiée (reçue d'un autre appareil) : ${entry.path ?? ''}${entry.detail ? ` — ${entry.detail}` : ''}`;
     case 'delete':
       return `Supprimé : ${entry.path ?? ''}${entry.detail ? ` (${entry.detail})` : ''}`;
     case 'conflict':

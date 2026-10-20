@@ -23,6 +23,9 @@ export type SyncSummary = {
   // en corbeille. Comptés À PART (ni « envoyé(s) » ni « modifié(s) ») pour
   // que le résumé ne compte pas deux fois le même geste.
   trashed: number;
+  // v0.4.89 (la demande de Catelina) : les fichiers modifiés à l'extérieur
+  // et reçus — annoncés « modification », jamais « reçu ».
+  modifications: number;
   conflicts: number;
   errors: string[];
 };
