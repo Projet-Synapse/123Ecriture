@@ -207,11 +207,11 @@ export function registerSyncHandlers(getWindow?: () => BrowserWindow | null): vo
     if (!vaultPath || !fsSync.existsSync(vaultPath)) return false;
     activeWatcher = fsSync.watch(vaultPath, { recursive: true }, (_event, filename) => {
       if (watcherPaused || !filename) return;
-      // Les métadonnées de l'app (.123ecriture, état/ordre/identité) ne
-      // comptent pas comme du contenu à propager — mais `.trash` oui : la
-      // corbeille est synchronisée.
+      // Les métadonnées de l'app (.123ecriture, état/ordre/identité) ET la
+      // corbeille (.trash — locale comme Obsidian, voir isHashableRelPath)
+      // ne comptent pas comme du contenu à propager.
       const parts = String(filename).split(path.sep);
-      if (parts[0] !== '.trash' && parts.some((p) => p.startsWith('.'))) return;
+      if (parts.some((p) => p.startsWith('.'))) return;
       watcherGetWindow?.()?.webContents?.send('sync:local-changed', String(filename));
     });
     return true;

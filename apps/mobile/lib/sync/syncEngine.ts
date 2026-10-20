@@ -10,14 +10,10 @@ import {
   pullFile,
   isBinaryAttachmentRelPath,
   loadSyncBase,
-} from './cloud';
-import { heartbeatDevice, fetchMyDeviceLock } from './cloud';
+ heartbeatDevice, fetchMyDeviceLock } from './cloud';
 import { requireBridges } from './bridges';
 
 import { type SyncSummary } from './syncTypes';
-// Le compte de lignes backslashed signalé au cycle précédent : le signal
-// « N lignes ignorées » ne se répète que si le nombre change.
-let lastBackslashReport = -1;
 import { computeLocalDeletions, isMassiveDeletion, remoteDeletionAction } from './deletions';
 import {
   loadPendingReview,
@@ -34,6 +30,9 @@ import {
 } from './journal';
 import { tryThreeWayMerge } from './merge';
 import { processDeviceCommands } from './deviceGateway';
+// Le compte de lignes backslashed signalé au cycle précédent : le signal
+// « N lignes ignorées » ne se répète que si le nombre change.
+let lastBackslashReport = -1;
 // Liste des pièces jointes synchronisées (source unique : nativeVaultAdapter).
 // randomUUID portable — crypto.randomUUID n'existe pas sous Hermes natif
 // (le helper web tombe sur Math.random), voir lib/storage/webUuid.ts.
@@ -399,6 +398,18 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
     }
   } catch {
     // Pont sans getCurrentPath (vieux pont) : on laisse passer le cycle.
+  }
+
+  // PASSERELLE À DISTANCE — AVANT le garde disjoncteur : les commandes
+  // (clear-sync-block, lock/unlock, dump/export diagnostics) doivent rester
+  // exécutables QUAND MÊME le sync est bloqué. Appelée après le garde
+  // (bug vécu 20-21/10), elle était morte avec le disjoncteur : le verrou
+  // contenait sa propre clé, impossible de le lever à distance.
+  try {
+    await processDeviceCommands(remoteVaultId, ownerId);
+  } catch (error) {
+    // La passerelle ne doit jamais empêcher le cycle de tourner.
+    console.error('[sync] passerelle à distance :', error);
   }
 
   // DISJONCTEUR DE SYNCHRO : si le cycle PRÉCÉDENT s'est terminé en rafale
@@ -916,10 +927,9 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   // résumé (voir heartbeatDevice).
   await heartbeatDevice(remoteVaultId, ownerId, summary);
 
-  // PASSERELLE À DISTANCE : exécute les commandes adressées à CET
-  // appareil (dump-diagnostics, levée de bloc…) via le canal Supabase —
-  // best-effort, jamais bloquant, sans adb (voir deviceGateway.ts).
-  await processDeviceCommands(remoteVaultId, ownerId);
+  // La passerelle à distance est exécutée EN DÉBUT de cycle (voir le garde
+  // disjoncteur) : les commandes restent consommables même quand le sync
+  // est bloqué.
 
   journal.push(
     makeJournalEntry('cycle-end', {

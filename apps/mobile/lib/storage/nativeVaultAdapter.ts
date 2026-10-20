@@ -389,10 +389,10 @@ function mimeForName(name: string): string {
 // `StorageAccessFramework.getUriForDirectoryInRoot` plutôt que d'utiliser
 // telle quelle l'URI renvoyée par le parcours ; pas implémenté ici tant que
 // ça n'a pas été confirmé nécessaire en usage réel.
-async function walkSafTree(dirUri: string, parentRelPath: string, depth = 0): Promise<VaultTreeNode[]> {
+async function walkSafTree(dirUri: string, parentRelPath: string, depth = 0, index: Map<string, IndexEntry> = pathIndex): Promise<VaultTreeNode[]> {
   if (depth > 40) return []; // garde-fou anti-boucle, jamais légitime à cette profondeur
   const childUris = await StorageAccessFramework.readDirectoryAsync(dirUri);
-  return walkSafChildren(childUris, parentRelPath, depth);
+  return walkSafChildren(childUris, parentRelPath, depth, false, index);
 }
 
 // ⚠️ PAS de getInfoAsync ici : en SAF, expo-file-system legacy l'implémente
@@ -402,7 +402,7 @@ async function walkSafTree(dirUri: string, parentRelPath: string, depth = 0): Pr
 // fichier isDirectory vaut TOUJOURS false. On sonde donc chaque enfant avec
 // readSAFDirectoryAsync : réussite = DOSSIER (les enfants sont déjà
 // récupérés, aucun aller-retour de plus), rejet = fichier.
-async function walkSafChildren(childUris: string[], parentRelPath: string, depth: number, meta = false): Promise<VaultTreeNode[]> {
+async function walkSafChildren(childUris: string[], parentRelPath: string, depth: number, meta = false, index: Map<string, IndexEntry> = pathIndex): Promise<VaultTreeNode[]> {
   if (depth > 40) return [];
   const nodes: VaultTreeNode[] = [];
   for (const uri of childUris) {
@@ -430,18 +430,18 @@ async function walkSafChildren(childUris: string[], parentRelPath: string, depth
       grandChildren = null; // fichier (un dossier illisible serait traité en fichier — coffres réels lisibles)
     }
     if (grandChildren) {
-      pathIndex.set(relPath, { uri, isDirectory: true });
-      const children = await walkSafChildren(grandChildren, relPath, depth + 1, isMeta);
+      index.set(relPath, { uri, isDirectory: true });
+      const children = await walkSafChildren(grandChildren, relPath, depth + 1, isMeta, index);
       if (!isMeta) nodes.push({ type: 'folder', relPath, name, children });
     } else {
       if (isMeta) {
         // .json/.txt de métadonnées : indexés même sans extension reconnue.
-        pathIndex.set(relPath, { uri, isDirectory: false });
+        index.set(relPath, { uri, isDirectory: false });
         continue;
       }
       const kind = extensionKind(name);
       if (!kind) continue; // ignore les fichiers non reconnus (pièces jointes...), comme walkTree
-      pathIndex.set(relPath, { uri, isDirectory: false });
+      index.set(relPath, { uri, isDirectory: false });
       // modifiedAt inconnu en SAF (l'implémentation expo ne l'expose pas) :
       // l'arborescence ne trie jamais par date (voir reorder ci-dessous).
       nodes.push({ type: 'note', relPath, name, modifiedAt: Date.now(), kind });
@@ -457,13 +457,35 @@ async function walkSafChildren(childUris: string[], parentRelPath: string, depth
   return nodes;
 }
 
+// UN SEUL WALK À LA FOIS, construit À CÔTÉ (build-aside) : le rescan
+// (retour au premier plan) et le listTree du montage peuvent se chevaucher.
+// Avant ce verrou, refreshIndex vidait pathIndex et posait indexedRootUri
+// AVANT le parcours : le listTree concurrent voyait « coffre courant » et
+// construisait l'arbre depuis un index en cours de remplissage →
+// « Aucune note pour l'instant » pendant TOUT le parcours (vécu 20-21/10 :
+// 3-4 minutes d'explorateur vide à chaque relance). Le walk remplit donc
+// un index à CÔTÉ, permuté en une seule affectation à la fin ; entre-temps
+// listTree charge l'index persisté du disque (instantané, voir
+// loadPersistedIndex) et l'arbre s'affiche immédiatement.
+let walkEnCours: Promise<VaultTreeNode[]> | null = null;
+
 async function refreshIndex(): Promise<VaultTreeNode[]> {
-  const rootUri = await requireActiveRootUri();
-  pathIndex = new Map();
-  indexedRootUri = rootUri;
-  cachedTree = await walkSafTree(rootUri, '');
-  await persistIndex();
-  return cachedTree;
+  if (walkEnCours) return walkEnCours;
+  walkEnCours = (async () => {
+    const rootUri = await requireActiveRootUri();
+    const nextIndex = new Map<string, IndexEntry>();
+    const arbre = await walkSafTree(rootUri, '', 0, nextIndex);
+    pathIndex = nextIndex;
+    indexedRootUri = rootUri;
+    cachedTree = arbre;
+    await persistIndex();
+    return arbre;
+  })();
+  try {
+    return await walkEnCours;
+  } finally {
+    walkEnCours = null;
+  }
 }
 
 // L'index est PERSISTÉ hors du coffre (documentDirectory) : un parcours SAF
@@ -691,7 +713,28 @@ async function ensureSafDir(parentRelPath: string): Promise<string> {
       parentUri = entry.uri;
       continue;
     }
-    const newUri = await StorageAccessFramework.makeDirectoryAsync(parentUri, seg);
+    // RELECTURE-AVANT-CRÉATION (symétrique de la relecture-avant-pull) :
+    // l'index mémoire peut ignorer un dossier QUI EXISTE sur le disque
+    // (index périmé, coffre modifié hors de l'app). Le provider SAF ne
+    // renvoie PAS d'erreur dans ce cas : il crée « seg (1) » à côté —
+    // le mécanisme exact des .trash (n) et .123ecriture (n) vécus les
+    // 19-21/10. On relit donc le parent et on RÉUTILISE le dossier
+    // existant s'il répond.
+    let newUri: string | null = null;
+    try {
+      const enfants = await StorageAccessFramework.readDirectoryAsync(parentUri);
+      for (const enfant of enfants) {
+        if (nameFromSafUri(enfant) === seg) {
+          newUri = enfant;
+          break;
+        }
+      }
+    } catch {
+      // Parent illisible : on tentera la création directe ci-dessous.
+    }
+    if (!newUri) {
+      newUri = await StorageAccessFramework.makeDirectoryAsync(parentUri, seg);
+    }
     pathIndex.set(acc, { uri: newUri, isDirectory: true });
     invalidateTree();
     parentUri = newUri;

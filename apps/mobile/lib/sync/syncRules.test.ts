@@ -15,12 +15,15 @@ describe('isHashableRelPath (règle unique desktop+mobile)', () => {
     expect(isHashableRelPath('attachments/image.png')).toBe(true);
   });
 
-  it('hache la corbeille .trash du coffre (synchronisée v0.4.26)', () => {
-    expect(isHashableRelPath('.trash/Note.mdx')).toBe(true);
-    // `.json` est une extension code reconnue : hachable même sous .trash.
-    expect(isHashableRelPath('.trash/.123ecriture/tasks.json')).toBe(true);
-    // Extension inconnue sous .trash : non hachée.
+  it('LA CORBEILLE RESTE LOCALE : .trash n est plus ni poussé ni tiré (21/10)', () => {
+    // Ancien design (v0.4.26 : corbeille synchronisée) inversé après le
+    // vécu 20-21/10 : 718 lignes .trash re-poussées au cloud cycle après
+    // cycle par le hachage des corbeilles. La suppression voyage par la
+    // tombstone ; la corbeille d un appareil reste sur cet appareil.
+    expect(isHashableRelPath('.trash/Note.mdx')).toBe(false);
+    expect(isHashableRelPath('.trash/.123ecriture/tasks.json')).toBe(false);
     expect(isHashableRelPath('.trash/archive.xyz')).toBe(false);
+    expect(isHashableRelPath('.trash')).toBe(false);
   });
 
   it('exclut les segments cachés (.123ecriture, .obsidian…)', () => {
