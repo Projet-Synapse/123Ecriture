@@ -12,7 +12,9 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "build:editor-web": "node scripts/build-editor-web.mjs"
+    "build:editor-web": "node scripts/build-editor-web.mjs",
+    "dev:android": "expo run:android --variant dev",
+    "dev:metro": "expo start --dev-client"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.3",
