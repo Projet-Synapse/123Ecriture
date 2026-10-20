@@ -357,7 +357,7 @@ let lastConnexionAnnouncedAt = 0;
 // pire synchroniser l'ANCIEN coffre actif un cycle de trop, jamais deux
 // coffres entremêlés.
 export async function runSync(ownerId: string, trigger = 'automatique'): Promise<SyncSummary> {
-  const summary: SyncSummary = { pushed: 0, pulled: 0, deleted: 0, trashed: 0, conflicts: 0, errors: [] };
+  const summary: SyncSummary = { pushed: 0, pulled: 0, deleted: 0, trashed: 0, modifications: 0, conflicts: 0, errors: [] };
   let bridges;
   try {
     bridges = requireBridges();
@@ -766,7 +766,8 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
           }
           await pullFile(remoteVaultId, decision.relPath, remoteByPath.get(decision.relPath)?.storageObjectPath);
           summary.pulled += 1;
-          journal.push(makeJournalEntry('pull', { path: decision.relPath }));
+          summary.modifications += 1;
+          journal.push(makeJournalEntry('modification-reçue', { path: decision.relPath, detail: 'reçue depuis un autre appareil' }));
           break;
         case 'conflict-push-wins': {
           // Un fichier EN COURS D'ÉDITION ne fusionne JAMAIS à chaud : le
@@ -922,7 +923,7 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
 
   journal.push(
     makeJournalEntry('cycle-end', {
-      detail: `${summary.pushed} envoyé(s), ${summary.pulled} reçu(s), ${summary.deleted} supprimé(s), ${summary.conflicts} conflit(s)${summary.errors.length > 0 ? `, ${summary.errors.length} erreur(s)` : ''}`,
+      detail: `${summary.pushed} envoyé(s), ${summary.pulled} reçu(s), ${summary.deleted} supprimé(s), ${summary.conflicts} conflit(s), ${summary.modifications} modification(s)${summary.errors.length > 0 ? `, ${summary.errors.length} erreur(s)` : ''}`,
     }),
   );
 
