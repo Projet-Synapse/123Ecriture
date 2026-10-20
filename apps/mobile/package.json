@@ -1,6 +1,6 @@
 {
   "name": "@123ecriture/mobile",
-  "version": "0.4.88",
+  "version": "0.4.89",
   "private": true,
   "main": "index.ts",
   "scripts": {
@@ -12,7 +12,9 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "build:editor-web": "node scripts/build-editor-web.mjs"
+    "build:editor-web": "node scripts/build-editor-web.mjs",
+    "dev:android": "expo run:android --variant dev",
+    "dev:metro": "expo start --dev-client"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.3",

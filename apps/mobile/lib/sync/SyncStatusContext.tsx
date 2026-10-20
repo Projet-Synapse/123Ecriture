@@ -382,7 +382,7 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
         if (syncingRef.current || syncPausedRef.current) return;
         void window.sync?.watchRestart?.().catch(() => undefined);
         void runSync('périodique (2 min)');
-      }, 2 * 60_000);
+      }, 30_000);
       return () => clearInterval(t);
     }, [preferences.autoSyncEnabled, cloudSyncConfigured, runSync]);
 

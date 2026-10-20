@@ -19,3 +19,9 @@
 | L'authentification | `AuthContext.tsx` (mobile) / `ponts-desktop/auth.ts` (desktop) |
 | La spécification officielle du cycle | `docs/sync-cycle-spec.md` |
 | L'historique des incidents | `docs/vault-incidents.md` |
+
+## 🛠️ Le mode développement (la fin des builds pour tester)
+
+- **`pnpm --filter @123ecriture/mobile dev:android`** : construit l'APK de développement (une fois) et l'installe sur le téléphone branché — cette app se connecte au serveur Metro du PC.
+- **`pnpm --filter @123ecriture/mobile dev:metro`** : le serveur Metro en continu — chaque modification de code arrive sur le téléphone en ~1 seconde (le hot-reload), sans aucun build ni release.
+- Les variantes de production (les releases taguées) restent inchangées : le gate de mise à jour les installe partout.
