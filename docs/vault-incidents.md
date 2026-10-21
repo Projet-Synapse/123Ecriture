@@ -202,3 +202,44 @@ Fonctionnalité MANQUANTE prouvée (pas une table d'hypothèses) : le registre m
 | 15.3 | Le moteur MEURT après certains cycles : plus AUCUN cycle déclenché ensuite (ni par événement, ni par focus) — vu 2× en direct (19/10 00:36, 18/10 15:20) | ✅ CORRIGÉ (cycle de fond) | Cause probable : le watcher fsSync.watch meurt silencieusement sous Windows après certaines écritures, et rien ne le relance. FIX : cycle de fond PÉRIODIQUE toutes les 2 min (relance la surveillance + lance un cycle) + autoSyncEnabled passe à TRUE par défaut. |
 | 15.4 | Le journal annonce « upload-start 1 / upload-end 1 » puis « 0 envoyé(s) » : le compte annonce un push différé (fichier chaud) comme s'il avait eu lieu | ✅ CORRIGÉ | Prouvé 00:30 (le push du chaud abandonné, compté dans upload-start/end). FIX reporté : ne compter que les pushes RÉELS (mineur, cosmétique). |
 | 15.5 | Le verdict du protocole : la chaîne CREATE → push → cloud est FIDÈLE (octets, hash, taille identiques) ; la chaîne MODIFY → cloud se rattrape au cycle suivant quand rien ne bloque | ✅ MESURÉ | Vérification n°1 : create → cloud identique ✓. Vérification n°2 : modify → écrasement (15.2), rattrapage impossible (15.3) → les deux fixes transforment le scénario : modification → push propre au cycle suivant. |
+
+## 17. Comparaison app ↔ explorateur Android ↔ disque du téléphone (20/10 soir, demandé par Catelina : « compare ce que tu vois dans l'explorateur de fichiers de mon téléphone »)
+
+**Protocole** : adb (find — la source de vérité disque) + navigation réelle dans « Mes fichiers » Samsung (captures + uiautomator) + relance de l'app 123Ecriture avec indexation complète observée à l'écran + diff rigoureux contre vault_files (session PC lue SANS refresh, pour ne pas brûler la session de l'app PC).
+
+| Constat | Chiffre | Statut |
+|---------|---------|--------|
+| Fichiers VIVANTS sur le disque du coffre `✒️ 123Ecriture` (hors corbeilles et `.123ecriture`) | **200** — les 200 vivants du cloud sont TOUS présents sur le disque (0 absent) | ✅ RÉSOLU (la restauration USB tient) |
+| Fichiers dans les corbeilles `.trash` → `.trash (5)` (SIX corbeilles numérotées) | **575** (554 rien que dans `.trash`) — chaque corbeille contient son propre `.123ecriture` interne | 🔶 à purger (avec décision de Catelina) |
+| Dossiers doublons d'échappement `1. 👁️ L'\''ENCHANTERESSE`, `2. 🦸🏼 L'\''HOMME VOLANT` | au niveau racine, **VIDES** (0 fichier) | 🔶 à purger (inoffensifs pour le contenu) |
+| Fichier de test `🧪 Propagation PC-LORDI.md` | au niveau racine, visible dans les 3 vues (disque, explorateur, app) | 🔶 à supprimer si Catelina confirme |
+| Vue « Mes fichiers » : racine du coffre | 6 éléments (0. BASE + 2 vrais dossiers projet + 2 doublons vides + le 🧪) ; les dossiers cachés (point) sont masqués ; la recherche masque l'émoji ✒️ du nom | ℹ️ observé |
+| Vue APP : arborescence complète après indexation | 0. BASE / 1. L'ENCHANTERESSE / 2. L'HOMME VOLANT + le 🧪 en dernier item — **les 2 doublons vides ne sont PAS affichés**, les corbeilles non plus : l'app = le contenu vivant propre | ✅ cohérente avec le disque vivant |
+| **Le cloud porte les corbeilles comme CONTENU** : vault_files vivants = 1061 = les 200 utiles **+ 861 déchets** (`.trash/…` et `.123ecriture/…` indexés deleted=false — y compris `preferences 2.json`, guides dupliqués « … 2 2.md ») | **861 lignes polluantes** | ❌ PROUVÉ par chiffres : « la corbeille synchronisée comme contenu » — purge cloud + exclusion `.trash` du walk/push à faire |
+| Indexation au démarrage (coffre pollué : 775 fichiers traversés) | **~4 minutes** avant l'affichage de l'arborescence (walk complet, corbeilles incluses) — pendant ce temps : « Actualisation du coffre en arrière-plan… » et « Aucune note » | 🔶 lenteur expliquée — disparaîtra après la purge |
+| **NOUVEAU SYMPTÔME** : la recherche de l'app (« ENCHANT ») répond « Aucun résultat » alors que l'arborescence affiche L'ENCHANTERESSE et ses fichiers | l'index de recherche est vide/pas peuplé après l'indexation du coffre | ❌ à investiguer (prochain chantier) |
+
+Leçons : (1) explorateur Android et app sont COHÉRENTS sur le contenu vivant — le téléphone n'est plus « les fichiers manquants » ; (2) les 6 corbeilles expliquent à la fois la lenteur d'indexation ET les 861 lignes cloud polluées ; (3) toute purge de corbeille devra lever les tombstones cloud correspondantes (API DELETE avec Content-Profile, méthode déjà éprouvée §11-14).
+
+**Complément du 20/10 23:40-23:50 (Catelina remet le téléphone devant moi : « je t'ai mis sur le bon 123Ecriture, je veux voir ce que tu en penses »)** — le coffre est un PALIMPSESTE, chaque couche a laissé ses doublons suffixés :
+
+| Artefact | Détail prouvé | Cause |
+|----------|---------------|-------|
+| Corbeilles ×6 (`.trash` → `.trash (5)`) | 554+2+4+10+5+0 = **575 fichiers**, toujours en place | chaque vague de suppression/recréation a créé un `.trash (n)` neuf au lieu de réutiliser |
+| Internes ×2 | `.123ecriture` (actif) + `.123ecriture (1)` **créé VIDE à 23:27 par la seule relance de l'app** — le mécanisme de duplication est VIVANT | « créer si absent » sans relecture de l'existant (symétrique du bug 15.2 côté création) |
+| Bases de fusion ×2 | `.123ecriture/bases/` = **557 fichiers base64url** (22:20) + `bases (1)/` = 1 (22:40) ; décodage : `.trash/Sans titre 4.mdx`, `🧪 Propagation PC-LORDI.md`, **`.trash/📈 ESPACE DE TRAVAIL/1. 🧠 PROJET SYNAPSE/123Creez/components/feature/DrawingCanvas.tsx`** | les bases gardent la mémoire des chemins morts (corbeilles + la contamination passée par le CODE SYNAPSE/123Creez) — ~345 bases sur 557 référencent des chemins qui n'existeront plus jamais |
+| Doublons projet ×2 | noms à backslash LITTÉRAL (hexa : `L '\ \ ' ' ENCHANTERESSE`), **squelettes de dossiers : 0 fichier** (l'arborescence seule), visibles dans l'explorateur, ignorés par l'app | l'échappement shell d'apostrophe (`'\''`) inséré comme texte par le script de restauration du 19 (12:33) |
+| Total disque du coffre | **1341 fichiers** = 200 vivants + 575 corbeillés + 558 bases + 8 internes | — |
+
+Verdict : le contenu vivant (200) est PROPRE et cohérent sur les trois vues (disque, explorateur, app) ; c'est la MÉCANIQUE DE CRÉATION qui duplique (corbeilles, internes, bases) et la MÉMOIRE DES BASES qui entretient des chemins morts. Remède proposé : reconstruction propre (coffre neuf = les 200 vivants + interne régénéré), l'ancien archivé hors coffre ; fixes code : relecture-avant-création, exclusion `.trash` du walk/push, purge des 861 lignes cloud.
+
+
+## 18. Cascade du 21/10 : réorganisation manuelle + tombstones hallucinées + garde anti-résurrection (demandé par Catelina : « aide-moi à restaurer »)
+
+**Chaîne vécue** : réorganisation MANUELLE du coffre du téléphone (conteneur avec les 4 coffres, ~22h13-22h21) -> l'auto-sync du téléphone voit 961 anciens chemins « disparaître » -> 195-199 tombstones posées à 23h30 UTC (le garde anti-masse n'a pas bloqué : 199/564 = 35 %, sous le tiers) -> LORDI tire les tombstones le matin = déplacements en masse vers la corbeille. Ma levée de disjoncteur (00h12) a ouvert la porte : le disjoncteur PROTÉGEAIT le cloud de l'état incohérent du téléphone.
+
+**Découvertes structurelles** : (1) le PATCH deleted=false est SILENCIEUSEMENT bloqué par le garde anti-résurrection en base (0.4.72-75) — c'est aussi ce qui a rendu le SQL de Catelina inopérant ; la voie éprouvée = API DELETE des lignes tombstonées ; (2) le Storage du bucket est INDÉPENDANT des lignes (3 267 objets intacts) ; (3) l'offset PostgREST sans ORDER est non déterministe (comptages faux) ; (4) la réorganisation manuelle d'un coffre se fait app FERMÉE, jamais à chaud.
+
+**Réparation** : cascade coupée (LORDI + téléphone stoppés), 221 tombstones utiles levées par DELETE (0 échec), l'app PC — coffre complet, jamais touché — re-pousse tout, LORDI restaure au pull. Les copies corbeille de LORDI : à purger en une passe. Le téléphone : quadruplets (L'ENCHANTERESSE ×4, L'HOMME VOLANT ×3, .123ecriture (3)-(6), .trash (8)) — tri en une passe avec Catelina.
+
+**Statut** : cascade arrêtée, cloud réparé, PC 0.4.91 installé, téléphone 0.4.91 installé (Success), LORDI à mettre à jour à sa prochaine ouverture (gate forcé). Fixes structurels : commit 2bfa493 (six fragilités hautes de l'audit, dont le garde anti-masse FERMÉ par disjoncteur et la sonde disque avant toute tombstone) — livrés en v0.4.91.
