@@ -1,6 +1,8 @@
 import { Alert } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
+
+import { hasAllFilesAccess } from './permisDirect';
 import { StorageAccessFramework } from 'expo-file-system/legacy';
 
 import { parseFrontmatter } from '../properties/frontmatter';
@@ -467,6 +469,97 @@ async function walkSafChildren(childUris: string[], parentRelPath: string, depth
 // un index à CÔTÉ, permuté en une seule affectation à la fin ; entre-temps
 // listTree charge l'index persisté du disque (instantané, voir
 // loadPersistedIndex) et l'arbre s'affiche immédiatement.
+// ===== LE PARCOURS DIRECT (v0.4.92 — l'option A, GO de Catelina) =====
+// La permission « Tous les fichiers » débloque le CHEMIN DIRECT
+// (/storage/emulated/0/…) : le listage File API natif lit TOUT — les
+// dossiers à apostrophe que le provider OneUI rejette en SAF
+// (L'ENCHANTERESSE, L'HOMME VOLANT : 169 fichiers invisibles vécus
+// 17-21/10) — en une fraction du temps (accès natifs, pas de
+// content-resolver par entrée). SAF reste le repli si la permission est
+// refusée.
+
+function cheminDirectDuCoffre(rootUri: string): string | null {
+  return cheminDirect(rootUri, '');
+}
+
+async function walkDirectTree(
+  chemin: string,
+  parentRelPath: string,
+  depth = 0,
+  index: Map<string, IndexEntry> = pathIndex,
+): Promise<VaultTreeNode[]> {
+  if (depth > 40) return [];
+  // Le direct : getInfoAsync est FIABLE (le piège « Function not
+  // implemented » ne concerne que le fournisseur SAF) — la distinction
+  // dossier/fichier se fait par getInfoAsync, une requête par enfant.
+  const noms = (await FileSystem.readDirectoryAsync('file://' + chemin))
+    .slice()
+    .sort((a, b) => a.localeCompare(b, 'fr'));
+  const nodes: VaultTreeNode[] = [];
+  for (const nom of noms) {
+    const relPath = parentRelPath ? `${parentRelPath}/${nom}` : nom;
+    const estMeta =
+      relPath === '.123ecriture' ||
+      relPath.startsWith('.123ecriture/') ||
+      relPath === '.trash' ||
+      relPath.startsWith('.trash/');
+    if (nom.startsWith('.') && !estMeta) continue; // cachés, comme le parcours SAF
+    if (nom.includes('\\') && !estMeta) continue; // anti-contamination
+    const cheminEnfant = `${chemin}/${nom}`;
+    let estDossier = false;
+    let modificationTime: number | undefined;
+    try {
+      const info = await FileSystem.getInfoAsync('file://' + cheminEnfant);
+      if (info.exists) {
+        estDossier = !!info.isDirectory;
+        modificationTime = info.modificationTime;
+      }
+    } catch {
+      estDossier = false; // illisible = traité en fichier, jamais d'avortement
+    }
+    if (estDossier) {
+      index.set(relPath, { uri: 'file://' + cheminEnfant, isDirectory: true });
+      const children = await walkDirectTree(cheminEnfant, relPath, depth + 1, index);
+      if (!estMeta) nodes.push({ type: 'folder', relPath, name: nom, children });
+    } else {
+      if (estMeta) {
+        index.set(relPath, { uri: 'file://' + cheminEnfant, isDirectory: false });
+        continue;
+      }
+      const kind = extensionKind(nom);
+      if (!kind) continue;
+      const info = await FileSystem.getInfoAsync('file://' + cheminEnfant);
+      index.set(relPath, { uri: 'file://' + cheminEnfant, isDirectory: false });
+      nodes.push({
+        type: 'note',
+        relPath,
+        name: nom,
+        // Le direct expose modificationTime (secondes) : le tri par date
+        // redevient POSSIBLE sur mobile (SAF ne l'exposait pas).
+        modifiedAt: (modificationTime ?? 0) * 1000 || Date.now(),
+        kind,
+      });
+    }
+  }
+  nodes.sort((a, b) => {
+    if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
+    return a.name.localeCompare(b.name, 'fr');
+  });
+  return nodes;
+}
+
+// La sélection du parcours : le direct si la permission est accordée, le
+// SAF en repli. Une seule porte pour tous les appelants.
+async function parcoursComplet(rootUri: string, index: Map<string, IndexEntry>): Promise<VaultTreeNode[]> {
+  if (await hasAllFilesAccess()) {
+    const chemin = cheminDirectDuCoffre(rootUri);
+    if (chemin) {
+      return walkDirectTree(chemin, '', 0, index);
+    }
+  }
+  return walkSafTree(rootUri, '', 0, index);
+}
+
 let walkEnCours: Promise<VaultTreeNode[]> | null = null;
 
 async function refreshIndex(): Promise<VaultTreeNode[]> {
@@ -474,7 +567,7 @@ async function refreshIndex(): Promise<VaultTreeNode[]> {
   walkEnCours = (async () => {
     const rootUri = await requireActiveRootUri();
     const nextIndex = new Map<string, IndexEntry>();
-    const arbre = await walkSafTree(rootUri, '', 0, nextIndex);
+    const arbre = await parcoursComplet(rootUri, nextIndex);
     // RE-VÉRIFICATION ANTI-BASCULE : le parcours dure des minutes — si le
     // coffre actif a changé PENDANT, l'arbre appartient à l'ANCIEN coffre ;
     // l'étiqueter au nouveau ferait readNote/writeNote lire et écrire des
@@ -857,6 +950,18 @@ async function writeNoteBinaryInternal(relPath: string, base64: string): Promise
 // Après 3 replis réussis, le direct devient prioritaire (le SAF redevient
 // le repli) — une panne OneUI ne bloque plus jamais l'app.
 let repliDirectConsecutifs = 0;
+// v0.4.92 — SEUIL DYNAMIQUE : la permission « Tous les fichiers » accordée
+// => le seuil tombe à 0 : TOUTES les lectures/écritures partent par le
+// chemin direct (rapide, complet, les apostrophes OK) et SAF ne sert qu'au
+// choix initial du dossier. Refusée => le comportement historique (le
+// direct en repli après 3 succès SAF).
+let seuilRepliDirectCache: number | null = null;
+async function seuilRepliDirect(): Promise<number> {
+  if (seuilRepliDirectCache === null) {
+    seuilRepliDirectCache = (await hasAllFilesAccess()) ? 0 : 3;
+  }
+  return seuilRepliDirectCache;
+}
 
 function estRejetOneUI(error: unknown): boolean {
   const message = String((error as Error)?.message ?? error);
@@ -955,7 +1060,7 @@ export const nativeVaultAdapter: VaultBridge = {
   readNote: async (relPath) => {
     const rootUriPourRepli = await getActiveVaultRootUri().catch(() => null);
     const direct = rootUriPourRepli ? cheminDirect(rootUriPourRepli, relPath) : null;
-    if (repliDirectConsecutifs >= 3 && direct) {
+    if (repliDirectConsecutifs >= (await seuilRepliDirect()) && direct) {
       try {
         return await FileSystem.readAsStringAsync(direct);
       } catch {
@@ -1002,7 +1107,7 @@ export const nativeVaultAdapter: VaultBridge = {
     const rootUriPourRepli = await getActiveVaultRootUri().catch(() => null);
     const direct = rootUriPourRepli ? cheminDirect(rootUriPourRepli, relPath) : null;
     const dossierDirect = direct ? direct.slice(0, direct.lastIndexOf('/')) : null;
-    if (repliDirectConsecutifs >= 3 && direct && dossierDirect) {
+    if (repliDirectConsecutifs >= (await seuilRepliDirect()) && direct && dossierDirect) {
       try {
         await FileSystem.makeDirectoryAsync(dossierDirect, { intermediates: true });
         await FileSystem.writeAsStringAsync(direct, content);

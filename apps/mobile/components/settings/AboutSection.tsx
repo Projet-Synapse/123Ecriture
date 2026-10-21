@@ -14,8 +14,51 @@ import {
   type LatestRelease,
 } from '../../lib/updaterAndroid';
 import { usePreferences } from '../../preferences/PreferencesContext';
+import { demanderAccesDirect, hasAllFilesAccess } from '../../lib/storage/permisDirect';
 import { SettingsToggle } from './SettingsToggle';
 import { settingsStyles as s } from './settingsStyles';
+
+// v0.4.92 — L'OPTION A (modèle Obsidian) : la permission « Tous les
+// fichiers » débloque le chemin direct (rapide, complet, les apostrophes
+// OK). La carte montre l'état et ouvre l'interrupteur système — jamais
+// bloquante : l'app fonctionne en SAF tant que la permission est refusée.
+function CarteAccesDirect() {
+  const { theme } = usePreferences();
+  const [acces, setAcces] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    void hasAllFilesAccess().then(setAcces);
+  }, []);
+  if (Platform.OS !== 'android' || acces === null) return null;
+  if (acces) {
+    return (
+      <View style={[s.card, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+        <Text style={[s.cardTitle, { color: theme.text }]}>⚡ Accès direct au stockage</Text>
+        <Text style={{ color: theme.textMuted }}>
+          ✅ Actif — l'explorateur lit tout le coffre en natif (rapide, complet).
+        </Text>
+      </View>
+    );
+  }
+  return (
+    <View style={[s.card, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+      <Text style={[s.cardTitle, { color: theme.text }]}>⚡ Accès direct au stockage</Text>
+      <Text style={{ color: theme.text }}>
+        Pour que l'explorateur soit complet et rapide, active « Tous les fichiers » pour 123Ecriture dans les
+        réglages Android, puis reviens ici.
+      </Text>
+      <Pressable
+        onPress={async () => {
+          await demanderAccesDirect();
+          void hasAllFilesAccess().then(setAcces);
+        }}
+        style={[s.button, { backgroundColor: theme.accent }]}
+      >
+        <Text style={s.buttonText}>Activer l'accès direct</Text>
+      </Pressable>
+    </View>
+  );
+}
 
 // ✒️ 123ECRITURE — components/settings/AboutSection.tsx — la carte « À propos »
 //////////////////////////////////////////////////////////////////////////////
@@ -244,6 +287,7 @@ export function AboutSection() {
             de la page de téléchargement de l'APK (voir lib/updaterAndroid.ts).
             L'installation in-app d'un APK exige des permissions système
             spécifiques — le flux navigateur est le plus fiable. */}
+        {Platform.OS !== 'web' && <CarteAccesDirect />}
         {Platform.OS !== 'web' && <MobileUpdateCard />}
         {Platform.OS === 'web' && (
           <Text style={[s.muted, { color: theme.textMuted }]}>
