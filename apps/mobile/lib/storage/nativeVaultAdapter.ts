@@ -531,7 +531,6 @@ async function walkDirectProgressif(cheminRacine: string, index: Map<string, Ind
   const racine = cheminRacine.replace(/\/+$/, '');
   const file: Élément[] = [{ chemin: racine, relPath: '', tentative: 0 }];
   parcoursProgress = { enCours: racine, indexés: index.size, restants: file.length };
-  const échecs: string[] = [];
 
   while (file.length > 0) {
     const élément = file.shift()!;
@@ -549,12 +548,10 @@ async function walkDirectProgressif(cheminRacine: string, index: Map<string, Ind
         if (nom.includes('\\') && !estMeta) continue; // anti-contamination
         const cheminEnfant = `${élément.chemin}/${nom}`;
         let estDossier = false;
-        let modificationTime: number | undefined;
         try {
           const info = await FileSystem.getInfoAsync('file://' + cheminEnfant);
           if (info.exists) {
             estDossier = !!info.isDirectory;
-            modificationTime = info.modificationTime;
           }
         } catch {
           estDossier = false; // illisible = traité en fichier, jamais d'avortement
