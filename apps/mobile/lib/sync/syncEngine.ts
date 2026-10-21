@@ -30,6 +30,7 @@ import {
 } from './journal';
 import { tryThreeWayMerge } from './merge';
 import { processDeviceCommands } from './deviceGateway';
+import { sautsDuDernierParcours } from '../storage/nativeVaultAdapter';
 // Le compte de lignes backslashed signalé au cycle précédent : le signal
 // « N lignes ignorées » ne se répète que si le nombre change.
 let lastBackslashReport = -1;
@@ -917,6 +918,17 @@ async function runSyncIntérieur(ownerId: string, trigger = 'automatique'): Prom
     }
   }
 
+  // Les sous-arbres que le parcours a dû sauter (les listages rejetés
+  // même après retry) sont SIGNALÉS — jamais silencieux : ce sont des
+  // fichiers ignorés, donc invisibles à la sync jusqu'à leur retour.
+  const sauts = sautsDuDernierParcours();
+  if (sauts.length > 0) {
+    journal.push(
+      makeJournalEntry('info', {
+        detail: `⚠️ ${sauts.length} sous-arbre(s) IGNORÉ(S) par le parcours (listage refusé par le système) : ${sauts.slice(0, 3).join(' | ').slice(0, 140)}. Rescan recommandé.`,
+      }),
+    );
+  }
   if (pushCount > 0) journal.push(makeJournalEntry('upload-end', { detail: `${pushCount} fichier(s)` }));
   if (pullCount > 0) journal.push(makeJournalEntry('download-end', { detail: `${pullCount} fichier(s)` }));
 

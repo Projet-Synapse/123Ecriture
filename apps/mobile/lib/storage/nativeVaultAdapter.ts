@@ -482,6 +482,33 @@ function cheminDirectDuCoffre(rootUri: string): string | null {
   return cheminDirect(rootUri, '');
 }
 
+// LE LISTAGE FIABLE (v0.4.93) : le provider rejette INTERMITTEMMENT le
+// listage de certains dossiers (un cycle sur deux sur le coffre vécu
+// 21/10 : un parcours voyait L'ENCHANTERESSE entière, le suivant la
+// sautait — d'où « 210 manquants » et le disjoncteur en boucle). Un rejet
+// n'est donc JAMAIS un verdict : 3 tentatives espacées, et seul l'échec
+// final est assumé — le sous-arbre est alors compté comme « sauté » et
+// signalé au sync (qui le journalise : jamais silencieux).
+const LS_RETRIES = [0, 200, 450];
+let sautsDuDernierWalk: string[] = [];
+
+export function sautsDuDernierParcours(): string[] {
+  return sautsDuDernierWalk;
+}
+
+async function lsDirFiable(chemin: string): Promise<string[]> {
+  let derniereErreur: unknown = null;
+  for (const delai of LS_RETRIES) {
+    if (delai > 0) await new Promise((r) => setTimeout(r, delai));
+    try {
+      return await FileSystem.readDirectoryAsync('file://' + chemin);
+    } catch (error) {
+      derniereErreur = error;
+    }
+  }
+  throw derniereErreur ?? new Error('listage impossible');
+}
+
 async function walkDirectTree(
   chemin: string,
   parentRelPath: string,
@@ -492,9 +519,15 @@ async function walkDirectTree(
   // Le direct : getInfoAsync est FIABLE (le piège « Function not
   // implemented » ne concerne que le fournisseur SAF) — la distinction
   // dossier/fichier se fait par getInfoAsync, une requête par enfant.
-  const noms = (await FileSystem.readDirectoryAsync('file://' + chemin))
-    .slice()
-    .sort((a, b) => a.localeCompare(b, 'fr'));
+  let noms: string[];
+  try {
+    noms = (await lsDirFiable(chemin)).slice().sort((a, b) => a.localeCompare(b, 'fr'));
+  } catch {
+    // Sous-arbre sauté : compté et signalé (jamais silencieux — le sync
+    // journalise les sauts et le garde anti-masse protège le reste).
+    if (parentRelPath) sautsDuDernierWalk.push(parentRelPath);
+    return [];
+  }
   const nodes: VaultTreeNode[] = [];
   for (const nom of noms) {
     const relPath = parentRelPath ? `${parentRelPath}/${nom}` : nom;
@@ -567,6 +600,7 @@ async function refreshIndex(): Promise<VaultTreeNode[]> {
   walkEnCours = (async () => {
     const rootUri = await requireActiveRootUri();
     const nextIndex = new Map<string, IndexEntry>();
+    sautsDuDernierWalk = [];
     const arbre = await parcoursComplet(rootUri, nextIndex);
     // RE-VÉRIFICATION ANTI-BASCULE : le parcours dure des minutes — si le
     // coffre actif a changé PENDANT, l'arbre appartient à l'ANCIEN coffre ;
