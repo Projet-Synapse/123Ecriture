@@ -355,7 +355,23 @@ let lastConnexionAnnouncedAt = 0;
 // « distant du coffre A » avec « dossier du coffre B » : le moteur peut au
 // pire synchroniser l'ANCIEN coffre actif un cycle de trop, jamais deux
 // coffres entremêlés.
+// VERROU DE CYCLE (v0.4.91) : un seul runSync à la fois — le second appel
+// reçoit la promesse du premier. Avant ce verrou, deux cycles pouvaient
+// tourner en parallèle (le watchdog révoque l'ÉTAT du cycle suspendu sans
+// l'arrêter ; un broadcast, un focus ou le tick de fond en relançaient un)
+// : deux saveSyncState en course, deux troncatures de journal, des
+// décisions perdues.
+let cycleEnCours: Promise<SyncSummary> | null = null;
+
 export async function runSync(ownerId: string, trigger = 'automatique'): Promise<SyncSummary> {
+  if (cycleEnCours) return cycleEnCours;
+  cycleEnCours = runSyncIntérieur(ownerId, trigger).finally(() => {
+    cycleEnCours = null;
+  });
+  return cycleEnCours;
+}
+
+async function runSyncIntérieur(ownerId: string, trigger = 'automatique'): Promise<SyncSummary> {
   const summary: SyncSummary = { pushed: 0, pulled: 0, deleted: 0, trashed: 0, modifications: 0, conflicts: 0, errors: [] };
   let bridges;
   try {
@@ -562,11 +578,23 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   // humaine explicite depuis l'écran de revue.
   const locallyDeleted = computeLocalDeletions(syncState.files, localPaths);
   if (isMassiveDeletion(locallyDeleted.length, localFiles.length)) {
+    // FERMETURE TOTALE (durci 21/10) : la revue seule ne suffisait pas —
+    // une voie secondaire a propagé 195 tombstones à côté d'elle (vécu
+    // 20-21/10). Le disjoncteur bloque le cycle ENTIÈREMENT : aucune autre
+    // voie (pull de tombstones distantes, application de revue, hachage)
+    // ne tourne tant qu'un humain n'a pas tranché.
     const review: PendingReview = {
       suspiciousDeletions: {
         at: new Date().toISOString(),
         count: locallyDeleted.length,
         paths: locallyDeleted.slice(0, 200),
+      },
+      syncBlocked: {
+        at: new Date().toISOString(),
+        errorCount: locallyDeleted.length,
+        samples: [
+          `${locallyDeleted.length} fichier(s) manquent localement (coffre : ${localFiles.length} fichiers) — suppressions BLOQUÉES, revue obligatoire`,
+        ],
       },
     };
     await savePendingReview(bridges.vault, review).catch(() => undefined);
@@ -576,13 +604,17 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   } else {
     for (const relPath of locallyDeleted) {
       try {
-        // REVÉRIFICATION DIRECTE AVANT TOUTE TOMBSTONE : un parcours peut
-        // manquer un fichier (édité pendant le scan). Si le fichier RÉPOND
-        // à une lecture directe, il existe : le parcours s'est trompé, on
-        // ne détruit rien et on le signale — sinon les AUTRES appareils
-        // effacent un fichier vivant.
-        try {
-          await bridges.vault.readNote(relPath);
+        // SONDE DISQUE (v0.4.91) : la relecture ne passe JAMAIS par
+        // l'index mémoire — un index périmé répond « introuvable » pour un
+        // fichier vivant et valide une tombe injuste (195 tombstones
+        // hallucinées vécues 20-21/10 après un déplacement manuel).
+        // true = présent (tombe annulée), false = absent pour de vrai
+        // (tombe légitime), null = non concluant (conservé ce cycle).
+        const pont = bridges.vault as VaultBridge & {
+          existsNote?: (relPath: string) => Promise<boolean | null>;
+        };
+        const sonde = await pont.existsNote?.(relPath);
+        if (sonde === true) {
           journal.push(
             makeJournalEntry('info', {
               path: relPath,
@@ -590,14 +622,34 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
             }),
           );
           continue;
-        } catch (readError) {
-          const brut = readError instanceof Error ? readError.message : String(readError);
-          if (!/introuvable|not found|could not be found|ENOENT/i.test(brut)) {
-            // Illisible (≠ absent) : conservé ce cycle, retenté au suivant.
+        }
+        if (sonde === null) {
+          journal.push(
+            makeJournalEntry('info', { path: relPath, detail: 'sonde non concluante — fichier conservé ce cycle' }),
+          );
+          continue;
+        }
+        if (sonde !== false) {
+          // Pont sans sonde (ancien contrat) : ancien chemin readNote —
+          // « introuvable » vaut alors absent, les autres réponses
+          // conservent le fichier ce cycle.
+          try {
+            await bridges.vault.readNote(relPath);
             journal.push(
-              makeJournalEntry('info', { path: relPath, detail: `lecture en échec — fichier conservé ce cycle : ${brut.slice(0, 120)}` }),
+              makeJournalEntry('info', {
+                path: relPath,
+                detail: 'présent à la relecture directe — tombstone annulée (parcours du cycle non fiable)',
+              }),
             );
             continue;
+          } catch (readError) {
+            const brut = readError instanceof Error ? readError.message : String(readError);
+            if (!/introuvable|not found|could not be found|ENOENT/i.test(brut)) {
+              journal.push(
+                makeJournalEntry('info', { path: relPath, detail: `lecture en échec — fichier conservé ce cycle : ${brut.slice(0, 120)}` }),
+              );
+              continue;
+            }
           }
         }
         if (remoteByPath.has(relPath)) {
@@ -691,6 +743,10 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   //    cloud porte encore le hash connu est un push, pas un conflit.
   const diffLocalFiles = localFiles.filter((note) => !tombstonedPaths.has(note.relPath));
   const diffRemoteFiles = activeRemoteFiles.filter((file) => !tombstonedPaths.has(file.relPath));
+  // Suivi des pushes pour l'état de référence : un hash n'y entre que si la
+  // propagation a RÉUSSI (voir la construction de nextFiles plus bas).
+  const pushedPaths = new Set<string>();
+  const failedPushPaths = new Set<string>();
   const decisions = diffVault(diffLocalFiles, diffRemoteFiles, syncState.files);
   // Les fichiers VIVANTS passent avant les chemins `.trash/…` : sinon le
   // tri alphabétique place la corbeille du cloud (des centaines de lignes)
@@ -729,6 +785,7 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
             ).catch(() => null);
           }
           await pushFile(remoteVaultId, ownerId, note, journal, previousRemoteContent);
+          pushedPaths.add(decision.relPath);
           // Un push sous `.trash/` est le continu d'un déplacement en
           // corbeille — compté À PART, pas dans « envoyé(s) ».
           if (decision.relPath.startsWith('.trash/')) {
@@ -855,6 +912,7 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
     } catch (error) {
       console.error(`[sync] échec sur ${decision.relPath} (${decision.kind}) :`, error);
       summary.errors.push(`${decision.relPath} : ${errorMessage(error)}`);
+      if (decision.kind === 'push') failedPushPaths.add(decision.relPath);
       journal.push(makeJournalEntry('error', { path: decision.relPath, detail: `${decision.kind} : ${errorMessage(error)}` }));
     }
   }
@@ -871,7 +929,17 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   const nextFiles: Record<string, string> = {};
   for (const note of localFiles) {
     if (locallyDeleted.includes(note.relPath) || appliedDeletions.has(note.relPath)) continue;
-    nextFiles[note.relPath] = note.contentHash;
+    // ANTI-ÉCRASEMENT : le hash de référence doit refléter CE QUE LE CLOUD
+    // CONTIENT, pas l'état local. Un fichier « chaud » (édition de moins de
+    // 60 s, sortie du diff) ou un push RATÉ n'a rien propagé : y écrire le
+    // hash courant ferait le prochain cycle trancher « pull » (référence ==
+    // local) et ÉCRASER le contenu neuf par l'ancien cloud. On conserve
+    // donc l'ANCIEN hash de référence : la divergence reste visible et sera
+    // re-traitée au cycle suivant (rattrapage normal).
+    const propagé = !hotPaths.has(note.relPath) && !failedPushPaths.has(note.relPath);
+    nextFiles[note.relPath] = propagé
+      ? note.contentHash
+      : syncState.files[note.relPath] ?? note.contentHash;
   }
   for (const decision of orderedDecisions) {
     if (decision.kind !== 'pull' && decision.kind !== 'conflict-pull-wins') continue;

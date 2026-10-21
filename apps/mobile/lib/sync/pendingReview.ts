@@ -82,15 +82,33 @@ export async function clearPendingReviewSyncBlock(vault: {
 
 // Un lecteur générique (le pont vault du coffre actif) est passé en
 // paramètre : ce module reste utilisable par le moteur comme par l'UI sans
-// dépendre du contexte React. Absent/corrompu → file vide (jamais d'échec
-// de cycle à cause de la revue elle-même).
+// dépendre du contexte React. ABSENT → file vide (première exécution).
+// CORROMPU (JSON invalide) → file vide AUSSI, mais le fichier corrompu est
+// archivé en `.corrupt` pour l'analyse : un crash pendant l'écriture ne
+// doit pas DÉSARMER en silence le disjoncteur et les revues en attente
+// (c'est précisément quand l'état est abîmé que les gardes comptent).
 export async function loadPendingReview(vault: {
   readNote: (relPath: string) => Promise<string>;
+  writeNote: (relPath: string, content: string) => Promise<void>;
 }): Promise<PendingReview> {
+  let brut: string;
   try {
-    const parsed = JSON.parse(await vault.readNote(PENDING_REVIEW_REL_PATH)) as PendingReview;
-    return parsed && typeof parsed === 'object' ? parsed : {};
+    brut = await vault.readNote(PENDING_REVIEW_REL_PATH);
   } catch {
+    return {}; // absent (première exécution) : file vide normale
+  }
+  try {
+    const parsed = JSON.parse(brut) as PendingReview;
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch (error) {
+    // Corrompu : archiver la version abîmée (une seule fois) et repartir
+    // d'une file vide — mais le laisser une trace exploitable.
+    console.error('[revue] pending-review.json illisible — archivé en .corrupt :', error);
+    try {
+      await vault.writeNote(`${PENDING_REVIEW_REL_PATH}.corrupt`, brut);
+    } catch {
+      // Best-effort : la lecture du prochain cycle re-signalera.
+    }
     return {};
   }
 }

@@ -475,6 +475,16 @@ async function refreshIndex(): Promise<VaultTreeNode[]> {
     const rootUri = await requireActiveRootUri();
     const nextIndex = new Map<string, IndexEntry>();
     const arbre = await walkSafTree(rootUri, '', 0, nextIndex);
+    // RE-VÉRIFICATION ANTI-BASCULE : le parcours dure des minutes — si le
+    // coffre actif a changé PENDANT, l'arbre appartient à l'ANCIEN coffre ;
+    // l'étiqueter au nouveau ferait readNote/writeNote lire et écrire des
+    // URI de l'ancien coffre sous des chemins du nouveau (écritures
+    // croisées). On jette le résultat : le prochain listTree chargera
+    // l'index persisté du coffre réellement actif.
+    const actuel = await getActiveVaultRootUri().catch(() => null);
+    if (actuel && actuel !== rootUri) {
+      return cachedTree ?? [];
+    }
     pathIndex = nextIndex;
     indexedRootUri = rootUri;
     cachedTree = arbre;
@@ -864,6 +874,40 @@ function cheminDirect(rootUri: string, relPath: string): string | null {
 }
 
 export const nativeVaultAdapter: VaultBridge = {
+  // SONDE DISQUE (v0.4.91) : « ce fichier existe-t-il RÉELLEMENT ? » — la
+  // relecture-avant-tombstone ne doit JAMAIS se fier à l'index mémoire : un
+  // index périmé répond « introuvable » pour un fichier vivant et valide une
+  // tombe injuste (vécu 20-21/10 : 195 tombstones hallucinées après un
+  // déplacement manuel de dossiers). Retour : true = présent (le parcours
+  // s'est trompé), false = réellement absent (la tombe est légitime),
+  // null = non concluant (conservé ce cycle).
+  // Sondage : le chemin direct d'abord (une requête), puis la lecture SAF du
+  // dossier parent si le direct ne conclut pas.
+  existsNote: async (relPath) => {
+    const rootUri = await getActiveVaultRootUri().catch(() => null);
+    if (!rootUri) return null;
+    const direct = cheminDirect(rootUri, relPath);
+    if (direct) {
+      try {
+        const info = await FileSystem.getInfoAsync(direct);
+        if (info.exists) return true;
+      } catch {
+        // Le direct peut être refusé (OneUI) : passer au sondage SAF.
+      }
+    }
+    const parentRelPath = relPath.includes('/') ? relPath.slice(0, relPath.lastIndexOf('/')) : '';
+    const name = relPath.includes('/') ? relPath.slice(relPath.lastIndexOf('/') + 1) : relPath;
+    try {
+      const parentUri = await ensureSafDir(parentRelPath);
+      const enfants = await StorageAccessFramework.readDirectoryAsync(parentUri);
+      for (const enfant of enfants) {
+        if (nameFromSafUri(enfant) === name) return true;
+      }
+      return false;
+    } catch {
+      return null;
+    }
+  },
   // Délègue au coffre actif (voir nativeVaultsAdapter.ts) — même relation
   // que côté Electron, où vault:choose-folder appelle en interne
   // vaults.pickAndAddExistingVault().

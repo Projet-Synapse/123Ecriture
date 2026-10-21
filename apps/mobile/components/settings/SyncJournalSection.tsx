@@ -91,6 +91,45 @@ function formatTime(iso: string): string {
   );
 }
 
+// v0.4.91 — JOURNAL LISIBLE D'UN COUP D'ŒIL : la direction de chaque
+// événement se voit à la COULEUR, pas seulement à l'icône — envoi vert,
+// réception bleue, suppression/corbeille orange, conflit violet (l'erreur
+// garde la couleur du thème). Les pastilles sont lisibles sur les deux
+// thèmes.
+const COULEUR_PAR_TYPE: Partial<Record<SyncJournalEntryType, string>> = {
+  push: '#2e7d32',
+  modification: '#2e7d32',
+  'modification-reçue': '#1565c0',
+  pull: '#1565c0',
+  corbeille: '#e65100',
+  delete: '#e65100',
+  conflict: '#6a1b9a',
+};
+
+// Le jour d'une entrée (l'en-tête de groupe quand le jour change).
+function formatJour(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+}
+
+// Le détail d'un cycle-end (« X envoyé(s), Y reçu(s), … ») en compteurs
+// exploitables pour la bande résumé du dernier cycle.
+function parseCycleEnd(detail: string): { sent: number; pulled: number; deleted: number; conflicts: number; modifications: number } | null {
+  const nombre = (motif: RegExp) => {
+    const m = detail.match(motif);
+    return m ? parseInt(m[1], 10) : 0;
+  };
+  if (!/envoyé/.test(detail)) return null;
+  return {
+    sent: nombre(/(\d+) envoyé/),
+    pulled: nombre(/(\d+) reçu/),
+    deleted: nombre(/(\d+) supprimé/),
+    conflicts: nombre(/(\d+) conflit/),
+    modifications: nombre(/(\d+) modification/),
+  };
+}
+
 //////// 2. SyncJournalSection — la carte (revue, filtres, recherche, copie) ///////////////
 
 export function SyncJournalSection() {
@@ -134,6 +173,13 @@ export function SyncJournalSection() {
       return journalEntryLabel(entry).toLowerCase().includes(query);
     });
   }, [reversed, activeFilter, search]);
+
+  // v0.4.91 — BANDE RÉSUMÉ : le bilan du dernier cycle en pastilles, sans
+  // lire la liste. Disparaît quand aucun cycle n'est enregistré.
+  const dernierCycle = useMemo(() => {
+    const fin = reversed.find((entry) => entry.type === 'cycle-end');
+    return fin ? { at: fin.t, bilan: parseCycleEnd(fin.detail ?? '') } : null;
+  }, [reversed]);
 
   const copyJournal = async () => {
     try {
@@ -237,6 +283,31 @@ export function SyncJournalSection() {
         </Pressable>
       </View>
 
+      {/* v0.4.91 — RÉSUMÉ DU DERNIER CYCLE : le bilan en pastilles colorées,
+          lisible sans parcourir la liste. */}
+      {dernierCycle && dernierCycle.bilan && (
+        <View
+          style={{
+            flexDirection: 'row',
+            flexWrap: 'wrap',
+            gap: 6,
+            paddingVertical: 6,
+            paddingHorizontal: 10,
+            borderRadius: 8,
+            borderWidth: 1,
+            borderColor: theme.border,
+            backgroundColor: theme.surface,
+          }}
+        >
+          <Text style={{ color: theme.textMuted, fontSize: 12 }}>Dernier cycle {formatTime(dernierCycle.at)}</Text>
+          <Text style={{ color: '#2e7d32', fontSize: 12, fontWeight: '600' }}>⬆️ {dernierCycle.bilan.sent}</Text>
+          <Text style={{ color: '#1565c0', fontSize: 12, fontWeight: '600' }}>⬇️ {dernierCycle.bilan.pulled}</Text>
+          <Text style={{ color: '#e65100', fontSize: 12, fontWeight: '600' }}>🗑️ {dernierCycle.bilan.deleted}</Text>
+          <Text style={{ color: '#6a1b9a', fontSize: 12, fontWeight: '600' }}>⚠️ {dernierCycle.bilan.conflicts}</Text>
+          <Text style={{ color: theme.text, fontSize: 12, fontWeight: '600' }}>✏️ {dernierCycle.bilan.modifications}</Text>
+        </View>
+      )}
+
       {entries === null ? (
         <ActivityIndicator color={theme.accent} />
       ) : visible.length === 0 ? (
@@ -247,16 +318,44 @@ export function SyncJournalSection() {
         </Text>
       ) : (
         <ScrollView style={{ maxHeight: 420 }} nestedScrollEnabled>
-          {visible.slice(0, 200).map((entry, index) => (
-            <View key={`${entry.t}-${index}`} style={{ flexDirection: 'row', gap: 8 }}>
-              <Text style={{ color: theme.textMuted, fontFamily: 'monospace', fontSize: 12, minWidth: 86 }}>
-                {formatTime(entry.t)}
-              </Text>
-              <Text style={{ color: entry.type === 'error' ? theme.danger : theme.text, fontSize: 13, flex: 1 }}>
-                {ICON_BY_TYPE[entry.type]} {journalEntryLabel(entry)}
-              </Text>
-            </View>
-          ))}
+          {visible.slice(0, 200).map((entry, index) => {
+            // v0.4.91 — SÉPARATEUR DE JOUR : quand le jour change entre
+            // deux entrées consécutives (du plus récent au plus ancien),
+            // un en-tête de date évite de deviner « quel jour » on lit.
+            const jour = formatJour(entry.t);
+            const jourPrécédent = index > 0 ? formatJour(visible[index - 1].t) : null;
+            const nouveauJour = jour && jour !== jourPrécédent;
+            const couleur = COULEUR_PAR_TYPE[entry.type] ?? (entry.type === 'error' ? theme.danger : theme.text);
+            return (
+              <View key={`${entry.t}-${index}`}>
+                {nouveauJour && (
+                  <Text
+                    style={{
+                      color: theme.textMuted,
+                      fontSize: 11,
+                      fontWeight: '700',
+                      textTransform: 'capitalize',
+                      marginTop: index === 0 ? 0 : 10,
+                      marginBottom: 4,
+                      borderTopWidth: index === 0 ? 0 : 1,
+                      borderTopColor: theme.border,
+                      paddingTop: index === 0 ? 0 : 6,
+                    }}
+                  >
+                    {jour}
+                  </Text>
+                )}
+                <View style={{ flexDirection: 'row', gap: 8 }}>
+                  <Text style={{ color: theme.textMuted, fontFamily: 'monospace', fontSize: 12, minWidth: 86 }}>
+                    {formatTime(entry.t)}
+                  </Text>
+                  <Text style={{ color: couleur, fontSize: 13, flex: 1 }}>
+                    {ICON_BY_TYPE[entry.type]} {journalEntryLabel(entry)}
+                  </Text>
+                </View>
+              </View>
+            );
+          })}
           {visible.length > 200 && (
             <Text style={[s.hint, { color: theme.textMuted }]}>+ {visible.length - 200} entrée(s) plus anciennes…</Text>
           )}

@@ -1,13 +1,13 @@
 import * as FileSystem from 'expo-file-system/legacy';
 
 import { getActiveVaultRootUri } from './nativeVaultsAdapter';
+import { isHashableRelPath } from '../sync/syncRules';
 import {
   ensureVaultIndexed,
   getVaultIndexEntry,
   getVaultIndexKeys,
   nativeVaultAdapter,
   SYNC_ATTACHMENT_EXTENSIONS,
-  SYNCED_META_FILES,
   takeDirtyPathsForRoot,
 } from './nativeVaultAdapter';
 import { sha256Hex, utf8Bytes } from '../sync/nativeSha256';
@@ -50,7 +50,7 @@ import { sha256Hex, utf8Bytes } from '../sync/nativeSha256';
 //////////////////////////////////////////////////////////////////////////////
 
 //////// 1. Règles de hachage et baseline hors coffre //////////////////////////////////
-const SYNC_EXTENSIONS = ['.mdx', '.md', '.canvas', '.chart', '.excalidraw', '.base'];
+
 
 // Baseline hors coffre (documentDirectory), clé par URI racine : changer de
 // coffre actif ou reconnecter un dossier invalide l'ancienne.
@@ -79,27 +79,13 @@ async function saveBaseline(rootUri: string, entries: BaselineEntries): Promise<
   }
 }
 
-// Quels relPaths appartiennent à l'arbre synchronisé — mêmes règles que
-// walkAndHash desktop (segments cachés exclus, .trash excepté), plus les
-// MÉTADONNÉES SYNCHRONISÉES (SYNCED_META_FILES, importée de
-// nativeVaultAdapter : apparence, tâches/listes, préférences).
+// Quels relPaths appartiennent à l'arbre synchronisé — LA RÈGLE UNIQUE
+// (syncRules.isHashableRelPath), la même que le marcheur desktop. Avant le
+// 21/10, ce pont portait sa copie locale qui divergait : les fichiers code
+// (.py, .ts…) jamais hachés ni poussés (divergence silencieuse), et la
+// corbeille .trash re-poussée au cloud cycle après cycle (718 lignes vécues).
 function hashableRelPath(relPath: string): boolean {
-  if (SYNCED_META_FILES.includes(relPath)) return true;
-  // ANTI-CONTAMINATION : un nom contenant un `\` est un FICHIER PLAT créé
-  // par un ancien pull d'une ligne backslashed (le `\` est légal dans un
-  // nom Android, pas dans un vrai arbre) — le pousser re-imbriquerait la
-  // contamination dans le cloud (dossiers fantômes chez les autres
-  // appareils). Jamais hachés, jamais poussés ; ils restent locaux jusqu'à
-  // purge manuelle.
-  if (relPath.includes('\\')) return false;
-  const segments = relPath.split('/');
-  if (segments[0] !== '.trash' && segments.some((segment) => segment.startsWith('.'))) return false;
-  const name = segments[segments.length - 1].toLowerCase();
-  // Pièces jointes synchronisées : images/PDF/audio — la taille par
-  // fichier est plafonnée côté desktop ; le mobile hache ce que son index
-  // connaît.
-  if (SYNC_ATTACHMENT_EXTENSIONS.some((ext) => name.endsWith(ext))) return true;
-  return SYNC_EXTENSIONS.some((ext) => name.endsWith(ext));
+  return isHashableRelPath(relPath);
 }
 
 // Décodage base64 → octets (pur JS : Hermes n'a pas `atob` garanti) —

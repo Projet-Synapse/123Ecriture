@@ -41,6 +41,11 @@ declare global {
     // de synchro les utilise pour les push/pull des pièces jointes
     // (SYNC_ATTACHMENT_EXTENSIONS). Optionnels : leur absence (web) fait
     // passer ces fichiers en « non synchronisés sur cet appareil ».
+    // v0.4.91 — SONDE DISQUE pour la relecture-avant-tombstone : true =
+    // présent (annule la tombe), false = réellement absent (la tombe est
+    // légitime), null = non concluant (le fichier est conservé ce cycle).
+    // Optionnel : son absence fait reprendre l'ancien chemin readNote.
+    existsNote?: (relPath: string) => Promise<boolean | null>;
     readNoteBinary?: (relPath: string) => Promise<string>;
     writeNoteBinary?: (relPath: string, base64: string) => Promise<void>;
     createNote: (name: string, parentRelPath?: string, kind?: VaultEntryKind) => Promise<VaultEntry>;
