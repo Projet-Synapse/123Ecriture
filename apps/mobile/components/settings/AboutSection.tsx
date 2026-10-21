@@ -35,7 +35,7 @@ function CarteAccesDirect() {
       <View style={[s.card, { backgroundColor: theme.surface, borderColor: theme.border }]}>
         <Text style={[s.cardTitle, { color: theme.text }]}>⚡ Accès direct au stockage</Text>
         <Text style={{ color: theme.textMuted }}>
-          ✅ Actif — l'explorateur lit tout le coffre en natif (rapide, complet).
+          ✅ Actif — l’explorateur lit tout le coffre en natif (rapide, complet).
         </Text>
       </View>
     );
@@ -44,17 +44,19 @@ function CarteAccesDirect() {
     <View style={[s.card, { backgroundColor: theme.surface, borderColor: theme.border }]}>
       <Text style={[s.cardTitle, { color: theme.text }]}>⚡ Accès direct au stockage</Text>
       <Text style={{ color: theme.text }}>
-        Pour que l'explorateur soit complet et rapide, active « Tous les fichiers » pour 123Ecriture dans les
+        Pour que l’explorateur soit complet et rapide, active « Tous les fichiers » pour 123Ecriture dans les
         réglages Android, puis reviens ici.
       </Text>
       <Pressable
-        onPress={async () => {
-          await demanderAccesDirect();
-          void hasAllFilesAccess().then(setAcces);
+        onPress={() => {
+          void (async () => {
+            await demanderAccesDirect();
+            void hasAllFilesAccess().then(setAcces);
+          })();
         }}
         style={[s.button, { backgroundColor: theme.accent }]}
       >
-        <Text style={s.buttonText}>Activer l'accès direct</Text>
+        <Text style={s.buttonText}>Activer l’accès direct</Text>
       </Pressable>
     </View>
   );
@@ -134,7 +136,7 @@ function MobileUpdateCard() {
           {installed === null ? (
             <Text style={{ color: theme.textMuted }}>
               ⚠️ Impossible de déterminer la version installée sur cet appareil. Dernière publiée : v{latest.version}. Si
-              tu viens d'installer cette version, redémarre l'application — ce message disparaîtra.
+              tu viens d’installer cette version, redémarre l’application — ce message disparaîtra.
             </Text>
           ) : aJour ? (
             <Text style={{ color: theme.textMuted }}>✅ À jour (dernière publiée : v{latest.version}).</Text>

@@ -528,7 +528,7 @@ async function walkDirectTree(
       }
       const kind = extensionKind(nom);
       if (!kind) continue;
-      const info = await FileSystem.getInfoAsync('file://' + cheminEnfant);
+      await FileSystem.getInfoAsync('file://' + cheminEnfant);
       index.set(relPath, { uri: 'file://' + cheminEnfant, isDirectory: false });
       nodes.push({
         type: 'note',
