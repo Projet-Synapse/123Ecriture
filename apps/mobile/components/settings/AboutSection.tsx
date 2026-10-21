@@ -84,7 +84,16 @@ function MobileUpdateCard() {
       {error ? <Text style={{ color: theme.danger }}>⚠️ {error}</Text> : null}
       {latest ? (
         <>
-          {aJour ? (
+          {/* v0.4.91 — NE JAMAIS AFFICHER « nouvelle version » si la version
+              installée est inconnue : Platform.constants.appVersion peut être
+              absent sur certains appareils, et le faux « disponible » pousse
+              à réinstaller en boucle (vécu 21/10). */}
+          {installed === null ? (
+            <Text style={{ color: theme.textMuted }}>
+              ⚠️ Impossible de déterminer la version installée sur cet appareil. Dernière publiée : v{latest.version}. Si
+              tu viens d'installer cette version, redémarre l'application — ce message disparaîtra.
+            </Text>
+          ) : aJour ? (
             <Text style={{ color: theme.textMuted }}>✅ À jour (dernière publiée : v{latest.version}).</Text>
           ) : (
             <>
