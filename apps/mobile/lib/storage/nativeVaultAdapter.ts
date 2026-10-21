@@ -509,85 +509,92 @@ async function lsDirFiable(chemin: string): Promise<string[]> {
   throw derniereErreur ?? new Error('listage impossible');
 }
 
-async function walkDirectTree(
-  chemin: string,
-  parentRelPath: string,
-  depth = 0,
-  index: Map<string, IndexEntry> = pathIndex,
-): Promise<VaultTreeNode[]> {
-  if (depth > 40) return [];
-  // Le direct : getInfoAsync est FIABLE (le piège « Function not
-  // implemented » ne concerne que le fournisseur SAF) — la distinction
-  // dossier/fichier se fait par getInfoAsync, une requête par enfant.
-  let noms: string[];
-  try {
-    noms = (await lsDirFiable(chemin)).slice().sort((a, b) => a.localeCompare(b, 'fr'));
-  } catch {
-    // Sous-arbre sauté : compté et signalé (jamais silencieux — le sync
-    // journalise les sauts et le garde anti-masse protège le reste).
-    if (parentRelPath) sautsDuDernierWalk.push(parentRelPath);
-    return [];
-  }
-  const nodes: VaultTreeNode[] = [];
-  for (const nom of noms) {
-    const relPath = parentRelPath ? `${parentRelPath}/${nom}` : nom;
-    const estMeta =
-      relPath === '.123ecriture' ||
-      relPath.startsWith('.123ecriture/') ||
-      relPath === '.trash' ||
-      relPath.startsWith('.trash/');
-    if (nom.startsWith('.') && !estMeta) continue; // cachés, comme le parcours SAF
-    if (nom.includes('\\') && !estMeta) continue; // anti-contamination
-    const cheminEnfant = `${chemin}/${nom}`;
-    let estDossier = false;
-    let modificationTime: number | undefined;
-    try {
-      const info = await FileSystem.getInfoAsync('file://' + cheminEnfant);
-      if (info.exists) {
-        estDossier = !!info.isDirectory;
-        modificationTime = info.modificationTime;
-      }
-    } catch {
-      estDossier = false; // illisible = traité en fichier, jamais d'avortement
-    }
-    if (estDossier) {
-      index.set(relPath, { uri: 'file://' + cheminEnfant, isDirectory: true });
-      const children = await walkDirectTree(cheminEnfant, relPath, depth + 1, index);
-      if (!estMeta) nodes.push({ type: 'folder', relPath, name: nom, children });
-    } else {
-      if (estMeta) {
-        index.set(relPath, { uri: 'file://' + cheminEnfant, isDirectory: false });
-        continue;
-      }
-      const kind = extensionKind(nom);
-      if (!kind) continue;
-      await FileSystem.getInfoAsync('file://' + cheminEnfant);
-      index.set(relPath, { uri: 'file://' + cheminEnfant, isDirectory: false });
-      nodes.push({
-        type: 'note',
-        relPath,
-        name: nom,
-        // Le direct expose modificationTime (secondes) : le tri par date
-        // redevient POSSIBLE sur mobile (SAF ne l'exposait pas).
-        modifiedAt: (modificationTime ?? 0) * 1000 || Date.now(),
-        kind,
-      });
-    }
-  }
-  nodes.sort((a, b) => {
-    if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
-    return a.name.localeCompare(b.name, 'fr');
-  });
-  return nodes;
+// ===== LE PARCOURS PROGRESSIF PAR FILE (v0.4.94, le design de Catelina :
+// « la synchronisation prend le temps qu'il faut en affichant de façon
+// progressive ») : les dossiers à lister vivent dans une file — les
+// listages rejetés sont RE-POUSSÉS en fin de file avec une tentative de
+// plus (les rejets intermittents du provider sont surmontés par les délais
+// naturels des autres dossiers, sans compter sur la chance). Le progress
+// (le dossier en cours + les compteurs) est lu par l'UI, et l'arbre est
+// construit depuis l'index à la fin.
+export type ParcoursProgress = { enCours: string; indexés: number; restants: number };
+let parcoursProgress: ParcoursProgress | null = null;
+
+export function parcoursProgressActuel(): ParcoursProgress | null {
+  return parcoursProgress;
 }
 
-// La sélection du parcours : le direct si la permission est accordée, le
-// SAF en repli. Une seule porte pour tous les appelants.
+const PASSES_MAX = 4;
+
+async function walkDirectProgressif(cheminRacine: string, index: Map<string, IndexEntry>): Promise<VaultTreeNode[]> {
+  type Élément = { chemin: string; relPath: string; tentative: number };
+  const racine = cheminRacine.replace(/\/+$/, '');
+  const file: Élément[] = [{ chemin: racine, relPath: '', tentative: 0 }];
+  parcoursProgress = { enCours: racine, indexés: index.size, restants: file.length };
+  const échecs: string[] = [];
+
+  while (file.length > 0) {
+    const élément = file.shift()!;
+    parcoursProgress = { enCours: élément.relPath || racine, indexés: index.size, restants: file.length };
+    try {
+      const noms = (await lsDirFiable(élément.chemin)).slice().sort((a, b) => a.localeCompare(b, 'fr'));
+      for (const nom of noms) {
+        const relPath = élément.relPath ? `${élément.relPath}/${nom}` : nom;
+        const estMeta =
+          relPath === '.123ecriture' ||
+          relPath.startsWith('.123ecriture/') ||
+          relPath === '.trash' ||
+          relPath.startsWith('.trash/');
+        if (nom.startsWith('.') && !estMeta) continue; // cachés, comme le parcours SAF
+        if (nom.includes('\\') && !estMeta) continue; // anti-contamination
+        const cheminEnfant = `${élément.chemin}/${nom}`;
+        let estDossier = false;
+        let modificationTime: number | undefined;
+        try {
+          const info = await FileSystem.getInfoAsync('file://' + cheminEnfant);
+          if (info.exists) {
+            estDossier = !!info.isDirectory;
+            modificationTime = info.modificationTime;
+          }
+        } catch {
+          estDossier = false; // illisible = traité en fichier, jamais d'avortement
+        }
+        if (estDossier) {
+          index.set(relPath, { uri: 'file://' + cheminEnfant, isDirectory: true });
+          file.push({ chemin: cheminEnfant, relPath, tentative: 0 });
+        } else {
+          if (estMeta) {
+            index.set(relPath, { uri: 'file://' + cheminEnfant, isDirectory: false });
+            continue;
+          }
+          const kind = extensionKind(nom);
+          if (!kind) continue;
+          index.set(relPath, { uri: 'file://' + cheminEnfant, isDirectory: false });
+        }
+      }
+    } catch {
+      // Listage rejeté : re-poussé en fin de file avec +1 tentative ; au-delà
+      // du maximum de passes, compté comme saut SIGNALÉ (jamais silencieux).
+      if (élément.tentative + 1 < PASSES_MAX) {
+        file.push({ chemin: élément.chemin, relPath: élément.relPath, tentative: élément.tentative + 1 });
+      } else if (élément.relPath) {
+        sautsDuDernierWalk.push(élément.relPath);
+      }
+    }
+  }
+
+  parcoursProgress = null;
+  return buildTreeFromIndex();
+}
+
+// La sélection du parcours : le progressif par le chemin direct si la
+// permission est accordée, le SAF en repli. Une seule porte pour tous les
+// appelants.
 async function parcoursComplet(rootUri: string, index: Map<string, IndexEntry>): Promise<VaultTreeNode[]> {
   if (await hasAllFilesAccess()) {
     const chemin = cheminDirectDuCoffre(rootUri);
     if (chemin) {
-      return walkDirectTree(chemin, '', 0, index);
+      return walkDirectProgressif(chemin, index);
     }
   }
   return walkSafTree(rootUri, '', 0, index);

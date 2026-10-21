@@ -37,6 +37,7 @@ import {
 import { countCharacters, countWords } from '../../lib/editor/wordCount';
 import { useSyncStatus } from '../../lib/sync/SyncStatusContext';
 import { useVaults } from '../../lib/sync/VaultsContext';
+import { parcoursProgressActuel, type ParcoursProgress } from '../../lib/storage/nativeVaultAdapter';
 import { usePreferences } from '../../preferences/PreferencesContext';
 import type { NotesActions } from '../AppShell';
 import { CanvasEditor } from '../editors/CanvasEditor';
@@ -1001,6 +1002,10 @@ export function NotesScreen({
   //   complet en arrière-plan (~1 requête par entrée), l'arbre se met à
   //   jour quand il arrive sans geler l'interface.
   const [rescanEnCours, setRescanEnCours] = useState(false);
+  // v0.4.94 — INDEXATION PROGRESSIVE (demande de Catelina : voir les
+  // dossiers indexés au fil de l'eau) : le parcours expose le dossier en
+  // cours et les compteurs ; l'UI les affiche en direct.
+  const [parcoursEnCours, setParcoursEnCours] = useState<ParcoursProgress | null>(null);
   const rescanVault = useCallback(async () => {
     if (Platform.OS === 'web') {
       await refreshTree();
@@ -1026,6 +1031,16 @@ export function NotesScreen({
     });
     return () => subscription.remove();
   }, [rescanVault, rescanEnCours]);
+
+  // Le suivi du parcours en cours : le dossier listé, l'avancement — lu
+  // périodiquement pendant le rescan (le module expose l'état en direct).
+  useEffect(() => {
+    if (!rescanEnCours) return;
+    const maj = () => setParcoursEnCours(parcoursProgressActuel());
+    maj();
+    const timer = setInterval(maj, 400);
+    return () => clearInterval(timer);
+  }, [rescanEnCours]);
 
   const handleCreateFolder = useCallback(
     async (parentRelPath?: string) => {
@@ -2300,7 +2315,9 @@ export function NotesScreen({
             suffit déjà pour agir dessus seul. */}
         {rescanEnCours && (
           <Text style={{ color: theme.textMuted, fontSize: 11, paddingHorizontal: 12 }}>
-            Actualisation du coffre en arrière-plan…
+            {parcoursEnCours
+              ? `En cours d'indexation : /${parcoursEnCours.enCours} — ${parcoursEnCours.indexés} entrées${parcoursEnCours.restants ? `, ${parcoursEnCours.restants} dossier(s) en file` : ''}`
+              : 'Actualisation du coffre en arrière-plan…'}
           </Text>
         )}
         {selectedRelPaths.size >= 2 && (
