@@ -501,7 +501,7 @@ async function lsDirFiable(chemin: string): Promise<string[]> {
   for (const delai of LS_RETRIES) {
     if (delai > 0) await new Promise((r) => setTimeout(r, delai));
     try {
-      return await FileSystem.readDirectoryAsync('file://' + chemin);
+      return await FileSystem.readDirectoryAsync(cheminVersUri(chemin));
     } catch (error) {
       derniereErreur = error;
     }
@@ -526,6 +526,14 @@ export function parcoursProgressActuel(): ParcoursProgress | null {
 
 const PASSES_MAX = 4;
 
+// L'URI d'un chemin : CHAQUE segment encodé (encodeURIComponent) — les
+// apostrophes/émojis non encodées dans l'URI font REJETER le listage par
+// le parseur URI d'expo (la cause des 35 fichiers vus sur 210, vécu
+// 22/10). La construction par segments encodés puis jointure par '/'.
+function cheminVersUri(chemin: string): string {
+  return 'file://' + chemin.split('/').map((seg) => encodeURIComponent(seg)).join('/');
+}
+
 async function walkDirectProgressif(cheminRacine: string, index: Map<string, IndexEntry>): Promise<VaultTreeNode[]> {
   type Élément = { chemin: string; relPath: string; tentative: number };
   const racine = cheminRacine.replace(/\/+$/, '');
@@ -549,7 +557,7 @@ async function walkDirectProgressif(cheminRacine: string, index: Map<string, Ind
         const cheminEnfant = `${élément.chemin}/${nom}`;
         let estDossier = false;
         try {
-          const info = await FileSystem.getInfoAsync('file://' + cheminEnfant);
+          const info = await FileSystem.getInfoAsync(cheminVersUri(cheminEnfant));
           if (info.exists) {
             estDossier = !!info.isDirectory;
           }
