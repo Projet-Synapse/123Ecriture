@@ -32,21 +32,20 @@ import {
   VAULT_FILES_BUCKET,
   VAULT_FILES_TABLE,
   VAULTS_TABLE,
-} from './supabaseClient';
+ VAULT_DEVICES_TABLE } from './supabaseClient';
 import type { LocalHashedNote, RemoteVaultFile } from './diff';
 import { vaultStorageObjectKey } from './storageKeys';
 import { SYNC_ATTACHMENT_EXTENSIONS } from '../storage/nativeVaultAdapter';
 import { errorMessage } from '../errorMessage';
 import { installedAppVersion } from '../updaterAndroid';
+import { normalizeRelPath } from './relPath';
 import { loadPendingReview, savePendingReview, type PendingReview } from './pendingReview';
 import { randomUUID as uuid } from '../storage/webUuid';
 import { textChangeStats, textChangeDetail } from './changeStats';
 import { makeJournalEntry, type SyncJournalEntry } from './journal';
 import { requireBridges } from './bridges';
 import { sortDevicesByLastSeen, type RemoteVaultDevice } from './devices';
-import type { RemoteVaultSummary } from './syncTypes';
-import type { SyncSummary } from './syncTypes';
-import { VAULT_DEVICES_TABLE } from './supabaseClient';
+import type { RemoteVaultSummary , SyncSummary } from './syncTypes';
 
 
 //////// 2. La liaison et le catalogue des coffres distants ////////////////
@@ -253,7 +252,7 @@ export async function fetchRemoteFiles(remoteVaultId: string): Promise<RemoteVau
     // en `/` ici, sinon le pull aplatit les sous-dossiers en fichiers à
     // racine (Android refuse les `\` dans les noms) et aucun chemin ne
     // correspond entre le hash local et les lignes distantes.
-    relPath: (row.rel_path as string).replace(/\\/g, '/'),
+    relPath: normalizeRelPath(row.rel_path as string),
     // Forme BRUTE conservée : repérer les lignes backslashed et viser la
     // clé exacte en base, pas la normalisée.
     rawRelPath: row.rel_path as string,
@@ -261,7 +260,11 @@ export async function fetchRemoteFiles(remoteVaultId: string): Promise<RemoteVau
     sizeBytes: row.size_bytes as number,
     updatedAt: row.updated_at as string,
     deleted: row.deleted as boolean,
-    storageObjectPath: (row.storage_object_path as string | null) ?? undefined,
+    // Ligne héritée à backslash sans clé enregistrée : l'objet a été
+    // téléversé sous la clé de son chemin BRUT — jamais sous le normalisé.
+    storageObjectPath:
+      (row.storage_object_path as string | null) ??
+      ((row.rel_path as string).includes('\\') ? storageObjectPath(remoteVaultId, row.rel_path as string) : undefined),
   }));
 }
 
@@ -461,7 +464,7 @@ export async function pushFile(
   // Défense en profondeur — quel que soit le pont, le chemin poussé au
   // cloud est TOUJOURS en slashes POSIX (un backslashed crée un doublon
   // cloud jamais matché, cassant tombestones et pulls).
-  const relPath = note.relPath.split('\\').join('/');
+  const relPath = normalizeRelPath(note.relPath);
   let uploadBody: string | Uint8Array;
   let uploadContentType: string;
   if (isBinaryAttachmentRelPath(relPath)) {

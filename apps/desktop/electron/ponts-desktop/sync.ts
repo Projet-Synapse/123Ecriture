@@ -36,6 +36,7 @@ import path from 'path';
 import * as vaults from './vaults';
 import type { HashedNote } from '../types';
 import { isHashableRelPath } from '../../../mobile/lib/sync/syncRules';
+import { normalizeRelPath } from '../../../mobile/lib/sync/relPath';
 
 // Ce module duplique volontairement une petite partie du parcours de
 // vault.ts (walkTree) : vault.ts retourne une arborescence imbriquée
@@ -110,7 +111,7 @@ async function walkAndHash(dir: string, vaultRoot: string, out: HashedNote[]): P
         // doubles entrées dans le cloud jamais matchées par les lignes à
         // slashes — les tombestones ne partent plus et le fichier
         // ressuscite au cycle suivant.
-        const relPath = path.relative(vaultRoot, fullPath).split(path.sep).join('/');
+        const relPath = normalizeRelPath(path.relative(vaultRoot, fullPath));
         const cached = hashCache.get(relPath);
         if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
           nextCache.set(relPath, cached);

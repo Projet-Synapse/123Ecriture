@@ -32,6 +32,7 @@ import * as vaults from './vaults';
 import type { FileSortMode, VaultEntryKind, VaultOrder, VaultTreeNode } from '../types';
 import { matchesEmbedTarget } from '../../../mobile/lib/notes/embedResolution';
 import { CODE_FILE_EXTENSIONS } from '../../../mobile/lib/editor/codeLanguages';
+import { normalizeRelPath } from '../../../mobile/lib/sync/relPath';
 
 
 //////// 1. Types de fichiers et gabarits //////////////////////////////////
@@ -410,7 +411,7 @@ export async function walkTree(dir: string, vaultRoot: string, order: VaultOrder
       const children = await walkTree(fullPath, vaultRoot, order);
       nodes.push({
         type: 'folder',
-        relPath: path.relative(vaultRoot, fullPath),
+        relPath: normalizeRelPath(path.relative(vaultRoot, fullPath)),
         name: entry.name,
         children,
       });
@@ -419,7 +420,7 @@ export async function walkTree(dir: string, vaultRoot: string, order: VaultOrder
       const extension = path.extname(entry.name);
       nodes.push({
         type: 'note',
-        relPath: path.relative(vaultRoot, fullPath),
+        relPath: normalizeRelPath(path.relative(vaultRoot, fullPath)),
         name: entry.name.slice(0, -extension.length),
         modifiedAt: stat.mtimeMs,
         kind: EXTENSION_TO_KIND[extension],

@@ -15,11 +15,9 @@ describe('isHashableRelPath (règle unique desktop+mobile)', () => {
     expect(isHashableRelPath('attachments/image.png')).toBe(true);
   });
 
-  it('hache la corbeille .trash du coffre (synchronisée v0.4.26)', () => {
-    expect(isHashableRelPath('.trash/Note.mdx')).toBe(true);
-    // `.json` est une extension code reconnue : hachable même sous .trash.
-    expect(isHashableRelPath('.trash/.123ecriture/tasks.json')).toBe(true);
-    // Extension inconnue sous .trash : non hachée.
+  it('ne synchronise PLUS la corbeille .trash (locale à chaque appareil)', () => {
+    expect(isHashableRelPath('.trash/Note.mdx')).toBe(false);
+    expect(isHashableRelPath('.trash/.123ecriture/tasks.json')).toBe(false);
     expect(isHashableRelPath('.trash/archive.xyz')).toBe(false);
   });
 

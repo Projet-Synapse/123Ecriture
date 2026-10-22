@@ -10,6 +10,7 @@ import crypto from 'crypto';
 
 import * as vaults from './ponts-desktop/vaults';
 import type { OccurrenceEntry, OccurrencePatch } from './types';
+import { normalizeRelPath } from '../../mobile/lib/sync/relPath';
 
 // Module "Occurrences" (voir docs/ARCHITECTURE.md §4/§8, panneau
 // OccurrencesPanel.tsx dans la barre latérale) : dictionnaire personnel de
@@ -102,7 +103,7 @@ async function findNotesContaining(vaultPath: string, word: string): Promise<str
   const matches: string[] = [];
   for (const fullPath of files) {
     const content = await fs.readFile(fullPath, 'utf8');
-    if (pattern.test(content)) matches.push(path.relative(vaultPath, fullPath));
+    if (pattern.test(content)) matches.push(normalizeRelPath(path.relative(vaultPath, fullPath)));
   }
   return matches;
 }

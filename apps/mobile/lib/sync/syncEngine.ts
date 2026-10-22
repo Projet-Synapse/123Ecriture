@@ -14,6 +14,7 @@ import {
 import { requireBridges } from './bridges';
 
 import { type SyncSummary } from './syncTypes';
+import { isTrashRelPath, selectRemoteRows } from './relPath';
 import { computeLocalDeletions, isMassiveDeletion, remoteDeletionAction } from './deletions';
 import {
   loadPendingReview,
@@ -116,6 +117,9 @@ async function loadSyncState(): Promise<SyncState> {
     const files: Record<string, string> = {};
     for (const [relPath, hash] of Object.entries(parsed.files ?? {})) {
       if (relPath.includes('\\')) continue;
+      // `.trash/` n'est plus synchronisé : ses anciennes références ne
+      // doivent pas devenir des « suppressions locales » (tombstones).
+      if (isTrashRelPath(relPath)) continue;
       files[relPath] = hash;
     }
     return { files, rootPath: parsed.rootPath ?? null };
@@ -525,18 +529,24 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   const backslashedRows = remoteFiles.filter((file) => (file.rawRelPath ?? '').includes('\\'));
   if (backslashedRows.length > 0 && backslashedRows.length !== lastBackslashReport) {
     lastBackslashReport = backslashedRows.length;
+    const { legacy, shadowed } = selectRemoteRows(backslashedRows.concat(remoteFiles.filter((f) => !(f.rawRelPath ?? '').includes('\\'))));
     journal.push(
       makeJournalEntry('info', {
-        detail: `${backslashedRows.length} ligne(s) résiduelle(s) à backslash ignorée(s) dans le cloud (inoffensives) — nettoyage manuel disponible sur demande`,
+        detail: `${backslashedRows.length} ligne(s) à backslash dans le cloud (chemins Windows hérités) : ${legacy.length} lue(s) sous leur chemin POSIX, ${shadowed.length} masquée(s) par une jumelle — migration : scripts/migrate-backslash-relpaths.mjs`,
       }),
     );
   }
-  const activeRemoteFiles = remoteFiles.filter(
-    (file) => !file.deleted && !(file.rawRelPath ?? '').includes('\\'),
-  );
+  // 1ter) SÉLECTION DES LIGNES (relPath.ts) : `.trash/` jamais synchronisé ;
+  // une ligne héritée à backslash SANS jumelle POSIX est lue sous son chemin
+  // normalisé (sinon tout un coffre poussé depuis Windows reste invisible
+  // sur Android) ; avec jumelle, elle est masquée. Aucune réécriture des
+  // données ici (script de migration dédié : scripts/migrate-backslash-relpaths.mjs).
+  const selected = selectRemoteRows(remoteFiles);
+  const visibleRemoteFiles = selected.rows;
+  const activeRemoteFiles = visibleRemoteFiles.filter((file) => !file.deleted);
   const remoteByPath = new Map(activeRemoteFiles.map((file) => [file.relPath, file]));
   const tombstonedPaths = new Set(
-    remoteFiles.filter((file) => file.deleted).map((file) => file.relPath),
+    visibleRemoteFiles.filter((file) => file.deleted).map((file) => file.relPath),
   );
 
   // 1) Supprimés LOCALEMENT depuis le dernier cycle -> tombestones distantes.
@@ -594,7 +604,9 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
             .from(VAULT_FILES_TABLE)
             .update({ deleted: true, updated_at: new Date().toISOString() })
             .eq('vault_id', remoteVaultId)
-            .eq('rel_path', relPath);
+            // Clé EXACTE en base : une ligne héritée à backslash est
+            // tombstonée sous sa forme brute (sinon elle ressusciterait).
+            .eq('rel_path', remoteByPath.get(relPath)?.rawRelPath ?? relPath);
           if (error) throw error;
         }
         tombstonedPaths.add(relPath);

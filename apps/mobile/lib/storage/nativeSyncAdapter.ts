@@ -93,7 +93,8 @@ function hashableRelPath(relPath: string): boolean {
   // purge manuelle.
   if (relPath.includes('\\')) return false;
   const segments = relPath.split('/');
-  if (segments[0] !== '.trash' && segments.some((segment) => segment.startsWith('.'))) return false;
+  // `.trash/` local uniquement (plus synchronisé, comme syncRules.ts).
+  if (segments.some((segment) => segment.startsWith('.'))) return false;
   const name = segments[segments.length - 1].toLowerCase();
   // Pièces jointes synchronisées : images/PDF/audio — la taille par
   // fichier est plafonnée côté desktop ; le mobile hache ce que son index

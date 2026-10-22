@@ -73,10 +73,11 @@ import {
   KIND_TO_EXTENSION,
   TRASH_FOLDER,
 } from './coffre-outils';
-export { EXTENSION_TO_KIND, resolveInVault, getVaultPath, walkTree } from './coffre-outils';
 import * as vaults from './vaults';
 import type { VaultEntryKind } from '../types';
 import { isCodeFile } from '../../../mobile/lib/editor/codeLanguages';
+import { normalizeRelPath } from '../../../mobile/lib/sync/relPath';
+export { EXTENSION_TO_KIND, resolveInVault, getVaultPath, walkTree } from './coffre-outils';
 // Critères de résolution des cibles d'embed façon Obsidian (chemin exact →
 // suffixe → nom seul, casse ignorée) — fonction PURE partagée avec le port
 // web (webVaultAdapter.ts) et le Live Preview, importée telle quelle comme
@@ -210,7 +211,7 @@ export function registerVaultHandlers(getWindow: GetWindow): void {
       const stat = await fs.stat(fullPath);
 
       return {
-        relPath: path.relative(vaultPath, fullPath),
+        relPath: normalizeRelPath(path.relative(vaultPath, fullPath)),
         name: fileName.slice(0, -extension.length),
         modifiedAt: stat.mtimeMs,
         kind: safeKind,
@@ -252,7 +253,7 @@ export function registerVaultHandlers(getWindow: GetWindow): void {
     const stat = await fs.stat(destFull);
 
     return {
-      relPath: path.relative(vaultPath, destFull),
+      relPath: normalizeRelPath(path.relative(vaultPath, destFull)),
       name: candidateName,
       modifiedAt: stat.mtimeMs,
       kind,
@@ -269,7 +270,7 @@ export function registerVaultHandlers(getWindow: GetWindow): void {
     const fullPath = path.join(parentFull, folderName);
     await fs.mkdir(fullPath);
 
-    return { relPath: path.relative(vaultPath, fullPath), name: folderName };
+    return { relPath: normalizeRelPath(path.relative(vaultPath, fullPath)), name: folderName };
   });
 
   // Note journalière — voir apps/mobile/components/CalendarScreen.tsx.
@@ -301,7 +302,7 @@ export function registerVaultHandlers(getWindow: GetWindow): void {
     const stat = await fs.stat(fullPath);
 
     return {
-      relPath: path.relative(vaultPath, fullPath),
+      relPath: normalizeRelPath(path.relative(vaultPath, fullPath)),
       name: dateIso,
       modifiedAt: stat.mtimeMs,
     };
@@ -329,7 +330,7 @@ export function registerVaultHandlers(getWindow: GetWindow): void {
     const destPath = path.join(attachmentsDir, finalName);
     await fs.copyFile(sourcePath, destPath);
 
-    return { relPath: path.relative(vaultPath, destPath), name: finalName };
+    return { relPath: normalizeRelPath(path.relative(vaultPath, destPath)), name: finalName };
   });
 
   // Contenu d'une pièce jointe en URI `data:` (image/audio affichés inline
@@ -398,7 +399,7 @@ export function registerVaultHandlers(getWindow: GetWindow): void {
     }
 
     await fs.rename(oldFull, newFull);
-    return { relPath: path.relative(vaultPath, newFull), name: baseName };
+    return { relPath: normalizeRelPath(path.relative(vaultPath, newFull)), name: baseName };
   });
 
   // Déplace une note ou un dossier vers un autre dossier du vault (ou la
@@ -434,12 +435,12 @@ export function registerVaultHandlers(getWindow: GetWindow): void {
 
     if (newFull === oldFull) {
       // Déjà à cet endroit — no-op plutôt qu'une erreur fs.rename inutile.
-      return { relPath: path.relative(vaultPath, oldFull), name: baseName };
+      return { relPath: normalizeRelPath(path.relative(vaultPath, oldFull)), name: baseName };
     }
 
     await fs.rename(oldFull, newFull);
     return {
-      relPath: path.relative(vaultPath, newFull),
+      relPath: normalizeRelPath(path.relative(vaultPath, newFull)),
       name: extension ? finalName.replace(new RegExp(`${escapeRegExp(extension)}$`, 'i'), '') : finalName,
     };
   });
@@ -480,7 +481,7 @@ export function registerVaultHandlers(getWindow: GetWindow): void {
     if (newFull === oldFull) {
       // Déjà à cet endroit — no-op plutôt qu'une erreur fs.rename inutile.
       return {
-        relPath: path.relative(vaultPath, newFull),
+        relPath: normalizeRelPath(path.relative(vaultPath, newFull)),
         name: isNote ? path.basename(newFull, extension) : path.basename(newFull),
       };
     }
@@ -495,7 +496,7 @@ export function registerVaultHandlers(getWindow: GetWindow): void {
     await fs.mkdir(path.dirname(newFull), { recursive: true });
     await fs.rename(oldFull, newFull);
     return {
-      relPath: path.relative(vaultPath, newFull),
+      relPath: normalizeRelPath(path.relative(vaultPath, newFull)),
       name: isNote ? path.basename(newFull, extension) : path.basename(newFull),
     };
   });
