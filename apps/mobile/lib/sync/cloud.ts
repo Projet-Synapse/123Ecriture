@@ -304,7 +304,7 @@ export function isBinaryAttachmentRelPath(relPath: string): boolean {
   return SYNC_ATTACHMENT_EXTENSIONS.some((ext) => lower.endsWith(ext));
 }
 
-function mimeForAttachment(relPath: string): string {
+export function mimeForAttachment(relPath: string): string {
   const ext = relPath.toLowerCase().slice(relPath.lastIndexOf('.'));
   const table: Record<string, string> = {
     '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
@@ -317,7 +317,7 @@ function mimeForAttachment(relPath: string): string {
   return table[ext] ?? 'application/octet-stream';
 }
 
-function base64ToUint8Array(base64: string): Uint8Array {
+export function base64ToUint8Array(base64: string): Uint8Array {
   if (typeof atob === 'function') {
     const binary = atob(base64);
     return Uint8Array.from(binary, (ch) => ch.charCodeAt(0));

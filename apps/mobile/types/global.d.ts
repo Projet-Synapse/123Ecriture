@@ -31,6 +31,9 @@ declare global {
   type VaultTreeNode = VaultNoteNode | VaultFolderNode;
 
   interface VaultBridge {
+    // Android 100 % cloud (v0.4.96) : poignée de synchro du coffre cloud.
+    // Absente sur desktop (le moteur classique hash/diff s’applique).
+    cloudSync?: import("../lib/storage/cloud/cloudVaultCore").CloudSyncHandle;
     chooseFolder: () => Promise<string | null>;
     getCurrentPath: () => Promise<string | null>;
     listTree: () => Promise<VaultTreeNode[]>;
@@ -159,6 +162,14 @@ declare global {
     // Retourne la liste mise à jour, ou null si annulé.
     relocateVault?: (id: string) => Promise<VaultRegistryEntry[] | null>;
     onChanged: (callback: (vaults: VaultRegistryEntry[]) => void) => () => void;
+    // Android 100 % cloud (v0.4.96) : plus de dossiers locaux ; import
+    // UNIQUE (lecture seule) d'un ancien coffre SAF non lié.
+    cloudOnly?: boolean;
+    importLegacy?: (
+      id: string,
+      ownerId: string,
+      onProgress?: (done: number, total: number) => void,
+    ) => Promise<import("../lib/storage/cloud/legacyImportCore").ImportReport | null>;
   }
 
   interface AuthBridge {

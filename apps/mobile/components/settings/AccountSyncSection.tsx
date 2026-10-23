@@ -2,15 +2,14 @@ import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { useAuth } from '../../lib/sync/AuthContext';
-import { setDeviceRemoteLock } from '../../lib/sync/cloud';
-import { useSyncStatus } from '../../lib/sync/SyncStatusContext';
-import { formatLastCycle, formatLastSeen } from '../../lib/sync/devices';
-import {
+import { setDeviceRemoteLock ,
   createRemoteVault,
   linkVaultToCloud,
   listRemoteVaults,
   renameRemoteVault,
 } from '../../lib/sync/cloud';
+import { useSyncStatus } from '../../lib/sync/SyncStatusContext';
+import { formatLastCycle, formatLastSeen } from '../../lib/sync/devices';
 import type { RemoteVaultSummary, SyncSummary } from '../../lib/sync/syncTypes';
 import { useVaults } from '../../lib/sync/VaultsContext';
 import { usePreferences } from '../../preferences/PreferencesContext';
@@ -76,12 +75,39 @@ export function AccountSyncSection() {
     relocateVault,
   } = useVaults();
   const vault = typeof window !== 'undefined' ? window.vault : undefined;
+  // Android 100 % cloud (v0.4.96) : aucun dossier local, aucune
+  // déconnexion destructive ; les anciens coffres non liés sont « à
+  // importer » (lecture seule de l'ancien dossier).
+  const syncStatus = useSyncStatus();
+  const cloudOnly = typeof window !== 'undefined' && window.vaults?.cloudOnly === true;
+  const [importState, setImportState] = useState<{ id: string; text: string; busy: boolean } | null>(null);
+  const [cloudStatus, setCloudStatus] = useState<string | null>(null);
+  useEffect(() => {
+    if (!cloudOnly || !vault?.cloudSync) return;
+    let alive = true;
+    const refresh = () =>
+      void vault.cloudSync!
+        .status()
+        .then((st) => {
+          if (!alive) return;
+          const parts = [`${st.files} fichier(s) dans le cloud`, `${st.cached} disponible(s) hors ligne`];
+          parts.push(st.pending > 0 ? `${st.pending} modification(s) en attente d’envoi` : 'tout est envoyé');
+          if (st.conflicts.length > 0) parts.push(`${st.conflicts.length} conflit(s) — copies « (conflit …) » créées`);
+          setCloudStatus(parts.join(' · '));
+        })
+        .catch(() => alive && setCloudStatus(null));
+    refresh();
+    const t = setInterval(refresh, 5000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, [cloudOnly, vault, activeVaultId, syncStatus.status]);
   // Statut partagé (voir SyncStatusContext.tsx) — source de vérité pour le
   // coffre ACTIF, la même que l'indicateur global de AppShell.tsx. Les
   // autres coffres liés (non actifs) gardent leur propre state local
   // ci-dessous : le contexte ne suit que "le" coffre courant, comme
   // l'indicateur global qui n'a de sens que pour un seul coffre à la fois.
-  const syncStatus = useSyncStatus();
 
   const [vaultActionError, setVaultActionError] = useState<string | null>(null);
   const [renamingVaultId, setRenamingVaultId] = useState<string | null>(null);
@@ -221,6 +247,37 @@ export function AccountSyncSection() {
     if (!auth.user) return;
     loadRemoteVaults();
   }, [auth.user, linkedVaultCount, loadRemoteVaults]);
+
+  // Import UNIQUE d'un ancien coffre SAF non lié (Android cloud) — voir
+  // lib/storage/cloud/legacyImport.ts (lecture seule de l'ancien dossier).
+  const handleImportLegacy = useCallback(
+    async (v: VaultRegistryEntry) => {
+      if (!auth.user || !window.vaults?.importLegacy) {
+        setVaultActionError('Connecte-toi d’abord à ton compte pour importer ce coffre.');
+        return;
+      }
+      setImportState({ id: v.id, text: 'Lecture de l’ancien dossier…', busy: true });
+      try {
+        const report = await window.vaults.importLegacy(v.id, auth.user.id, (done, total) =>
+          setImportState({ id: v.id, text: `Import : ${done}/${total} fichiers`, busy: true }),
+        );
+        if (!report) {
+          setImportState({ id: v.id, text: 'Import annulé (dossier non choisi). Rien n’a été modifié.', busy: false });
+          return;
+        }
+        const bits = [`${report.imported} fichier(s) importé(s)`];
+        if (report.skippedExisting) bits.push(`${report.skippedExisting} déjà présent(s)`);
+        if (report.skippedTooLarge.length) bits.push(`${report.skippedTooLarge.length} trop volumineux (> 50 Mo) ignoré(s)`);
+        if (report.failed.length) bits.push(`${report.failed.length} illisible(s)`);
+        if (report.pending) bits.push(`${report.pending} en attente d’envoi${report.offline ? ' (hors ligne)' : ''}`);
+        setImportState({ id: v.id, text: `✅ ${bits.join(' · ')}. L’ancien dossier est intact.`, busy: false });
+        loadRemoteVaults();
+      } catch (error) {
+        setImportState({ id: v.id, text: `⚠️ ${errorMessage(error)}`, busy: false });
+      }
+    },
+    [auth.user, loadRemoteVaults],
+  );
 
   const handleLinkVault = useCallback(
     async (v: VaultRegistryEntry) => {
@@ -589,7 +646,13 @@ export function AccountSyncSection() {
 
       {vault && (
         <View style={[s.card, { backgroundColor: theme.surface, borderColor: theme.border }]}>
-          <Text style={[s.cardTitle, { color: theme.text }]}>Coffres locaux</Text>
+          <Text style={[s.cardTitle, { color: theme.text }]}>{cloudOnly ? 'Coffres sur cet appareil' : 'Coffres locaux'}</Text>
+          {cloudOnly && (
+            <Text style={[styles.vaultPathText, { color: theme.textMuted }]}>
+              Sur Android, tes coffres vivent dans le cloud (cache privé pour la lecture et l’écriture hors ligne).
+              Les anciens dossiers du téléphone ne sont plus utilisés ni modifiés.
+            </Text>
+          )}
 
           {vaultList.length === 0 && (
             <Text style={[s.cardValue, { color: theme.textMuted }]}>Aucun coffre local pour l’instant.</Text>
@@ -618,7 +681,11 @@ export function AccountSyncSection() {
                     <View>
                       <Text style={{ color: theme.text, fontWeight: isActive ? '600' : '400' }}>{v.name}</Text>
                       <Text style={[styles.vaultPathText, { color: theme.textMuted }]} numberOfLines={1}>
-                        {v.path}
+                        {cloudOnly
+                          ? v.remoteVaultId
+                            ? '☁️ Coffre cloud'
+                            : '📦 Ancien dossier du téléphone — à importer'
+                          : v.path}
                       </Text>
                     </View>
                   )}
@@ -658,7 +725,7 @@ export function AccountSyncSection() {
                       mort ou vide d'identité — la synchro est bloquée tant
                       que le nouvel emplacement n'est pas désigné, sinon tout
                       le distant serait « ressuscité » à l'ancien chemin. */}
-                  {vaultFolderIssues[v.id] && (
+                  {!cloudOnly && vaultFolderIssues[v.id] && (
                     <View style={styles.relocateBlock}>
                       <Text style={{ color: theme.danger }}>
                         ⚠️{' '}
@@ -674,7 +741,24 @@ export function AccountSyncSection() {
                       </Pressable>
                     </View>
                   )}
-                  {!v.cloudLinked ? (
+                  {cloudOnly && !v.remoteVaultId ? (
+                    <View>
+                      <Pressable
+                        onPress={() => void handleImportLegacy(v)}
+                        disabled={importState?.busy}
+                        style={[styles.syncButton, { backgroundColor: theme.accent, opacity: importState?.busy ? 0.6 : 1 }]}
+                      >
+                        <Text style={s.buttonText}>Importer dans le cloud…</Text>
+                      </Pressable>
+                      <Text style={[styles.vaultPathText, { color: theme.textMuted }]}>
+                        Copie unique de l’ancien dossier vers un nouveau coffre cloud. Le dossier est seulement lu :
+                        rien n’y est écrit ni supprimé.
+                      </Text>
+                      {importState?.id === v.id && (
+                        <Text style={[styles.vaultPathText, { color: theme.text }]}>{importState.text}</Text>
+                      )}
+                    </View>
+                  ) : !v.cloudLinked && !cloudOnly ? (
                     <View style={styles.linkButtonsRow}>
                       <Pressable
                         onPress={() => void handleLinkVault(v)}
@@ -701,15 +785,21 @@ export function AccountSyncSection() {
                           <Text style={s.buttonText}>Synchroniser maintenant</Text>
                         )}
                       </Pressable>
-                      <Pressable
+                      {!cloudOnly && <Pressable
                         onPress={() => setConfirmDisconnectVault(v)}
                         style={[styles.syncButton, styles.linkSecondaryButton, { borderColor: theme.danger }]}
                       >
                         <Text style={{ color: theme.danger }}>Déconnecter…</Text>
-                      </Pressable>
+                      </Pressable>}
                     </View>
                   )}
-                  {result?.summary && (
+                  {cloudOnly && v.id === activeVaultId && cloudStatus && (
+                    <Text style={[styles.vaultPathText, { color: theme.textMuted }]}>{cloudStatus}</Text>
+                  )}
+                  {importState?.id === v.id && v.remoteVaultId && (
+                    <Text style={[styles.vaultPathText, { color: theme.text }]}>{importState.text}</Text>
+                  )}
+                  {result?.summary && v.id === activeVaultId && (
                     <Text style={[styles.vaultPathText, { color: theme.textMuted }]}>
                       {result.summary.pushed} envoyée(s), {result.summary.pulled} reçue(s),{' '}
                       {result.summary.deleted} supprimée(s), {result.summary.conflicts} conflit(s)
@@ -767,7 +857,7 @@ export function AccountSyncSection() {
 
           {vaultActionError && <Text style={{ color: theme.danger }}>⚠️ {vaultActionError}</Text>}
 
-          <View style={styles.vaultButtonsRow}>
+          {!cloudOnly && <View style={styles.vaultButtonsRow}>
             <Pressable
               onPress={() => void runVaultAction(addExistingVault)}
               style={[s.button, { backgroundColor: theme.accent }]}
@@ -780,7 +870,7 @@ export function AccountSyncSection() {
             >
               <Text style={s.buttonText}>Nouveau coffre</Text>
             </Pressable>
-          </View>
+          </View>}
 
           {showCreateForm && (
             <View style={styles.vaultButtonsRow}>

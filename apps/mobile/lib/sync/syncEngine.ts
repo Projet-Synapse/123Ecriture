@@ -242,6 +242,8 @@ export async function restoreFromTrash(
   if (!trashRelPath.startsWith('.trash/')) {
     throw new Error('Ce chemin n’est pas dans la corbeille.');
   }
+  // Android cloud : restore_file (tombstone levée côté serveur, verrou optimiste).
+  if (vault.cloudSync) return vault.cloudSync.restore(trashRelPath);
   const normalize = (p: string) => p.replace(/\\/g, '/');
   const originalBase = trashRelPath.slice('.trash/'.length);
 
@@ -483,6 +485,12 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   void tick();
   const ticker = setInterval(() => void tick(), CYCLE_TICK_MS);
   try {
+    // ANDROID 100 % CLOUD : pas de diff disque ↔ cloud — on rejoue la file
+    // d'opérations du cache (verrou optimiste côté serveur) puis on relit
+    // le catalogue distant. Aucune suppression distante ne naît d'ici.
+    if (bridges.vault.cloudSync) {
+      return await runCloudCycle(bridges.vault.cloudSync, ownerId, remoteVaultId, summary, trigger);
+    }
     await bridges.sync.setVaultLock?.(true);
     return await runLockedCycle(bridges, ownerId, remoteVaultId, summary);
   } finally {
@@ -495,6 +503,41 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
       console.error('[sync] libération du verrou de coffre :', errorMessage(error));
     }
   }
+}
+
+async function runCloudCycle(
+  cloudSync: NonNullable<VaultBridge['cloudSync']>,
+  ownerId: string,
+  remoteVaultId: string,
+  summary: SyncSummary,
+  trigger: string,
+): Promise<SyncSummary> {
+  const result = await withTimeout(cloudSync.flush(), 10 * 60_000, 'synchronisation cloud');
+  summary.pushed = result.pushed;
+  summary.deleted = result.deleted;
+  summary.conflicts = result.conflicts;
+  summary.errors.push(...result.errors);
+  if (result.offline) summary.errors.push(`Hors ligne : ${result.pending} modification(s) en attente, envoyées au retour du réseau.`);
+  try {
+    await appendJournalEntries([
+      makeJournalEntry(result.errors.length ? 'error' : 'info', {
+        detail: `cycle cloud (${trigger}) : ${result.pushed} envoyé(s), ${result.deleted} en corbeille, ${result.restored} restauré(s), ${result.conflicts} conflit(s), ${result.pending} en attente${result.offline ? ' — hors ligne' : ''}`,
+      }),
+    ]);
+  } catch {
+    // journal best-effort
+  }
+  if (!result.offline) {
+    await withTimeout(heartbeatDevice(remoteVaultId, ownerId, summary), 30_000, 'heartbeat de fin').catch(() => undefined);
+    await withTimeout(processDeviceCommands(remoteVaultId, ownerId), 120_000, 'commandes appareil').catch(() => undefined);
+    try {
+      const { publishDeviceInventory } = await import('./deviceInventory');
+      await publishDeviceInventory(remoteVaultId, await cloudSync.inventory());
+    } catch (error) {
+      console.warn('[sync] inventaire du cache :', errorMessage(error));
+    }
+  }
+  return summary;
 }
 
 async function runLockedCycle(
