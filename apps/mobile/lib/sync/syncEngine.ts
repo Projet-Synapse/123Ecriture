@@ -1,5 +1,6 @@
 
 import { diffVault } from './diff';
+import { textChangeStats } from './changeStats';
 import { splitEditHot } from './editQuiet';
 import { errorMessage } from '../errorMessage';
 import { APP_SCHEMA, VAULT_FILES_TABLE } from './supabaseClient';
@@ -12,6 +13,8 @@ import {
   loadSyncBase,
  heartbeatDevice, fetchMyDeviceLock } from './cloud';
 import { requireBridges } from './bridges';
+import { conflictStore } from './conflictStore';
+import { findFoldedCollision, newConflictId, sanitizeName, type PendingConflict } from './conflictQueue';
 
 import { type SyncSummary } from './syncTypes';
 import { isTrashRelPath, selectRemoteRows } from './relPath';
@@ -106,7 +109,7 @@ type SyncState = {
 // Helper qui renvoie le signal quand il existe, sinon undefined (pas
 // d'abandon — le délai d'attente strict reste un chantier pour une
 // polyfill dédiée).
-async function loadSyncState(): Promise<SyncState> {
+export async function loadSyncState(): Promise<SyncState> {
   const { vault } = requireBridges();
   try {
     const raw = await vault.readNote(SYNC_STATE_REL_PATH);
@@ -129,7 +132,7 @@ async function loadSyncState(): Promise<SyncState> {
   }
 }
 
-async function saveSyncState(state: SyncState): Promise<void> {
+export async function saveSyncState(state: SyncState): Promise<void> {
   const { vault } = requireBridges();
   await vault.writeNote(SYNC_STATE_REL_PATH, JSON.stringify(state));
 }
@@ -200,7 +203,7 @@ export const SYNC_JOURNAL_READ_PATH = SYNC_JOURNAL_REL_PATH;
 // suppression, ressuscitant en boucle des fichiers supprimés. Le contenu
 // reste récupérable sur l'appareil qui a tranché le conflit, sans polluer
 // le coffre ni la synchro.
-async function backupLosingSide(relPath: string, content: string): Promise<void> {
+export async function backupLosingSide(relPath: string, content: string): Promise<void> {
   const { vault } = requireBridges();
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
   const backupRelPath = `.123ecriture/conflits/${timestamp}/${relPath}`;
@@ -510,6 +513,11 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
       }),
     );
   }
+  // CONFLITS DE NOM EN ATTENTE (conflictQueue.ts) : leurs chemins sont GELÉS
+  // — ni push, ni pull, ni tombstone — jusqu'à la décision humaine.
+  const conflictFrozen: Set<string> = await conflictStore.frozenPaths().catch(() => new Set<string>());
+  const ignoredRemote: Record<string, string> = await conflictStore.ignoredRemote().catch(() => ({}));
+  const newConflicts: PendingConflict[] = [];
   const localByPath = new Map(localFilesCold.map((note) => [note.relPath, note]));
   const localPaths = new Set(localFilesCold.map((note) => note.relPath));
 
@@ -558,7 +566,7 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   // coffre) et le cycle se termine sans supprimer ; jamais de confirmation
   // par un simple « relancer une fois ». La levée se fait par une action
   // humaine explicite depuis l'écran de revue.
-  const locallyDeleted = computeLocalDeletions(syncState.files, localPaths);
+  const locallyDeleted = computeLocalDeletions(syncState.files, localPaths).filter((p) => !conflictFrozen.has(p));
   if (isMassiveDeletion(locallyDeleted.length, localFiles.length)) {
     const review: PendingReview = {
       suspiciousDeletions: {
@@ -689,8 +697,27 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   //    supprimés localement (absents du disque). Le sync-state sert de
   //    RÉFÉRENCE au diff (3 voies) : une modification d'un fichier dont le
   //    cloud porte encore le hash connu est un push, pas un conflit.
-  const diffLocalFiles = localFiles.filter((note) => !tombstonedPaths.has(note.relPath));
-  const diffRemoteFiles = activeRemoteFiles.filter((file) => !tombstonedPaths.has(file.relPath));
+  // Collisions casse/NFC-NFD : une ligne distante ABSENTE ici mais dont le
+  // nom ne diffère d'un fichier local que par la casse ou l'encodage des
+  // accents n'est jamais tirée (elle écraserait ou doublerait le fichier
+  // sur un système insensible à la casse) : conflit en file.
+  const allLocalPaths = localFiles.map((n) => n.relPath);
+  for (const file of activeRemoteFiles) {
+    if (tombstonedPaths.has(file.relPath) || conflictFrozen.has(file.relPath)) continue;
+    if (ignoredRemote[file.relPath] === file.contentHash) continue;
+    if (localByPath.has(file.relPath) || hotPaths.has(file.relPath)) continue;
+    const hit = findFoldedCollision(file.relPath, allLocalPaths);
+    if (!hit || conflictFrozen.has(hit.existingRelPath)) continue;
+    const local = localFiles.find((n) => n.relPath === hit.existingRelPath);
+    newConflicts.push(makePullConflict(remoteVaultId, file, hit.existingRelPath, hit.reason, local));
+    conflictFrozen.add(file.relPath);
+    conflictFrozen.add(hit.existingRelPath);
+  }
+  const isFrozen = (relPath: string) => conflictFrozen.has(relPath);
+  const diffLocalFiles = localFiles.filter((note) => !tombstonedPaths.has(note.relPath) && !isFrozen(note.relPath));
+  const diffRemoteFiles = activeRemoteFiles.filter(
+    (file) => !tombstonedPaths.has(file.relPath) && !isFrozen(file.relPath) && ignoredRemote[file.relPath] !== file.contentHash,
+  );
   const decisions = diffVault(diffLocalFiles, diffRemoteFiles, syncState.files);
   // Les fichiers VIVANTS passent avant les chemins `.trash/…` : sinon le
   // tri alphabétique place la corbeille du cloud (des centaines de lignes)
@@ -714,6 +741,29 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   const pullCount = decisions.filter((d) => d.kind === 'pull' || d.kind === 'conflict-pull-wins').length;
   if (pushCount > 0) journal.push(makeJournalEntry('upload-start', { detail: `${pushCount} fichier(s)` }));
   if (pullCount > 0) journal.push(makeJournalEntry('download-start', { detail: `${pullCount} fichier(s)` }));
+
+  const queueSamePathConflict = async (relPath: string) => {
+    const remote = remoteByPath.get(relPath);
+    const local = localByPath.get(relPath);
+    if (!remote) return;
+    const conflict = makePullConflict(remoteVaultId, remote, relPath, 'same-path', local);
+    if (conflict.isText) {
+      try {
+        const [localText, remoteText] = await Promise.all([
+          bridges.vault.readNote(relPath),
+          downloadRemoteText(remoteVaultId, relPath, remote.storageObjectPath),
+        ]);
+        const stats = textChangeStats(localText, remoteText);
+        conflict.diffSummary = { addedChars: stats.addedChars, removedChars: stats.removedChars };
+      } catch {
+        conflict.diffSummary = null;
+      }
+    }
+    newConflicts.push(conflict);
+    conflictFrozen.add(relPath);
+    summary.conflicts += 1;
+    journal.push(makeJournalEntry('conflict', { path: relPath, detail: 'modifié des deux côtés — EN ATTENTE DE DÉCISION (aucune copie automatique)' }));
+  };
 
   for (const decision of orderedDecisions) {
     try {
@@ -781,7 +831,20 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
               // réellement absent du disque : le pull est légitime
             }
           }
-          await pullFile(remoteVaultId, decision.relPath, remoteByPath.get(decision.relPath)?.storageObjectPath);
+          try {
+            await pullFile(remoteVaultId, decision.relPath, remoteByPath.get(decision.relPath)?.storageObjectPath);
+          } catch (pullError) {
+            // Nom refusé/modifié par le stockage (vault-fs E_NAME, ex. « : »
+            // sur stockage FAT) : conflit en file avec un nom proposé, jamais
+            // de fichier mal nommé ni de nouvel essai en boucle.
+            const remote = remoteByPath.get(decision.relPath);
+            if (remote && /E_NAME/.test(errorMessage(pullError))) {
+              newConflicts.push(makePullConflict(remoteVaultId, remote, decision.relPath, 'invalid-name', undefined));
+              journal.push(makeJournalEntry('conflict', { path: decision.relPath, detail: 'nom refusé par le stockage — en attente de décision' }));
+              break;
+            }
+            throw pullError;
+          }
           pulledPaths.add(decision.relPath);
           summary.pulled += 1;
           summary.modifications += 1;
@@ -813,20 +876,9 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
             summary.conflicts += 1;
             break;
           }
-          const note = localByPath.get(decision.relPath);
-          if (!note) break;
-          const losingRemoteContent = await downloadRemoteText(
-            remoteVaultId,
-            decision.relPath,
-            remoteByPath.get(decision.relPath)?.storageObjectPath,
-          );
-          await backupLosingSide(decision.relPath, losingRemoteContent);
-          // La version distante perdante sert aussi au journal
-          // « modification » (+/− caractères de la version conservée).
-          await pushFile(remoteVaultId, ownerId, note, journal, losingRemoteContent);
-          summary.pushed += 1;
-          summary.conflicts += 1;
-          journal.push(makeJournalEntry('conflict', { path: decision.relPath, detail: 'version locale conservée, distante archivée' }));
+          // Fusion impossible : plus de gagnant/perdant automatique — le
+          // conflit part dans la file et la feuille demande quoi faire.
+          await queueSamePathConflict(decision.relPath);
           break;
         }
         case 'conflict-pull-wins': {
@@ -842,21 +894,13 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
             summary.conflicts += 1;
             break;
           }
-          const losingLocalContent = await bridges.vault.readNote(decision.relPath);
-          // Jamais l'archivage d'un fichier en cours d'édition :
-          // même garde que le pull simple ci-dessus.
           if (hotPaths.has(decision.relPath)) {
             journal.push(
               makeJournalEntry('info', { path: decision.relPath, detail: 'conflit différé : fichier en cours d’édition sur cet appareil' }),
             );
             break;
           }
-          await backupLosingSide(decision.relPath, losingLocalContent);
-          await pullFile(remoteVaultId, decision.relPath, remoteByPath.get(decision.relPath)?.storageObjectPath);
-          pulledPaths.add(decision.relPath);
-          summary.pulled += 1;
-          summary.conflicts += 1;
-          journal.push(makeJournalEntry('conflict', { path: decision.relPath, detail: 'version distante conservée, locale archivée' }));
+          await queueSamePathConflict(decision.relPath);
           break;
         }
       }
@@ -894,6 +938,19 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   // conflit, en boucle.
   for (const [relPath, mergedHash] of Object.entries(mergedHashes)) {
     nextFiles[relPath] = mergedHash;
+  }
+  // Chemins en conflit : la référence ne bouge PAS tant que l'humain n'a
+  // pas tranché (sinon le cycle suivant prendrait le local pour la
+  // référence et laisserait un pull simple écraser la version locale).
+  for (const relPath of conflictFrozen) {
+    if (relPath in syncState.files) nextFiles[relPath] = syncState.files[relPath];
+    else delete nextFiles[relPath];
+  }
+  if (newConflicts.length > 0) {
+    await conflictStore.enqueue(newConflicts).catch((error) => {
+      console.error('[sync] écriture de la file de conflits :', error);
+      summary.errors.push(`file de conflits : ${errorMessage(error)}`);
+    });
   }
   try {
     await saveSyncState({ files: nextFiles, rootPath: vaultRootPath });
@@ -980,4 +1037,39 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
 
   await bridges.sync.setVaultLock?.(false);
   return summary;
+}
+
+
+// Conflit de pull (même chemin, casse/NFC, nom refusé) prêt pour la file.
+function makePullConflict(
+  remoteVaultId: string,
+  remote: { relPath: string; contentHash: string; sizeBytes: number; updatedAt: string; storageObjectPath?: string },
+  existingRelPath: string,
+  reason: PendingConflict['reason'],
+  local: { relPath: string; contentHash: string; sizeBytes: number; modifiedAt: number } | undefined,
+): PendingConflict {
+  const name = existingRelPath.slice(existingRelPath.lastIndexOf('/') + 1);
+  return {
+    id: newConflictId(),
+    origin: 'pull',
+    reason,
+    existing: {
+      relPath: reason === 'invalid-name' ? existingRelPath.slice(0, existingRelPath.length - name.length) + sanitizeName(name) : existingRelPath,
+      sizeBytes: local?.sizeBytes ?? null,
+      modifiedAt: local ? new Date(local.modifiedAt).toISOString() : null,
+      device: 'cet appareil',
+      contentHash: local?.contentHash,
+    },
+    incoming: {
+      relPath: remote.relPath,
+      sizeBytes: remote.sizeBytes,
+      modifiedAt: remote.updatedAt,
+      device: 'cloud (autre appareil)',
+      contentHash: remote.contentHash,
+      storageObjectPath: remote.storageObjectPath,
+      remoteVaultId,
+    },
+    isText: !isBinaryAttachmentRelPath(remote.relPath),
+    createdAt: new Date().toISOString(),
+  };
 }
