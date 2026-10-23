@@ -1,4 +1,5 @@
 import * as FileSystem from 'expo-file-system/legacy';
+import { Platform } from 'react-native';
 
 import {
   addVault,
@@ -107,8 +108,27 @@ function decodeFolderNameFromUri(uri: string): string {
 
 //////// 2. VaultsBridge natif (registre, identité d'appareil, coffre actif) ////////////
 
+// v0.4.96 — ANDROID 100 % CLOUD : plus de choix de dossier local. Un coffre
+// Android est une entrée de registre « cloud:… » liée à un coffre distant ;
+// les anciennes entrées SAF restent dans le registre (« à importer » si non
+// liées) et leurs dossiers ne sont JAMAIS modifiés ni vidés.
+const CLOUD_ONLY = Platform.OS === 'android';
+export const CLOUD_ONLY_ADD_EXISTING_MESSAGE =
+  'Sur Android, les coffres vivent dans le cloud : connecte un coffre de ton compte (Réglages → Synchronisation). Un ancien dossier du téléphone peut être importé une fois, sans y écrire.';
+
+export function isCloudVaultPath(path: string): boolean {
+  return path.startsWith('cloud:');
+}
+
+async function registerCloudVault(name: string): Promise<VaultRegistryEntry[]> {
+  const id = `cloud-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  return addVault({ id, name, path: `cloud:${id}`, cloudLinked: false, remoteVaultId: null }, true);
+}
+
 export const nativeVaultsAdapter: VaultsBridge = {
   clearVaultContent: async (id: string): Promise<void> => {
+    // Android cloud : JAMAIS de vidage disque (anciens dossiers SAF intacts).
+    if (CLOUD_ONLY) return;
     const registry = await readRegistry();
     const entry = registry.vaults.find((v) => v.id === id);
     if (!entry) return;
@@ -118,7 +138,10 @@ export const nativeVaultsAdapter: VaultsBridge = {
 
   getActive: async () => (await readRegistry()).activeVaultId,
 
-  addExisting: () => requestAndRegisterVault('Nouveau coffre'),
+  addExisting: async () => {
+    if (CLOUD_ONLY) throw new Error(CLOUD_ONLY_ADD_EXISTING_MESSAGE);
+    return requestAndRegisterVault('Nouveau coffre');
+  },
   // Variante exportée pour les ponts qui doivent CRÉER un coffre quand
   // aucun n'existe (chooseFolder du pont vault sans coffre actif).
 
@@ -126,7 +149,7 @@ export const nativeVaultsAdapter: VaultsBridge = {
   // dossier est choisi/créé depuis le sélecteur système lui-même, puis
   // enregistré sous le nom donné (voir requestAndRegisterVault).
   createNew: async (name: string, _title?: string, _vaultName?: string) =>
-    requestAndRegisterVault(name || 'Nouveau coffre'),
+    CLOUD_ONLY ? registerCloudVault(name || 'Nouveau coffre') : requestAndRegisterVault(name || 'Nouveau coffre'),
 
   // Identité d'appareil pour « appareils connectés » : stable par
   // installation (pas de hostname exposé par React Native), nom générique.

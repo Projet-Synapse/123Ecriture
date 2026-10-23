@@ -6,6 +6,7 @@ import { nativeSyncAdapter } from './nativeSyncAdapter';
 import { nativePreferencesAdapter } from './nativePreferencesAdapter';
 import { nativeTaskListsBridge, nativeTasksBridge } from './nativeTasksAdapter';
 import { installNativeAuthBridge } from './nativeAuthBridge';
+import { importLegacyVault } from './cloud/legacyImport';
 
 // ✒️ 123ECRITURE — lib/storage/installNativeBridges.ts — installation des ponts natifs (Android)
 //////////////////////////////////////////////////////////////////////////////
@@ -49,7 +50,9 @@ export function installNativeBridges(): void {
   if (window.vault) return;
 
   window.vault = activeVaultAdapter; // module natif VaultFs si présent (voir vaultBackend.ts)
-  window.vaults = nativeVaultsAdapter;
+  window.vaults = Platform.OS === 'android'
+    ? { ...nativeVaultsAdapter, cloudOnly: true, importLegacy: importLegacyVault }
+    : nativeVaultsAdapter;
   window.sync = nativeSyncAdapter;
 
   //////// 2. Le câblage des ponts window.* ///////////////////////////////////////////////

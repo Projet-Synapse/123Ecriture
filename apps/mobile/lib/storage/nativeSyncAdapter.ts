@@ -4,6 +4,7 @@ import { getActiveVaultRootUri } from './nativeVaultsAdapter';
 import { SYNC_ATTACHMENT_EXTENSIONS, SYNCED_META_FILES, takeDirtyPathsForRoot } from './nativeVaultAdapter';
 import {
   activeVaultAdapter as nativeVaultAdapter,
+  cloudSyncHandle,
   ensureActiveVaultIndexed as ensureVaultIndexed,
   getActiveVaultIndexEntry as getVaultIndexEntry,
   getActiveVaultIndexKeys as getVaultIndexKeys,
@@ -129,6 +130,8 @@ function base64ToBytes(base64: string): Uint8Array {
 
 export const nativeSyncAdapter = {
   hashVaultTree: async (): Promise<HashedNote[]> => {
+    // Android cloud : l'« arbre local » est le CACHE privé (inventaire).
+    if (cloudSyncHandle) return cloudSyncHandle.inventory();
     const rootUri = await getActiveVaultRootUri();
     if (!rootUri) return []; // pas de coffre actif : rien à hacher
     await ensureVaultIndexed();

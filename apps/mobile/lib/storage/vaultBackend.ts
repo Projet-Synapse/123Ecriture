@@ -1,46 +1,42 @@
 import { Platform } from "react-native";
 
-import { VaultFs } from "../../modules/vault-fs/src";
+import { createDefaultCloudVault } from "./cloud/cloudVaultAdapter";
+import type { CloudSyncHandle } from "./cloud/cloudVaultCore";
 import {
   ensureVaultIndexed as legacyEnsureIndexed,
   getVaultIndexEntry as legacyGetEntry,
   getVaultIndexKeys as legacyGetKeys,
   nativeVaultAdapter,
 } from "./nativeVaultAdapter";
-import { createDefaultVaultFsAdapter } from "./nativeVaultFsAdapter";
 
-// ✒️ 123ECRITURE — lib/storage/vaultBackend.ts — choix du point d'accès fichiers Android
-// Module natif VaultFs (modules/vault-fs, embarqué dans l'APK) par DÉFAUT sur
-// Android dès qu'il est présent ; repli sur l'ancien pont SAF expo-file-system
-// sinon (APK plus ancien) ou si EXPO_PUBLIC_VAULT_FS=0 (interrupteur de secours).
+// ✒️ 123ECRITURE — lib/storage/vaultBackend.ts — choix du point d'accès fichiers
+// v0.4.96 — ANDROID = 100 % CLOUD. Le coffre actif est lu/écrit dans
+// Supabase (vault_files + Storage), avec un cache privé de l'app
+// (cloud/cloudVaultAdapter.ts). Plus aucun accès SAF / content:// /
+// module vault-fs pour les données. Les anciens dossiers SAF du
+// téléphone ne sont JAMAIS touchés (l'import unique, cloud/legacyImport.ts,
+// les lit sans y écrire).
+//
+// Hors Android (web de dev Expo), on garde l'ancien pont (inchangé).
 
-export function shouldUseVaultFs(
-  os: string = Platform.OS,
-  moduleAvailable: boolean = VaultFs !== null && VaultFs !== undefined,
-  flag: string | undefined = process.env.EXPO_PUBLIC_VAULT_FS,
-): boolean {
-  return (
-    os === "android" && moduleAvailable && flag !== "0" && flag !== "false"
-  );
+export function isAndroidCloudOnly(os: string = Platform.OS): boolean {
+  return os === "android";
 }
 
-const native =
-  shouldUseVaultFs() && VaultFs ? createDefaultVaultFsAdapter(VaultFs) : null;
+const cloud = isAndroidCloudOnly() ? createDefaultCloudVault() : null;
 
-export const vaultBackendName: "vault-fs" | "saf-legacy" = native
-  ? "vault-fs"
-  : "saf-legacy";
-export const activeVaultAdapter: VaultBridge = native
-  ? native.adapter
+export const vaultBackendName: "cloud" | "saf-legacy" = cloud ? "cloud" : "saf-legacy";
+
+export const activeVaultAdapter: VaultBridge = cloud
+  ? { ...cloud.adapter, cloudSync: cloud.cloudSync }
   : nativeVaultAdapter;
-export const ensureActiveVaultIndexed: () => Promise<void> = native
-  ? native.ensureIndexed
+
+export const cloudSyncHandle: CloudSyncHandle | null = cloud ? cloud.cloudSync : null;
+
+export const ensureActiveVaultIndexed: () => Promise<void> = cloud
+  ? async () => undefined
   : legacyEnsureIndexed;
-export const getActiveVaultIndexKeys: () => string[] = native
-  ? native.getIndexKeys
-  : legacyGetKeys;
+export const getActiveVaultIndexKeys: () => string[] = cloud ? () => [] : legacyGetKeys;
 export const getActiveVaultIndexEntry: (
   relPath: string,
-) => { isDirectory: boolean } | undefined = native
-  ? native.getIndexEntry
-  : legacyGetEntry;
+) => { isDirectory: boolean } | undefined = cloud ? () => undefined : legacyGetEntry;

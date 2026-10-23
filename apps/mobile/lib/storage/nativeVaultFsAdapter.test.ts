@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { VaultFsNativeModule } from "../../modules/vault-fs/src";
 import { createVaultFsAdapter, normalizeRelPath } from "./nativeVaultFsAdapter";
-import { shouldUseVaultFs } from "./vaultBackend";
 
 vi.mock("react-native", () => ({
   Alert: { alert: vi.fn() },
@@ -179,17 +178,6 @@ describe("normalizeRelPath", () => {
       "PROGRAMMATION/Kotlin/note.md",
     );
     expect(normalizeRelPath("/a/./b/")).toBe("a/b");
-  });
-});
-
-describe("shouldUseVaultFs", () => {
-  it("actif par défaut sur Android si le module est présent", () => {
-    expect(shouldUseVaultFs("android", true, undefined)).toBe(true);
-  });
-  it("repli sur l’ancien pont sans module, hors Android, ou flag coupé", () => {
-    expect(shouldUseVaultFs("android", false, undefined)).toBe(false);
-    expect(shouldUseVaultFs("ios", true, undefined)).toBe(false);
-    expect(shouldUseVaultFs("android", true, "0")).toBe(false);
   });
 });
 
