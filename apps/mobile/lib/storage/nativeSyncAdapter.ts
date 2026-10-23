@@ -1,15 +1,13 @@
 import * as FileSystem from 'expo-file-system/legacy';
 
 import { getActiveVaultRootUri } from './nativeVaultsAdapter';
+import { SYNC_ATTACHMENT_EXTENSIONS, SYNCED_META_FILES, takeDirtyPathsForRoot } from './nativeVaultAdapter';
 import {
-  ensureVaultIndexed,
-  getVaultIndexEntry,
-  getVaultIndexKeys,
-  nativeVaultAdapter,
-  SYNC_ATTACHMENT_EXTENSIONS,
-  SYNCED_META_FILES,
-  takeDirtyPathsForRoot,
-} from './nativeVaultAdapter';
+  activeVaultAdapter as nativeVaultAdapter,
+  ensureActiveVaultIndexed as ensureVaultIndexed,
+  getActiveVaultIndexEntry as getVaultIndexEntry,
+  getActiveVaultIndexKeys as getVaultIndexKeys,
+} from './vaultBackend';
 import { sha256Hex, utf8Bytes } from '../sync/nativeSha256';
 
 // ✒️ 123ECRITURE — lib/storage/nativeSyncAdapter.ts — hachage de sync natif (Android)
@@ -164,9 +162,10 @@ export const nativeSyncAdapter = {
           // Binaire (image/PDF/audio…) : hachage sur les OCTETS décodés du
           // base64 — le fichier lu « en texte » donnerait un hash différent
           // du hachage desktop (octets bruts) et des faux conflits.
-          const base64 = await FileSystem.readAsStringAsync(entry.uri, {
-            encoding: FileSystem.EncodingType.Base64,
-          });
+          // Via le pont actif (module natif VaultFs ou ancien SAF) — jamais
+          // une URI lue directement ici.
+          if (!nativeVaultAdapter.readNoteBinary) throw new Error('lecture binaire indisponible');
+          const base64 = await nativeVaultAdapter.readNoteBinary(relPath);
           bytes = base64ToBytes(base64);
         } else {
           const content = await nativeVaultAdapter.readNote(relPath);

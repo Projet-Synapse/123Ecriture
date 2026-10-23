@@ -27,7 +27,7 @@
 
 //////// 1. Lectures tolérantes, ids et migration paresseuse des listes ///////////////
 
-import { nativeVaultAdapter } from './nativeVaultAdapter';
+import { activeVaultAdapter as nativeVaultAdapter } from './vaultBackend';
 
 const TASKS_PATH = '.123ecriture/tasks.json';
 const LISTS_PATH = '.123ecriture/tasklists.json';

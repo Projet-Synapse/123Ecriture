@@ -93,7 +93,7 @@ async function loadDirtyQueue(): Promise<DirtyItem[]> {
   return dirtyQueue;
 }
 
-function markVaultFileDirty(relPath: string): void {
+export function markVaultFileDirty(relPath: string): void {
   // Les métadonnées .123ecriture/** restent hors hachage SAUF la liste
   // synchronisée (tasks/tasklists/preferences/appearance, cf.
   // nativeSyncAdapter.SYNCED_META_FILES) — leur modification doit bien
@@ -307,7 +307,7 @@ async function writeSafFileText(uri: string, content: string): Promise<string> {
 
 //////// 3. Parcours de l'arborescence + index persisté par coffre /////////////////
 
-function extensionKind(name: string): VaultEntryKind | null {
+export function extensionKind(name: string): VaultEntryKind | null {
   const lower = name.toLowerCase();
   if (lower.endsWith('.mdx') || lower.endsWith('.md')) return 'markdown';
   if (lower.endsWith('.canvas')) return 'canvas';
@@ -320,7 +320,7 @@ function extensionKind(name: string): VaultEntryKind | null {
 }
 
 // Extensions de CONTENU reconnues (même liste que createNote plus bas).
-const KNOWN_CONTENT_EXTS = [
+export const KNOWN_CONTENT_EXTS = [
   '.mdx',
   '.md',
   '.canvas',
@@ -338,7 +338,7 @@ const KNOWN_CONTENT_EXTS = [
 // nom AVEC extension casse tout : titres affichés « Note.md » et les
 // `[[Note]]` ne matchent plus (ouvrir un lien recrée une note, le graphe
 // perd ses liens).
-function baseNameOf(name: string): string {
+export function baseNameOf(name: string): string {
   const lower = name.toLowerCase();
   const ext = KNOWN_CONTENT_EXTS.find((known) => lower.endsWith(known));
   return ext ? name.slice(0, -ext.length) : name;
@@ -530,7 +530,7 @@ async function loadPersistedIndex(rootUri: string): Promise<boolean> {
 // Reconstruit l'arbre VISIBLE depuis l'index (pur JS, instantane) — meme
 // forme que walkSafChildren : dossiers d'abord, tri alphabetique fr,
 // .123ecriture et .trash indexes mais jamais affiches.
-function buildTreeFromIndex(): VaultTreeNode[] {
+export function buildTreeFromIndex(index: Map<string, { isDirectory: boolean }> = pathIndex): VaultTreeNode[] {
   type Builder = { folders: Map<string, Builder>; notes: VaultTreeNode[] };
   const root: Builder = { folders: new Map(), notes: [] };
   // Puits pour les chemins cachés (.123ecriture/**, .trash/**) : indexés
@@ -574,12 +574,12 @@ function buildTreeFromIndex(): VaultTreeNode[] {
   // mais JAMAIS affichés dans l'arbre (ils y apparaissent comme des
   // dossiers fantômes). Leur purge = retirer le coffre local sur l'appareil.
   const contaminé = (relPath: string): boolean => relPath.includes('\\');
-  for (const [relPath, entry] of pathIndex) {
+  for (const [relPath, entry] of index) {
     if (!entry.isDirectory || contaminé(relPath)) continue;
     const slash = relPath.lastIndexOf('/');
     builderFor(slash >= 0 ? relPath.slice(0, slash) : '', isHiddenRoot(relPath));
   }
-  for (const [relPath, entry] of pathIndex) {
+  for (const [relPath, entry] of index) {
     if (entry.isDirectory) continue;
     const slash = relPath.lastIndexOf('/');
     const parentRelPath = slash >= 0 ? relPath.slice(0, slash) : '';
@@ -609,7 +609,7 @@ function buildTreeFromIndex(): VaultTreeNode[] {
 
 //////// 4. Types de fichiers, noms et MIME SAF //////////////////////////////////////
 
-const EXTENSION_FOR_KIND: Record<VaultEntryKind, string> = {
+export const EXTENSION_FOR_KIND: Record<VaultEntryKind, string> = {
   markdown: '.mdx',
   canvas: '.canvas',
   chart: '.chart',
@@ -637,9 +637,9 @@ const MIME_FOR_KIND: Record<VaultEntryKind, string> = {
 // convention de duplication assumée qu'entre ce fichier-là et
 // apps/mobile/lib/markdownPlugins.ts (voir leurs commentaires respectifs) :
 // aucun `packages/` commun aujourd'hui pour la porter une seule fois.
-const TAG_PATTERN = /(^|[\s])#([\p{L}\p{N}_-]+)/gu;
+export const TAG_PATTERN = /(^|[\s])#([\p{L}\p{N}_-]+)/gu;
 
-function defaultContentForKind(kind: VaultEntryKind, title: string): string {
+export function defaultContentForKind(kind: VaultEntryKind, title: string): string {
   if (kind === 'markdown') return `---\ntitle: ${title}\ncreated: ${new Date().toISOString()}\n---\n\n`;
   if (kind === 'canvas') return JSON.stringify({ nodes: [], edges: [] }, null, 2);
   if (kind === 'excalidraw') return JSON.stringify({ type: 'excalidraw', elements: [], appState: {} }, null, 2);
@@ -647,7 +647,7 @@ function defaultContentForKind(kind: VaultEntryKind, title: string): string {
   return JSON.stringify({ columns: [], rows: [], chart: null }, null, 2);
 }
 
-function findAvailableName(baseName: string, siblingNames: Set<string>): string {
+export function findAvailableName(baseName: string, siblingNames: Set<string>): string {
   if (!siblingNames.has(baseName)) return baseName;
   const dotIndex = baseName.lastIndexOf('.');
   const stem = dotIndex === -1 ? baseName : baseName.slice(0, dotIndex);
@@ -756,7 +756,7 @@ async function patchVaultState(patch: NativeVaultState): Promise<void> {
 
 // Anciens fichiers GLOBAUX du documentDirectory (avant la refonte par
 // coffre) —lus en MIGRATION seulement, jamais réécrits.
-async function readLegacyStringFile(name: string): Promise<string | null> {
+export async function readLegacyStringFile(name: string): Promise<string | null> {
   try {
     const path = `${FileSystem.documentDirectory}${name}`;
     const info = await FileSystem.getInfoAsync(path);
@@ -768,7 +768,7 @@ async function readLegacyStringFile(name: string): Promise<string | null> {
   }
 }
 
-async function readLegacyJsonArrayFile(name: string): Promise<string[]> {
+export async function readLegacyJsonArrayFile(name: string): Promise<string[]> {
   try {
     const path = `${FileSystem.documentDirectory}${name}`;
     const info = await FileSystem.getInfoAsync(path);
