@@ -1,6 +1,6 @@
 import { Platform } from "react-native";
 
-import { createDefaultCloudVault } from "./cloud/cloudVaultAdapter";
+import { VaultFs } from "../../modules/vault-fs/src";
 import type { CloudSyncHandle } from "./cloud/cloudVaultCore";
 import {
   ensureVaultIndexed as legacyEnsureIndexed,
@@ -8,35 +8,42 @@ import {
   getVaultIndexKeys as legacyGetKeys,
   nativeVaultAdapter,
 } from "./nativeVaultAdapter";
+import { createDefaultVaultFsAdapter } from "./nativeVaultFsAdapter";
 
-// ✒️ 123ECRITURE — lib/storage/vaultBackend.ts — choix du point d'accès fichiers
-// v0.4.96 — ANDROID = 100 % CLOUD. Le coffre actif est lu/écrit dans
-// Supabase (vault_files + Storage), avec un cache privé de l'app
-// (cloud/cloudVaultAdapter.ts). Plus aucun accès SAF / content:// /
-// module vault-fs pour les données. Les anciens dossiers SAF du
-// téléphone ne sont JAMAIS touchés (l'import unique, cloud/legacyImport.ts,
-// les lit sans y écrire).
-//
-// Hors Android (web de dev Expo), on garde l'ancien pont (inchangé).
+// ✒️ 123ECRITURE — lib/storage/vaultBackend.ts — choix du point d'accès fichiers Android
+// v0.4.96-test.3 — RETOUR AU COFFRE LOCAL (local-first, comme le PC).
+// Le coffre Android est un dossier du téléphone lu/écrit par le module natif
+// VaultFs (modules/vault-fs, #197 : DocumentsContract + permission d'arbre
+// PERSISTANTE). Le cloud n'est qu'une copie synchronisée par le moteur
+// trois états. Si la permission est perdue : index en cache (lecture seule),
+// demande de re-sélection, et AUCUNE suppression (VaultPermissionLostError).
+// Repli sur l'ancien pont SAF expo-file-system si le module est absent ou si
+// EXPO_PUBLIC_VAULT_FS=0.
 
-export function isAndroidCloudOnly(os: string = Platform.OS): boolean {
-  return os === "android";
+export function shouldUseVaultFs(
+  os: string = Platform.OS,
+  moduleAvailable: boolean = VaultFs !== null && VaultFs !== undefined,
+  flag: string | undefined = process.env.EXPO_PUBLIC_VAULT_FS,
+): boolean {
+  return os === "android" && moduleAvailable && flag !== "0" && flag !== "false";
 }
 
-const cloud = isAndroidCloudOnly() ? createDefaultCloudVault() : null;
+// Le mode « Android 100 % cloud » (#201) est abandonné.
+export function isAndroidCloudOnly(_os: string = Platform.OS): boolean {
+  return false;
+}
 
-export const vaultBackendName: "cloud" | "saf-legacy" = cloud ? "cloud" : "saf-legacy";
+const native = shouldUseVaultFs() && VaultFs ? createDefaultVaultFsAdapter(VaultFs) : null;
 
-export const activeVaultAdapter: VaultBridge = cloud
-  ? { ...cloud.adapter, cloudSync: cloud.cloudSync }
-  : nativeVaultAdapter;
-
-export const cloudSyncHandle: CloudSyncHandle | null = cloud ? cloud.cloudSync : null;
-
-export const ensureActiveVaultIndexed: () => Promise<void> = cloud
-  ? async () => undefined
-  : legacyEnsureIndexed;
-export const getActiveVaultIndexKeys: () => string[] = cloud ? () => [] : legacyGetKeys;
-export const getActiveVaultIndexEntry: (
-  relPath: string,
-) => { isDirectory: boolean } | undefined = cloud ? () => undefined : legacyGetEntry;
+export const vaultBackendName: "vault-fs" | "saf-legacy" = native ? "vault-fs" : "saf-legacy";
+export const activeVaultAdapter: VaultBridge = native ? native.adapter : nativeVaultAdapter;
+// Conservé pour compatibilité (import cloud) : toujours null désormais.
+export const cloudSyncHandle: CloudSyncHandle | null = null;
+export const ensureActiveVaultIndexed: () => Promise<void> = native ? native.ensureIndexed : legacyEnsureIndexed;
+export const getActiveVaultIndexKeys: () => string[] = native ? native.getIndexKeys : legacyGetKeys;
+export const getActiveVaultIndexEntry: (relPath: string) => { isDirectory: boolean } | undefined = native
+  ? native.getIndexEntry
+  : legacyGetEntry;
+// Avant un cycle de synchro : lève une erreur si l'accès au dossier est perdu.
+export const assertActiveVaultAccess: () => Promise<void> = native ? native.assertAccess : async () => undefined;
+export const isActiveVaultPermissionLost: () => boolean = native ? native.isPermissionLost : () => false;

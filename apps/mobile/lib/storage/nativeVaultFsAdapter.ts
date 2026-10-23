@@ -54,7 +54,21 @@ export type VaultFsAdapterDeps = {
   getRootUri: () => Promise<string | null>;
   markDirty: (relPath: string) => void;
   confirm: (title: string, message: string) => Promise<boolean>;
+  // Cache d'index PERSISTÉ (hors du coffre) : l'UI reste lisible même si
+  // l'accès au dossier est perdu (permission SAF révoquée, carte retirée…).
+  loadIndexCache?: (rootUri: string) => Promise<[string, VaultFsIndexEntry][] | null>;
+  saveIndexCache?: (rootUri: string, entries: [string, VaultFsIndexEntry][]) => Promise<void>;
+  onPermissionLost?: (rootUri: string) => void;
 };
+
+// Accès au dossier du coffre PERDU : jamais interprété comme « coffre vide »
+// (aucune suppression, aucune tombstone) — l'utilisateur doit re-sélectionner.
+export class VaultPermissionLostError extends Error {
+  constructor() {
+    super("Accès au dossier du coffre perdu : re-sélectionne le dossier (Réglages → Coffres). Rien n'a été supprimé.");
+    this.name = "VaultPermissionLostError";
+  }
+}
 
 // Fichiers temporaires de writeFileAtomic (VaultFsCore.kt) : jamais indexés.
 const TEMP_PREFIX = ".vfs-";
@@ -103,6 +117,7 @@ export function createVaultFsAdapter(deps: VaultFsAdapterDeps) {
   let indexedRoot: string | null = null;
   let lastErrors: { relPath: string; message: string }[] = [];
   let cachedTree: VaultTreeNode[] | null = null;
+  let permissionLost = false;
 
   async function root(): Promise<string> {
     const uri = await deps.getRootUri();
@@ -117,6 +132,19 @@ export function createVaultFsAdapter(deps: VaultFsAdapterDeps) {
 
   async function refresh(): Promise<void> {
     const treeUri = await root();
+    let allowed = true;
+    try {
+      allowed = await fs.hasPermission(treeUri);
+    } catch {
+      allowed = false;
+    }
+    if (!allowed) {
+      // On GARDE l'index connu (cache) : lecture seule, rien ne paraît supprimé.
+      if (!permissionLost) deps.onPermissionLost?.(treeUri);
+      permissionLost = true;
+      throw new VaultPermissionLostError();
+    }
+    permissionLost = false;
     const { entries, errors } = await fs.listTree(treeUri);
     const next = new Map<string, VaultFsIndexEntry>();
     for (const e of entries as VaultFsTreeEntry[]) {
@@ -140,6 +168,7 @@ export function createVaultFsAdapter(deps: VaultFsAdapterDeps) {
     index = next;
     lastErrors = errors;
     cachedTree = null;
+    await deps.saveIndexCache?.(treeUri, [...index.entries()]).catch(() => undefined);
   }
 
   function invalidate(): void {
@@ -546,9 +575,34 @@ export function createVaultFsAdapter(deps: VaultFsAdapterDeps) {
   return {
     adapter,
     ensureIndexed: async () => {
-      await root();
-      if (index.size === 0) await refresh();
+      const uri = await root();
+      if (index.size > 0) return;
+      const cached = await deps.loadIndexCache?.(uri).catch(() => null);
+      if (cached && cached.length > 0) index = new Map(cached);
+      try {
+        await refresh();
+      } catch (error) {
+        // Permission perdue mais cache présent : l'UI reste lisible.
+        if (!(error instanceof VaultPermissionLostError) || index.size === 0) throw error;
+      }
     },
+    // Vérifie l'accès AVANT un cycle de synchro : lève VaultPermissionLostError.
+    assertAccess: async () => {
+      const uri = await root();
+      let ok = false;
+      try {
+        ok = await fs.hasPermission(uri);
+      } catch {
+        ok = false;
+      }
+      if (!ok) {
+        if (!permissionLost) deps.onPermissionLost?.(uri);
+        permissionLost = true;
+        throw new VaultPermissionLostError();
+      }
+      permissionLost = false;
+    },
+    isPermissionLost: () => permissionLost,
     getIndexKeys: () => [...index.keys()],
     getIndexEntry: (relPath: string) => index.get(relPath),
     // Dossiers illisibles au dernier parcours : leurs fichiers sont « inconnus ».
@@ -574,11 +628,31 @@ export function alertConfirm(title: string, message: string): Promise<boolean> {
   });
 }
 
+function indexCachePath(rootUri: string): string {
+  let h = 0;
+  for (let i = 0; i < rootUri.length; i++) h = (h * 31 + rootUri.charCodeAt(i)) | 0;
+  return `${FileSystem.documentDirectory}vaultfs-index-${(h >>> 0).toString(36)}.json`;
+}
+
 export function createDefaultVaultFsAdapter(fs: VaultFsNativeModule) {
   return createVaultFsAdapter({
     fs,
     getRootUri: getActiveVaultRootUri,
     markDirty: markVaultFileDirty,
     confirm: alertConfirm,
+    loadIndexCache: async (rootUri) => {
+      const raw = await FileSystem.readAsStringAsync(indexCachePath(rootUri));
+      const parsed = JSON.parse(raw) as { rootUri: string; entries: [string, VaultFsIndexEntry][] };
+      return parsed.rootUri === rootUri ? parsed.entries : null;
+    },
+    saveIndexCache: (rootUri, entries) =>
+      FileSystem.writeAsStringAsync(indexCachePath(rootUri), JSON.stringify({ rootUri, entries })),
+    onPermissionLost: () => {
+      Alert.alert(
+        "Accès au coffre perdu",
+        "Android a retiré l'accès au dossier du coffre. Tes notes restent lisibles depuis le cache et RIEN n'a été supprimé. Re-sélectionne le dossier pour reprendre (Réglages → Coffres → Ouvrir un coffre existant).",
+        [{ text: "OK" }],
+      );
+    },
   });
 }

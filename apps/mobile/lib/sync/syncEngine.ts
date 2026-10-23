@@ -23,7 +23,6 @@ import { remoteDeletionAction } from './deletions';
 import {
   loadPendingReview,
   savePendingReview,
-  SYNC_ERROR_BLOCK_THRESHOLD,
   type PendingReview,
 } from './pendingReview';
 import { pickActiveRemoteVault } from './activeVault';
@@ -58,7 +57,7 @@ let lastBackslashReport = -1;
 //
 // Un cycle (runSync) déroule toujours la même séquence : résoudre ENSEMBLE
 // le coffre local actif et sa ligne distante, passer les gardes d'entrée
-// (disjoncteur, verrou à distance, verrou anti-bascule), hacher le coffre
+// (verrou à distance, verrou anti-bascule), hacher le coffre
 // via le pont, paginer les lignes distantes, propager les suppressions,
 // calculer le diff à trois voix (local / distant / état du dernier cycle),
 // appliquer les décisions (push, pull, fusion de conflit), puis réécrire
@@ -88,7 +87,7 @@ let lastBackslashReport = -1;
 // SOMMAIRE :
 //   1. L'état de synchro et le journal du cycle (persistés dans le coffre)
 //   2. La liaison et le catalogue des coffres distants
-//   3. Les appareils : heartbeat, verrou à distance, levée du disjoncteur
+//   3. Les appareils : heartbeat, verrou à distance
 //   4. La lecture du cloud : pagination et téléchargements
 //   5. Les pièces jointes binaires (détection, MIME, base64)
 //   6. Le push, le pull et les bases de fusion
@@ -433,25 +432,8 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
     // Pont sans getCurrentPath (vieux pont) : on laisse passer le cycle.
   }
 
-  // DISJONCTEUR DE SYNCHRO : si le cycle PRÉCÉDENT s'est terminé en rafale
-  // d'erreurs, « Synchroniser » est REFUSÉ d'office — on ne resynchronise
-  // jamais par-dessus un appareil en échec. La levée est manuelle (revue,
-  // ou opérateur via le fichier).
-  const pendingReview = await loadPendingReview(bridges.vault).catch(() => ({}) as PendingReview);
-  if (pendingReview.syncBlocked) {
-    const blocked = pendingReview.syncBlocked;
-    const message = `Synchronisation BLOQUÉE par le disjoncteur : ${blocked.errorCount} erreur(s) au dernier cycle (${blocked.at}). Exemple : « ${blocked.samples[0] ?? '…'} ». Validez ou corrigez depuis Paramètres → Journal de synchronisation avant de resynchroniser.`;
-    summary.errors.push(message);
-    // Log visible dans logcat release (console.error) : message + origine,
-    // pour diagnostic à distance sans devinettes.
-    console.error('[sync] disjoncteur ouvert :', message);
-    try {
-      await appendJournalEntries([makeJournalEntry('error', { detail: message })]);
-    } catch {
-      // Le journal ne doit pas masquer le refus.
-    }
-    return summary;
-  }
+  // (Disjoncteur de synchro SUPPRIMÉ : des erreurs n'interrompent plus
+  // les cycles suivants ; seul le garde-fou de suppressions reste.)
 
   // VERROU À DISTANCE : si CET appareil a été verrouillé (carte
   // « Appareils connectés » d'un autre appareil, ou SQL/API d'urgence),
@@ -1140,35 +1122,6 @@ async function runLockedCycle(
   } catch (error) {
     console.error('[sync] échec de la sauvegarde de l’état de synchro :', error);
     journal.push(makeJournalEntry('error', { detail: `sauvegarde de l'état : ${errorMessage(error)}` }));
-  }
-
-  // DISJONCTEUR : une rafale d'erreurs dans un cycle FERME le
-  // circuit pour les cycles suivants (revue manuelle pour rouvrir — jamais
-  // de resynchronisation par-dessus un appareil en échec). Le message et
-  // son ORIGINE partent dans le journal ET dans les logs (console.error
-  // visible en logcat release).
-  if (summary.errors.length >= SYNC_ERROR_BLOCK_THRESHOLD) {
-    const blocked = {
-      at: new Date().toISOString(),
-      errorCount: summary.errors.length,
-      samples: summary.errors.slice(0, 3),
-    };
-    try {
-      const review = await loadPendingReview(bridges.vault).catch(() => ({}) as PendingReview);
-      await savePendingReview(bridges.vault, { ...review, syncBlocked: blocked });
-    } catch (error) {
-      // Le bloc n'a pas pu être persisté (écritures en échec — c'est
-      // justement le cas typique) : le log et le journal restent la trace.
-      console.error('[sync] disjoncteur non persistable :', error);
-    }
-    console.error(
-      `[sync] DISJONCTEUR OUVERT : ${blocked.errorCount} erreurs ce cycle — synchro bloquée jusqu'à revue. Origines : ${blocked.samples.join(' | ').slice(0, 400)}`,
-    );
-    journal.push(
-      makeJournalEntry('error', {
-        detail: `Disjoncteur ouvert : ${blocked.errorCount} erreur(s) — synchronisation bloquée jusqu'à revue manuelle. Ex. ${blocked.samples[0] ?? ''}`,
-      }),
-    );
   }
 
   // « Appareils connectés » (Paramètres → Coffres distants) : heartbeat

@@ -4,6 +4,7 @@ import { getActiveVaultRootUri } from './nativeVaultsAdapter';
 import { SYNC_ATTACHMENT_EXTENSIONS, SYNCED_META_FILES, takeDirtyPathsForRoot } from './nativeVaultAdapter';
 import {
   activeVaultAdapter as nativeVaultAdapter,
+  assertActiveVaultAccess,
   cloudSyncHandle,
   ensureActiveVaultIndexed as ensureVaultIndexed,
   getActiveVaultIndexEntry as getVaultIndexEntry,
@@ -134,6 +135,8 @@ export const nativeSyncAdapter = {
     if (cloudSyncHandle) return cloudSyncHandle.inventory();
     const rootUri = await getActiveVaultRootUri();
     if (!rootUri) return []; // pas de coffre actif : rien à hacher
+    // Permission perdue : on REFUSE le cycle (jamais « coffre vide » ⇒ aucune suppression).
+    await assertActiveVaultAccess();
     await ensureVaultIndexed();
 
     const baseline = await loadBaseline();

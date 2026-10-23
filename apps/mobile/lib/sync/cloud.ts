@@ -39,7 +39,6 @@ import { SYNC_ATTACHMENT_EXTENSIONS } from '../storage/nativeVaultAdapter';
 import { errorMessage } from '../errorMessage';
 import { installedAppVersion } from '../updaterAndroid';
 import { normalizeRelPath } from './relPath';
-import { loadPendingReview, savePendingReview, type PendingReview } from './pendingReview';
 import { randomUUID as uuid } from '../storage/webUuid';
 import { textChangeStats, textChangeDetail } from './changeStats';
 import { makeJournalEntry, type SyncJournalEntry } from './journal';
@@ -207,7 +206,7 @@ async function fetchFileCountsByVault(): Promise<Map<string, number>> {
   return counts;
 }
 
-//////// 3. Les appareils : heartbeat, verrou à distance, disjoncteur //////
+//////// 3. Les appareils : heartbeat, verrou à distance//////
 
 // Heartbeat « appareil connecté » : upsert d'une ligne vault_devices à chaque
 // synchro réussie du coffre par CET appareil (identité stable du pont —
@@ -666,7 +665,7 @@ export async function fetchDevicesByVault(): Promise<Map<string, RemoteVaultDevi
 
 
 
-//////// 3. Les appareils : heartbeat, verrou à distance, disjoncteur //////
+//////// 3. Les appareils : heartbeat, verrou à distance//////
 
 // Heartbeat « appareil connecté » : upsert d'une ligne vault_devices à chaque
 // synchro réussie du coffre par CET appareil (identité stable du pont —
@@ -797,15 +796,6 @@ export async function setDeviceRemoteLock(
   if (error) throw error;
 }
 
-// Lève le disjoncteur (après revue humaine) — appelé par l'écran de revue
-// (Paramètres → Journal de synchronisation).
-export async function clearSyncBlock(): Promise<void> {
-  const { vault } = requireBridges();
-  const review = await loadPendingReview(vault).catch(() => ({}) as PendingReview);
-  if (!review.syncBlocked) return;
-  delete review.syncBlocked;
-  await savePendingReview(vault, review);
-}
 
 
 // Suppression distante : UNIQUEMENT via la RPC tombstone_file (verrou
