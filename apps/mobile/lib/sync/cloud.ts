@@ -34,7 +34,8 @@ import {
   VAULTS_TABLE,
  VAULT_DEVICES_TABLE } from './supabaseClient';
 import type { LocalHashedNote, RemoteVaultFile } from './diff';
-import { vaultStorageObjectKey, vaultVersionObjectPath } from './storageKeys';
+import { vaultStorageObjectKey, vaultVersionedObjectPath, vaultVersionObjectPath } from './storageKeys';
+import { isMissingRpcError, parseLockResult, VersionConflictError, type LockResult } from './versionLock';
 import { SYNC_ATTACHMENT_EXTENSIONS } from '../storage/nativeVaultAdapter';
 import { errorMessage } from '../errorMessage';
 import { installedAppVersion } from '../updaterAndroid';
@@ -232,7 +233,9 @@ export async function fetchRemoteFiles(remoteVaultId: string): Promise<RemoteVau
     let query = client
       .schema(APP_SCHEMA)
       .from(VAULT_FILES_TABLE)
-      .select('rel_path, content_hash, size_bytes, updated_at, deleted, storage_object_path')
+      // `*` et non une liste : `version` n'existe qu'après la migration
+      // vault_optimistic_lock — une colonne nommée absente casserait le cycle.
+      .select('*')
       .eq('vault_id', remoteVaultId)
       .order('rel_path', { ascending: true })
       .range(from, from + REMOTE_FILES_PAGE_SIZE - 1);
@@ -265,6 +268,7 @@ export async function fetchRemoteFiles(remoteVaultId: string): Promise<RemoteVau
     storageObjectPath:
       (row.storage_object_path as string | null) ??
       ((row.rel_path as string).includes('\\') ? storageObjectPath(remoteVaultId, row.rel_path as string) : undefined),
+    version: typeof row.version === 'number' ? row.version : typeof row.version === 'string' ? Number(row.version) : undefined,
   }));
 }
 
@@ -488,7 +492,10 @@ export async function pushFile(
   // Filet de sécurité : ligne distante AVANT écrasement — son objet est
   // copié en archive (.versions) avant l'upload. Absent = rien à archiver.
   previousRemoteFile?: Pick<RemoteVaultFile, 'contentHash' | 'storageObjectPath'> | null,
-): Promise<void> {
+  // Verrou optimiste : version serveur que l'on croit remplacer. null =
+  // on crée le fichier (refusé s'il existe déjà, même en pierre tombale).
+  expectedVersion: number | null = null,
+): Promise<number | null> {
   const { supabase: client, vault } = requireBridges();
   // Défense en profondeur — quel que soit le pont, le chemin poussé au
   // cloud est TOUJOURS en slashes POSIX (un backslashed crée un doublon
@@ -507,34 +514,62 @@ export async function pushFile(
     uploadBody = await vault.readNote(relPath);
     uploadContentType = 'text/plain;charset=UTF-8';
   }
-  if (previousRemoteFile && previousRemoteFile.contentHash !== note.contentHash) {
+  // Clé UNIQUE par version (`<clé>@<hash>`) : l'objet de la version
+  // courante n'est jamais écrasé ; la RPC bascule la ligne ensuite. Une
+  // ancienne clé « en place » (sans @) est d'abord archivée (#191).
+  if (
+    previousRemoteFile &&
+    previousRemoteFile.contentHash !== note.contentHash &&
+    !(previousRemoteFile.storageObjectPath ?? '').includes('@')
+  ) {
     await archivePreviousObject(client, remoteVaultId, relPath, previousRemoteFile, journal);
   }
+  const objectPath = vaultVersionedObjectPath(remoteVaultId, relPath, note.contentHash);
   const { error: uploadError } = await client.storage
     .from(VAULT_FILES_BUCKET)
-    .upload(storageObjectPath(remoteVaultId, relPath), uploadBody, {
+    .upload(objectPath, uploadBody, {
       upsert: true,
       contentType: uploadContentType,
     });
   if (uploadError) throw uploadError;
 
-  const { error: upsertError } = await client
-    .schema(APP_SCHEMA)
-    .from(VAULT_FILES_TABLE)
-    .upsert(
-      {
-        vault_id: remoteVaultId,
-        owner_id: ownerId,
-        rel_path: relPath,
-        content_hash: note.contentHash,
-        size_bytes: note.sizeBytes,
-        storage_object_path: storageObjectPath(remoteVaultId, relPath),
-        updated_at: new Date(note.modifiedAt).toISOString(),
-        deleted: false,
-      },
-      { onConflict: 'vault_id,rel_path' },
-    );
-  if (upsertError) throw upsertError;
+  let newVersion: number | null = null;
+  const { data: rpcData, error: rpcError } = await client.schema(APP_SCHEMA).rpc('push_file', {
+    p_vault_id: remoteVaultId,
+    p_rel_path: relPath,
+    p_expected_version: expectedVersion,
+    p_content_hash: note.contentHash,
+    p_size_bytes: note.sizeBytes,
+    p_storage_path: objectPath,
+  });
+  if (rpcError && !isMissingRpcError(rpcError)) throw rpcError;
+  if (!rpcError) {
+    const result = parseLockResult(rpcData);
+    // Conflit : RIEN n'est écrit côté ligne ; l'objet `@hash` téléversé
+    // reste orphelin (inoffensif, jamais référencé). L'appelant route vers
+    // fusion / copie de conflit au cycle suivant.
+    if (!result.ok) throw new VersionConflictError(relPath, result);
+    newVersion = result.currentVersion;
+  } else {
+    // Migration pas encore appliquée : ancien chemin (upsert direct).
+    const { error: upsertError } = await client
+      .schema(APP_SCHEMA)
+      .from(VAULT_FILES_TABLE)
+      .upsert(
+        {
+          vault_id: remoteVaultId,
+          owner_id: ownerId,
+          rel_path: relPath,
+          content_hash: note.contentHash,
+          size_bytes: note.sizeBytes,
+          storage_object_path: objectPath,
+          updated_at: new Date(note.modifiedAt).toISOString(),
+          deleted: false,
+        },
+        { onConflict: 'vault_id,rel_path' },
+      );
+    if (upsertError) throw upsertError;
+  }
 
   // JOURNAL « MODIFICATION » : le journal raconte le changement, pas un
   // « envoyé » aveugle. Best-effort : un échec de statistique n'est JAMAIS
@@ -582,6 +617,7 @@ export async function pushFile(
   if (typeof uploadBody === 'string') {
     await saveSyncBase(relPath, uploadBody);
   }
+  return newVersion;
 }
 
 export async function pullFile(remoteVaultId: string, relPath: string, objectPath?: string): Promise<void> {
@@ -799,3 +835,38 @@ export async function clearSyncBlock(): Promise<void> {
   await savePendingReview(vault, review);
 }
 
+
+// Verrou optimiste — pierre tombale conditionnelle. Retourne null quand la
+// RPC n'existe pas encore (l'appelant applique l'ancien UPDATE).
+export async function tombstoneRemoteFile(
+  remoteVaultId: string,
+  relPath: string,
+  expectedVersion: number | null,
+): Promise<LockResult | null> {
+  const { supabase: client } = requireBridges();
+  const { data, error } = await client.schema(APP_SCHEMA).rpc('tombstone_file', {
+    p_vault_id: remoteVaultId,
+    p_rel_path: relPath,
+    p_expected_version: expectedVersion,
+  });
+  if (error) {
+    if (isMissingRpcError(error)) return null;
+    throw error;
+  }
+  return parseLockResult(data);
+}
+
+// Verrou optimiste — restauration explicite d'une pierre tombale (seul
+// chemin qui « ressuscite » : push_file refuse une ligne supprimée).
+export async function restoreRemoteFile(remoteVaultId: string, relPath: string): Promise<LockResult | null> {
+  const { supabase: client } = requireBridges();
+  const { data, error } = await client.schema(APP_SCHEMA).rpc('restore_file', {
+    p_vault_id: remoteVaultId,
+    p_rel_path: relPath,
+  });
+  if (error) {
+    if (isMissingRpcError(error)) return null;
+    throw error;
+  }
+  return parseLockResult(data);
+}

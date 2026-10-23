@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { decodeVaultStorageObjectKey, vaultStorageObjectKey, vaultVersionObjectPath } from './storageKeys';
+import { decodeVaultStorageObjectKey, vaultStorageObjectKey, vaultVersionedObjectPath, vaultVersionObjectPath } from './storageKeys';
 
 // Le point critique : Supabase Storage n'accepte que A-Za-z0-9 et quelques
 // symboles — jamais les émojis/accents des noms de fichiers réels.
@@ -38,5 +38,13 @@ describe('vaultVersionObjectPath', () => {
   });
   it('nettoie un hash exotique', () => {
     expect(vaultVersionObjectPath('v', 'x.md', 'sha256:ab/cd')).toMatch(/@sha256abcd$/);
+  });
+});
+
+describe('vaultVersionedObjectPath', () => {
+  it('produit une clé unique par hash, sous le dossier du coffre', () => {
+    const a = vaultVersionedObjectPath('v1', 'notes/a.md', 'sha:ab/c');
+    expect(a).toBe(`v1/${vaultStorageObjectKey('notes/a.md')}@shaabc`);
+    expect(a).not.toBe(vaultVersionedObjectPath('v1', 'notes/a.md', 'other'));
   });
 });

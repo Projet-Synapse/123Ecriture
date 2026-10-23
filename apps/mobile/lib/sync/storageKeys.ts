@@ -119,3 +119,11 @@ export function vaultVersionObjectPath(remoteVaultId: string, relPath: string, c
   const safeHash = contentHash.replace(/[^A-Za-z0-9_-]/g, '');
   return `${remoteVaultId}/.versions/${vaultStorageObjectKey(relPath)}@${safeHash}`;
 }
+
+// Verrou optimiste : clé d'objet UNIQUE par version de contenu
+// (`<vault>/<clé>@<hash>`). Jamais réécrite pour un autre contenu — la
+// ligne vault_files ne bascule dessus qu'après succès de la RPC push_file.
+export function vaultVersionedObjectPath(remoteVaultId: string, relPath: string, contentHash: string): string {
+  const safeHash = contentHash.replace(/[^A-Za-z0-9_-]/g, '');
+  return `${remoteVaultId}/${vaultStorageObjectKey(relPath)}@${safeHash}`;
+}
