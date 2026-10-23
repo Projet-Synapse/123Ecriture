@@ -35,6 +35,11 @@ export type SyncSettings = {
   // Choix fait à la LIAISON d'un dossier non vide (dialogue de fusion) :
   // priorité des conflits du PREMIER cycle (base vide). Effacé après.
   linkPreference: Record<string, 'merge' | 'local' | 'remote'>;
+  // MISE À JOUR de l'app détectée (version installée ≠ dernière vue) :
+  // AUCUNE synchro ni envoi tant que l'utilisatrice n'a pas explicitement
+  // relié un coffre (dialogue de fusion) ou confirmé la reprise.
+  lastSeenVersion: string | null;
+  pausedAfterUpdate: boolean;
 };
 
 export const DEFAULT_SYNC_SETTINGS: SyncSettings = {
@@ -53,6 +58,8 @@ export const DEFAULT_SYNC_SETTINGS: SyncSettings = {
   emptyFolders: true,
   wifiOnly: false,
   linkPreference: {},
+  lastSeenVersion: null,
+  pausedAfterUpdate: false,
 };
 
 export const SYNC_CATEGORY_LABELS: Record<SyncFileCategory, string> = {
@@ -104,6 +111,8 @@ export function normalizeSyncSettings(raw: unknown): SyncSettings {
     emptyFolders: r.emptyFolders !== false,
     wifiOnly: r.wifiOnly === true,
     linkPreference: { ...(r.linkPreference ?? {}) },
+    lastSeenVersion: typeof r.lastSeenVersion === 'string' ? r.lastSeenVersion : null,
+    pausedAfterUpdate: r.pausedAfterUpdate === true,
   };
 }
 
@@ -140,11 +149,66 @@ export function loadSyncSettings(): SyncSettings {
 export function saveSyncSettings(next: SyncSettings): void {
   memory = normalizeSyncSettings(next);
   try {
-    kv()?.setItem(STORAGE_KEY, JSON.stringify(memory));
+    const store = kv();
+    if (store) store.setItem(STORAGE_KEY, JSON.stringify(memory));
+    else void nativeFile()?.write(JSON.stringify(memory));
   } catch {
     // best-effort
   }
   for (const l of listeners) l(memory);
+}
+
+// Android/iOS (pas de localStorage) : fichier JSON dans le dossier privé de
+// l'app (expo-file-system), relu au démarrage par hydrateSyncSettings().
+function nativeFile(): { read(): Promise<string | null>; write(v: string): Promise<void> } | null {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const FS = require('expo-file-system/legacy') as {
+      documentDirectory: string | null;
+      readAsStringAsync(uri: string): Promise<string>;
+      writeAsStringAsync(uri: string, v: string): Promise<void>;
+    };
+    if (!FS.documentDirectory) return null;
+    const uri = `${FS.documentDirectory}sync-settings.json`;
+    return {
+      read: () => FS.readAsStringAsync(uri).catch(() => null),
+      write: (v) => FS.writeAsStringAsync(uri, v),
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function hydrateSyncSettings(): Promise<SyncSettings> {
+  if (kv()) return loadSyncSettings();
+  const raw = await nativeFile()?.read();
+  if (raw) {
+    try {
+      memory = normalizeSyncSettings(JSON.parse(raw));
+    } catch {
+      // illisible
+    }
+  }
+  return memory;
+}
+
+// Détection de MISE À JOUR : à appeler au démarrage avec la version
+// installée. Première exécution (aucune version vue) = pas une mise à jour.
+export async function checkAppUpdate(installedVersion: string | null): Promise<SyncSettings> {
+  const current = await hydrateSyncSettings();
+  if (!installedVersion || current.lastSeenVersion === installedVersion) return current;
+  const updated = current.lastSeenVersion !== null;
+  const next: SyncSettings = {
+    ...current,
+    lastSeenVersion: installedVersion,
+    pausedAfterUpdate: current.pausedAfterUpdate || updated,
+  };
+  saveSyncSettings(next);
+  return next;
+}
+
+export function resumeSyncAfterUpdate(): void {
+  saveSyncSettings({ ...loadSyncSettings(), pausedAfterUpdate: false });
 }
 
 export function subscribeSyncSettings(listener: (s: SyncSettings) => void): () => void {

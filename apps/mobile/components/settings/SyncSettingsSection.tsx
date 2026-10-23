@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
-import { Text, View } from 'react-native';
+import { Pressable, Text, View } from 'react-native';
 
 import { useVaults } from '../../lib/sync/VaultsContext';
 import {
   SYNC_CATEGORY_LABELS,
   loadSyncSettings,
+  resumeSyncAfterUpdate,
   saveSyncSettings,
   subscribeSyncSettings,
   type SyncFileCategory,
@@ -53,6 +54,17 @@ export function SyncSettingsSection() {
         <Text style={[s.hint, { color: theme.textMuted }]}>
           Vos fichiers vivent sur cet appareil ; le cloud n’en est qu’une copie. Désactiver la synchronisation ne supprime rien.
         </Text>
+        {settings.pausedAfterUpdate && (
+          <View style={{ gap: 8 }}>
+            <Text style={[s.hint, { color: theme.text }]}>
+              ⏸️ L’app vient d’être mise à jour : la synchronisation est en pause, rien n’est envoyé au cloud. Vos fichiers locaux (ou le cache de l’appareil) restent affichés.
+              Sur ordinateur, reliez à nouveau un coffre distant (une fusion vous sera proposée) ; sur le téléphone, confirmez la reprise.
+            </Text>
+            <Pressable style={[s.button, { borderColor: theme.accent }]} onPress={resumeSyncAfterUpdate}>
+              <Text style={[s.buttonText, { color: theme.accent }]}>Reprendre la synchronisation</Text>
+            </Pressable>
+          </View>
+        )}
         <SettingsToggle label="Synchronisation activée" value={settings.enabled} onChange={(v) => update({ enabled: v })} theme={theme} />
         <SettingsToggle label="Uniquement en Wi-Fi (Android)" value={settings.wifiOnly} onChange={(v) => update({ wifiOnly: v })} theme={theme} />
         <SettingsToggle label="Synchroniser les dossiers vides" value={settings.emptyFolders} onChange={(v) => update({ emptyFolders: v })} theme={theme} />

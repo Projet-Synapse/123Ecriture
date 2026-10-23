@@ -1,3 +1,5 @@
+import { installedAppVersion } from '../updaterAndroid';
+import { checkAppUpdate } from './syncSettings';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 
@@ -274,6 +276,16 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
   // attend le cycle éventuellement en cours, gèle tous les déclencheurs de
   // runSync pendant `fn`, puis rend la main — l'appelant enchaîne un
   // runSync() explicite sur l'état final cohérent.
+  // Détection de MISE À JOUR au démarrage (version installée vs dernière
+  // vue) → synchro en pause jusqu'à reconnexion/confirmation explicite.
+  useEffect(() => {
+    void (async () => {
+      const g = globalThis as { updater?: { getVersion?: () => Promise<string> } };
+      const version = installedAppVersion() ?? (await g.updater?.getVersion?.().catch(() => null)) ?? null;
+      await checkAppUpdate(version);
+    })();
+  }, []);
+
   const runSyncExclusive = useCallback(async <T,>(fn: () => Promise<T>): Promise<T> => {
     // LOCAL-FIRST : on n'attend PLUS la fin d'un cycle (jusqu'à 10 min) —
     // au plus EXCLUSIVE_WAIT_MAX_MS. Au-delà, l'opération locale passe :

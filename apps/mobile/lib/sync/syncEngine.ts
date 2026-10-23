@@ -403,7 +403,7 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   // PARAMÈTRES DE SYNCHRONISATION (syncSettings.ts) : sync globale ou de ce
   // coffre désactivée → cycle ignoré SANS erreur (l'app reste 100 % locale).
   const syncSettings = loadSyncSettings();
-  if (!isVaultSyncEnabled(syncSettings, remoteVaultId)) {
+  if (!isVaultSyncEnabled(syncSettings, remoteVaultId) || syncSettings.pausedAfterUpdate) {
     return summary;
   }
   // Wi-Fi uniquement : sur réseau mobile, cycle ignoré (aucune erreur).

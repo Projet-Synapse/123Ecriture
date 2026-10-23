@@ -312,7 +312,7 @@ export function AccountSyncSection() {
       setPendingMerge(null);
       if (!pending) return;
       const current = loadSyncSettings();
-      saveSyncSettings({ ...current, linkPreference: { ...current.linkPreference, [pending.remoteId]: choice } });
+      saveSyncSettings({ ...current, pausedAfterUpdate: false, linkPreference: { ...current.linkPreference, [pending.remoteId]: choice } });
       await runVaultAction(() => setCloudLink(pending.vault.id, { linked: true, remoteVaultId: pending.remoteId }));
     },
     [pendingMerge, runVaultAction, setCloudLink],

@@ -7,3 +7,6 @@
 - Dossiers : marqueur `<dossier>/.123ecriture-dossier` (vide). Aucune migration SQL.
 - Paramètres (`lib/sync/syncSettings.ts`, Paramètres → Synchronisation) : global, par coffre, par type, dossiers vides, Wi-Fi uniquement ; respectés par le moteur.
 - Liaison d'un dossier existant à un coffre distant : dialogue (fusionner / local prioritaire / distant prioritaire / annuler).
+- Dossiers : tous les répertoires du disque (scan, vides compris) sont des entrées 3-états ; renommer = nouveau marqueur + tombstone de l'ancien ; supprimer = tombstone du marqueur.
+- Après MISE À JOUR (version installée ≠ dernière vue, `syncSettings.checkAppUpdate`) : session conservée, synchro en PAUSE (`pausedAfterUpdate`), aucun envoi (moteur desktop et file Android). Reprise : reconnexion d'un coffre distant (dialogue de fusion) ou bouton « Reprendre la synchronisation » (Paramètres → Synchronisation).
+- Seed NON appliqué : `supabase/seeds_lordi_dossiers_vides.sql` (dossiers vides WORLDBUILDING de LORDI).
