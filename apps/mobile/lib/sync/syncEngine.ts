@@ -10,14 +10,10 @@ import {
   pullFile,
   isBinaryAttachmentRelPath,
   loadSyncBase,
-} from './cloud';
-import { heartbeatDevice, fetchMyDeviceLock } from './cloud';
+ heartbeatDevice, fetchMyDeviceLock } from './cloud';
 import { requireBridges } from './bridges';
 
 import { type SyncSummary } from './syncTypes';
-// Le compte de lignes backslashed signalé au cycle précédent : le signal
-// « N lignes ignorées » ne se répète que si le nombre change.
-let lastBackslashReport = -1;
 import { computeLocalDeletions, isMassiveDeletion, remoteDeletionAction } from './deletions';
 import {
   loadPendingReview,
@@ -34,6 +30,9 @@ import {
 } from './journal';
 import { tryThreeWayMerge } from './merge';
 import { processDeviceCommands } from './deviceGateway';
+// Le compte de lignes backslashed signalé au cycle précédent : le signal
+// « N lignes ignorées » ne se répète que si le nombre change.
+let lastBackslashReport = -1;
 // Liste des pièces jointes synchronisées (source unique : nativeVaultAdapter).
 // randomUUID portable — crypto.randomUUID n'existe pas sous Hermes natif
 // (le helper web tombe sur Math.random), voir lib/storage/webUuid.ts.
@@ -690,6 +689,12 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
     (a, b) => Number(a.relPath.startsWith('.trash/')) - Number(b.relPath.startsWith('.trash/')),
   );
   const mergedHashes: Record<string, string> = {};
+  // Chemins RÉELLEMENT écrits sur le disque par un pull de ce cycle. Seuls
+  // eux entrent dans le nouvel état de référence : un pull différé ou en
+  // échec (ex. écriture SAF rejetée) référencé quand même ferait croire au
+  // cycle suivant que le fichier a été « supprimé localement » — et la
+  // revue des suppressions massives reviendrait en boucle.
+  const pulledPaths = new Set<string>();
 
   // Les étapes réseau : le journal raconte le cycle comme Obsidian Sync
   // (« upload en cours », « upload terminé »).
@@ -765,6 +770,7 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
             }
           }
           await pullFile(remoteVaultId, decision.relPath, remoteByPath.get(decision.relPath)?.storageObjectPath);
+          pulledPaths.add(decision.relPath);
           summary.pulled += 1;
           summary.modifications += 1;
           journal.push(makeJournalEntry('modification-reçue', { path: decision.relPath, detail: 'reçue depuis un autre appareil' }));
@@ -835,6 +841,7 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
           }
           await backupLosingSide(decision.relPath, losingLocalContent);
           await pullFile(remoteVaultId, decision.relPath, remoteByPath.get(decision.relPath)?.storageObjectPath);
+          pulledPaths.add(decision.relPath);
           summary.pulled += 1;
           summary.conflicts += 1;
           journal.push(makeJournalEntry('conflict', { path: decision.relPath, detail: 'version distante conservée, locale archivée' }));
@@ -864,6 +871,7 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   }
   for (const decision of orderedDecisions) {
     if (decision.kind !== 'pull' && decision.kind !== 'conflict-pull-wins') continue;
+    if (!pulledPaths.has(decision.relPath)) continue;
     const remote = remoteByPath.get(decision.relPath);
     if (remote) nextFiles[decision.relPath] = remote.contentHash;
   }
