@@ -6,6 +6,7 @@ import { useResizablePanel } from '../lib/ui/useResizablePanel';
 import { useSyncStatus } from '../lib/sync/SyncStatusContext';
 import { usePreferences } from '../preferences/PreferencesContext';
 import { CommandPalette } from './CommandPalette';
+import { ConflictSheet } from './ConflictSheet';
 import { ResizeHandle } from './ResizeHandle';
 import { VaultSwitcher } from './VaultSwitcher';
 
@@ -228,6 +229,9 @@ export function AppShell({
         </View>
       )}
       {!isWide && nav}
+
+      {/* Conflits de nom en attente : feuille non bloquante sur la page courante. */}
+      <ConflictSheet theme={theme} />
 
       {commandPaletteOpen && (
         <CommandPalette

@@ -24,6 +24,13 @@ import type {
   VaultFsNativeModule,
   VaultFsTreeEntry,
 } from "../../modules/vault-fs/src";
+import {
+  findFoldedCollision,
+  findPathCollisions,
+  newConflictId,
+  STAGED_CONFLICTS_DIR,
+  type PendingConflict,
+} from "../sync/conflictQueue";
 
 // ✒️ 123ECRITURE — lib/storage/nativeVaultFsAdapter.ts — le coffre Android via le module natif VaultFs
 //////////////////////////////////////////////////////////////////////////////
@@ -54,6 +61,9 @@ export type VaultFsAdapterDeps = {
   getRootUri: () => Promise<string | null>;
   markDirty: (relPath: string) => void;
   confirm: (title: string, message: string) => Promise<boolean>;
+  // Conflits de nom (indexation casse/NFC, import sur un nom pris) : jamais
+  // tranchés ici, ils partent dans la file persistée (conflictStore).
+  reportConflicts?: (conflicts: PendingConflict[]) => void;
 };
 
 // Fichiers temporaires de writeFileAtomic (VaultFsCore.kt) : jamais indexés.
@@ -140,6 +150,36 @@ export function createVaultFsAdapter(deps: VaultFsAdapterDeps) {
     index = next;
     lastErrors = errors;
     cachedTree = null;
+    reportIndexCollisions();
+  }
+
+  function side(relPath: string, device: string) {
+    const e = index.get(relPath);
+    return {
+      relPath,
+      sizeBytes: e?.size ?? null,
+      modifiedAt: e?.mtime ? new Date(e.mtime).toISOString() : null,
+      device,
+    };
+  }
+
+  function reportIndexCollisions(): void {
+    if (!deps.reportConflicts) return;
+    const files = [...index.entries()]
+      .filter(([p, e]) => !e.isDirectory && !isMetaRelPath(p))
+      .map(([p]) => p);
+    const found = findPathCollisions(files).map(
+      ({ a, b, reason }): PendingConflict => ({
+        id: newConflictId(),
+        origin: "index",
+        reason,
+        existing: side(a, "cet appareil"),
+        incoming: side(b, "cet appareil"),
+        isText: extensionKind(a) !== null,
+        createdAt: new Date().toISOString(),
+      }),
+    );
+    if (found.length > 0) deps.reportConflicts(found);
   }
 
   function invalidate(): void {
@@ -456,15 +496,44 @@ export function createVaultFsAdapter(deps: VaultFsAdapterDeps) {
       } catch {
         // défaut
       }
-      const name = findAvailableName(
-        asset.name,
-        siblings(normalizeRelPath(folder)),
-      );
-      const relPath = join(normalizeRelPath(folder), name);
+      const dir = normalizeRelPath(folder);
+      const wanted = join(dir, asset.name);
       // asset.uri = copie dans le CACHE PRIVÉ de l'app (hors coffre).
       const base64 = await FileSystem.readAsStringAsync(asset.uri, {
         encoding: FileSystem.EncodingType.Base64,
       });
+      if (index.size === 0) await refresh();
+      const clash = index.has(wanted)
+        ? { existingRelPath: wanted, reason: "same-path" as const }
+        : findFoldedCollision(wanted, index.keys());
+      if (clash && deps.reportConflicts) {
+        // Nom déjà pris : la copie est mise de côté (dossier caché, hors
+        // synchro) et la feuille de conflit demande quoi faire.
+        const id = newConflictId();
+        const stagedRelPath = `${STAGED_CONFLICTS_DIR}/${id}-${nameOf(wanted)}`;
+        await write(stagedRelPath, base64, "base64");
+        const now = new Date().toISOString();
+        deps.reportConflicts([
+          {
+            id,
+            origin: "import",
+            reason: clash.reason,
+            existing: side(clash.existingRelPath, "cet appareil"),
+            incoming: {
+              relPath: wanted,
+              sizeBytes: asset.size ?? Math.floor((base64.length * 3) / 4),
+              modifiedAt: now,
+              device: "import (cet appareil)",
+              stagedRelPath,
+            },
+            isText: extensionKind(wanted) !== null,
+            createdAt: now,
+          },
+        ]);
+        return null;
+      }
+      const name = findAvailableName(asset.name, siblings(dir));
+      const relPath = join(dir, name);
       await write(relPath, base64, "base64");
       return { relPath, name };
     },
@@ -580,5 +649,12 @@ export function createDefaultVaultFsAdapter(fs: VaultFsNativeModule) {
     getRootUri: getActiveVaultRootUri,
     markDirty: markVaultFileDirty,
     confirm: alertConfirm,
+    reportConflicts: (conflicts) => {
+      void import("../sync/conflictStore").then(({ conflictStore }) =>
+        conflictStore
+          .enqueue(conflicts)
+          .catch((e) => console.error("[vault-fs] file de conflits :", e)),
+      );
+    },
   });
 }
