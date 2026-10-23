@@ -36,11 +36,11 @@ import { Platform } from 'react-native';
 
 import { APP_SCHEMA, DEVICE_COMMANDS_TABLE, VAULT_FILES_TABLE, supabase } from './supabaseClient';
 import { errorMessage } from '../errorMessage';
+import { clearPendingReviewSyncBlock, loadPendingReview, savePendingReview, type PendingReview } from './pendingReview';
+import type { DiagnosticsReport } from './diagnostics';
 // Le chemin du journal est défini dans syncEngine (repris ici sans
 // import pour éviter un cycle : syncEngine importe cette passerelle).
 const SYNC_JOURNAL_READ_PATH = '.123ecriture/sync-journal.json';
-import { clearPendingReviewSyncBlock, loadPendingReview, savePendingReview, type PendingReview } from './pendingReview';
-import type { DiagnosticsReport } from './diagnostics';
 
 type CommandParams = Record<string, unknown>;
 
@@ -216,7 +216,7 @@ async function executeCommand(
       await clearPendingReviewSyncBlock(vault);
       return 'disjoncteur levé';
     case 'lock-sync': {
-      const review = await loadPendingReview(vault).catch(() => ({}) as PendingReview);
+      const review = await loadPendingReview(vault);
       const next: PendingReview = {
         ...review,
         syncBlocked: {

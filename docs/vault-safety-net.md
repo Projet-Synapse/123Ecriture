@@ -92,3 +92,14 @@ Client (`apps/mobile/lib/sync`) :
 - RPC absente (migration pas encore appliquée, `PGRST202`) : repli automatique sur l'ancien chemin.
 
 Ordre de déploiement : migration #191 → migration verrou → clients.
+
+## Approbation des suppressions distantes
+
+Aucune pierre tombale venue d'un autre appareil ne supprime plus un fichier local automatiquement.
+
+- Le moteur (`syncEngine.ts`, section 2) met chaque fichier tombstoné encore présent localement dans `pending-review.json` → `remoteDeletions` (appareil auteur, date, version).
+- Pendant l'attente : pas de push, pas de suppression locale, référence (hash + version) conservée.
+- Paramètres → Journal de synchronisation → Revue : **Approuver** (corbeille locale) / **Refuser** (`restore_file`), à l'unité ou en masse. Décisions exécutées hors cycle (`runSyncExclusive`).
+- Badge « N suppression(s) à valider » dans l'indicateur de synchro.
+- Migration `20261023120000_vault_remote_deletion_traceability.sql` : colonnes `deleted_by_device`, `deleted_at` (trigger), `tombstone_file(..., p_device_id default null)`.
+- Une file illisible n'est plus traitée comme vide : erreur visible, jamais écrasée.

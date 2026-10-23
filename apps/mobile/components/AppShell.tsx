@@ -275,7 +275,13 @@ function SyncStatusChip({ compact }: { compact?: boolean }) {
     label = 'Erreur de sync';
     color = theme.danger;
     } else if (syncStatus.status === 'success' && syncStatus.lastSyncedAt) {
-      if (syncStatus.lastConflicts > 0) {
+      if ((syncStatus.lastSummary?.pendingRemoteDeletions ?? 0) > 0) {
+        // Badge : suppressions venues d'autres appareils à valider (fichiers
+        // conservés) — Paramètres → Journal de synchronisation.
+        icon = '🗑';
+        label = `${syncStatus.lastSummary?.pendingRemoteDeletions} suppression(s) à valider`;
+        color = theme.danger;
+      } else if (syncStatus.lastConflicts > 0) {
         icon = '⚠';
         label = `${syncStatus.lastConflicts} conflit(s)`;
         color = theme.danger;

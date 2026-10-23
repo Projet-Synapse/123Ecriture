@@ -40,7 +40,7 @@ import { SYNC_ATTACHMENT_EXTENSIONS } from '../storage/nativeVaultAdapter';
 import { errorMessage } from '../errorMessage';
 import { installedAppVersion } from '../updaterAndroid';
 import { normalizeRelPath } from './relPath';
-import { loadPendingReview, savePendingReview, type PendingReview } from './pendingReview';
+import { loadPendingReview, savePendingReview } from './pendingReview';
 import { randomUUID as uuid } from '../storage/webUuid';
 import { textChangeStats, textChangeDetail } from './changeStats';
 import { makeJournalEntry, type SyncJournalEntry } from './journal';
@@ -269,6 +269,8 @@ export async function fetchRemoteFiles(remoteVaultId: string): Promise<RemoteVau
       (row.storage_object_path as string | null) ??
       ((row.rel_path as string).includes('\\') ? storageObjectPath(remoteVaultId, row.rel_path as string) : undefined),
     version: typeof row.version === 'number' ? row.version : typeof row.version === 'string' ? Number(row.version) : undefined,
+    deletedByDevice: (row.deleted_by_device as string | null | undefined) ?? null,
+    deletedAt: (row.deleted_at as string | null | undefined) ?? null,
   }));
 }
 
@@ -829,7 +831,7 @@ export async function setDeviceRemoteLock(
 // (Paramètres → Journal de synchronisation).
 export async function clearSyncBlock(): Promise<void> {
   const { vault } = requireBridges();
-  const review = await loadPendingReview(vault).catch(() => ({}) as PendingReview);
+  const review = await loadPendingReview(vault);
   if (!review.syncBlocked) return;
   delete review.syncBlocked;
   await savePendingReview(vault, review);
@@ -844,10 +846,14 @@ export async function tombstoneRemoteFile(
   expectedVersion: number | null,
 ): Promise<LockResult | null> {
   const { supabase: client } = requireBridges();
+  // Traçabilité : l'appareil auteur est inscrit dans deleted_by_device
+  // (affiché dans la revue des AUTRES appareils).
+  const info = typeof window !== 'undefined' && window.vaults ? await window.vaults.deviceInfo() : null;
   const { data, error } = await client.schema(APP_SCHEMA).rpc('tombstone_file', {
     p_vault_id: remoteVaultId,
     p_rel_path: relPath,
     p_expected_version: expectedVersion,
+    p_device_id: info ? info.name || info.id : null,
   });
   if (error) {
     if (isMissingRpcError(error)) return null;

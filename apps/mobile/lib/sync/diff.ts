@@ -54,6 +54,8 @@ export type RemoteVaultFile = {
   // Version serveur (verrou optimiste, migration vault_optimistic_lock).
   // Absente tant que la migration n'est pas appliquée.
   version?: number;
+  deletedByDevice?: string | null;
+  deletedAt?: string | null;
 };
 
 export type SyncDecisionKind = 'push' | 'pull' | 'noop' | 'conflict-push-wins' | 'conflict-pull-wins';
