@@ -11,6 +11,7 @@ import { readEvents } from './calendar';
 import { getTaskLists, readTasks } from './tasks';
 import * as vaults from './ponts-desktop/vaults';
 import type { SearchOptions, SearchResult, SearchResultKind, TagGroup, VaultEntryKind } from './types';
+import { normalizeRelPath } from '../../mobile/lib/sync/relPath';
 
 // Module "Recherche globale" (voir .claude/References/Sources.md §2,
 // bouton en haut de l'explorateur de fichiers) : parcourt le coffre à la
@@ -52,7 +53,7 @@ async function walkAll(dir: string, vaultRoot: string, out: WalkedEntry[] = []):
     // .git...) — même règle que walkTree/walkMdxFiles.
     if (entry.name.startsWith('.')) continue;
     const fullPath = path.join(dir, entry.name);
-    const relPath = path.relative(vaultRoot, fullPath);
+    const relPath = normalizeRelPath(path.relative(vaultRoot, fullPath));
 
     if (entry.isDirectory()) {
       out.push({ fullPath, relPath, name: entry.name, isFolder: true, kind: 'folder' });

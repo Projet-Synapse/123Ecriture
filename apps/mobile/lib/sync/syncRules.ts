@@ -68,8 +68,8 @@ export function isHashableRelPath(relPath: string): boolean {
   const isAttachment = SYNC_ATTACHMENT_EXTENSIONS.includes(extension);
   const isContent = SYNC_CONTENT_EXTENSIONS.includes(extension);
   if (!isAttachment && !isContent) return false;
-  const isTrash = segments[0] === '.trash';
-  const hasHiddenSegment = segments.some((segment) => segment.startsWith('.'));
-  if (hasHiddenSegment && !isTrash) return false;
+  // `.trash/` n'est PLUS synchronisé : la corbeille reste locale à chaque
+  // appareil (mettre à la corbeille = suppression propagée normalement).
+  if (segments.some((segment) => segment.startsWith('.'))) return false;
   return true;
 }
