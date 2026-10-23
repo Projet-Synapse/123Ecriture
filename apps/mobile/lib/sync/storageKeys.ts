@@ -108,3 +108,14 @@ export function vaultStorageObjectKey(relPath: string): string {
 export function decodeVaultStorageObjectKey(key: string): string {
   return utf8Decode(base64Decode(key.replace(/-/g, '+').replace(/_/g, '/')));
 }
+
+// Filet de sécurité (docs/vault-safety-net.md) : clé d'ARCHIVE d'une
+// version précédente, `<vault>/.versions/<clé>@<hash>`. Le premier segment
+// reste l'id du coffre (les policies Storage s'appliquent telles quelles) ;
+// `.versions` ne peut pas collisionner avec une clé de note (base64url, sans
+// point). DOIT rester identique au calcul SQL du trigger
+// (archive_storage_path dans la migration vault_file_versions).
+export function vaultVersionObjectPath(remoteVaultId: string, relPath: string, contentHash: string): string {
+  const safeHash = contentHash.replace(/[^A-Za-z0-9_-]/g, '');
+  return `${remoteVaultId}/.versions/${vaultStorageObjectKey(relPath)}@${safeHash}`;
+}

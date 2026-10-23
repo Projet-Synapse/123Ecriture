@@ -34,7 +34,7 @@ import {
   VAULTS_TABLE,
  VAULT_DEVICES_TABLE } from './supabaseClient';
 import type { LocalHashedNote, RemoteVaultFile } from './diff';
-import { vaultStorageObjectKey } from './storageKeys';
+import { vaultStorageObjectKey, vaultVersionObjectPath } from './storageKeys';
 import { SYNC_ATTACHMENT_EXTENSIONS } from '../storage/nativeVaultAdapter';
 import { errorMessage } from '../errorMessage';
 import { installedAppVersion } from '../updaterAndroid';
@@ -450,6 +450,32 @@ export async function loadSyncBase(relPath: string): Promise<string | null> {
   }
 }
 
+// FILET DE SÉCURITÉ (docs/vault-safety-net.md) : copie l'objet distant
+// courant vers `<vault>/.versions/<clé>@<ancien hash>` AVANT de l'écraser.
+// JAMAIS bloquant : un échec est journalisé et le push continue (comportement
+// identique à avant). « already exists » = version déjà archivée → OK.
+export async function archivePreviousObject(
+  client: ReturnType<typeof requireBridges>['supabase'],
+  remoteVaultId: string,
+  relPath: string,
+  previous: Pick<RemoteVaultFile, 'contentHash' | 'storageObjectPath'>,
+  journal: SyncJournalEntry[],
+): Promise<boolean> {
+  try {
+    const source = previous.storageObjectPath ?? storageObjectPath(remoteVaultId, relPath);
+    const target = vaultVersionObjectPath(remoteVaultId, relPath, previous.contentHash);
+    const { error } = await client.storage.from(VAULT_FILES_BUCKET).copy(source, target);
+    if (error && !/already exists|duplicate/i.test(error.message ?? '')) throw error;
+    return true;
+  } catch (error) {
+    console.error(`[sync] archivage de version impossible ${relPath} :`, error);
+    journal.push(
+      makeJournalEntry('info', { path: relPath, detail: `version précédente non archivée (push poursuivi) : ${errorMessage(error)}` }),
+    );
+    return false;
+  }
+}
+
 export async function pushFile(
   remoteVaultId: string,
   ownerId: string,
@@ -459,6 +485,9 @@ export async function pushFile(
   // CHANGEMENT (+ajoutés / −supprimés / total) au lieu d'un « envoyé »
   // aveugle. null/undefined = fichier nouveau ou statistique indisponible.
   previousRemoteContent?: string | null,
+  // Filet de sécurité : ligne distante AVANT écrasement — son objet est
+  // copié en archive (.versions) avant l'upload. Absent = rien à archiver.
+  previousRemoteFile?: Pick<RemoteVaultFile, 'contentHash' | 'storageObjectPath'> | null,
 ): Promise<void> {
   const { supabase: client, vault } = requireBridges();
   // Défense en profondeur — quel que soit le pont, le chemin poussé au
@@ -477,6 +506,9 @@ export async function pushFile(
   } else {
     uploadBody = await vault.readNote(relPath);
     uploadContentType = 'text/plain;charset=UTF-8';
+  }
+  if (previousRemoteFile && previousRemoteFile.contentHash !== note.contentHash) {
+    await archivePreviousObject(client, remoteVaultId, relPath, previousRemoteFile, journal);
   }
   const { error: uploadError } = await client.storage
     .from(VAULT_FILES_BUCKET)

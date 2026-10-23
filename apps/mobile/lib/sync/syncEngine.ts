@@ -734,7 +734,7 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
               remoteRow.storageObjectPath,
             ).catch(() => null);
           }
-          await pushFile(remoteVaultId, ownerId, note, journal, previousRemoteContent);
+          await pushFile(remoteVaultId, ownerId, note, journal, previousRemoteContent, remoteRow);
           // Un push sous `.trash/` est le continu d'un déplacement en
           // corbeille — compté À PART, pas dans « envoyé(s) ».
           if (decision.relPath.startsWith('.trash/')) {
@@ -823,7 +823,7 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
           await backupLosingSide(decision.relPath, losingRemoteContent);
           // La version distante perdante sert aussi au journal
           // « modification » (+/− caractères de la version conservée).
-          await pushFile(remoteVaultId, ownerId, note, journal, losingRemoteContent);
+          await pushFile(remoteVaultId, ownerId, note, journal, losingRemoteContent, remoteByPath.get(decision.relPath));
           summary.pushed += 1;
           summary.conflicts += 1;
           journal.push(makeJournalEntry('conflict', { path: decision.relPath, detail: 'version locale conservée, distante archivée' }));
