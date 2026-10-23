@@ -178,6 +178,32 @@ export function registerSyncHandlers(getWindow?: () => BrowserWindow | null): vo
     vaults.setSyncLock(Boolean(active));
     return vaults.isSyncLocked();
   });
+  // Dossiers du coffre (y compris VIDES) : entrées de première classe de la
+  // synchronisation (marqueurs .123ecriture-dossier côté cloud). Dossiers
+  // cachés et corbeille exclus. Liste vide si le coffre est introuvable —
+  // jamais d'exception (une erreur ici ne doit RIEN bloquer).
+  ipcMain.handle('sync:list-folders', async () => {
+    const vaultPath = vaults.getActiveVaultPath();
+    if (!vaultPath || !fsSync.existsSync(vaultPath)) return [];
+    const out: string[] = [];
+    const walk = async (dir: string, rel: string): Promise<void> => {
+      let entries: fsSync.Dirent[];
+      try {
+        entries = await fs.readdir(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const entry of entries) {
+        if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+        const childRel = rel ? `${rel}/${entry.name}` : entry.name;
+        out.push(childRel);
+        await walk(path.join(dir, entry.name), childRel);
+      }
+    };
+    await walk(vaultPath, '');
+    return out;
+  });
+
   ipcMain.handle('sync:hash-vault', async () => {
     const vaultPath = vaults.getActiveVaultPath();
     if (!vaultPath) return [];

@@ -1,3 +1,4 @@
+import { folderToMarker, isFolderMarker } from '../../sync/folderMarker';
 // ✒️ 123ECRITURE — lib/storage/cloud/cloudVaultCore.ts — le coffre Android 100 % cloud
 //////////////////////////////////////////////////////////////////////////////
 //
@@ -276,6 +277,12 @@ export function createCloudVault(deps: CloudVaultDeps) {
     };
     for (const p of effective(s).keys()) {
       if (isTrash(p) || p.startsWith('.123ecriture/')) continue;
+      // Marqueur de dossier (folderMarker.ts) : rend le dossier visible,
+      // même vide, sans jamais apparaître comme fichier.
+      if (isFolderMarker(p)) {
+        addParents(p);
+        continue;
+      }
       addParents(p);
       idx.set(p, { isDirectory: false });
     }
@@ -649,10 +656,12 @@ export function createCloudVault(deps: CloudVaultDeps) {
       const parent = normalizeCloudRelPath(parentRelPath ?? '');
       const finalName = h.findAvailableName(name, siblings(s, parent));
       const relPath = join(parent, finalName);
-      // Le cloud ne connaît que des fichiers : un dossier vide vit dans le
-      // cache de l'appareil jusqu'à ce qu'il contienne une note.
+      // Dossier de PREMIÈRE CLASSE : visible tout de suite (cache), et son
+      // marqueur vide part dans la file → le dossier existe aussi sur les
+      // autres appareils, même vide.
       s.folders.push(relPath);
       await save(s);
+      await write(folderToMarker(relPath), '', 'utf8');
       return { relPath, name: finalName };
     },
 

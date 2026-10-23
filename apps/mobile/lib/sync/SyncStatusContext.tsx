@@ -89,6 +89,10 @@ const AUTO_SYNC_STARTUP_DELAY_MS = 60_000;
 // (génération invalide). Aligné sur le TTL du verrou main (vaults.ts).
 const SYNC_CYCLE_TIMEOUT_MS = 10 * 60 * 1000;
 
+// Attente maximale d'un cycle en cours avant une opération de l'interface
+// (supprimer, renommer, restaurer) : l'interface ne dépend JAMAIS du réseau.
+const EXCLUSIVE_WAIT_MAX_MS = 3_000;
+
 // v0.4.29 : canal broadcast de propagation temps réel + marqueur de session.
 // Volontairement au niveau du MODULE (pas des refs React) : une seule
 // instance de ce contexte existe par app, et le linter React interdit les
@@ -271,8 +275,18 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
   // runSync pendant `fn`, puis rend la main — l'appelant enchaîne un
   // runSync() explicite sur l'état final cohérent.
   const runSyncExclusive = useCallback(async <T,>(fn: () => Promise<T>): Promise<T> => {
-    while (currentCycleRef.current) {
-      await currentCycleRef.current;
+    // LOCAL-FIRST : on n'attend PLUS la fin d'un cycle (jusqu'à 10 min) —
+    // au plus EXCLUSIVE_WAIT_MAX_MS. Au-delà, l'opération locale passe :
+    // le moteur à trois états relit le disque au cycle suivant (une absence
+    // dans la base = suppression, un nouveau chemin = création), donc rien
+    // n'est perdu ni ressuscité.
+    const deadline = Date.now() + EXCLUSIVE_WAIT_MAX_MS;
+    while (currentCycleRef.current && Date.now() < deadline) {
+      const remaining = deadline - Date.now();
+      await Promise.race([
+        currentCycleRef.current.catch(() => undefined),
+        new Promise<void>((resolve) => setTimeout(resolve, remaining)),
+      ]);
     }
     syncPausedRef.current = true;
     try {

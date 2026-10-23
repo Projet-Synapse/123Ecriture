@@ -44,6 +44,7 @@ import { randomUUID as uuid } from '../storage/webUuid';
 import { textChangeStats, textChangeDetail } from './changeStats';
 import { makeJournalEntry, type SyncJournalEntry } from './journal';
 import { requireBridges } from './bridges';
+import { isFolderMarker } from './folderMarker';
 import { sortDevicesByLastSeen, type RemoteVaultDevice } from './devices';
 import type { RemoteVaultSummary , SyncSummary } from './syncTypes';
 
@@ -232,7 +233,7 @@ export async function fetchRemoteFiles(remoteVaultId: string): Promise<RemoteVau
     let query = client
       .schema(APP_SCHEMA)
       .from(VAULT_FILES_TABLE)
-      .select('rel_path, content_hash, size_bytes, updated_at, deleted, storage_object_path')
+      .select('rel_path, content_hash, size_bytes, updated_at, deleted, storage_object_path, version')
       .eq('vault_id', remoteVaultId)
       .order('rel_path', { ascending: true })
       .range(from, from + REMOTE_FILES_PAGE_SIZE - 1);
@@ -260,6 +261,7 @@ export async function fetchRemoteFiles(remoteVaultId: string): Promise<RemoteVau
     sizeBytes: row.size_bytes as number,
     updatedAt: row.updated_at as string,
     deleted: row.deleted as boolean,
+    version: (row.version as number | null | undefined) ?? null,
     // Ligne héritée à backslash sans clé enregistrée : l'objet a été
     // téléversé sous la clé de son chemin BRUT — jamais sous le normalisé.
     storageObjectPath:
@@ -459,6 +461,7 @@ export async function pushFile(
   // CHANGEMENT (+ajoutés / −supprimés / total) au lieu d'un « envoyé »
   // aveugle. null/undefined = fichier nouveau ou statistique indisponible.
   previousRemoteContent?: string | null,
+  options?: { expectedVersion?: number | null; restore?: boolean },
 ): Promise<void> {
   const { supabase: client, vault } = requireBridges();
   // Défense en profondeur — quel que soit le pont, le chemin poussé au
@@ -467,7 +470,11 @@ export async function pushFile(
   const relPath = normalizeRelPath(note.relPath);
   let uploadBody: string | Uint8Array;
   let uploadContentType: string;
-  if (isBinaryAttachmentRelPath(relPath)) {
+  if (isFolderMarker(relPath)) {
+    // Dossier : marqueur vide, jamais lu sur le disque (folderMarker.ts).
+    uploadBody = '';
+    uploadContentType = 'text/plain;charset=UTF-8';
+  } else if (isBinaryAttachmentRelPath(relPath)) {
     if (!vault.readNoteBinary) {
       throw new Error('Les pièces jointes ne sont pas prises en charge par cet appareil.');
     }
@@ -486,23 +493,56 @@ export async function pushFile(
     });
   if (uploadError) throw uploadError;
 
-  const { error: upsertError } = await client
-    .schema(APP_SCHEMA)
-    .from(VAULT_FILES_TABLE)
-    .upsert(
-      {
-        vault_id: remoteVaultId,
-        owner_id: ownerId,
-        rel_path: relPath,
-        content_hash: note.contentHash,
-        size_bytes: note.sizeBytes,
-        storage_object_path: storageObjectPath(remoteVaultId, relPath),
-        updated_at: new Date(note.modifiedAt).toISOString(),
-        deleted: false,
-      },
-      { onConflict: 'vault_id,rel_path' },
-    );
+  // v0.4.97 — LOCAL-FIRST : plus d'UPSERT direct sur vault_files. Le push
+  // passe par la RPC push_file (verrou optimiste : le serveur refuse
+  // d'écraser une version que cet appareil n'a pas vue) ; une ligne
+  // tombstonée est d'abord relevée par restore_file (action explicite).
+  // Version attendue : fournie par le moteur (catalogue du cycle) ; sinon
+  // (actions explicites : restauration, fusion) relue juste avant le push.
+  let expectedVersion: number | null = options?.expectedVersion ?? null;
+  let restore = options?.restore ?? false;
+  if (!options || options.expectedVersion === undefined) {
+    const { data: row, error: rowError } = await client
+      .schema(APP_SCHEMA)
+      .from(VAULT_FILES_TABLE)
+      .select('version, deleted')
+      .eq('vault_id', remoteVaultId)
+      .eq('rel_path', relPath)
+      .maybeSingle();
+    if (rowError) throw rowError;
+    expectedVersion = (row?.version as number | undefined) ?? null;
+    restore = restore || row?.deleted === true;
+  }
+  if (restore) {
+    const { error: restoreError } = await client.schema(APP_SCHEMA).rpc('restore_file', {
+      p_vault_id: remoteVaultId,
+      p_rel_path: relPath,
+    });
+    if (restoreError) throw restoreError;
+    const { data: row } = await client
+      .schema(APP_SCHEMA)
+      .from(VAULT_FILES_TABLE)
+      .select('version')
+      .eq('vault_id', remoteVaultId)
+      .eq('rel_path', relPath)
+      .maybeSingle();
+    expectedVersion = (row?.version as number | undefined) ?? null;
+  }
+  const { data: lock, error: upsertError } = await client.schema(APP_SCHEMA).rpc('push_file', {
+    p_vault_id: remoteVaultId,
+    p_rel_path: relPath,
+    p_expected_version: expectedVersion,
+    p_content_hash: note.contentHash,
+    p_size_bytes: note.sizeBytes,
+    p_storage_path: storageObjectPath(remoteVaultId, relPath),
+  });
   if (upsertError) throw upsertError;
+  if (lock && typeof lock === 'object' && (lock as { ok?: boolean }).ok === false) {
+    // Quelqu'un a modifié le fichier entre la lecture du catalogue et le
+    // push : rien n'est écrasé, le cycle suivant le traitera en conflit.
+    throw new Error('version distante plus récente — rien écrasé, conflit traité au prochain cycle');
+  }
+  void ownerId;
 
   // JOURNAL « MODIFICATION » : le journal raconte le changement, pas un
   // « envoyé » aveugle. Best-effort : un échec de statistique n'est JAMAIS
@@ -767,3 +807,22 @@ export async function clearSyncBlock(): Promise<void> {
   await savePendingReview(vault, review);
 }
 
+
+// Suppression distante : UNIQUEMENT via la RPC tombstone_file (verrou
+// optimiste, trace de l'appareil). Fini les UPDATE directs sur vault_files.
+export async function tombstoneRemoteFile(
+  remoteVaultId: string,
+  rawRelPath: string,
+  expectedVersion: number | null,
+  deviceId: string | null,
+): Promise<{ ok: boolean }> {
+  const { supabase: client } = requireBridges();
+  const { data, error } = await client.schema(APP_SCHEMA).rpc('tombstone_file', {
+    p_vault_id: remoteVaultId,
+    p_rel_path: rawRelPath,
+    p_expected_version: expectedVersion,
+    p_device_id: deviceId,
+  });
+  if (error) throw error;
+  return { ok: (data as { ok?: boolean } | null)?.ok !== false };
+}

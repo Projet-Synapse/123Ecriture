@@ -14,6 +14,8 @@ import type { RemoteVaultSummary, SyncSummary } from '../../lib/sync/syncTypes';
 import { useVaults } from '../../lib/sync/VaultsContext';
 import { usePreferences } from '../../preferences/PreferencesContext';
 import { ConfirmDialog } from '../dialogs/ConfirmDialog';
+import { MergeLinkDialog, type MergeChoice } from '../dialogs/MergeLinkDialog';
+import { loadSyncSettings, saveSyncSettings } from '../../lib/sync/syncSettings';
 import { SettingsToggle } from './SettingsToggle';
 import { settingsStyles as s } from './settingsStyles';
 import { errorMessage } from '../../lib/errorMessage';
@@ -297,13 +299,36 @@ export function AccountSyncSection() {
   // Raccordement d'un coffre local à un coffre distant DÉJÀ existant (cas
   // « nouvel appareil » ou « dossier recréé ») : aucune écriture côté cloud,
   // la référence vit dans le registre local — voir docs/ARCHITECTURE.md §6.
-  const handleConnectExisting = useCallback(
-    async (v: VaultRegistryEntry, remoteId: string) => {
-      setPickingRemoteForVaultId(null);
-      await runVaultAction(() => setCloudLink(v.id, { linked: true, remoteVaultId: remoteId }));
+  // Dossier local EXISTANT → dialogue de fusion (aperçu + fusionner /
+  // garder le local / garder le distant / annuler) AVANT toute liaison.
+  const [pendingMerge, setPendingMerge] = useState<{ vault: VaultRegistryEntry; remoteId: string } | null>(null);
+  const handleConnectExisting = useCallback(async (v: VaultRegistryEntry, remoteId: string) => {
+    setPickingRemoteForVaultId(null);
+    setPendingMerge({ vault: v, remoteId });
+  }, []);
+  const confirmMerge = useCallback(
+    async (choice: MergeChoice) => {
+      const pending = pendingMerge;
+      setPendingMerge(null);
+      if (!pending) return;
+      const current = loadSyncSettings();
+      saveSyncSettings({ ...current, linkPreference: { ...current.linkPreference, [pending.remoteId]: choice } });
+      await runVaultAction(() => setCloudLink(pending.vault.id, { linked: true, remoteVaultId: pending.remoteId }));
     },
-    [runVaultAction, setCloudLink],
+    [pendingMerge, runVaultAction, setCloudLink],
   );
+  const loadMergePreview = useCallback(async () => {
+    const remote = remoteVaults?.find((r) => r.id === pendingMerge?.remoteId);
+    let local: number | null = null;
+    if (pendingMerge && pendingMerge.vault.id === activeVaultId) {
+      try {
+        local = (await window.sync?.hashVaultTree?.())?.length ?? null;
+      } catch {
+        local = null;
+      }
+    }
+    return { local, remote: remote?.fileCount ?? null };
+  }, [remoteVaults, pendingMerge, activeVaultId]);
 
   // Connexion d'un coffre distant SUR CET APPAREIL, dans cet ordre :
   // 1) « Connecter » ci-dessous, 2) l'app demande OÙ placer les fichiers,
@@ -894,6 +919,16 @@ export function AccountSyncSection() {
       {/* Confirmation de retrait de coffre — `onSettled` referme dans tous
           les cas (succès OU échec, l'erreur restant visible via
           vaultActionError), même montage que TasksScreen.tsx. */}
+      {pendingMerge && (
+        <MergeLinkDialog
+          theme={theme}
+          vaultName={pendingMerge.vault.name}
+          remoteName={remoteVaults?.find((r) => r.id === pendingMerge.remoteId)?.name ?? 'coffre distant'}
+          loadPreview={loadMergePreview}
+          onChoose={(c) => void confirmMerge(c)}
+          onCancel={() => setPendingMerge(null)}
+        />
+      )}
       {confirmRemoveVault && (
         <ConfirmDialog
           theme={theme}

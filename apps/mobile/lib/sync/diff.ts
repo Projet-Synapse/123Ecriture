@@ -43,6 +43,8 @@ export type RemoteVaultFile = {
   sizeBytes: number;
   updatedAt: string; // ISO 8601
   deleted: boolean;
+  // Version serveur (verrou optimiste push_file / tombstone_file).
+  version?: number | null;
   // Clé d'objet Storage EFFECTIVEMENT enregistrée au moment du push (encodée
   // base64url — les noms bruts avec émojis/accents sont rejetés par Storage,
   // voir storageKeys.ts). Optionnel : les lignes anciennes peuvent
