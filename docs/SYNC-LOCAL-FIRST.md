@@ -10,3 +10,20 @@
 - Dossiers : tous les répertoires du disque (scan, vides compris) sont des entrées 3-états ; renommer = nouveau marqueur + tombstone de l'ancien ; supprimer = tombstone du marqueur.
 - Après MISE À JOUR (version installée ≠ dernière vue, `syncSettings.checkAppUpdate`) : session conservée, synchro en PAUSE (`pausedAfterUpdate`), aucun envoi (moteur desktop et file Android). Reprise : reconnexion d'un coffre distant (dialogue de fusion) ou bouton « Reprendre la synchronisation » (Paramètres → Synchronisation).
 - Seed NON appliqué : `supabase/seeds_lordi_dossiers_vides.sql` (dossiers vides WORLDBUILDING de LORDI).
+
+## Mise à jour test.3 — Android revient au coffre LOCAL, disjoncteur supprimé
+
+- **Android = coffre local** (comme le PC) via le module natif `vault-fs` (#197) :
+  dossier choisi par l'utilisateur avec permission d'arbre SAF **persistante**.
+  Le cloud n'est qu'une copie synchronisée par le moteur trois états.
+  `lib/storage/vaultBackend.ts` ne crée plus le coffre cloud-only de #201
+  (`isAndroidCloudOnly()` renvoie `false`). Le correctif updater/versionCode de #201 est conservé.
+- **Permission perdue** : l'index du coffre est mis en cache
+  (`documentDirectory/vaultfs-index-*.json`) ; l'UI reste lisible, une alerte
+  demande de re-sélectionner le dossier, et chaque cycle de synchro est refusé
+  (`VaultPermissionLostError`) — **jamais** interprété comme « coffre vide », donc aucune suppression.
+- **Après mise à jour** : même règle sur Android (pause jusqu'à reconnexion explicite + fusion).
+- **Disjoncteur supprimé** : plus de `syncBlocked`, de seuil d'erreurs ni de bouton
+  « Lever le disjoncteur ». Les commandes à distance `lock-sync` / `unlock-sync` /
+  `clear-sync-block` pilotent maintenant l'interrupteur « Synchronisation activée ».
+  Le garde-fou trois états (suppressions massives / dossier local vide) **reste**.
