@@ -268,7 +268,7 @@ function SyncStatusChip({ compact }: { compact?: boolean }) {
 
   if (syncStatus.status === 'syncing') {
     icon = '⟳';
-    label = 'Synchronisation…';
+    label = syncStatus.progressLabel ?? 'Synchronisation…';
     color = theme.accent;
   } else if (syncStatus.status === 'error') {
     icon = '⚠';

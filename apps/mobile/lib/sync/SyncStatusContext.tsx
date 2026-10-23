@@ -3,6 +3,7 @@ import type { RealtimeChannel } from '@supabase/supabase-js';
 
 import { useAuth } from './AuthContext';
 import { runSync as runSyncEngine } from './syncEngine';
+import { formatSyncProgress, getSyncProgress, subscribeSyncProgress } from './syncProgress';
 import type { SyncSummary } from './syncTypes';
 import { supabase } from './supabaseClient';
 import { useVaults } from './VaultsContext';
@@ -32,6 +33,8 @@ type SyncStatusContextValue = {
   // Résumé humain du dernier résultat, succès OU erreur — ce que
   // l'indicateur global et Paramètres affichent tous les deux tel quel.
   lastResultSummary: string | null;
+  // « Téléchargement 12/250 fichiers » pendant le cycle (null sinon).
+  progressLabel: string | null;
   // Nombre de conflits du dernier cycle réussi — distingue "synchronisé
   // proprement" de "synchronisé, mais des conflits ont été résolus" pour
   // l'indicateur global (voir AppShell.tsx).
@@ -107,6 +110,8 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<SyncStatus>('idle');
   const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(null);
   const [lastResultSummary, setLastResultSummary] = useState<string | null>(null);
+  const [progressLabel, setProgressLabel] = useState<string | null>(null);
+  useEffect(() => subscribeSyncProgress((p) => setProgressLabel(formatSyncProgress(p))), []);
   const [lastConflicts, setLastConflicts] = useState(0);
   const [lastSummary, setLastSummary] = useState<SyncSummary | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
@@ -173,14 +178,20 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
     // currentCycleRef : runSyncExclusive peut attendre SA fin exacte.
     const generation = ++cycleGenerationRef.current;
     const cycle = (async () => {
-    const watchdog = setTimeout(() => {
+    // Watchdog d'INACTIVITÉ (v0.4.96) : un long premier pull qui progresse
+    // n'est jamais révoqué ; seul un cycle SANS progression depuis
+    // SYNC_CYCLE_TIMEOUT_MS l'est.
+    const startedAt = Date.now();
+    const watchdog = setInterval(() => {
       if (!syncingRef.current || cycleGenerationRef.current !== generation) return;
+      const lastActivity = Math.max(startedAt, getSyncProgress()?.at ?? 0);
+      if (Date.now() - lastActivity < SYNC_CYCLE_TIMEOUT_MS) return;
       cycleGenerationRef.current += 1;
       setStatus('error');
-      setLastError('Synchro interrompue : délai de 10 minutes dépassé (réseau coupé ?). Réessayez — un nouveau cycle repartira proprement.');
+      setLastError('Synchro interrompue : aucune progression depuis 10 minutes (réseau coupé ?). Réessayez — un nouveau cycle repartira proprement.');
       syncingRef.current = false;
       void window.sync?.watchResume?.().catch(() => undefined);
-    }, SYNC_CYCLE_TIMEOUT_MS);
+    }, 15_000);
     // La surveillance du dossier se tait pendant le cycle : les écritures
     // du pull ne doivent pas redéclencher une synchro (boucle).
     await window.sync?.watchPause?.().catch(() => undefined);
@@ -235,7 +246,7 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
       setLastError(message);
       setLastResultSummary(message);
     } finally {
-      clearTimeout(watchdog);
+      clearInterval(watchdog);
       // Génération courante uniquement : un cycle révoqué par le watchdog ne
       // doit pas libérer le verrou d'un cycle PLUS RÉCENT qui aurait démarré.
       if (cycleGenerationRef.current === generation) {
@@ -391,6 +402,7 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
       status,
       lastSyncedAt,
       lastResultSummary,
+      progressLabel,
       lastConflicts,
       lastSummary,
       lastError,
@@ -398,7 +410,7 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
       runSync,
       runSyncExclusive,
     }),
-    [status, lastSyncedAt, lastResultSummary, lastConflicts, lastSummary, lastError, cloudSyncConfigured, runSync, runSyncExclusive],
+    [status, lastSyncedAt, lastResultSummary, progressLabel, lastConflicts, lastSummary, lastError, cloudSyncConfigured, runSync, runSyncExclusive],
   );
 
   return <SyncStatusReactContext.Provider value={value}>{children}</SyncStatusReactContext.Provider>;

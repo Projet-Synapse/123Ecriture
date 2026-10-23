@@ -31,6 +31,17 @@ import {
 } from './journal';
 import { tryThreeWayMerge } from './merge';
 import { processDeviceCommands } from './deviceGateway';
+import { FILE_OP_TIMEOUT_MS, STEP_TIMEOUT_MS, setSyncProgress, withTimeout } from './syncProgress';
+
+// Cycle moteur EN COURS (module) : un cycle révoqué par le watchdog de l'UI
+// continue en arrière-plan — on n'en lance jamais un second par-dessus.
+let engineCycleRunning = false;
+// Heartbeat + passerelle PENDANT le cycle (toutes les N secondes) : un long
+// premier pull reste visible (« vu à … ») et pilotable (dump-diagnostics).
+const CYCLE_TICK_MS = 30_000;
+// Journal de progression écrit AU FIL DU CYCLE (pas seulement à la fin).
+const PROGRESS_JOURNAL_EVERY = 20;
+const PROGRESS_JOURNAL_MIN_MS = 30_000;
 // Le compte de lignes backslashed signalé au cycle précédent : le signal
 // « N lignes ignorées » ne se répète que si le nombre change.
 let lastBackslashReport = -1;
@@ -447,7 +458,51 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   // s'écrit sur le disque de B. Pendant le cycle, `vaults:switch` est donc
   // REFUSÉ par le main process (TTL de 10 min : un crash du renderer ne
   // bloque pas l'app pour toujours).
-  await bridges.sync.setVaultLock?.(true);
+  if (engineCycleRunning) {
+    const message = 'Cycle ignoré : le cycle précédent est encore en cours sur cet appareil.';
+    summary.errors.push(message);
+    console.error('[sync]', message);
+    return summary;
+  }
+  engineCycleRunning = true;
+  // VERROU LIBÉRÉ DANS UN FINALLY : une exception ou un délai dépassé ne
+  // laisse plus jamais le coffre verrouillé ni le moteur « occupé ».
+  let ticking = false;
+  const tick = async () => {
+    if (ticking) return;
+    ticking = true;
+    try {
+      await withTimeout(heartbeatDevice(remoteVaultId, ownerId), 20_000, 'heartbeat');
+      await withTimeout(processDeviceCommands(remoteVaultId, ownerId), 120_000, 'commandes appareil');
+    } catch (error) {
+      console.warn('[sync] tick de cycle :', errorMessage(error));
+    } finally {
+      ticking = false;
+    }
+  };
+  void tick();
+  const ticker = setInterval(() => void tick(), CYCLE_TICK_MS);
+  try {
+    await bridges.sync.setVaultLock?.(true);
+    return await runLockedCycle(bridges, ownerId, remoteVaultId, summary);
+  } finally {
+    clearInterval(ticker);
+    setSyncProgress(null);
+    engineCycleRunning = false;
+    try {
+      await bridges.sync.setVaultLock?.(false);
+    } catch (error) {
+      console.error('[sync] libération du verrou de coffre :', errorMessage(error));
+    }
+  }
+}
+
+async function runLockedCycle(
+  bridges: ReturnType<typeof requireBridges>,
+  ownerId: string,
+  remoteVaultId: string,
+  summary: SyncSummary,
+): Promise<SyncSummary> {
 
   // Le journal PROGRESSIF raconte le cycle comme Obsidian Sync (« connexion
   // au serveur », « upload en cours », « upload terminé ») : la connexion
@@ -467,10 +522,12 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   const journalStartLength = await journalLength();
   await appendJournalEntries(journal);
 
-  const [remoteFiles, syncState] = await Promise.all([
-    fetchRemoteFiles(remoteVaultId),
-    loadSyncState(),
-  ]);
+  setSyncProgress({ phase: 'Lecture de la liste distante…', done: 0, total: 0 });
+  const [remoteFiles, syncState] = await withTimeout(
+    Promise.all([fetchRemoteFiles(remoteVaultId), loadSyncState()]),
+    STEP_TIMEOUT_MS,
+    'liste distante',
+  );
 
   // SYNC-STATE HONNÊTE : l'état ne vaut que pour LE dossier qu'il décrit.
   // Un rootPath différent (dossier reconnecté, migration du socle,
@@ -492,7 +549,8 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   // POSIX quel que soit le pont — un relPath backslashed crée des doublons
   // cloud jamais matchés, des tombestones jamais envoyées et des
   // résurrections en boucle (le fix à la source vit dans sync.ts).
-  const localFiles = (await bridges.sync.hashVaultTree()).map((note) => ({
+  setSyncProgress({ phase: 'Analyse du coffre local…', done: 0, total: 0 });
+  const localFiles = (await withTimeout(bridges.sync.hashVaultTree(), STEP_TIMEOUT_MS, 'analyse du coffre local')).map((note) => ({
     ...note,
     relPath: note.relPath.split('\\').join('/'),
   }));
@@ -715,7 +773,29 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   if (pushCount > 0) journal.push(makeJournalEntry('upload-start', { detail: `${pushCount} fichier(s)` }));
   if (pullCount > 0) journal.push(makeJournalEntry('download-start', { detail: `${pullCount} fichier(s)` }));
 
+  const actionable = orderedDecisions.filter((d) => d.kind !== 'noop').length;
+  let progressDone = 0;
+  let lastProgressJournalAt = Date.now();
+  let lastProgressJournalDone = 0;
+  const phase = pullCount > 0 && pushCount === 0 ? 'Téléchargement' : pushCount > 0 && pullCount === 0 ? 'Envoi' : 'Synchronisation';
+  if (actionable > 0) setSyncProgress({ phase, done: 0, total: actionable });
   for (const decision of orderedDecisions) {
+    if (decision.kind !== 'noop') {
+      setSyncProgress({ phase, done: progressDone, total: actionable, current: decision.relPath });
+      // JOURNAL PROGRESSIF : écrit pendant le cycle (toutes les N actions
+      // ou 30 s), visible dans Paramètres → Journal sans attendre la fin.
+      if (
+        progressDone > lastProgressJournalDone &&
+        (progressDone - lastProgressJournalDone >= PROGRESS_JOURNAL_EVERY || Date.now() - lastProgressJournalAt >= PROGRESS_JOURNAL_MIN_MS)
+      ) {
+        lastProgressJournalDone = progressDone;
+        lastProgressJournalAt = Date.now();
+        await appendJournalEntries([
+          makeJournalEntry('info', { detail: `${phase} en cours : ${progressDone}/${actionable} fichiers` }),
+        ]).catch(() => undefined);
+      }
+      progressDone += 1;
+    }
     try {
       switch (decision.kind) {
         case 'noop':
@@ -734,7 +814,7 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
               remoteRow.storageObjectPath,
             ).catch(() => null);
           }
-          await pushFile(remoteVaultId, ownerId, note, journal, previousRemoteContent);
+          await withTimeout(pushFile(remoteVaultId, ownerId, note, journal, previousRemoteContent), FILE_OP_TIMEOUT_MS, `envoi ${note.relPath}`);
           // Un push sous `.trash/` est le continu d'un déplacement en
           // corbeille — compté À PART, pas dans « envoyé(s) ».
           if (decision.relPath.startsWith('.trash/')) {
@@ -781,7 +861,7 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
               // réellement absent du disque : le pull est légitime
             }
           }
-          await pullFile(remoteVaultId, decision.relPath, remoteByPath.get(decision.relPath)?.storageObjectPath);
+          await withTimeout(pullFile(remoteVaultId, decision.relPath, remoteByPath.get(decision.relPath)?.storageObjectPath), FILE_OP_TIMEOUT_MS, `réception ${decision.relPath}`);
           pulledPaths.add(decision.relPath);
           summary.pulled += 1;
           summary.modifications += 1;
@@ -823,7 +903,7 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
           await backupLosingSide(decision.relPath, losingRemoteContent);
           // La version distante perdante sert aussi au journal
           // « modification » (+/− caractères de la version conservée).
-          await pushFile(remoteVaultId, ownerId, note, journal, losingRemoteContent);
+          await withTimeout(pushFile(remoteVaultId, ownerId, note, journal, losingRemoteContent), FILE_OP_TIMEOUT_MS, `envoi ${note.relPath}`);
           summary.pushed += 1;
           summary.conflicts += 1;
           journal.push(makeJournalEntry('conflict', { path: decision.relPath, detail: 'version locale conservée, distante archivée' }));
@@ -852,7 +932,7 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
             break;
           }
           await backupLosingSide(decision.relPath, losingLocalContent);
-          await pullFile(remoteVaultId, decision.relPath, remoteByPath.get(decision.relPath)?.storageObjectPath);
+          await withTimeout(pullFile(remoteVaultId, decision.relPath, remoteByPath.get(decision.relPath)?.storageObjectPath), FILE_OP_TIMEOUT_MS, `réception ${decision.relPath}`);
           pulledPaths.add(decision.relPath);
           summary.pulled += 1;
           summary.conflicts += 1;
@@ -867,6 +947,7 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
     }
   }
 
+  if (actionable > 0) setSyncProgress({ phase, done: actionable, total: actionable });
   if (pushCount > 0) journal.push(makeJournalEntry('upload-end', { detail: `${pushCount} fichier(s)` }));
   if (pullCount > 0) journal.push(makeJournalEntry('download-end', { detail: `${pullCount} fichier(s)` }));
 
@@ -934,12 +1015,12 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   // « Appareils connectés » (Paramètres → Coffres distants) : heartbeat
   // best-effort APRÈS le cycle de fichiers — jamais dans les erreurs du
   // résumé (voir heartbeatDevice).
-  await heartbeatDevice(remoteVaultId, ownerId, summary);
+  await withTimeout(heartbeatDevice(remoteVaultId, ownerId, summary), 30_000, 'heartbeat de fin').catch(() => undefined);
 
   // PASSERELLE À DISTANCE : exécute les commandes adressées à CET
   // appareil (dump-diagnostics, levée de bloc…) via le canal Supabase —
   // best-effort, jamais bloquant, sans adb (voir deviceGateway.ts).
-  await processDeviceCommands(remoteVaultId, ownerId);
+  await withTimeout(processDeviceCommands(remoteVaultId, ownerId), 120_000, 'commandes appareil').catch(() => undefined);
 
   journal.push(
     makeJournalEntry('cycle-end', {
@@ -987,6 +1068,5 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
     await truncateJournalEntries(journalStartLength);
   }
 
-  await bridges.sync.setVaultLock?.(false);
   return summary;
 }
