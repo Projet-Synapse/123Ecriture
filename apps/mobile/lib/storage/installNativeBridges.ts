@@ -1,6 +1,6 @@
 import { Platform } from 'react-native';
 
-import { nativeVaultAdapter } from './nativeVaultAdapter';
+import { activeVaultAdapter } from './vaultBackend';
 import { nativeVaultsAdapter } from './nativeVaultsAdapter';
 import { nativeSyncAdapter } from './nativeSyncAdapter';
 import { nativePreferencesAdapter } from './nativePreferencesAdapter';
@@ -48,7 +48,7 @@ export function installNativeBridges(): void {
   // mais mieux vaut un garde-fou explicite qu'une supposition silencieuse.
   if (window.vault) return;
 
-  window.vault = nativeVaultAdapter;
+  window.vault = activeVaultAdapter; // module natif VaultFs si présent (voir vaultBackend.ts)
   window.vaults = nativeVaultsAdapter;
   window.sync = nativeSyncAdapter;
 
