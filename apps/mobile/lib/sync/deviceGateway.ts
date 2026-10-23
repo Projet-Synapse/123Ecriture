@@ -36,11 +36,11 @@ import { Platform } from 'react-native';
 
 import { APP_SCHEMA, DEVICE_COMMANDS_TABLE, VAULT_FILES_TABLE, supabase } from './supabaseClient';
 import { errorMessage } from '../errorMessage';
+import { clearPendingReviewSyncBlock, loadPendingReview, savePendingReview, type PendingReview } from './pendingReview';
+import type { DiagnosticsReport } from './diagnostics';
 // Le chemin du journal est défini dans syncEngine (repris ici sans
 // import pour éviter un cycle : syncEngine importe cette passerelle).
 const SYNC_JOURNAL_READ_PATH = '.123ecriture/sync-journal.json';
-import { clearPendingReviewSyncBlock, loadPendingReview, savePendingReview, type PendingReview } from './pendingReview';
-import type { DiagnosticsReport } from './diagnostics';
 
 type CommandParams = Record<string, unknown>;
 
@@ -211,6 +211,12 @@ async function executeCommand(
       const { exporterDiagnosticDansCoffre } = await import('./diagnosticExport');
       const chemin = await exporterDiagnosticDansCoffre();
       return 'diagnostic exporté : ' + chemin;
+    }
+    case 'export-index': {
+      // Inventaire local (fichiers + dossiers) : .123ecriture/devices/<id>.json
+      // + table vault_device_inventories.
+      const { publishDeviceInventory } = await import('./deviceInventory');
+      return 'inventaire exporté : ' + (await publishDeviceInventory(remoteVaultId));
     }
     case 'clear-sync-block':
       await clearPendingReviewSyncBlock(vault);

@@ -969,6 +969,15 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
     console.error('[sync] publication du journal (sync_journals) :', error);
   }
 
+  // INVENTAIRE PAR APPAREIL (deviceInventory.ts) : ce que CE disque
+  // contient réellement, publié à chaque fin de cycle. Best-effort.
+  try {
+    const { publishDeviceInventory } = await import('./deviceInventory');
+    await publishDeviceInventory(remoteVaultId, localFiles);
+  } catch (error) {
+    console.error('[sync] inventaire appareil :', error);
+  }
+
   // Cycle SANS aucune action : la « Connexion au serveur » est retirée — le
   // journal ne garde que les cycles qui ont réellement fait quelque chose
   // (pas de spam de cycles à vide).
