@@ -516,6 +516,8 @@ async function loadPersistedIndex(rootUri: string): Promise<boolean> {
     if (parsed.rootUri !== rootUri || !parsed.entries) return false;
     pathIndex = new Map();
     for (const [relPath, entry] of Object.entries(parsed.entries)) {
+      // Entrées non-SAF (file://) : purgées, re-résolues à la demande.
+      if (!isSafUri(entry.u)) continue;
       pathIndex.set(relPath, { uri: entry.u, isDirectory: entry.d });
     }
     indexedRootUri = rootUri;
@@ -670,7 +672,22 @@ function siblingNamesOf(parentRelPath: string): Set<string> {
 
 async function resolveParentUri(parentRelPath: string | undefined): Promise<string> {
   if (!parentRelPath) return requireActiveRootUri();
-  return resolveIndexed(parentRelPath).uri;
+  const { uri } = resolveIndexed(parentRelPath);
+  return isSafUri(uri) ? uri : ensureSafDir(parentRelPath);
+}
+
+// Une URI utilisable par les appels StorageAccessFramework.* (content://).
+export function isSafUri(uri: string | undefined | null): boolean {
+  return typeof uri === 'string' && uri.startsWith('content://');
+}
+
+async function findSafChild(parentUri: string, name: string): Promise<string | null> {
+  try {
+    const children = await StorageAccessFramework.readDirectoryAsync(parentUri);
+    return children.find((child) => nameFromSafUri(child) === name) ?? null;
+  } catch {
+    return null;
+  }
 }
 
 // Résout l'URI d'un dossier en le CRÉANT (récursivement depuis la racine)
@@ -687,8 +704,19 @@ async function ensureSafDir(parentRelPath: string): Promise<string> {
   for (const seg of parentRelPath.split('/')) {
     acc = acc ? `${acc}/${seg}` : seg;
     const entry = pathIndex.get(acc);
-    if (entry?.isDirectory) {
+    if (entry?.isDirectory && isSafUri(entry.uri)) {
       parentUri = entry.uri;
+      continue;
+    }
+    // Entrée d'index absente OU non-SAF (URI `file://` héritée d'un
+    // ancien index) : createSAFFileAsync la rejetterait (« is not a
+    // Storage Access Framework URI ») et CHAQUE pull du dossier échouerait.
+    // On retrouve d'abord le dossier existant dans son parent SAF (jamais
+    // de doublon « (1) »), création seulement s'il est vraiment absent.
+    const existing = await findSafChild(parentUri, seg);
+    if (existing) {
+      pathIndex.set(acc, { uri: existing, isDirectory: true });
+      parentUri = existing;
       continue;
     }
     const newUri = await StorageAccessFramework.makeDirectoryAsync(parentUri, seg);
