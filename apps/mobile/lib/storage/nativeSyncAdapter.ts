@@ -127,7 +127,9 @@ export const nativeSyncAdapter = {
   // du coffre (vault-fs ou SAF), dossiers visibles uniquement.
   listFolders: async (): Promise<string[]> => {
     const rootUri = await getActiveVaultRootUri();
-    if (!rootUri) return [];
+    // Pas de coffre = liste INCONNUE (jamais « aucun dossier » : sinon les
+    // marqueurs de la base seraient tombstonés dans le cloud).
+    if (!rootUri) throw new Error('aucun coffre actif');
     await assertActiveVaultAccess();
     await ensureVaultIndexed();
     return visibleFolders(getVaultIndexKeys(), (p) => getVaultIndexEntry(p));
@@ -224,7 +226,7 @@ export const nativeSyncAdapter = {
       relPath,
       contentHash: value.hash,
       sizeBytes: value.size,
-      modifiedAt: indexedModifiedAt(getVaultIndexEntry(relPath)),
+      modifiedAt: indexedModifiedAt(getVaultIndexEntry(relPath), relPath),
     }));
   },
 };

@@ -60,7 +60,15 @@ export function splitEditHot<T extends { relPath: string; modifiedAt: number }>(
 // paraissaient « modifiés il y a 0 s » → tous « en cours d'édition »
 // (editQuiet.ts) → sortis du plan : 0 envoyé, 0 reçu, à vie. Inconnue →
 // 0 = « ancien » (froid, synchronisable), jamais « maintenant ».
-export function indexedModifiedAt(entry: unknown): number {
+// + la DERNIÈRE ÉCRITURE PAR L'APP (éditeur, pull) : la garde 60 s reste
+// active même si l'index n'a pas de mtime (chemin SAF hérité).
+const recentLocalWrites = new Map<string, number>();
+export function noteLocalWrite(relPath: string, nowMs: number = Date.now()): void {
+  recentLocalWrites.set(relPath.split('\\').join('/'), nowMs);
+}
+export function indexedModifiedAt(entry: unknown, relPath?: string): number {
   const mtime = (entry as { mtime?: unknown } | undefined)?.mtime;
-  return typeof mtime === 'number' && Number.isFinite(mtime) && mtime > 0 ? mtime : 0;
+  const fromIndex = typeof mtime === 'number' && Number.isFinite(mtime) && mtime > 0 ? mtime : 0;
+  const written = relPath ? (recentLocalWrites.get(relPath) ?? 0) : 0;
+  return Math.max(fromIndex, written);
 }

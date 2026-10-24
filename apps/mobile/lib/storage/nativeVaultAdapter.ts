@@ -1,4 +1,5 @@
 import { Alert } from 'react-native';
+import { noteLocalWrite } from '../sync/editQuiet';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import { StorageAccessFramework } from 'expo-file-system/legacy';
@@ -94,6 +95,7 @@ async function loadDirtyQueue(): Promise<DirtyItem[]> {
 }
 
 export function markVaultFileDirty(relPath: string): void {
+  noteLocalWrite(relPath);
   // Les métadonnées .123ecriture/** restent hors hachage SAUF la liste
   // synchronisée (tasks/tasklists/preferences/appearance, cf.
   // nativeSyncAdapter.SYNCED_META_FILES) — leur modification doit bien
