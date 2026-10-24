@@ -1,4 +1,5 @@
 import { Alert } from "react-native";
+import { emitVaultTreeRefreshed } from './vaultTreeEvents';
 import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system/legacy";
 
@@ -59,6 +60,8 @@ export type VaultFsAdapterDeps = {
   loadIndexCache?: (rootUri: string) => Promise<[string, VaultFsIndexEntry][] | null>;
   saveIndexCache?: (rootUri: string, entries: [string, VaultFsIndexEntry][]) => Promise<void>;
   onPermissionLost?: (rootUri: string) => void;
+  // Parcours complet terminé APRÈS un affichage depuis le cache.
+  onIndexRefreshed?: () => void;
 };
 
 // Accès au dossier du coffre PERDU : jamais interprété comme « coffre vide »
@@ -121,6 +124,9 @@ export function createVaultFsAdapter(deps: VaultFsAdapterDeps) {
   // Index COMPLET (parcours natif ou cache chargé) ? read()/write() ajoutent
   // des entrées isolées à l'index : sa taille ne prouve PAS qu'il est complet.
   let fullyIndexed = false;
+  // Cache d'index déjà tenté pour ce coffre (affichage instantané).
+  let cacheTried = false;
+  let refreshing: Promise<void> | null = null;
 
   async function root(): Promise<string> {
     const uri = await deps.getRootUri();
@@ -130,11 +136,18 @@ export function createVaultFsAdapter(deps: VaultFsAdapterDeps) {
       indexedRoot = uri;
       cachedTree = null;
       fullyIndexed = false;
+      cacheTried = false;
     }
     return uri;
   }
 
-  async function refresh(): Promise<void> {
+  // Un seul parcours natif à la fois (arrière-plan + appel direct).
+  function refresh(): Promise<void> {
+    if (!refreshing) refreshing = doRefresh().finally(() => { refreshing = null; });
+    return refreshing;
+  }
+
+  async function doRefresh(): Promise<void> {
     const treeUri = await root();
     let allowed = true;
     try {
@@ -287,10 +300,30 @@ export function createVaultFsAdapter(deps: VaultFsAdapterDeps) {
       return liste.length > 0 ? liste[liste.length - 1].path : null;
     },
     getCurrentPath: () => deps.getRootUri(),
+    // AFFICHAGE IMMÉDIAT : premier appel = cache d'index persisté (aucun
+    // parcours SAF bloquant), parcours complet en arrière-plan puis
+    // onIndexRefreshed. Le cache ne rend PAS l'index « complet » : la
+    // synchro (suppressions) attend toujours le vrai parcours.
     listTree: async () => {
-      await root();
+      const uri = await root();
       if (cachedTree) return cachedTree;
-      if (index.size === 0) await refresh();
+      if (!fullyIndexed && !cacheTried) {
+        cacheTried = true;
+        const cached = await deps.loadIndexCache?.(uri).catch(() => null);
+        if (cached && cached.length > 0) {
+          index = new Map([...cached, ...index]);
+          cachedTree = buildTreeFromIndex(index);
+          void refresh().then(() => deps.onIndexRefreshed?.(), () => undefined);
+          return cachedTree;
+        }
+      }
+      if (!fullyIndexed) {
+        try {
+          await refresh();
+        } catch (error) {
+          if (!(error instanceof VaultPermissionLostError) || index.size === 0) throw error;
+        }
+      }
       cachedTree = buildTreeFromIndex(index);
       return cachedTree;
     },
@@ -660,6 +693,7 @@ export function createDefaultVaultFsAdapter(fs: VaultFsNativeModule) {
     },
     saveIndexCache: (rootUri, entries) =>
       FileSystem.writeAsStringAsync(indexCachePath(rootUri), JSON.stringify({ rootUri, entries })),
+    onIndexRefreshed: emitVaultTreeRefreshed,
     onPermissionLost: () => {
       Alert.alert(
         "Accès au coffre perdu",
