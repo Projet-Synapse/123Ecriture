@@ -16,6 +16,7 @@ import {
   pullFile,
   isBinaryAttachmentRelPath,
   loadSyncBase,
+  saveSyncBase,
  heartbeatDevice, fetchMyDeviceLock, pushFolderMarkers, runPool } from './cloud';
 import { requireBridges } from './bridges';
 
@@ -35,6 +36,7 @@ import {
   type SyncJournalEntry,
 } from './journal';
 import { tryThreeWayMerge } from './merge';
+import { configConflictBackupPath, isStructuredConfigFile, mergeConfigJson } from './configMerge';
 import { processDeviceCommands } from './deviceGateway';
 import { FILE_OP_TIMEOUT_MS, STEP_TIMEOUT_MS, setSyncProgress, withTimeout } from './syncProgress';
 
@@ -320,8 +322,13 @@ async function attemptConflictMerge(
   relPath: string,
   remoteObjectPath: string | undefined,
   journal: SyncJournalEntry[],
+  preferLocal = false,
+  onLocalChanged?: () => void,
 ): Promise<string | null> {
   if (isBinaryAttachmentRelPath(relPath)) return null; // jamais de fusion binaire
+  if (isStructuredConfigFile(relPath)) {
+    return resolveConfigConflict(remoteVaultId, ownerId, relPath, remoteObjectPath, journal, preferLocal, onLocalChanged);
+  }
   const base = await loadSyncBase(relPath);
   if (base === null) return null;
   let local: string;
@@ -359,6 +366,67 @@ async function attemptConflictMerge(
       detail: 'fusion automatique des deux versions (diff-match-patch)',
     }),
   );
+  return note.contentHash;
+}
+
+// Conflit sur un fichier de CONFIGURATION JSON (tasks/tasklists/
+// preferences) : fusion STRUCTURÉE (configMerge.ts), jamais
+// diff-match-patch. Retourne TOUJOURS le hash du fichier local final (le
+// conflit est résolu ici, pas de repli gagnant/perdant). Le résultat
+// fusionné devient la nouvelle base (pushFile/pullFile/saveSyncBase) :
+// une suppression ne revient pas au conflit suivant. Sans base ou avec un
+// côté illisible : le cloud gagne (sauf priorité « local » explicite du
+// dialogue de fusion) et la version perdante est gardée LOCALEMENT en
+// `.123ecriture/<nom>.conflict-<horodatage>.json` (jamais synchronisé).
+async function resolveConfigConflict(
+  remoteVaultId: string,
+  ownerId: string,
+  relPath: string,
+  remoteObjectPath: string | undefined,
+  journal: SyncJournalEntry[],
+  preferLocal: boolean,
+  onLocalChanged?: () => void,
+): Promise<string | null> {
+  const { vault, sync } = requireBridges();
+  const local = await vault.readNote(relPath);
+  const remote = await downloadRemoteText(remoteVaultId, relPath, remoteObjectPath);
+  const base = await loadSyncBase(relPath);
+  const rehash = async () => {
+    const tree = await sync.hashVaultTree();
+    return tree.find((n) => n.relPath === relPath) ?? null;
+  };
+  const result = mergeConfigJson(base, local, remote);
+  if (result.kind === 'remote-wins') {
+    const why = result.reason === 'no-base' ? 'sans base de fusion' : 'contenu illisible';
+    if (preferLocal) {
+      await vault.writeNote(configConflictBackupPath(relPath), remote);
+      const note = await rehash();
+      if (!note) return null;
+      await withTimeout(pushFile(remoteVaultId, ownerId, note, journal, remote), FILE_OP_TIMEOUT_MS, `envoi ${relPath}`);
+      journal.push(makeJournalEntry('conflict', { path: relPath, detail: `configuration ${why} : version locale conservée (priorité choisie), distante sauvegardée localement` }));
+      return note.contentHash;
+    }
+    await vault.writeNote(configConflictBackupPath(relPath), local);
+    await withTimeout(pullFile(remoteVaultId, relPath, remoteObjectPath), FILE_OP_TIMEOUT_MS, `réception ${relPath}`);
+    onLocalChanged?.();
+    const note = await rehash();
+    journal.push(makeJournalEntry('conflict', { path: relPath, detail: `configuration ${why} : version du cloud conservée, locale sauvegardée (.conflict)` }));
+    return note?.contentHash ?? null;
+  }
+  const merged = result.text;
+  if (merged !== local) {
+    await vault.writeNote(relPath, merged);
+    onLocalChanged?.();
+  }
+  const note = await rehash();
+  if (!note) return null;
+  if (merged === remote) {
+    // Le cloud porte déjà le résultat : rien à pousser, base = résultat.
+    await saveSyncBase(relPath, merged);
+  } else {
+    await withTimeout(pushFile(remoteVaultId, ownerId, note, journal, remote), FILE_OP_TIMEOUT_MS, `envoi ${relPath}`);
+  }
+  journal.push(makeJournalEntry('conflict', { path: relPath, detail: 'fusion structurée de la configuration (par identifiant / par clé)' }));
   return note.contentHash;
 }
 
@@ -1141,6 +1209,8 @@ async function runLockedCycle(
             decision.relPath,
             remoteByPath.get(decision.relPath)?.storageObjectPath,
             journal,
+            syncSettings.linkPreference[remoteVaultId] === 'local',
+            () => { summary.pulled += 1; },
           );
           if (mergedPushHash) {
             mergedHashes[decision.relPath] = mergedPushHash;
@@ -1170,6 +1240,8 @@ async function runLockedCycle(
             decision.relPath,
             remoteByPath.get(decision.relPath)?.storageObjectPath,
             journal,
+            syncSettings.linkPreference[remoteVaultId] === 'local',
+            () => { summary.pulled += 1; },
           );
           if (mergedPullHash) {
             mergedHashes[decision.relPath] = mergedPullHash;

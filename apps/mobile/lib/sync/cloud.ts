@@ -435,7 +435,7 @@ function syncBaseRelPath(relPath: string): string {
   return `${SYNC_BASES_DIR}/${vaultStorageObjectKey(relPath)}`;
 }
 
-async function saveSyncBase(relPath: string, content: string): Promise<void> {
+export async function saveSyncBase(relPath: string, content: string): Promise<void> {
   try {
     const { vault } = requireBridges();
     await vault.writeNote(syncBaseRelPath(relPath), content);
