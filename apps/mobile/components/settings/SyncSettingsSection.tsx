@@ -13,6 +13,10 @@ import {
 } from '../../lib/sync/syncSettings';
 import { usePreferences } from '../../preferences/PreferencesContext';
 import { SettingsToggle } from './SettingsToggle';
+import { MergeLinkDialog, type MergeChoice } from '../dialogs/MergeLinkDialog';
+import { listRemoteVaults } from '../../lib/sync/cloud';
+import type { RemoteVaultSummary } from '../../lib/sync/syncTypes';
+import { remotesNeedingMerge } from '../../lib/sync/linkGate';
 import { VaultSwitcherSection } from './VaultSwitcherSection';
 import { settingsStyles as s } from './settingsStyles';
 
@@ -44,6 +48,36 @@ export function SyncSettingsSection() {
     saveSyncSettings(next);
   };
 
+  // « Reprendre » après une mise à jour : si un coffre lié a déjà des
+  // fichiers dans le cloud, le dialogue de fusion est OBLIGATOIRE
+  // (linkGate.ts) — la reprise enregistre le choix (linkPreference) comme
+  // une liaison. Coffres distants vides : reprise directe.
+  const [resumeMerge, setResumeMerge] = useState<{ remoteIds: string[]; remotes: RemoteVaultSummary[] | null } | null>(null);
+  const requestResume = async () => {
+    const linkedIds = vaults.filter((v) => v.cloudLinked && v.remoteVaultId).map((v) => v.remoteVaultId as string);
+    let remotes: RemoteVaultSummary[] | null = null;
+    try {
+      remotes = await listRemoteVaults();
+    } catch {
+      remotes = null;
+    }
+    const remoteIds = remotesNeedingMerge(linkedIds, remotes);
+    if (remoteIds.length === 0) {
+      resumeSyncAfterUpdate();
+      return;
+    }
+    setResumeMerge({ remoteIds, remotes });
+  };
+  const confirmResume = (choice: MergeChoice) => {
+    const pending = resumeMerge;
+    setResumeMerge(null);
+    if (!pending) return;
+    const current = loadSyncSettings();
+    const linkPreference = { ...current.linkPreference };
+    for (const id of pending.remoteIds) linkPreference[id] = choice;
+    saveSyncSettings({ ...current, pausedAfterUpdate: false, linkPreference });
+  };
+
   const cardStyle = [s.card, { backgroundColor: theme.surface, borderColor: theme.border }];
   const linked = vaults.filter((v) => v.cloudLinked && v.remoteVaultId);
 
@@ -60,7 +94,7 @@ export function SyncSettingsSection() {
               ⏸️ L’app vient d’être mise à jour : la synchronisation est en pause, rien n’est envoyé au cloud. Vos fichiers locaux (ou le cache de l’appareil) restent affichés.
               Sur ordinateur, reliez à nouveau un coffre distant (une fusion vous sera proposée) ; sur le téléphone, confirmez la reprise.
             </Text>
-            <Pressable style={[s.button, { borderColor: theme.accent }]} onPress={resumeSyncAfterUpdate}>
+            <Pressable style={[s.button, { borderColor: theme.accent }]} onPress={() => void requestResume()}>
               <Text style={[s.buttonText, { color: theme.accent }]}>Reprendre la synchronisation</Text>
             </Pressable>
           </View>
@@ -99,6 +133,19 @@ export function SyncSettingsSection() {
       )}
 
       <VaultSwitcherSection />
+      {resumeMerge && (
+        <MergeLinkDialog
+          theme={theme}
+          vaultName={vaults.find((v) => v.remoteVaultId === resumeMerge.remoteIds[0])?.name ?? 'coffre local'}
+          remoteName={resumeMerge.remotes?.find((r) => r.id === resumeMerge.remoteIds[0])?.name ?? 'coffre distant'}
+          loadPreview={async () => ({
+            local: null,
+            remote: resumeMerge.remotes?.find((r) => r.id === resumeMerge.remoteIds[0])?.fileCount ?? null,
+          })}
+          onChoose={confirmResume}
+          onCancel={() => setResumeMerge(null)}
+        />
+      )}
     </>
   );
 }

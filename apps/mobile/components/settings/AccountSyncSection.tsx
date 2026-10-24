@@ -20,6 +20,7 @@ import { loadSyncSettings, saveSyncSettings } from '../../lib/sync/syncSettings'
 import { SettingsToggle } from './SettingsToggle';
 import { settingsStyles as s } from './settingsStyles';
 import { errorMessage } from '../../lib/errorMessage';
+import { needsMergeDialog } from '../../lib/sync/linkGate';
 
 // ✒️ 123ECRITURE — components/settings/AccountSyncSection.tsx — le compte et les coffres + sync cloud
 //////////////////////////////////////////////////////////////////////////////
@@ -284,11 +285,27 @@ export function AccountSyncSection() {
     [auth.user, loadRemoteVaults],
   );
 
+  const [pendingMerge, setPendingMerge] = useState<{ vault: VaultRegistryEntry; remoteId: string } | null>(null);
   const handleLinkVault = useCallback(
     async (v: VaultRegistryEntry) => {
       if (!auth.user) return;
       try {
         const remoteVaultId = await linkVaultToCloud(v.id, v.name, auth.user.id);
+        // L'upsert (owner_id, local_vault_id) peut retomber sur un coffre
+        // distant EXISTANT et déjà rempli : dialogue de fusion OBLIGATOIRE
+        // (linkGate.ts). Seul un coffre distant vide se lie directement.
+        let remotes: Awaited<ReturnType<typeof listRemoteVaults>> | null = null;
+        try {
+          remotes = await listRemoteVaults();
+          setRemoteVaults(remotes);
+        } catch {
+          remotes = null;
+        }
+        const fileCount = remotes ? (remotes.find((r) => r.id === remoteVaultId)?.fileCount ?? null) : null;
+        if (needsMergeDialog(fileCount)) {
+          setPendingMerge({ vault: v, remoteId: remoteVaultId });
+          return;
+        }
         await setCloudLink(v.id, { linked: true, remoteVaultId });
         loadRemoteVaults();
       } catch (error) {
@@ -304,7 +321,6 @@ export function AccountSyncSection() {
   // la référence vit dans le registre local — voir docs/ARCHITECTURE.md §6.
   // Dossier local EXISTANT → dialogue de fusion (aperçu + fusionner /
   // garder le local / garder le distant / annuler) AVANT toute liaison.
-  const [pendingMerge, setPendingMerge] = useState<{ vault: VaultRegistryEntry; remoteId: string } | null>(null);
   const handleConnectExisting = useCallback(async (v: VaultRegistryEntry, remoteId: string) => {
     setPickingRemoteForVaultId(null);
     setPendingMerge({ vault: v, remoteId });
