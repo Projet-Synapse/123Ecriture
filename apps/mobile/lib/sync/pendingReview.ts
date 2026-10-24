@@ -33,7 +33,7 @@ export const PENDING_REVIEW_REL_PATH = '.123ecriture/pending-review.json';
 export type SuspiciousDeletionReview = {
   at: string; // ISO — quand le garde a bloqué
   count: number; // nombre de fichiers concernés
-  paths: string[]; // échantillon (200 premiers) pour la revue
+  paths: string[]; // liste COMPLÈTE (nécessaire à la confirmation)
 };
 
 export type PendingReview = {
@@ -43,6 +43,11 @@ export type PendingReview = {
   // automatiquement — il reste EN PLACE jusqu'à ce que la revue tranche
   // (Supprimer vraiment / Restaurer dans le cloud).
   remoteDeletions?: RemoteDeletionReview[];
+  // SUPPRESSIONS APPROUVÉES par l'utilisatrice (bouton « Confirmer les
+  // suppressions ») : le moteur les applique au cycle suivant même si le
+  // garde-fou reste levé pour d'AUTRES chemins. Effacées dès qu'un cycle
+  // les a traitées.
+  approvedDeletions?: { at: string; paths: string[] };
 };
 
 export type RemoteDeletionReview = {

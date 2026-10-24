@@ -165,3 +165,33 @@ describe('dossiers reçus du cloud (régression Android 0.4.96-test.3)', () => {
     expect(visibleFolders(Object.keys(idx), (p) => (p in idx ? { isDirectory: idx[p] } : undefined))).toEqual(['A', 'A/🪐 B']);
   });
 });
+
+describe('planSync — suppressions approuvées (confirmation du garde-fou)', () => {
+  const N = 30;
+  const files = Array.from({ length: N }, (_, i) => `n${i}.md`);
+  const local = files.map((relPath) => ({ relPath, hash: 'h' }));
+  const remote = files.map((relPath) => ({ relPath, hash: 'h', deleted: true }));
+  const base: SyncBase = Object.fromEntries(files.map((p) => [p, { hash: 'h' }]));
+
+  it('sans approbation : 30 tombstones distantes → garde levé, rien supprimé', () => {
+    const plan = planSync({ local, remote, base });
+    expect(plan.guard.suspended).toBe(true);
+    expect(plan.guard.deletions).toHaveLength(N);
+    expect(plan.actions.some((a) => a.kind === 'delete-local')).toBe(false);
+  });
+
+  it('toutes approuvées : garde non levé, suppressions conservées', () => {
+    const plan = planSync({ local, remote, base, guard: { approved: new Set(files) } });
+    expect(plan.guard.suspended).toBe(false);
+    expect(plan.actions.filter((a) => a.kind === 'delete-local')).toHaveLength(N);
+  });
+
+  it('approbation partielle : seules les approuvées restent quand le garde est levé', () => {
+    const approved = new Set(files.slice(0, 5));
+    const plan = planSync({ local, remote, base, guard: { approved } });
+    expect(plan.guard.suspended).toBe(true);
+    expect(plan.guard.deletions).toHaveLength(N - 5);
+    const del = plan.actions.filter((a) => a.kind === 'delete-local').map((a) => a.relPath);
+    expect(new Set(del)).toEqual(approved);
+  });
+});

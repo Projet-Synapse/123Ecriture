@@ -68,7 +68,13 @@ export type PlanAction = {
   reason: string;
 };
 
-export type GuardOptions = { maxDeletions?: number; maxDeletionRatio?: number };
+export type GuardOptions = {
+  maxDeletions?: number;
+  maxDeletionRatio?: number;
+  // Chemins dont la suppression a été CONFIRMÉE par l'utilisatrice : hors
+  // décompte du garde-fou et conservés dans le plan même s'il est levé.
+  approved?: ReadonlySet<string>;
+};
 
 export type SyncPlan = {
   actions: PlanAction[];
@@ -136,9 +142,11 @@ export function planSync(args: {
   actions.sort((a, b) => a.relPath.localeCompare(b.relPath));
 
   // ---- GARDE-FOU ----
+  const approved = args.guard?.approved ?? new Set<string>();
   const deletions = actions
     .filter((a) => (a.kind === 'delete-local' || a.kind === 'tombstone-remote') && a.entryKind === 'file')
-    .map((a) => a.relPath);
+    .map((a) => a.relPath)
+    .filter((p) => !approved.has(p));
   const baseFiles = [...B.values()].filter((e) => (e.kind ?? 'file') === 'file').length;
   const localFiles = [...L.values()].filter((e) => (e.kind ?? 'file') === 'file').length;
   const maxDel = args.guard?.maxDeletions ?? DEFAULT_MAX_DELETIONS;
@@ -156,7 +164,7 @@ export function planSync(args: {
     // Les suppressions (fichiers ET dossiers) sont retirées du plan.
     for (let i = actions.length - 1; i >= 0; i -= 1) {
       const k = actions[i].kind;
-      if (k === 'delete-local' || k === 'tombstone-remote') actions.splice(i, 1);
+      if ((k === 'delete-local' || k === 'tombstone-remote') && !approved.has(actions[i].relPath)) actions.splice(i, 1);
     }
   }
   return { actions, guard: { suspended, reason: suspended ? reason : null, deletions: suspended ? deletions : [] } };

@@ -779,6 +779,11 @@ async function runLockedCycle(
     // Marqueurs de dossier : JAMAIS soumis à la garde « en cours d'édition »
     // (un dossier ne se « tape » pas) — toujours tirés/poussés.
     (isFolderMarker(relPath) ? foldersKnown : !hotPaths.has(relPath) && isHashableRelPath(relPath));
+  // Suppressions CONFIRMÉES depuis l'écran de revue (sinon la confirmation
+  // n'a aucun effet : le cycle suivant recalcule la même liste et relève le
+  // garde-fou — la demande « revient » toutes les 30 s).
+  const reviewBefore = await loadPendingReview(bridges.vault).catch(() => ({}) as PendingReview);
+  const approvedDeletions = new Set(reviewBefore.approvedDeletions?.paths ?? []);
   let plan: SyncPlan = planSync({
     local: [
       ...localFilesCold.map((n) => ({ relPath: n.relPath, hash: n.contentHash, size: n.sizeBytes, mtime: n.modifiedAt })),
@@ -796,6 +801,7 @@ async function runLockedCycle(
       Object.entries(syncState.files).map(([p, h]) => [p, { hash: h, kind: isFolderMarker(p) ? ('folder' as const) : ('file' as const) }]),
     ),
     allow,
+    guard: { approved: approvedDeletions },
   });
   {
     // OBSERVABILITÉ DOSSIERS : ce que le plan décide pour les marqueurs.
@@ -823,18 +829,24 @@ async function runLockedCycle(
   }
   const locallyDeleted = plan.actions.filter((x) => x.kind === 'tombstone-remote').map((x) => x.relPath);
   if (plan.guard.suspended) {
+    // FUSION (jamais d'écrasement) : les suppressions distantes en revue et
+    // les approbations déjà données sont conservées ; liste COMPLÈTE.
+    const current = await loadPendingReview(bridges.vault).catch(() => ({}) as PendingReview);
     const review: PendingReview = {
+      ...current,
       suspiciousDeletions: {
         at: new Date().toISOString(),
         count: plan.guard.deletions.length,
-        paths: plan.guard.deletions.slice(0, 200),
+        paths: plan.guard.deletions,
       },
     };
     await savePendingReview(bridges.vault, review).catch(() => undefined);
     const message = `Garde-fou : ${plan.guard.reason} Les suppressions sont SUSPENDUES (rien n'est effacé, ni ici ni dans le cloud) ; les fichiers manquants sont rapatriés. Valide depuis Paramètres → Journal de synchronisation si c'est volontaire.`;
     // Pas une ERREUR de l'interface : un avertissement du journal.
     journal.push(makeJournalEntry('info', { detail: message }));
-  } else {
+  }
+  {
+    // Garde levé : le plan ne contient plus que les suppressions APPROUVÉES.
     for (const relPath of locallyDeleted) {
       try {
         // REVÉRIFICATION DIRECTE AVANT TOUTE TOMBSTONE : un parcours peut
@@ -891,7 +903,12 @@ async function runLockedCycle(
   //    est conservé.
   const appliedDeletions = new Set<string>();
   const revueSuppressionsDistantes: { path: string; modified: boolean; at: string }[] = [];
-  for (const relPath of plan.guard.suspended || !fullyIndexed ? [] : tombstonedPaths) {
+  const remoteToApply = !fullyIndexed
+    ? []
+    : plan.guard.suspended
+      ? [...tombstonedPaths].filter((p) => approvedDeletions.has(p))
+      : [...tombstonedPaths];
+  for (const relPath of remoteToApply) {
     if (!allow(relPath)) continue;
     const local = localByPath.get(relPath);
     if (!local) continue;
@@ -930,6 +947,22 @@ async function runLockedCycle(
   // Les suppressions distantes en attente de validation sont publiées dans
   // pending-review.json (l'écran « Revue de sécurité » les affiche avec
   // « Supprimer vraiment / Restaurer dans le cloud »).
+  if (approvedDeletions.size > 0 && fullyIndexed) {
+    // Approbations consommées : on ne garde que celles encore en attente
+    // (échec ponctuel d'effacement) pour le cycle suivant.
+    try {
+      const review = await loadPendingReview(bridges.vault).catch(() => ({}) as PendingReview);
+      const stillPresent = [...approvedDeletions].filter(
+        (p) => !appliedDeletions.has(p) && !locallyDeleted.includes(p) && localByPath.has(p) && tombstonedPaths.has(p),
+      );
+      await savePendingReview(bridges.vault, {
+        ...review,
+        approvedDeletions: stillPresent.length > 0 ? { at: new Date().toISOString(), paths: stillPresent } : undefined,
+      });
+    } catch (error) {
+      console.error('[sync] mise à jour des approbations :', error);
+    }
+  }
   if (revueSuppressionsDistantes.length > 0) {
     try {
       const review = await loadPendingReview(bridges.vault).catch(() => ({}) as PendingReview);

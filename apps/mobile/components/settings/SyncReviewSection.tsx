@@ -90,7 +90,15 @@ export function SyncReviewSection() {
       // applique maintenant, en connaissance de cause).
       const supabaseMod = await import('../../lib/sync/deviceGateway');
       await supabaseMod.setRemoteRowsDeleted(remoteVaultId, paths, true);
-      await savePendingReview(window.vault, { ...(review ?? {}), suspiciousDeletions: undefined });
+      // APPROBATION PERSISTÉE : sans elle, le moteur recalcule la même liste
+      // au cycle suivant (fichiers encore présents ici quand ils ont été
+      // supprimés dans le cloud) et relève le garde-fou aussitôt.
+      const approved = new Set([...(review?.approvedDeletions?.paths ?? []), ...paths]);
+      await savePendingReview(window.vault, {
+        ...(review ?? {}),
+        suspiciousDeletions: undefined,
+        approvedDeletions: { at: new Date().toISOString(), paths: [...approved] },
+      });
     });
 
   const annulerSuppressionsMassives = () =>
