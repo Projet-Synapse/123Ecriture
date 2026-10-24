@@ -167,6 +167,8 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
   // déduit lui-même du coffre ACTIF (voir runSync, syncEngine.ts) ; ce ref
   // périmé pendant une bascule était la source de la contamination croisée.
   const triggerRef = useRef<string>('automatique');
+  const editRetryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const runSyncRef = useRef<((trigger?: string) => Promise<void>) | null>(null);
   const runSync = useCallback(async (trigger?: string) => {
     // Opération exclusive en cours (restauration de corbeille…) : les
     // déclencheurs auto ET manuels passent leur chemin — l'appelant
@@ -214,6 +216,16 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
       // à aucun état — un cycle PLUS RÉCENT est peut-être déjà en cours.
       if (cycleGenerationRef.current !== generation) return;
       setLastSummary(summary);
+      // RELANCE APRÈS ÉDITION : un fichier différé (tâches, préférences,
+      // note) part dès qu'il est silencieux, sans attendre un autre événement.
+      if (summary.retryAfterMs) {
+        if (editRetryRef.current) clearTimeout(editRetryRef.current);
+        const delay = Math.min(Math.max(summary.retryAfterMs - Date.now(), 1_000), 120_000);
+        editRetryRef.current = setTimeout(() => {
+          editRetryRef.current = null;
+          void runSyncRef.current?.('fin d’édition');
+        }, delay);
+      }
       if (summary.errors.length > 0) {
         setStatus('error');
         setLastError(summary.errors[0]);
@@ -277,6 +289,12 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
     // [] côté Preferences), la dépendance ne recrée jamais runSync — elle
     // satisfait juste le lint.
   }, [reloadVaultAppearance, reloadVaultPreferences]);
+  useEffect(() => {
+    runSyncRef.current = runSync;
+    return () => {
+      if (editRetryRef.current) clearTimeout(editRetryRef.current);
+    };
+  }, [runSync]);
 
   // Exécution HORS cycle (voir le contrat dans SyncStatusContextValue) :
   // attend le cycle éventuellement en cours, gèle tous les déclencheurs de

@@ -5,7 +5,7 @@ import { isSyncAllowed, isVaultSyncEnabled, loadSyncSettings, saveSyncSettings }
 import { isHashableRelPath } from './syncRules';
 import { holdDeletionsUntilIndexed, migrateSyncStateFiles, SYNC_STATE_VERSION } from './stateMigration';
 import { EMPTY_SHA256, folderToMarker, isFolderMarker, markerToFolder } from './folderMarker';
-import { splitEditHot } from './editQuiet';
+import { splitEditHot, quietRetryAt } from './editQuiet';
 import { errorMessage } from '../errorMessage';
 import { APP_SCHEMA, VAULT_FILES_TABLE } from './supabaseClient';
 import {
@@ -610,6 +610,7 @@ async function runLockedCycle(
   // sinon, conflit à chaque frappe pendant l'écriture.
   const { cold: localFilesCold, hotPaths } = splitEditHot(localFiles, Date.now());
   if (hotPaths.size > 0) {
+    summary.retryAfterMs = quietRetryAt(localFiles, hotPaths);
     journal.push(
       makeJournalEntry('info', {
         detail: `${hotPaths.size} fichier(s) en cours d'édition — synchronisation différée (silence de 60 s requis) : ${[...hotPaths].slice(0, 2).join(' | ').slice(0, 140)}`,

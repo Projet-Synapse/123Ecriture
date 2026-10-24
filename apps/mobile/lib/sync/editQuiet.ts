@@ -66,6 +66,13 @@ const recentLocalWrites = new Map<string, number>();
 export function noteLocalWrite(relPath: string, nowMs: number = Date.now()): void {
   recentLocalWrites.set(relPath.split('\\').join('/'), nowMs);
 }
+// Instant (ms) où TOUS les fichiers chauds seront silencieux (+1 s de marge).
+export function quietRetryAt(files: { relPath: string; modifiedAt: number }[], hotPaths: Set<string>): number | undefined {
+  let latest = 0;
+  for (const f of files) if (hotPaths.has(f.relPath) && f.modifiedAt > latest) latest = f.modifiedAt;
+  return latest > 0 ? latest + SYNC_EDIT_QUIET_MS + 1_000 : undefined;
+}
+
 export function indexedModifiedAt(entry: unknown, relPath?: string): number {
   const mtime = (entry as { mtime?: unknown } | undefined)?.mtime;
   const fromIndex = typeof mtime === 'number' && Number.isFinite(mtime) && mtime > 0 ? mtime : 0;

@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { indexedModifiedAt, splitEditHot , noteLocalWrite } from './editQuiet';
+import { indexedModifiedAt, splitEditHot , noteLocalWrite , quietRetryAt } from './editQuiet';
 
 import { planSync } from './threeWay';
 import { EMPTY_SHA256 } from './folderMarker';
+
 
 describe('mtime Android et période de silence', () => {
   it('fichiers à mtime réel ancien ou inconnu (0) : jamais « en cours d’édition »', () => {
@@ -48,5 +49,17 @@ describe('analyse d’impact test.8', () => {
       allow: () => true,
     });
     expect(plan.actions.map((a) => a.kind)).toEqual(['pull']);
+  });
+});
+describe('relance après édition (tasklists.json différé)', () => {
+  it('donne l’instant où le dernier fichier chaud redevient silencieux', () => {
+    const files = [
+      { relPath: '.123ecriture/tasklists.json', modifiedAt: 1_000_000 },
+      { relPath: '.123ecriture/preferences.json', modifiedAt: 1_005_000 },
+      { relPath: 'froid.md', modifiedAt: 9_999_999 },
+    ];
+    const hot = new Set(['.123ecriture/tasklists.json', '.123ecriture/preferences.json']);
+    expect(quietRetryAt(files, hot)).toBe(1_005_000 + 60_000 + 1_000);
+    expect(quietRetryAt(files, new Set())).toBeUndefined();
   });
 });
