@@ -631,6 +631,7 @@ async function runLockedCycle(
       foldersKnown = true;
     } catch (error) {
       console.warn('[sync] liste des dossiers :', errorMessage(error));
+      journal.push(makeJournalEntry('info', { detail: `Dossiers locaux illisibles ce cycle — dossiers non synchronisés : ${errorMessage(error).slice(0, 120)}` }));
     }
   }
   const localFolderSet = new Set(localFolders);
@@ -706,8 +707,9 @@ async function runLockedCycle(
   // d'édition et les types désactivés sortent entièrement du plan.
   const allow = (relPath: string) =>
     isSyncAllowed(relPath, syncSettings) &&
-    !hotPaths.has(relPath) &&
-    (isFolderMarker(relPath) ? foldersKnown : isHashableRelPath(relPath));
+    // Marqueurs de dossier : JAMAIS soumis à la garde « en cours d'édition »
+    // (un dossier ne se « tape » pas) — toujours tirés/poussés.
+    (isFolderMarker(relPath) ? foldersKnown : !hotPaths.has(relPath) && isHashableRelPath(relPath));
   let plan: SyncPlan = planSync({
     local: [
       ...localFilesCold.map((n) => ({ relPath: n.relPath, hash: n.contentHash, size: n.sizeBytes, mtime: n.modifiedAt })),
@@ -726,6 +728,17 @@ async function runLockedCycle(
     ),
     allow,
   });
+  {
+    // OBSERVABILITÉ DOSSIERS : ce que le plan décide pour les marqueurs.
+    const counts: Record<string, number> = {};
+    for (const a of plan.actions) if (a.entryKind === 'folder') counts[a.kind] = (counts[a.kind] ?? 0) + 1;
+    const remoteMarkers = visibleRemoteFiles.filter((r) => !r.deleted && isFolderMarker(r.relPath)).length;
+    journal.push(
+      makeJournalEntry('info', {
+        detail: `Dossiers : ${localFolders.length} ici, ${remoteMarkers} dans le cloud${foldersKnown ? '' : ' (liste locale indisponible)'} — plan : ${Object.entries(counts).map(([k, n]) => `${k} ${n}`).join(', ') || 'rien'}`,
+      }),
+    );
+  }
   const heldDeletions = new Set<string>();
   {
     const held = holdDeletionsUntilIndexed(plan, fullyIndexed);

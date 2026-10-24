@@ -16,6 +16,7 @@ import { sha256Hex, utf8Bytes } from '../sync/nativeSha256';
 import { isHashableRelPath } from '../sync/syncRules';
 import { visibleFolders } from '../sync/folderMarker';
 import { setSyncProgress } from '../sync/syncProgress';
+import { indexedModifiedAt } from '../sync/editQuiet';
 
 // ✒️ 123ECRITURE — lib/storage/nativeSyncAdapter.ts — hachage de sync natif (Android)
 //////////////////////////////////////////////////////////////////////////////
@@ -223,7 +224,8 @@ export const nativeSyncAdapter = {
       relPath,
       contentHash: value.hash,
       sizeBytes: value.size,
-      modifiedAt: Date.now(),
+      modifiedAt: indexedModifiedAt(getVaultIndexEntry(relPath)),
     }));
   },
 };
+

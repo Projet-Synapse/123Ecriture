@@ -54,3 +54,13 @@ export function splitEditHot<T extends { relPath: string; modifiedAt: number }>(
   }
   return { cold, hotPaths };
 }
+
+// DATE DE MODIFICATION RÉELLE (mtime de l'index du coffre). Avant :
+// Date.now() pour TOUS les fichiers, donc à chaque cycle les 435 fichiers
+// paraissaient « modifiés il y a 0 s » → tous « en cours d'édition »
+// (editQuiet.ts) → sortis du plan : 0 envoyé, 0 reçu, à vie. Inconnue →
+// 0 = « ancien » (froid, synchronisable), jamais « maintenant ».
+export function indexedModifiedAt(entry: unknown): number {
+  const mtime = (entry as { mtime?: unknown } | undefined)?.mtime;
+  return typeof mtime === 'number' && Number.isFinite(mtime) && mtime > 0 ? mtime : 0;
+}
