@@ -174,7 +174,13 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
     if (syncPausedRef.current) return;
     if (trigger) triggerRef.current = trigger;
     const { userId: currentUserId, remoteVaultId: currentRemoteVaultId } = latestRef.current;
-    if (!currentUserId || !currentRemoteVaultId || syncingRef.current) return;
+    if (!currentUserId || !currentRemoteVaultId) return;
+    // Cycle DÉJÀ en cours : l'appelant (bouton manuel) attend CE cycle au
+    // lieu de recevoir une promesse résolue sans rien (spinner orphelin).
+    if (syncingRef.current) {
+      await currentCycleRef.current?.catch(() => undefined);
+      return;
+    }
     syncingRef.current = true;
     // v0.4.57 — génération de cycle + watchdog : un cycle suspendu (réseau
     // mort sans timeout) est révoqué après SYNC_CYCLE_TIMEOUT_MS — statut

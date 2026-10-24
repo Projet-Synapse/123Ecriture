@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { awaitManualSync } from '../../lib/sync/manualSync';
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { useAuth } from '../../lib/sync/AuthContext';
@@ -112,6 +113,8 @@ export function AccountSyncSection() {
   // l'indicateur global qui n'a de sens que pour un seul coffre à la fois.
 
   const [vaultActionError, setVaultActionError] = useState<string | null>(null);
+  // Bouton « Synchroniser maintenant » : état LOCAL et borné (manualSync.ts).
+  const [manualSync, setManualSync] = useState<{ id: string; busy: boolean; note: string | null } | null>(null);
   const [renamingVaultId, setRenamingVaultId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
   const [showCreateForm, setShowCreateForm] = useState(false);
@@ -399,16 +402,23 @@ export function AccountSyncSection() {
   const handleSyncVault = useCallback(
     async (v: VaultRegistryEntry) => {
       if (!auth.user || !v.remoteVaultId) return;
-      // Le moteur de sync (ponts vault/sync) opère TOUJOURS sur le coffre
-      // ACTIF : synchroniser un coffre non actif sans basculer d'abord
-      // échangerait avec le bon coffre distant mais lirait/écrirait dans le
-      // dossier du coffre actif — contamination croisée (deux coffres
-      // échangés contre le même dossier). Toujours : bascule d'abord, sync
-      // ensuite — même chemin qu'à la main, zéro contournement du pont.
-      if (v.id !== activeVaultId) {
-        await runVaultAction(() => switchVault(v.id));
-      }
-      await syncStatus.runSync('manuel');
+      setManualSync({ id: v.id, busy: true, note: null });
+      const outcome = await awaitManualSync(async () => {
+        if (v.id !== activeVaultId) await runVaultAction(() => switchVault(v.id));
+        await syncStatus.runSync('manuel');
+      });
+      setManualSync({
+        id: v.id,
+        busy: false,
+        note:
+          outcome.kind === 'error'
+            ? `⚠️ ${outcome.message}`
+            : outcome.kind === 'background'
+              ? `La synchro continue en arrière-plan${syncStatus.progressLabel ? ` (${syncStatus.progressLabel})` : ''} — le résultat s'affichera ici.`
+              : null,
+      });
+      // Le moteur opère TOUJOURS sur le coffre ACTIF : bascule d'abord, sync
+      // ensuite (sinon contamination croisée entre coffres).
     },
     [auth.user, activeVaultId, syncStatus, switchVault, runVaultAction],
   );
@@ -736,7 +746,7 @@ export function AccountSyncSection() {
               // Toute synchro passe désormais par le contexte partagé (le
               // coffre visé devient actif d'abord — voir handleSyncVault) :
               // un seul état, celui de l'indicateur global.
-              const isSyncing = syncStatus.status === 'syncing';
+              const isSyncing = manualSync?.id === v.id && manualSync.busy;
               const result: { summary?: SyncSummary; error?: string } = {
                 summary: syncStatus.lastSummary ?? undefined,
                 error: syncStatus.lastError ?? undefined,
@@ -832,6 +842,9 @@ export function AccountSyncSection() {
                     </Text>
                   )}
                   {result?.error && <Text style={{ color: theme.danger }}>⚠️ {result.error}</Text>}
+                  {manualSync?.id === v.id && manualSync.note && (
+                    <Text style={[styles.vaultPathText, { color: theme.textMuted }]}>{manualSync.note}</Text>
+                  )}
                   {pickingRemoteForVaultId === v.id && (
                     <View style={styles.remotePicker}>
                       {(remoteVaults ?? [])
