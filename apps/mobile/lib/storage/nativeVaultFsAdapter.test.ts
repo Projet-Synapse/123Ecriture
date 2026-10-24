@@ -218,6 +218,12 @@ describe("adaptateur VaultFs", () => {
     expect(getIndexKeys()).toEqual(expect.arrayContaining(["🌲 ENVIRONNEMENT", "Sans titre.base"]));
   });
 
+  it("hashFile : empreinte calculée côté natif (aucun tableau d'octets en JS), chemin Windows normalisé", async () => {
+    fs.files.set("A/grosse note.md", "contenu");
+    const { hashFile } = make();
+    await expect(hashFile("A\\grosse note.md")).resolves.toEqual({ hash: "x", size: 7 });
+  });
+
   it("dossier illisible = contenu INCONNU : les fichiers déjà indexés ne disparaissent pas", async () => {
     fs.dirs.add("WORLDBUILDING");
     fs.files.set("WORLDBUILDING/carte.md", "c");

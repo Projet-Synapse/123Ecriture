@@ -9,11 +9,13 @@ import {
   ensureActiveVaultIndexed as ensureVaultIndexed,
   getActiveVaultIndexEntry as getVaultIndexEntry,
   getActiveVaultIndexKeys as getVaultIndexKeys,
+  hashActiveVaultFile,
   isActiveVaultFullyIndexed,
 } from './vaultBackend';
 import { sha256Hex, utf8Bytes } from '../sync/nativeSha256';
 import { isHashableRelPath } from '../sync/syncRules';
 import { visibleFolders } from '../sync/folderMarker';
+import { setSyncProgress } from '../sync/syncProgress';
 
 // ✒️ 123ECRITURE — lib/storage/nativeSyncAdapter.ts — hachage de sync natif (Android)
 //////////////////////////////////////////////////////////////////////////////
@@ -161,7 +163,21 @@ export const nativeSyncAdapter = {
       if (!indexSet.has(relPath)) targets.add(relPath);
     }
 
+    // PROGRESSION + SAUVEGARDE AU FIL DE L'EAU : un rattrapage de centaines
+    // de fichiers n'est plus muet (watchdog d'inactivité) et ce qui est haché
+    // reste acquis si le cycle est interrompu (délai, app tuée).
+    const total = targets.size;
+    let done = 0;
+    let lastSave = Date.now();
     for (const relPath of targets) {
+      done += 1;
+      if (total > 20 && (done % 10 === 0 || done === total)) {
+        setSyncProgress({ phase: 'Analyse du coffre local…', done, total, current: relPath });
+      }
+      if (Date.now() - lastSave > 5_000) {
+        await saveBaseline(rootUri, entries);
+        lastSave = Date.now();
+      }
       const entry = getVaultIndexEntry(relPath);
       if (!entry || entry.isDirectory) {
         delete entries[relPath]; // supprimé/déplacé depuis le dernier cycle
@@ -172,6 +188,11 @@ export const nativeSyncAdapter = {
         continue;
       }
       try {
+        if (hashActiveVaultFile) {
+          const hashed = await hashActiveVaultFile(relPath);
+          entries[relPath] = { hash: hashed.hash, size: hashed.size };
+          continue;
+        }
         let bytes: number[] | Uint8Array;
         if (SYNC_ATTACHMENT_EXTENSIONS.some((ext) => relPath.toLowerCase().endsWith(ext))) {
           // Binaire (image/PDF/audio…) : hachage sur les OCTETS décodés du

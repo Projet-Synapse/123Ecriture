@@ -39,6 +39,9 @@ export const vaultBackendName: "vault-fs" | "saf-legacy" = native ? "vault-fs" :
 export const activeVaultAdapter: VaultBridge = native ? native.adapter : nativeVaultAdapter;
 // Conservé pour compatibilité (import cloud) : toujours null désormais.
 export const cloudSyncHandle: CloudSyncHandle | null = null;
+export const hashActiveVaultFile: ((relPath: string) => Promise<{ hash: string; size: number }>) | null = native
+  ? native.hashFile
+  : null;
 export const isActiveVaultFullyIndexed: () => boolean = native ? native.isFullyIndexed : () => true;
 export const ensureActiveVaultIndexed: () => Promise<void> = native ? native.ensureIndexed : legacyEnsureIndexed;
 export const getActiveVaultIndexKeys: () => string[] = native ? native.getIndexKeys : legacyGetKeys;

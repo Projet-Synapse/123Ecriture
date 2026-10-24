@@ -609,6 +609,13 @@ export function createVaultFsAdapter(deps: VaultFsAdapterDeps) {
     },
     isPermissionLost: () => permissionLost,
     isFullyIndexed: () => fullyIndexed,
+    // Hachage CÔTÉ NATIF (Kotlin) : le JS ne construit plus de tableau
+    // d'octets (une note de 36 Mo = des centaines de Mo en Hermes).
+    hashFile: async (relPathRaw: string): Promise<{ hash: string; size: number }> => {
+      const relPath = normalizeRelPath(relPathRaw);
+      const res = await fs.readFile(await root(), relPath, "base64");
+      return { hash: res.sha256, size: res.size };
+    },
     getIndexKeys: () => [...index.keys()],
     getIndexEntry: (relPath: string) => index.get(relPath),
     // Dossiers illisibles au dernier parcours : leurs fichiers sont « inconnus ».
