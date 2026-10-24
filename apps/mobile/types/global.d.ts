@@ -190,6 +190,11 @@ declare global {
 
   interface SyncBridge {
     hashVaultTree: () => Promise<HashedNote[]>;
+    // Dossiers du coffre (chemins relatifs, y compris vides) — optionnel.
+    listFolders?: () => Promise<string[]>;
+    // Premier parcours COMPLET du coffre réussi ? Sinon aucune suppression
+    // n'est propagée (Android VaultFs) — absent = considéré complet.
+    isFullyIndexed?: () => boolean;
     // Verrou anti-bascule (v0.4.54) : posé par le moteur au début de chaque
     // cycle, retiré à la fin — pendant le cycle, changer de coffre actif
     // est refusé (desktop ; les autres plateformes l'omettent et

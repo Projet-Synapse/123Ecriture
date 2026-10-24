@@ -20,12 +20,12 @@
 //     (lecture/écriture JSON) — pur, sans contexte React.
 //
 // SOMMAIRE :
-//   1. Le contrat de la file (chemin, types, seuil du disjoncteur)
-//   2. Levée du disjoncteur + lecture/écriture de la file (clearPendingReviewSyncBlock, loadPendingReview, savePendingReview)
+//   1. Le contrat de la file (chemin, types, suppressions en revue)
+//   2. Lecture/écriture de la file (loadPendingReview, savePendingReview)
 //
 //////////////////////////////////////////////////////////////////////////////
 
-//////// 1. Le contrat de la file (chemin, types, seuil du disjoncteur) ///////////
+//////// 1. Le contrat de la file (chemin, types, suppressions en revue) ///////////
 
 // Le chemin relatif, partagé avec syncEngine (même convention .123ecriture).
 export const PENDING_REVIEW_REL_PATH = '.123ecriture/pending-review.json';
@@ -33,7 +33,7 @@ export const PENDING_REVIEW_REL_PATH = '.123ecriture/pending-review.json';
 export type SuspiciousDeletionReview = {
   at: string; // ISO — quand le garde a bloqué
   count: number; // nombre de fichiers concernés
-  paths: string[]; // échantillon (200 premiers) pour la revue
+  paths: string[]; // liste COMPLÈTE (nécessaire à la confirmation)
 };
 
 export type PendingReview = {
@@ -43,15 +43,11 @@ export type PendingReview = {
   // automatiquement — il reste EN PLACE jusqu'à ce que la revue tranche
   // (Supprimer vraiment / Restaurer dans le cloud).
   remoteDeletions?: RemoteDeletionReview[];
-  // DISJONCTEUR DE SYNCHRO : quand un cycle se termine avec trop d'erreurs,
-  // les cycles SUIVANTS sont refusés d'office tant qu'un humain n'a pas
-  // levé le bloc — on ne peut pas « resynchroniser » par-dessus un appareil
-  // en échec.
-  syncBlocked?: {
-    at: string;
-    errorCount: number;
-    samples: string[]; // extraits « origine : message » pour le diagnostic
-  };
+  // SUPPRESSIONS APPROUVÉES par l'utilisatrice (bouton « Confirmer les
+  // suppressions ») : le moteur les applique au cycle suivant même si le
+  // garde-fou reste levé pour d'AUTRES chemins. Effacées dès qu'un cycle
+  // les a traitées.
+  approvedDeletions?: { at: string; paths: string[] };
 };
 
 export type RemoteDeletionReview = {
@@ -60,25 +56,9 @@ export type RemoteDeletionReview = {
   at: string;
 };
 
-// Seuil d'erreurs DANS UN MÊME CYCLE qui pose le disjoncteur. 1-2 erreurs
-// passagères ne bloquent rien ; une rafale (SAF non inscriptible, réseau
-// fou, coffre incohérent) bloque tout jusqu'à revue.
-export const SYNC_ERROR_BLOCK_THRESHOLD = 10;
 
-//////// 2. Levée du disjoncteur + lecture/écriture de la file (clearPendingReviewSyncBlock, loadPendingReview, savePendingReview) ///////////
+//////// 2. Lecture/écriture de la file (loadPendingReview, savePendingReview) ///////////
 
-// Lève le disjoncteur (après revue humaine, ou à distance via la passerelle
-// deviceGateway.ts « clear-sync-block »).
-export async function clearPendingReviewSyncBlock(vault: {
-  readNote: (relPath: string) => Promise<string>;
-  writeNote: (relPath: string, content: string) => Promise<void>;
-}): Promise<boolean> {
-  const review = await loadPendingReview(vault);
-  if (!review.syncBlocked) return false;
-  delete review.syncBlocked;
-  await savePendingReview(vault, review);
-  return true;
-}
 
 // Un lecteur générique (le pont vault du coffre actif) est passé en
 // paramètre : ce module reste utilisable par le moteur comme par l'UI sans

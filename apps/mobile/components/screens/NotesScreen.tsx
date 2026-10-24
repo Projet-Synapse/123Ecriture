@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { onVaultTreeRefreshed } from '../../lib/storage/vaultTreeEvents';
 import {
   AppState,
   GestureResponderEvent,
@@ -469,6 +470,12 @@ export function NotesScreen({
   // ajoutés depuis l'explorateur Windows pendant que l'app était en
   // arrière-plan apparaissent au retour (walkTree relit le disque à chaque
   // appel, pas de cache). Natif : voir rescanVault (parcours SAF).
+  // Natif : arbre affiché depuis le cache d'index, relu après le parcours.
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    return onVaultTreeRefreshed(() => void refreshTree());
+  }, [refreshTree]);
+
   useEffect(() => {
     if (Platform.OS !== 'web') return;
     const onFocus = () => void refreshTree();

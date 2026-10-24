@@ -80,12 +80,6 @@ export function SyncReviewSection() {
     [reload],
   );
 
-  const leverDisjoncteur = () =>
-    run(async () => {
-      if (typeof window === 'undefined' || !window.vault) throw new Error('Pont vault absent.');
-      await savePendingReview(window.vault, { ...(review ?? {}), syncBlocked: undefined });
-    });
-
   const confirmerSuppressionsMassives = () =>
     run(async () => {
       if (!remoteVaultId) throw new Error('Aucun coffre distant lié — validation impossible depuis cet appareil.');
@@ -96,7 +90,15 @@ export function SyncReviewSection() {
       // applique maintenant, en connaissance de cause).
       const supabaseMod = await import('../../lib/sync/deviceGateway');
       await supabaseMod.setRemoteRowsDeleted(remoteVaultId, paths, true);
-      await savePendingReview(window.vault, { ...(review ?? {}), suspiciousDeletions: undefined });
+      // APPROBATION PERSISTÉE : sans elle, le moteur recalcule la même liste
+      // au cycle suivant (fichiers encore présents ici quand ils ont été
+      // supprimés dans le cloud) et relève le garde-fou aussitôt.
+      const approved = new Set([...(review?.approvedDeletions?.paths ?? []), ...paths]);
+      await savePendingReview(window.vault, {
+        ...(review ?? {}),
+        suspiciousDeletions: undefined,
+        approvedDeletions: { at: new Date().toISOString(), paths: [...approved] },
+      });
     });
 
   const annulerSuppressionsMassives = () =>
@@ -127,10 +129,9 @@ export function SyncReviewSection() {
   //////// 2. Le rendu (disjoncteur / suppressions massives / suppressions distantes) ///////
 
   if (!review) return null;
-  const hasBlocked = Boolean(review.syncBlocked);
   const hasMass = Boolean(review.suspiciousDeletions);
   const hasRemote = (review.remoteDeletions ?? []).length > 0;
-  if (!hasBlocked && !hasMass && !hasRemote) return null;
+  if (!hasMass && !hasRemote) return null;
 
   return (
     <View style={[s.card, { backgroundColor: theme.surface, borderColor: theme.danger }]}>
@@ -138,22 +139,6 @@ export function SyncReviewSection() {
       <Text style={[s.hint, { color: theme.textMuted }]}>
         Actions du moteur de synchro bloquées par protection — elles attendent ta décision. Rien n’a été perdu.
       </Text>
-
-      {hasBlocked && (
-        <View style={{ marginVertical: 8, gap: 6 }}>
-          <Text style={{ color: theme.danger, fontWeight: '600' }}>🚫 Synchronisation bloquée (disjoncteur)</Text>
-          <Text style={{ color: theme.textMuted, fontSize: 12 }}>
-            {String(review.syncBlocked?.samples?.[0] ?? '')}
-          </Text>
-          <Pressable
-            disabled={busy}
-            onPress={() => void leverDisjoncteur()}
-            style={[s.modeButton, { borderColor: theme.border, alignSelf: 'flex-start' }]}
-          >
-            <Text style={{ color: theme.text }}>🔓 Lever le disjoncteur et resynchroniser</Text>
-          </Pressable>
-        </View>
-      )}
 
       {hasMass && (
         <View style={{ marginVertical: 8, gap: 6 }}>

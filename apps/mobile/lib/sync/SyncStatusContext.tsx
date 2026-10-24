@@ -1,3 +1,5 @@
+import { installedAppVersion } from '../updaterAndroid';
+import { checkAppUpdate } from './syncSettings';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 
@@ -89,6 +91,10 @@ const AUTO_SYNC_STARTUP_DELAY_MS = 60_000;
 // (génération invalide). Aligné sur le TTL du verrou main (vaults.ts).
 const SYNC_CYCLE_TIMEOUT_MS = 10 * 60 * 1000;
 
+// Attente maximale d'un cycle en cours avant une opération de l'interface
+// (supprimer, renommer, restaurer) : l'interface ne dépend JAMAIS du réseau.
+const EXCLUSIVE_WAIT_MAX_MS = 3_000;
+
 // v0.4.29 : canal broadcast de propagation temps réel + marqueur de session.
 // Volontairement au niveau du MODULE (pas des refs React) : une seule
 // instance de ce contexte existe par app, et le linter React interdit les
@@ -161,6 +167,8 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
   // déduit lui-même du coffre ACTIF (voir runSync, syncEngine.ts) ; ce ref
   // périmé pendant une bascule était la source de la contamination croisée.
   const triggerRef = useRef<string>('automatique');
+  const editRetryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const runSyncRef = useRef<((trigger?: string) => Promise<void>) | null>(null);
   const runSync = useCallback(async (trigger?: string) => {
     // Opération exclusive en cours (restauration de corbeille…) : les
     // déclencheurs auto ET manuels passent leur chemin — l'appelant
@@ -168,7 +176,13 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
     if (syncPausedRef.current) return;
     if (trigger) triggerRef.current = trigger;
     const { userId: currentUserId, remoteVaultId: currentRemoteVaultId } = latestRef.current;
-    if (!currentUserId || !currentRemoteVaultId || syncingRef.current) return;
+    if (!currentUserId || !currentRemoteVaultId) return;
+    // Cycle DÉJÀ en cours : l'appelant (bouton manuel) attend CE cycle au
+    // lieu de recevoir une promesse résolue sans rien (spinner orphelin).
+    if (syncingRef.current) {
+      await currentCycleRef.current?.catch(() => undefined);
+      return;
+    }
     syncingRef.current = true;
     // v0.4.57 — génération de cycle + watchdog : un cycle suspendu (réseau
     // mort sans timeout) est révoqué après SYNC_CYCLE_TIMEOUT_MS — statut
@@ -202,6 +216,16 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
       // à aucun état — un cycle PLUS RÉCENT est peut-être déjà en cours.
       if (cycleGenerationRef.current !== generation) return;
       setLastSummary(summary);
+      // RELANCE APRÈS ÉDITION : un fichier différé (tâches, préférences,
+      // note) part dès qu'il est silencieux, sans attendre un autre événement.
+      if (summary.retryAfterMs) {
+        if (editRetryRef.current) clearTimeout(editRetryRef.current);
+        const delay = Math.min(Math.max(summary.retryAfterMs - Date.now(), 1_000), 120_000);
+        editRetryRef.current = setTimeout(() => {
+          editRetryRef.current = null;
+          void runSyncRef.current?.('fin d’édition');
+        }, delay);
+      }
       if (summary.errors.length > 0) {
         setStatus('error');
         setLastError(summary.errors[0]);
@@ -265,14 +289,44 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
     // [] côté Preferences), la dépendance ne recrée jamais runSync — elle
     // satisfait juste le lint.
   }, [reloadVaultAppearance, reloadVaultPreferences]);
+  useEffect(() => {
+    runSyncRef.current = runSync;
+    return () => {
+      if (editRetryRef.current) clearTimeout(editRetryRef.current);
+    };
+  }, [runSync]);
 
   // Exécution HORS cycle (voir le contrat dans SyncStatusContextValue) :
   // attend le cycle éventuellement en cours, gèle tous les déclencheurs de
   // runSync pendant `fn`, puis rend la main — l'appelant enchaîne un
   // runSync() explicite sur l'état final cohérent.
+  // Détection de MISE À JOUR au démarrage (version installée vs dernière
+  // vue) → synchro en pause jusqu'à reconnexion/confirmation explicite.
+  useEffect(() => {
+    void (async () => {
+      const g = globalThis as { updater?: { getVersion?: () => Promise<string> } };
+      const version = installedAppVersion() ?? (await g.updater?.getVersion?.().catch(() => null)) ?? null;
+      // Installation antérieure à la détection : un coffre déjà relié au cloud.
+      const v = globalThis as { vaults?: { list?: () => Promise<{ cloudLinked?: boolean }[]> } };
+      const list = await v.vaults?.list?.().catch(() => null);
+      const priorInstall = Array.isArray(list) && list.some((e) => e?.cloudLinked === true);
+      await checkAppUpdate(version, priorInstall);
+    })();
+  }, []);
+
   const runSyncExclusive = useCallback(async <T,>(fn: () => Promise<T>): Promise<T> => {
-    while (currentCycleRef.current) {
-      await currentCycleRef.current;
+    // LOCAL-FIRST : on n'attend PLUS la fin d'un cycle (jusqu'à 10 min) —
+    // au plus EXCLUSIVE_WAIT_MAX_MS. Au-delà, l'opération locale passe :
+    // le moteur à trois états relit le disque au cycle suivant (une absence
+    // dans la base = suppression, un nouveau chemin = création), donc rien
+    // n'est perdu ni ressuscité.
+    const deadline = Date.now() + EXCLUSIVE_WAIT_MAX_MS;
+    while (currentCycleRef.current && Date.now() < deadline) {
+      const remaining = deadline - Date.now();
+      await Promise.race([
+        currentCycleRef.current.catch(() => undefined),
+        new Promise<void>((resolve) => setTimeout(resolve, remaining)),
+      ]);
     }
     syncPausedRef.current = true;
     try {

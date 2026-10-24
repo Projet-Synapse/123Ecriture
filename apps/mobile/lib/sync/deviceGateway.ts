@@ -19,7 +19,7 @@
 //
 // Commandes v1 :
 //   - dump-diagnostics  → rapport complet (diagnostics.ts) en résultat
-//   - clear-sync-block  → lève le disjoncteur (après revue)
+//   - clear-sync-block  → réactive la synchronisation (ancien disjoncteur supprimé)
 //   - lock-sync         → pose le bloc local (motif dans params.reason)
 //   - unlock-sync       → lève le bloc local
 //
@@ -32,11 +32,11 @@
 
 //////// 1. La boucle d'exécution (processDeviceCommands, buildLocalDiagnostics, setRemoteRowsDeleted) ///////////
 
+import { loadPendingReview, type PendingReview } from './pendingReview';
 import { Platform } from 'react-native';
 
 import { APP_SCHEMA, DEVICE_COMMANDS_TABLE, VAULT_FILES_TABLE, supabase } from './supabaseClient';
 import { errorMessage } from '../errorMessage';
-import { clearPendingReviewSyncBlock, loadPendingReview, savePendingReview, type PendingReview } from './pendingReview';
 import type { DiagnosticsReport } from './diagnostics';
 // Le chemin du journal est défini dans syncEngine (repris ici sans
 // import pour éviter un cycle : syncEngine importe cette passerelle).
@@ -198,7 +198,7 @@ async function executeCommand(
   command: string,
   params: CommandParams,
 ): Promise<string> {
-  const { vault } = requireBridges();
+  requireBridges();
   switch (command) {
     case 'dump-diagnostics': {
       const report = await buildLocalDiagnostics();
@@ -218,25 +218,19 @@ async function executeCommand(
       const { publishDeviceInventory } = await import('./deviceInventory');
       return 'inventaire exporté : ' + (await publishDeviceInventory(remoteVaultId));
     }
-    case 'clear-sync-block':
-      await clearPendingReviewSyncBlock(vault);
-      return 'disjoncteur levé';
+    // Ancien disjoncteur supprimé : ces commandes pilotent désormais
+    // l'interrupteur « Synchronisation activée » des paramètres.
     case 'lock-sync': {
-      const review = await loadPendingReview(vault).catch(() => ({}) as PendingReview);
-      const next: PendingReview = {
-        ...review,
-        syncBlocked: {
-          at: new Date().toISOString(),
-          errorCount: 0,
-          samples: [String(params.reason ?? 'Verrou posé à distance (lock-sync)')],
-        },
-      };
-      await savePendingReview(vault, next);
-      return 'bloc local posé';
+      const { loadSyncSettings, saveSyncSettings } = await import('./syncSettings');
+      saveSyncSettings({ ...loadSyncSettings(), enabled: false });
+      return 'synchronisation désactivée sur cet appareil';
     }
-    case 'unlock-sync':
-      await clearPendingReviewSyncBlock(vault);
-      return 'bloc local levé';
+    case 'clear-sync-block':
+    case 'unlock-sync': {
+      const { loadSyncSettings, saveSyncSettings } = await import('./syncSettings');
+      saveSyncSettings({ ...loadSyncSettings(), enabled: true });
+      return 'synchronisation réactivée sur cet appareil';
+    }
     default:
       throw new Error(`Commande inconnue : ${command}`);
   }

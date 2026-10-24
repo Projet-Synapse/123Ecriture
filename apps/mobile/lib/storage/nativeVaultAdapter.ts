@@ -1,4 +1,5 @@
 import { Alert } from 'react-native';
+import { noteLocalWrite } from '../sync/editQuiet';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import { StorageAccessFramework } from 'expo-file-system/legacy';
@@ -94,6 +95,7 @@ async function loadDirtyQueue(): Promise<DirtyItem[]> {
 }
 
 export function markVaultFileDirty(relPath: string): void {
+  noteLocalWrite(relPath);
   // Les métadonnées .123ecriture/** restent hors hachage SAUF la liste
   // synchronisée (tasks/tasklists/preferences/appearance, cf.
   // nativeSyncAdapter.SYNCED_META_FILES) — leur modification doit bien
@@ -576,8 +578,11 @@ export function buildTreeFromIndex(index: Map<string, { isDirectory: boolean }> 
   const contaminé = (relPath: string): boolean => relPath.includes('\\');
   for (const [relPath, entry] of index) {
     if (!entry.isDirectory || contaminé(relPath)) continue;
-    const slash = relPath.lastIndexOf('/');
-    builderFor(slash >= 0 ? relPath.slice(0, slash) : '', isHiddenRoot(relPath));
+    // Le dossier LUI-MÊME (pas seulement son parent) : sinon un dossier
+    // vide n'apparaît jamais. Dossiers cachés (.obsidian, …) exclus,
+    // comme visibleFolders (sync).
+    if (relPath.split('/').some((seg) => seg.startsWith('.')) && !isHiddenRoot(relPath)) continue;
+    builderFor(relPath, isHiddenRoot(relPath));
   }
   for (const [relPath, entry] of index) {
     if (entry.isDirectory) continue;

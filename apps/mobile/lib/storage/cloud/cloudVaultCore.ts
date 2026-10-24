@@ -1,3 +1,5 @@
+import { loadSyncSettings } from '../../sync/syncSettings';
+import { folderToMarker, isFolderMarker } from '../../sync/folderMarker';
 // ✒️ 123ECRITURE — lib/storage/cloud/cloudVaultCore.ts — le coffre Android 100 % cloud
 //////////////////////////////////////////////////////////////////////////////
 //
@@ -276,6 +278,12 @@ export function createCloudVault(deps: CloudVaultDeps) {
     };
     for (const p of effective(s).keys()) {
       if (isTrash(p) || p.startsWith('.123ecriture/')) continue;
+      // Marqueur de dossier (folderMarker.ts) : rend le dossier visible,
+      // même vide, sans jamais apparaître comme fichier.
+      if (isFolderMarker(p)) {
+        addParents(p);
+        continue;
+      }
       addParents(p);
       idx.set(p, { isDirectory: false });
     }
@@ -545,6 +553,13 @@ export function createCloudVault(deps: CloudVaultDeps) {
   async function flushOnce(): Promise<CloudCycleResult> {
     const s = await load();
     const result: CloudCycleResult = { pushed: 0, deleted: 0, restored: 0, conflicts: 0, pending: 0, errors: [], offline: false };
+    // Après une MISE À JOUR (ou sync désactivée) : RIEN n'est poussé ; la
+    // file reste dans le cache et partira après confirmation explicite.
+    const settings = loadSyncSettings();
+    if (settings.pausedAfterUpdate || !settings.enabled) {
+      result.pending = s.queue.length;
+      return result;
+    }
     // Les copies d'un déplacement doivent réussir AVANT la tombstone de
     // l'ancien chemin : un put en échec (hors réseau) arrête la file.
     while (s.queue.length > 0) {
@@ -649,10 +664,12 @@ export function createCloudVault(deps: CloudVaultDeps) {
       const parent = normalizeCloudRelPath(parentRelPath ?? '');
       const finalName = h.findAvailableName(name, siblings(s, parent));
       const relPath = join(parent, finalName);
-      // Le cloud ne connaît que des fichiers : un dossier vide vit dans le
-      // cache de l'appareil jusqu'à ce qu'il contienne une note.
+      // Dossier de PREMIÈRE CLASSE : visible tout de suite (cache), et son
+      // marqueur vide part dans la file → le dossier existe aussi sur les
+      // autres appareils, même vide.
       s.folders.push(relPath);
       await save(s);
+      await write(folderToMarker(relPath), '', 'utf8');
       return { relPath, name: finalName };
     },
 
