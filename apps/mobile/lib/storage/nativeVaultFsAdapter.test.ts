@@ -207,6 +207,17 @@ describe("adaptateur VaultFs", () => {
     expect(getIndexKeys()).toEqual(["note.md"]);
   });
 
+  it("ensureIndexed : un index partiel (lecture isolée) déclenche quand même le parcours complet", async () => {
+    fs.dirs.add("🌲 ENVIRONNEMENT");
+    fs.files.set(".123ecriture/state.json", "{}");
+    fs.files.set("Sans titre.base", "b");
+    const { adapter, getIndexKeys, ensureIndexed } = make();
+    await adapter.readNote(".123ecriture/state.json");
+    expect(getIndexKeys()).toEqual([".123ecriture/state.json"]);
+    await ensureIndexed();
+    expect(getIndexKeys()).toEqual(expect.arrayContaining(["🌲 ENVIRONNEMENT", "Sans titre.base"]));
+  });
+
   it("dossier illisible = contenu INCONNU : les fichiers déjà indexés ne disparaissent pas", async () => {
     fs.dirs.add("WORLDBUILDING");
     fs.files.set("WORLDBUILDING/carte.md", "c");

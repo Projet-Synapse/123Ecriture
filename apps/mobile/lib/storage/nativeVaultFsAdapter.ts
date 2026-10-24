@@ -118,6 +118,9 @@ export function createVaultFsAdapter(deps: VaultFsAdapterDeps) {
   let lastErrors: { relPath: string; message: string }[] = [];
   let cachedTree: VaultTreeNode[] | null = null;
   let permissionLost = false;
+  // Index COMPLET (parcours natif ou cache chargé) ? read()/write() ajoutent
+  // des entrées isolées à l'index : sa taille ne prouve PAS qu'il est complet.
+  let fullyIndexed = false;
 
   async function root(): Promise<string> {
     const uri = await deps.getRootUri();
@@ -126,6 +129,7 @@ export function createVaultFsAdapter(deps: VaultFsAdapterDeps) {
       index = new Map();
       indexedRoot = uri;
       cachedTree = null;
+      fullyIndexed = false;
     }
     return uri;
   }
@@ -166,6 +170,7 @@ export function createVaultFsAdapter(deps: VaultFsAdapterDeps) {
       }
     }
     index = next;
+    fullyIndexed = true;
     lastErrors = errors;
     cachedTree = null;
     await deps.saveIndexCache?.(treeUri, [...index.entries()]).catch(() => undefined);
@@ -576,9 +581,9 @@ export function createVaultFsAdapter(deps: VaultFsAdapterDeps) {
     adapter,
     ensureIndexed: async () => {
       const uri = await root();
-      if (index.size > 0) return;
+      if (fullyIndexed) return;
       const cached = await deps.loadIndexCache?.(uri).catch(() => null);
-      if (cached && cached.length > 0) index = new Map(cached);
+      if (cached && cached.length > 0) index = new Map([...cached, ...index]);
       try {
         await refresh();
       } catch (error) {

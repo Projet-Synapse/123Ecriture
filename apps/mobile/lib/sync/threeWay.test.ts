@@ -1,3 +1,4 @@
+import { isHashableRelPath } from './syncRules';
 import { describe, expect, it } from 'vitest';
 import { planSync, type SyncBase } from './threeWay';
 import { isSyncAllowed, DEFAULT_SYNC_SETTINGS, categorize } from './syncSettings';
@@ -141,6 +142,22 @@ describe('dossiers reçus du cloud (régression Android 0.4.96-test.3)', () => {
   it('liste des dossiers indisponible : marqueurs exclus, jamais tombstonés', () => {
     const plan = planSync({ local: [], remote, base, allow: (p) => !isFolderMarker(p) });
     expect(plan.actions.filter((a) => a.kind === 'tombstone-remote')).toEqual([]);
+  });
+
+  it('dossier du cloud absent ici mais présent dans la base : RECRÉÉ, jamais tombstoné', () => {
+    const plan = planSync({ local: [], remote, base });
+    expect(plan.actions.map((a) => a.kind)).toEqual(['pull']);
+  });
+
+  it('chemin distant hors du périmètre de hachage local : exclu du plan (pas de pull en boucle)', () => {
+    const conflit = '.123ecriture/preferences (conflit Android 2026-10-23 16h25).json';
+    const plan = planSync({
+      local: [],
+      remote: [{ relPath: conflit, hash: 'h', deleted: false }],
+      base: {},
+      allow: (p) => isHashableRelPath(p),
+    });
+    expect(plan.actions).toEqual([]);
   });
 
   it('visibleFolders : dossiers visibles seulement', () => {

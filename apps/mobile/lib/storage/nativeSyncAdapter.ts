@@ -1,7 +1,7 @@
 import * as FileSystem from 'expo-file-system/legacy';
 
 import { getActiveVaultRootUri } from './nativeVaultsAdapter';
-import { SYNC_ATTACHMENT_EXTENSIONS, SYNCED_META_FILES, takeDirtyPathsForRoot } from './nativeVaultAdapter';
+import { SYNC_ATTACHMENT_EXTENSIONS, takeDirtyPathsForRoot } from './nativeVaultAdapter';
 import {
   activeVaultAdapter as nativeVaultAdapter,
   assertActiveVaultAccess,
@@ -11,6 +11,7 @@ import {
   getActiveVaultIndexKeys as getVaultIndexKeys,
 } from './vaultBackend';
 import { sha256Hex, utf8Bytes } from '../sync/nativeSha256';
+import { isHashableRelPath } from '../sync/syncRules';
 import { visibleFolders } from '../sync/folderMarker';
 
 // ✒️ 123ECRITURE — lib/storage/nativeSyncAdapter.ts — hachage de sync natif (Android)
@@ -51,7 +52,6 @@ import { visibleFolders } from '../sync/folderMarker';
 //////////////////////////////////////////////////////////////////////////////
 
 //////// 1. Règles de hachage et baseline hors coffre //////////////////////////////////
-const SYNC_EXTENSIONS = ['.mdx', '.md', '.canvas', '.chart', '.excalidraw', '.base'];
 
 // Baseline hors coffre (documentDirectory), clé par URI racine : changer de
 // coffre actif ou reconnecter un dossier invalide l'ancienne.
@@ -85,23 +85,9 @@ async function saveBaseline(rootUri: string, entries: BaselineEntries): Promise<
 // MÉTADONNÉES SYNCHRONISÉES (SYNCED_META_FILES, importée de
 // nativeVaultAdapter : apparence, tâches/listes, préférences).
 function hashableRelPath(relPath: string): boolean {
-  if (SYNCED_META_FILES.includes(relPath)) return true;
-  // ANTI-CONTAMINATION : un nom contenant un `\` est un FICHIER PLAT créé
-  // par un ancien pull d'une ligne backslashed (le `\` est légal dans un
-  // nom Android, pas dans un vrai arbre) — le pousser re-imbriquerait la
-  // contamination dans le cloud (dossiers fantômes chez les autres
-  // appareils). Jamais hachés, jamais poussés ; ils restent locaux jusqu'à
-  // purge manuelle.
-  if (relPath.includes('\\')) return false;
-  const segments = relPath.split('/');
-  // `.trash/` local uniquement (plus synchronisé, comme syncRules.ts).
-  if (segments.some((segment) => segment.startsWith('.'))) return false;
-  const name = segments[segments.length - 1].toLowerCase();
-  // Pièces jointes synchronisées : images/PDF/audio — la taille par
-  // fichier est plafonnée côté desktop ; le mobile hache ce que son index
-  // connaît.
-  if (SYNC_ATTACHMENT_EXTENSIONS.some((ext) => name.endsWith(ext))) return true;
-  return SYNC_EXTENSIONS.some((ext) => name.endsWith(ext));
+  // RÈGLE UNIQUE (syncRules.isHashableRelPath) partagée avec le moteur : un
+  // chemin distant que le hachage local ignorerait serait tiré en boucle.
+  return isHashableRelPath(relPath);
 }
 
 // Décodage base64 → octets (pur JS : Hermes n'a pas `atob` garanti) —
@@ -158,10 +144,19 @@ export const nativeSyncAdapter = {
     // Première exécution pour ce coffre (baseline vide) : passe complète
     // sur tout l'index. Sinon : uniquement les fichiers marqués modifiés.
     const targets = new Set(dirty);
-    if (Object.keys(entries).length === 0) {
-      for (const relPath of getVaultIndexKeys()) {
-        if (hashableRelPath(relPath)) targets.add(relPath);
-      }
+    // Rattrapage à CHAQUE cycle (pas seulement au premier) : tout fichier
+    // présent dans l'index mais absent de la baseline est haché, et toute
+    // entrée de baseline que l'index ne connaît plus est re-vérifiée. Sans
+    // ça, un fichier jamais marqué « dirty » (reçu, indexé par un parcours)
+    // restait invisible au moteur : pull → « répond localement » → différé,
+    // en boucle à chaque cycle.
+    const indexKeys = getVaultIndexKeys();
+    for (const relPath of indexKeys) {
+      if (hashableRelPath(relPath) && !entries[relPath]) targets.add(relPath);
+    }
+    const indexSet = new Set(indexKeys);
+    for (const relPath of Object.keys(entries)) {
+      if (!indexSet.has(relPath)) targets.add(relPath);
     }
 
     for (const relPath of targets) {

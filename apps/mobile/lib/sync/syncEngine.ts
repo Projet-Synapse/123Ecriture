@@ -2,6 +2,7 @@
 import { planSync, type SyncPlan } from './threeWay';
 import type { SyncDecision } from './diff';
 import { isSyncAllowed, isVaultSyncEnabled, loadSyncSettings, saveSyncSettings } from './syncSettings';
+import { isHashableRelPath } from './syncRules';
 import { EMPTY_SHA256, folderToMarker, isFolderMarker, markerToFolder } from './folderMarker';
 import { splitEditHot } from './editQuiet';
 import { errorMessage } from '../errorMessage';
@@ -681,7 +682,9 @@ async function runLockedCycle(
   // suppression QUE si le chemin était dans la base. Les fichiers en cours
   // d'édition et les types désactivés sortent entièrement du plan.
   const allow = (relPath: string) =>
-    isSyncAllowed(relPath, syncSettings) && !hotPaths.has(relPath) && (foldersKnown || !isFolderMarker(relPath));
+    isSyncAllowed(relPath, syncSettings) &&
+    !hotPaths.has(relPath) &&
+    (isFolderMarker(relPath) ? foldersKnown : isHashableRelPath(relPath));
   const plan: SyncPlan = planSync({
     local: [
       ...localFilesCold.map((n) => ({ relPath: n.relPath, hash: n.contentHash, size: n.sizeBytes, mtime: n.modifiedAt })),
