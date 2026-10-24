@@ -306,7 +306,11 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
     void (async () => {
       const g = globalThis as { updater?: { getVersion?: () => Promise<string> } };
       const version = installedAppVersion() ?? (await g.updater?.getVersion?.().catch(() => null)) ?? null;
-      await checkAppUpdate(version);
+      // Installation antérieure à la détection : un coffre déjà relié au cloud.
+      const v = globalThis as { vaults?: { list?: () => Promise<{ cloudLinked?: boolean }[]> } };
+      const list = await v.vaults?.list?.().catch(() => null);
+      const priorInstall = Array.isArray(list) && list.some((e) => e?.cloudLinked === true);
+      await checkAppUpdate(version, priorInstall);
     })();
   }, []);
 

@@ -193,11 +193,14 @@ export async function hydrateSyncSettings(): Promise<SyncSettings> {
 }
 
 // Détection de MISE À JOUR : à appeler au démarrage avec la version
-// installée. Première exécution (aucune version vue) = pas une mise à jour.
-export async function checkAppUpdate(installedVersion: string | null): Promise<SyncSettings> {
+// installée. Première exécution (aucune version vue) = pas une mise à jour,
+// SAUF si un coffre est déjà relié au cloud (`priorInstall`) : c'est alors
+// une version antérieure à cette détection (ex. 0.4.90 → 0.4.96), qui n'a
+// jamais enregistré lastSeenVersion — la pause doit s'appliquer aussi.
+export async function checkAppUpdate(installedVersion: string | null, priorInstall = false): Promise<SyncSettings> {
   const current = await hydrateSyncSettings();
   if (!installedVersion || current.lastSeenVersion === installedVersion) return current;
-  const updated = current.lastSeenVersion !== null;
+  const updated = current.lastSeenVersion !== null || priorInstall;
   const next: SyncSettings = {
     ...current,
     lastSeenVersion: installedVersion,
