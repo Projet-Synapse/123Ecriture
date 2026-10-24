@@ -614,13 +614,20 @@ async function runLockedCycle(
   // DOSSIERS DE PREMIÈRE CLASSE (folderMarker.ts) : chaque dossier local
   // est représenté par son marqueur ; le cloud en garde une ligne vide.
   let localFolders: string[] = [];
+  // Liste FIABLE des dossiers locaux ? Sinon (pont sans listFolders, échec
+  // de lecture) les marqueurs sortent ENTIÈREMENT du plan : une liste
+  // absente n'est jamais « aucun dossier » (sinon tombstone de tous les
+  // dossiers reçus au cycle précédent).
+  let foldersKnown = false;
   if (syncSettings.emptyFolders && bridges.sync.listFolders) {
     try {
       localFolders = (await bridges.sync.listFolders()).map((f: string) => f.split('\\').join('/'));
+      foldersKnown = true;
     } catch (error) {
       console.warn('[sync] liste des dossiers :', errorMessage(error));
     }
   }
+  const localFolderSet = new Set(localFolders);
 
 //////// 9. runSync : les suppressions — tombestones et revue //////////////
 
@@ -671,7 +678,8 @@ async function runLockedCycle(
   // L = disque, R = cloud, B = base (sync-state). Une absence ne vaut
   // suppression QUE si le chemin était dans la base. Les fichiers en cours
   // d'édition et les types désactivés sortent entièrement du plan.
-  const allow = (relPath: string) => isSyncAllowed(relPath, syncSettings) && !hotPaths.has(relPath);
+  const allow = (relPath: string) =>
+    isSyncAllowed(relPath, syncSettings) && !hotPaths.has(relPath) && (foldersKnown || !isFolderMarker(relPath));
   const plan: SyncPlan = planSync({
     local: [
       ...localFilesCold.map((n) => ({ relPath: n.relPath, hash: n.contentHash, size: n.sizeBytes, mtime: n.modifiedAt })),
@@ -856,7 +864,15 @@ async function runLockedCycle(
       } else if (x.kind === 'pull') {
         const folder = markerToFolder(x.relPath);
         const cut = folder.lastIndexOf('/');
-        await bridges.vault.createFolder?.(folder.slice(cut + 1), cut >= 0 ? folder.slice(0, cut) : undefined).catch(() => undefined);
+        // Idempotent : createFolder choisit un nom libre (« X 2 ») si le
+        // dossier existe déjà. Échec = PAS de base (sinon le cycle suivant
+        // le croit supprimé ici et le tombstone dans le cloud).
+        if (!localFolderSet.has(folder)) {
+          if (!bridges.vault.createFolder) throw new Error('création de dossier indisponible');
+          const created = await bridges.vault.createFolder(folder.slice(cut + 1), cut >= 0 ? folder.slice(0, cut) : undefined);
+          if (created && created.relPath !== folder) throw new Error(`créé sous un autre nom : ${created.relPath}`);
+          localFolderSet.add(folder);
+        }
         folderStates[x.relPath] = EMPTY_SHA256;
         journal.push(makeJournalEntry('modification-reçue', { path: folder, detail: 'dossier reçu' }));
       } else if (x.kind === 'noop') {

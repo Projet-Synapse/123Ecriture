@@ -11,6 +11,7 @@ import {
   getActiveVaultIndexKeys as getVaultIndexKeys,
 } from './vaultBackend';
 import { sha256Hex, utf8Bytes } from '../sync/nativeSha256';
+import { visibleFolders } from '../sync/folderMarker';
 
 // ✒️ 123ECRITURE — lib/storage/nativeSyncAdapter.ts — hachage de sync natif (Android)
 //////////////////////////////////////////////////////////////////////////////
@@ -130,6 +131,17 @@ function base64ToBytes(base64: string): Uint8Array {
 //////// 2. hashVaultTree — le hachage incrémental du coffre actif //////////////////////
 
 export const nativeSyncAdapter = {
+  // DOSSIERS (folderMarker.ts) : sans cette liste, le moteur croyait
+  // qu'AUCUN dossier n'existait sur Android — un dossier reçu au cycle N
+  // était donc tombstoné au cycle N+1 (« supprimé ici »). Source : l'index
+  // du coffre (vault-fs ou SAF), dossiers visibles uniquement.
+  listFolders: async (): Promise<string[]> => {
+    const rootUri = await getActiveVaultRootUri();
+    if (!rootUri) return [];
+    await assertActiveVaultAccess();
+    await ensureVaultIndexed();
+    return visibleFolders(getVaultIndexKeys(), (p) => getVaultIndexEntry(p));
+  },
   hashVaultTree: async (): Promise<HashedNote[]> => {
     // Android cloud : l'« arbre local » est le CACHE privé (inventaire).
     if (cloudSyncHandle) return cloudSyncHandle.inventory();

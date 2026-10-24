@@ -37,3 +37,14 @@ export function folderToMarker(folderRelPath: string): string {
 export function markerToFolder(markerRelPath: string): string {
   return markerRelPath.slice(0, Math.max(0, markerRelPath.length - FOLDER_MARKER_NAME.length - 1));
 }
+
+// Dossiers VISIBLES d'un index (aucun segment caché « . »).
+export function visibleFolders(
+  keys: string[],
+  entryOf: (relPath: string) => { isDirectory: boolean } | undefined,
+): string[] {
+  return keys
+    .map((k) => k.split('\\').join('/'))
+    .filter((k) => k && !k.split('/').some((seg) => seg.startsWith('.')) && entryOf(k)?.isDirectory === true)
+    .sort();
+}

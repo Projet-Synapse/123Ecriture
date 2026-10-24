@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { planSync, type SyncBase } from './threeWay';
 import { isSyncAllowed, DEFAULT_SYNC_SETTINGS, categorize } from './syncSettings';
-import { folderToMarker, markerToFolder, isFolderMarker, EMPTY_SHA256 } from './folderMarker';
+import { folderToMarker, markerToFolder, isFolderMarker, EMPTY_SHA256, visibleFolders } from './folderMarker';
 
 const kinds = (p: ReturnType<typeof planSync>) => Object.fromEntries(p.actions.map((a) => [a.relPath, a.kind]));
 
@@ -125,5 +125,26 @@ describe('planSync — moteur à trois états', () => {
     expect(kinds(p)).toEqual({ 'a.md': 'push' });
     expect(categorize('x/y.PNG')).toBe('images');
     expect(categorize('.123ecriture/tasks.json')).toBe('config');
+  });
+});
+
+describe('dossiers reçus du cloud (régression Android 0.4.96-test.3)', () => {
+  const marker = folderToMarker('L/RÉSUMÉS/🪐 LOIS DU MONDE');
+  const remote = [{ relPath: marker, hash: EMPTY_SHA256, version: 1, deleted: false, kind: 'folder' as const }];
+  const base = { [marker]: { hash: EMPTY_SHA256, kind: 'folder' as const } };
+
+  it('cycle suivant avec le dossier listé : noop, aucune tombstone', () => {
+    const plan = planSync({ local: [{ relPath: marker, hash: EMPTY_SHA256, kind: 'folder' }], remote, base });
+    expect(plan.actions.map((a) => a.kind)).toEqual(['noop']);
+  });
+
+  it('liste des dossiers indisponible : marqueurs exclus, jamais tombstonés', () => {
+    const plan = planSync({ local: [], remote, base, allow: (p) => !isFolderMarker(p) });
+    expect(plan.actions.filter((a) => a.kind === 'tombstone-remote')).toEqual([]);
+  });
+
+  it('visibleFolders : dossiers visibles seulement', () => {
+    const idx: Record<string, boolean> = { 'A': true, 'A/n.md': false, '.trash': true, '.123ecriture/devices': true, 'A/🪐 B': true };
+    expect(visibleFolders(Object.keys(idx), (p) => (p in idx ? { isDirectory: idx[p] } : undefined))).toEqual(['A', 'A/🪐 B']);
   });
 });
