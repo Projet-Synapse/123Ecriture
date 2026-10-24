@@ -39,13 +39,15 @@ import { SYNC_ATTACHMENT_EXTENSIONS } from '../storage/nativeVaultAdapter';
 import { errorMessage } from '../errorMessage';
 import { installedAppVersion } from '../updaterAndroid';
 import { normalizeRelPath } from './relPath';
+import { runPool } from './pool';
 import { randomUUID as uuid } from '../storage/webUuid';
 import { textChangeStats, textChangeDetail } from './changeStats';
 import { makeJournalEntry, type SyncJournalEntry } from './journal';
 import { requireBridges } from './bridges';
-import { isFolderMarker } from './folderMarker';
+import { EMPTY_SHA256 as EMPTY_MARKER_SHA256, isFolderMarker } from './folderMarker';
 import { sortDevicesByLastSeen, type RemoteVaultDevice } from './devices';
 import type { RemoteVaultSummary , SyncSummary } from './syncTypes';
+export { runPool } from './pool';
 
 
 //////// 2. La liaison et le catalogue des coffres distants ////////////////
@@ -451,6 +453,84 @@ export async function loadSyncBase(relPath: string): Promise<string | null> {
   }
 }
 
+export type FolderMarkerPush = { relPath: string; expectedVersion?: number | null; restore?: boolean };
+export type FolderMarkerResult = { relPath: string; ok: boolean; error?: string };
+
+// RPC groupée (migration 20261024120000_push_folder_markers.sql) absente du
+// serveur ? Repli définitif pour la session sur push_file en parallèle.
+let batchMarkerRpcMissing = false;
+export const FOLDER_MARKER_BATCH = 200;
+export const FOLDER_MARKER_PARALLEL = 8;
+
+// ENVOI GROUPÉ DES MARQUEURS DE DOSSIER : une requête pour N marqueurs
+// (aucun upload Storage). Les marqueurs à RELEVER (restore) ou à version
+// attendue passent par pushFile, en parallèle borné.
+export async function pushFolderMarkers(
+  remoteVaultId: string,
+  ownerId: string,
+  items: FolderMarkerPush[],
+  onProgress?: (done: number, total: number) => void,
+): Promise<FolderMarkerResult[]> {
+  const { supabase: client } = requireBridges();
+  const results: FolderMarkerResult[] = [];
+  let done = 0;
+  const tick = (n: number) => {
+    done += n;
+    onProgress?.(done, items.length);
+  };
+  const simple = items.filter((x) => !x.restore && (x.expectedVersion ?? null) === null);
+  const rest = items.filter((x) => !simple.includes(x));
+  const slow: FolderMarkerPush[] = [...rest];
+  if (!batchMarkerRpcMissing) {
+    for (let i = 0; i < simple.length; i += FOLDER_MARKER_BATCH) {
+      const chunk = simple.slice(i, i + FOLDER_MARKER_BATCH);
+      if (batchMarkerRpcMissing) {
+        slow.push(...chunk);
+        continue;
+      }
+      const paths = chunk.map((x) => normalizeRelPath(x.relPath));
+      const { data, error } = await client.schema(APP_SCHEMA).rpc('push_folder_markers', {
+        p_vault_id: remoteVaultId,
+        p_items: paths.map((p) => ({ rel_path: p, storage_path: storageObjectPath(remoteVaultId, p) })),
+      });
+      if (error) {
+        if (/PGRST202|could not find the function|does not exist/i.test(`${error.code ?? ''} ${error.message ?? ''}`)) {
+          batchMarkerRpcMissing = true;
+          slow.push(...chunk);
+          continue;
+        }
+        for (const p of paths) results.push({ relPath: p, ok: false, error: errorMessage(error) });
+        tick(chunk.length);
+        continue;
+      }
+      const okSet = new Set(
+        (Array.isArray(data) ? data : []).filter((r: { ok?: boolean }) => r?.ok).map((r: { rel_path?: string }) => r.rel_path),
+      );
+      for (const p of paths) results.push(okSet.has(p) ? { relPath: p, ok: true } : { relPath: p, ok: false, error: 'refusé par le serveur (version distante différente)' });
+      tick(chunk.length);
+    }
+  } else {
+    slow.push(...simple);
+  }
+  await runPool(slow, FOLDER_MARKER_PARALLEL, async (x) => {
+    try {
+      await pushFile(
+        remoteVaultId,
+        ownerId,
+        { relPath: x.relPath, contentHash: EMPTY_MARKER_SHA256, sizeBytes: 0, modifiedAt: Date.now() },
+        [],
+        null,
+        { expectedVersion: x.restore ? undefined : (x.expectedVersion ?? null), restore: x.restore },
+      );
+      results.push({ relPath: x.relPath, ok: true });
+    } catch (error) {
+      results.push({ relPath: x.relPath, ok: false, error: errorMessage(error) });
+    }
+    tick(1);
+  });
+  return results;
+}
+
 export async function pushFile(
   remoteVaultId: string,
   ownerId: string,
@@ -484,13 +564,17 @@ export async function pushFile(
     uploadBody = await vault.readNote(relPath);
     uploadContentType = 'text/plain;charset=UTF-8';
   }
-  const { error: uploadError } = await client.storage
-    .from(VAULT_FILES_BUCKET)
-    .upload(storageObjectPath(remoteVaultId, relPath), uploadBody, {
-      upsert: true,
-      contentType: uploadContentType,
-    });
-  if (uploadError) throw uploadError;
+  // Marqueur de dossier : taille 0, AUCUN objet Storage (le pull d'un
+  // marqueur ne télécharge jamais rien) — seule la ligne vault_files compte.
+  if (!isFolderMarker(relPath)) {
+    const { error: uploadError } = await client.storage
+      .from(VAULT_FILES_BUCKET)
+      .upload(storageObjectPath(remoteVaultId, relPath), uploadBody, {
+        upsert: true,
+        contentType: uploadContentType,
+      });
+    if (uploadError) throw uploadError;
+  }
 
   // v0.4.97 — LOCAL-FIRST : plus d'UPSERT direct sur vault_files. Le push
   // passe par la RPC push_file (verrou optimiste : le serveur refuse
@@ -709,7 +793,10 @@ export async function heartbeatDevice(remoteVaultId: string, ownerId: string, su
     };
     // OBSERVABILITÉ : version de l'app + résumé du dernier cycle, visibles
     // par TOUS les appareils sur la carte « Appareils connectés ».
-    if (summary && !colonnesObservabiliteAbsentes) {
+    // app_version part à CHAQUE heartbeat (tick de cycle compris), pas
+    // seulement en fin de cycle : sinon un long premier cycle affiche
+    // l'ancienne version jusqu'à sa fin.
+    if (!colonnesObservabiliteAbsentes) {
       const { error } = await supabase
         .schema(APP_SCHEMA)
         .from(VAULT_DEVICES_TABLE)
@@ -717,12 +804,16 @@ export async function heartbeatDevice(remoteVaultId: string, ownerId: string, su
           {
             ...base,
             app_version: await currentAppVersion(),
-            last_cycle_at: base.last_seen_at,
-            last_cycle_pushed: summary.pushed,
-            last_cycle_pulled: summary.pulled,
-            last_cycle_deleted: summary.deleted,
-            last_cycle_conflicts: summary.conflicts,
-            last_cycle_errors: summary.errors.length,
+            ...(summary
+              ? {
+                  last_cycle_at: base.last_seen_at,
+                  last_cycle_pushed: summary.pushed,
+                  last_cycle_pulled: summary.pulled,
+                  last_cycle_deleted: summary.deleted,
+                  last_cycle_conflicts: summary.conflicts,
+                  last_cycle_errors: summary.errors.length,
+                }
+              : {}),
           },
           { onConflict: 'vault_id,device_id' },
         );

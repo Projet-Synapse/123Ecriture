@@ -14,7 +14,7 @@ import {
   pullFile,
   isBinaryAttachmentRelPath,
   loadSyncBase,
- heartbeatDevice, fetchMyDeviceLock } from './cloud';
+ heartbeatDevice, fetchMyDeviceLock, pushFolderMarkers, runPool } from './cloud';
 import { requireBridges } from './bridges';
 
 import { type SyncSummary } from './syncTypes';
@@ -45,6 +45,8 @@ const CYCLE_TICK_MS = 30_000;
 // Journal de progression écrit AU FIL DU CYCLE (pas seulement à la fin).
 const PROGRESS_JOURNAL_EVERY = 20;
 const PROGRESS_JOURNAL_MIN_MS = 30_000;
+// Fichiers envoyés/reçus en parallèle (réseau + SAF : borne prudente).
+const FILE_PARALLEL = 4;
 // Le compte de lignes backslashed signalé au cycle précédent : le signal
 // « N lignes ignorées » ne se répète que si le nombre change.
 let lastBackslashReport = -1;
@@ -856,12 +858,61 @@ async function runLockedCycle(
   );
   // DOSSIERS : marqueurs poussés (vides) / dossiers créés localement.
   const folderStates: Record<string, string | null> = {};
-  for (const x of plan.actions.filter((a) => a.entryKind === 'folder')) {
+  const folderActions = plan.actions.filter((a) => a.entryKind === 'folder');
+  // ENVOI GROUPÉ : tous les marqueurs à pousser partent en une (ou quelques)
+  // requête(s), sans upload Storage ; progression + journal en direct.
+  const folderPushes = folderActions.filter((a) => a.kind === 'push');
+  if (folderPushes.length > 0) {
+    const label = 'Envoi des dossiers';
+    setSyncProgress({ phase: label, done: 0, total: folderPushes.length });
+    await appendJournalEntries([
+      makeJournalEntry('upload-start', { detail: `${folderPushes.length} dossier(s)` }),
+    ]).catch(() => undefined);
+    let lastJournalAt = Date.now();
+    const results = await withTimeout(
+      pushFolderMarkers(
+        remoteVaultId,
+        ownerId,
+        folderPushes.map((x) => ({ relPath: x.relPath, expectedVersion: x.expectedVersion ?? null, restore: x.restore })),
+        (done, total) => {
+          setSyncProgress({ phase: label, done, total });
+          if (Date.now() - lastJournalAt >= PROGRESS_JOURNAL_MIN_MS) {
+            lastJournalAt = Date.now();
+            void appendJournalEntries([makeJournalEntry('info', { detail: `${label} : ${done}/${total}` })]).catch(() => undefined);
+          }
+        },
+      ),
+      STEP_TIMEOUT_MS,
+      'envoi des dossiers',
+    ).catch((error) => folderPushes.map((x) => ({ relPath: x.relPath, ok: false, error: errorMessage(error) })));
+    let sent = 0;
+    for (const r of results) {
+      if (r.ok) {
+        folderStates[r.relPath] = EMPTY_SHA256;
+        sent += 1;
+      } else {
+        summary.errors.push(`${r.relPath} (dossier) : ${r.error ?? 'échec'}`);
+        journal.push(makeJournalEntry('error', { path: r.relPath, detail: `dossier : ${r.error ?? 'échec'}` }));
+      }
+    }
+    summary.pushed += sent;
+    await appendJournalEntries([
+      makeJournalEntry('upload-end', { detail: `${sent}/${folderPushes.length} dossier(s) envoyé(s)` }),
+    ]).catch(() => undefined);
+  }
+  // Parents avant enfants : un dossier reçu dont le parent arrive au même
+  // cycle doit trouver ce parent déjà créé.
+  const otherFolderActions = folderActions
+    .filter((a) => a.kind !== 'push')
+    .sort((a, b) => a.relPath.split('/').length - b.relPath.split('/').length);
+  const folderPullTotal = otherFolderActions.filter((a) => a.kind === 'pull').length;
+  let folderPullDone = 0;
+  if (folderPullTotal > 0) setSyncProgress({ phase: 'Réception des dossiers', done: 0, total: folderPullTotal });
+  for (const x of otherFolderActions) {
     try {
-      if (x.kind === 'push') {
-        await pushFile(remoteVaultId, ownerId, { relPath: x.relPath, contentHash: EMPTY_SHA256, sizeBytes: 0, modifiedAt: Date.now() }, [], null, { expectedVersion: x.restore ? undefined : (x.expectedVersion ?? null), restore: x.restore });
-        folderStates[x.relPath] = EMPTY_SHA256;
-      } else if (x.kind === 'pull') {
+      if (x.kind === 'pull') {
+        folderPullDone += 1;
+        setSyncProgress({ phase: 'Réception des dossiers', done: folderPullDone, total: folderPullTotal, current: markerToFolder(x.relPath) });
         const folder = markerToFolder(x.relPath);
         const cut = folder.lastIndexOf('/');
         // Idempotent : createFolder choisit un nom libre (« X 2 ») si le
@@ -888,8 +939,14 @@ async function runLockedCycle(
         folderStates[x.relPath] = null;
       }
     } catch (error) {
+      summary.errors.push(`${x.relPath} (dossier) : ${errorMessage(error)}`);
       journal.push(makeJournalEntry('error', { path: x.relPath, detail: `dossier : ${errorMessage(error)}` }));
     }
+  }
+  if (folderPullTotal > 0) {
+    await appendJournalEntries([
+      makeJournalEntry('info', { detail: `Réception des dossiers : ${folderPullDone}/${folderPullTotal}` }),
+    ]).catch(() => undefined);
   }
   // Les fichiers VIVANTS passent avant les chemins `.trash/…` : sinon le
   // tri alphabétique place la corbeille du cloud (des centaines de lignes)
@@ -920,7 +977,10 @@ async function runLockedCycle(
   let lastProgressJournalDone = 0;
   const phase = pullCount > 0 && pushCount === 0 ? 'Téléchargement' : pushCount > 0 && pullCount === 0 ? 'Envoi' : 'Synchronisation';
   if (actionable > 0) setSyncProgress({ phase, done: 0, total: actionable });
-  for (const decision of orderedDecisions) {
+  // PARALLÉLISME RAISONNABLE : envois/réceptions simples par FILE_PARALLEL
+  // en vol ; les conflits (archivage local + push) restent séquentiels.
+  const isConflict = (d: (typeof orderedDecisions)[number]) => d.kind === 'conflict-push-wins' || d.kind === 'conflict-pull-wins';
+  const runDecision = async (decision: (typeof orderedDecisions)[number]) => {
     if (decision.kind !== 'noop') {
       setSyncProgress({ phase, done: progressDone, total: actionable, current: decision.relPath });
       // JOURNAL PROGRESSIF : écrit pendant le cycle (toutes les N actions
@@ -1086,7 +1146,9 @@ async function runLockedCycle(
       summary.errors.push(`${decision.relPath} : ${errorMessage(error)}`);
       journal.push(makeJournalEntry('error', { path: decision.relPath, detail: `${decision.kind} : ${errorMessage(error)}` }));
     }
-  }
+  };
+  await runPool(orderedDecisions.filter((d) => !isConflict(d)), FILE_PARALLEL, runDecision);
+  for (const decision of orderedDecisions.filter(isConflict)) await runDecision(decision);
 
   if (actionable > 0) setSyncProgress({ phase, done: actionable, total: actionable });
   if (pushCount > 0) journal.push(makeJournalEntry('upload-end', { detail: `${pushCount} fichier(s)` }));
