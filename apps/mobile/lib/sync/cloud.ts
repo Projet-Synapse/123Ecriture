@@ -44,6 +44,7 @@ import { randomUUID as uuid } from '../storage/webUuid';
 import { textChangeStats, textChangeDetail } from './changeStats';
 import { makeJournalEntry, type SyncJournalEntry } from './journal';
 import { requireBridges } from './bridges';
+import { verifiedBase } from './configMerge';
 import { EMPTY_SHA256 as EMPTY_MARKER_SHA256, isFolderMarker } from './folderMarker';
 import { sortDevicesByLastSeen, type RemoteVaultDevice } from './devices';
 import type { RemoteVaultSummary , SyncSummary } from './syncTypes';
@@ -451,6 +452,18 @@ export async function loadSyncBase(relPath: string): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+// Base de fusion VÉRIFIÉE : le texte n'est une référence fiable que si son
+// SHA-256 est EXACTEMENT le hash enregistré dans le sync-state pour ce
+// chemin (= la dernière version synchronisée de CE coffre, dans CE
+// dossier). Sinon (sync-state remis à zéro après reconnexion, base d'un
+// ancien lien, base non réécrite après un échec best-effort) : null =
+// « pas de référence ». Une base périmée faisait croire que les deux côtés
+// avaient changé et le cloud écrasait silencieusement la modif locale.
+export async function loadVerifiedSyncBase(relPath: string, expectedHash: string | null | undefined): Promise<string | null> {
+  if (!expectedHash) return null;
+  return verifiedBase(await loadSyncBase(relPath), expectedHash);
 }
 
 export type FolderMarkerPush = { relPath: string; expectedVersion?: number | null; restore?: boolean };

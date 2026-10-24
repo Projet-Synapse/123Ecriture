@@ -15,7 +15,7 @@ import {
   tombstoneRemoteFile,
   pullFile,
   isBinaryAttachmentRelPath,
-  loadSyncBase,
+  loadVerifiedSyncBase,
   saveSyncBase,
  heartbeatDevice, fetchMyDeviceLock, pushFolderMarkers, runPool } from './cloud';
 import { requireBridges } from './bridges';
@@ -36,7 +36,7 @@ import {
   type SyncJournalEntry,
 } from './journal';
 import { tryThreeWayMerge } from './merge';
-import { configConflictBackupPath, isStructuredConfigFile, mergeConfigJson } from './configMerge';
+import { configConflictBackupPath, isStructuredConfigFile, newerSide, planConfigResolution, type Side } from './configMerge';
 import { processDeviceCommands } from './deviceGateway';
 import { FILE_OP_TIMEOUT_MS, STEP_TIMEOUT_MS, setSyncProgress, withTimeout } from './syncProgress';
 
@@ -316,6 +316,10 @@ export async function restoreFromTrash(
 // n'y a pas de base de fusion ou que les modifications se chevauchent
 // réellement : l'appelant retombe sur le comportement gagnant/perdant
 // archivé.
+// Contexte d'un conflit : hash de la dernière version synchronisée (pour
+// vérifier la base) et côté le plus récent (newerSide, tolérance d'horloge).
+type ConflictContext = { expectedBaseHash: string | undefined; newer: Side };
+
 async function attemptConflictMerge(
   remoteVaultId: string,
   ownerId: string,
@@ -324,12 +328,15 @@ async function attemptConflictMerge(
   journal: SyncJournalEntry[],
   preferLocal = false,
   onLocalChanged?: () => void,
+  ctx: ConflictContext = { expectedBaseHash: undefined, newer: 'remote' },
 ): Promise<string | null> {
   if (isBinaryAttachmentRelPath(relPath)) return null; // jamais de fusion binaire
   if (isStructuredConfigFile(relPath)) {
-    return resolveConfigConflict(remoteVaultId, ownerId, relPath, remoteObjectPath, journal, preferLocal, onLocalChanged);
+    return resolveConfigConflict(remoteVaultId, ownerId, relPath, remoteObjectPath, journal, preferLocal, onLocalChanged, ctx);
   }
-  const base = await loadSyncBase(relPath);
+  // Base VÉRIFIÉE (hash = sync-state) : une base périmée produirait une
+  // fusion fausse (passages réintroduits ou perdus).
+  const base = await loadVerifiedSyncBase(relPath, ctx.expectedBaseHash);
   if (base === null) return null;
   let local: string;
   let remote: string;
@@ -385,48 +392,47 @@ async function resolveConfigConflict(
   remoteObjectPath: string | undefined,
   journal: SyncJournalEntry[],
   preferLocal: boolean,
-  onLocalChanged?: () => void,
+  onLocalChanged: (() => void) | undefined,
+  ctx: ConflictContext,
 ): Promise<string | null> {
   const { vault, sync } = requireBridges();
   const local = await vault.readNote(relPath);
   const remote = await downloadRemoteText(remoteVaultId, relPath, remoteObjectPath);
-  const base = await loadSyncBase(relPath);
+  // Base VÉRIFIÉE : hash du texte = hash du sync-state, sinon « pas de base ».
+  const base = await loadVerifiedSyncBase(relPath, ctx.expectedBaseHash);
   const rehash = async () => {
     const tree = await sync.hashVaultTree();
     return tree.find((n) => n.relPath === relPath) ?? null;
   };
-  const result = mergeConfigJson(base, local, remote);
-  if (result.kind === 'remote-wins') {
-    const why = result.reason === 'no-base' ? 'sans base de fusion' : 'contenu illisible';
-    if (preferLocal) {
-      await vault.writeNote(configConflictBackupPath(relPath), remote);
-      const note = await rehash();
-      if (!note) return null;
-      await withTimeout(pushFile(remoteVaultId, ownerId, note, journal, remote), FILE_OP_TIMEOUT_MS, `envoi ${relPath}`);
-      journal.push(makeJournalEntry('conflict', { path: relPath, detail: `configuration ${why} : version locale conservée (priorité choisie), distante sauvegardée localement` }));
-      return note.contentHash;
-    }
-    await vault.writeNote(configConflictBackupPath(relPath), local);
+  // Priorité « local » du dialogue de fusion = le local est réputé le plus récent.
+  const newer: Side = preferLocal ? 'local' : ctx.newer;
+  // Plan PUR (configMerge.planConfigResolution, testé) puis exécution.
+  const plan = planConfigResolution(base, local, remote, newer);
+  if (plan.backupLocal) await vault.writeNote(configConflictBackupPath(relPath), local);
+  if (plan.backupCloud) await vault.writeNote(configConflictBackupPath(relPath, new Date(), 'cloud'), remote);
+  if (plan.pull) {
     await withTimeout(pullFile(remoteVaultId, relPath, remoteObjectPath), FILE_OP_TIMEOUT_MS, `réception ${relPath}`);
     onLocalChanged?.();
-    const note = await rehash();
-    journal.push(makeJournalEntry('conflict', { path: relPath, detail: `configuration ${why} : version du cloud conservée, locale sauvegardée (.conflict)` }));
-    return note?.contentHash ?? null;
-  }
-  const merged = result.text;
-  if (merged !== local) {
-    await vault.writeNote(relPath, merged);
+  } else if (plan.final !== local) {
+    await vault.writeNote(relPath, plan.final);
     onLocalChanged?.();
   }
   const note = await rehash();
   if (!note) return null;
-  if (merged === remote) {
-    // Le cloud porte déjà le résultat : rien à pousser, base = résultat.
-    await saveSyncBase(relPath, merged);
-  } else {
+  if (plan.push) {
+    // Résultat ≠ cloud : TOUJOURS envoyé (pushFile enregistre aussi la base).
     await withTimeout(pushFile(remoteVaultId, ownerId, note, journal, remote), FILE_OP_TIMEOUT_MS, `envoi ${relPath}`);
+  } else if (!plan.pull) {
+    // Le cloud porte déjà le résultat : base = résultat (même texte que le
+    // fichier local re-haché → hash cohérent au cycle suivant).
+    await saveSyncBase(relPath, plan.final);
   }
-  journal.push(makeJournalEntry('conflict', { path: relPath, detail: 'fusion structurée de la configuration (par identifiant / par clé)' }));
+  const qui = plan.newer === 'local' ? 'cet appareil' : 'le cloud';
+  const detail =
+    plan.reason === 'merged'
+      ? `fusion structurée de la configuration (par identifiant / par clé ; valeur en conflit : la plus récente gagne — ${qui})${plan.push ? ', envoyée' : ''}`
+      : `configuration ${plan.reason === 'no-base' ? 'sans base de fusion fiable' : 'illisible'} : version la plus récente conservée (${qui})${plan.push ? ' et envoyée' : ''}, l'autre sauvegardée (.conflict)`;
+  journal.push(makeJournalEntry('conflict', { path: relPath, detail }));
   return note.contentHash;
 }
 
@@ -1111,6 +1117,17 @@ async function runLockedCycle(
     (a, b) => Number(a.relPath.startsWith('.trash/')) - Number(b.relPath.startsWith('.trash/')),
   );
   const mergedHashes: Record<string, string> = {};
+  // Contexte de conflit : base attendue = hash du sync-state AU DÉBUT du
+  // cycle (dernière version synchronisée) ; plus récent = mtime local vs
+  // updated_at cloud, tolérance CLOCK_TOLERANCE_MS (configMerge.ts). La
+  // priorité « cloud » du dialogue de fusion force le cloud.
+  const conflictContext = (relPath: string): ConflictContext => ({
+    expectedBaseHash: syncState.files[relPath],
+    newer:
+      syncSettings.linkPreference[remoteVaultId] === 'remote'
+        ? 'remote'
+        : newerSide(localByPath.get(relPath)?.modifiedAt, remoteByPath.get(relPath)?.updatedAt),
+  });
   // Chemins RÉELLEMENT écrits sur le disque par un pull de ce cycle. Seuls
   // eux entrent dans le nouvel état de référence : un pull différé ou en
   // échec (ex. écriture SAF rejetée) référencé quand même ferait croire au
@@ -1244,6 +1261,7 @@ async function runLockedCycle(
             journal,
             syncSettings.linkPreference[remoteVaultId] === 'local',
             () => { summary.pulled += 1; },
+            conflictContext(decision.relPath),
           );
           if (mergedPushHash) {
             mergedHashes[decision.relPath] = mergedPushHash;
@@ -1275,6 +1293,7 @@ async function runLockedCycle(
             journal,
             syncSettings.linkPreference[remoteVaultId] === 'local',
             () => { summary.pulled += 1; },
+            conflictContext(decision.relPath),
           );
           if (mergedPullHash) {
             mergedHashes[decision.relPath] = mergedPullHash;
@@ -1390,12 +1409,16 @@ async function runLockedCycle(
   try {
     const device = (await bridges.vaults.deviceInfo?.()) ?? { id: remoteVaultId, name: 'appareil' };
     const { supabase: client } = requireBridges();
-    const { installedAppVersion: versionInstallée } = await import('../updaterAndroid');
+    // Android : version native (inchangé) ; desktop : updater.getVersion
+    // via myAppVersion — avant, null sur desktop (fonction Android seule).
+    const { installedAppVersion } = await import('../updaterAndroid');
+    const { myAppVersion } = await import('./deviceGateway');
+    const appVersion = installedAppVersion() ?? (await myAppVersion().catch(() => null));
     const { error: journalError } = await client.schema(APP_SCHEMA).from('sync_journals').upsert({
       vault_id: remoteVaultId,
       device_id: device.id,
       device_name: device.name ?? 'appareil',
-      app_version: versionInstallée(),
+      app_version: appVersion,
       entries: journal,
       updated_at: new Date().toISOString(),
     }, { onConflict: 'vault_id,device_id' });

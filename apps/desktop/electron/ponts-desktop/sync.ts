@@ -35,7 +35,7 @@ import path from 'path';
 
 import * as vaults from './vaults';
 import type { HashedNote } from '../types';
-import { isHashableRelPath } from '../../../mobile/lib/sync/syncRules';
+import { isHashableRelPath, shouldWatchTrigger } from '../../../mobile/lib/sync/syncRules';
 import { normalizeRelPath } from '../../../mobile/lib/sync/relPath';
 
 // Ce module duplique volontairement une petite partie du parcours de
@@ -234,11 +234,12 @@ export function registerSyncHandlers(getWindow?: () => BrowserWindow | null): vo
     if (!vaultPath || !fsSync.existsSync(vaultPath)) return false;
     activeWatcher = fsSync.watch(vaultPath, { recursive: true }, (_event, filename) => {
       if (watcherPaused || !filename) return;
-      // Les métadonnées de l'app (.123ecriture, état/ordre/identité) ne
-      // comptent pas comme du contenu à propager — mais `.trash` oui : la
-      // corbeille est synchronisée.
-      const parts = String(filename).split(path.sep);
-      if (parts[0] !== '.trash' && parts.some((p) => p.startsWith('.'))) return;
+      // Règle partagée (syncRules.shouldWatchTrigger) : contenu, `.trash`,
+      // et les 4 métadonnées synchronisées de .123ecriture (tâches, listes,
+      // préférences, apparence) — sans elles une modif de tâche ou de thème
+      // attendait le cycle périodique. Fichiers internes du moteur exclus
+      // (pas de boucle) ; le watcher reste en pause pendant un cycle.
+      if (!shouldWatchTrigger(String(filename))) return;
       watcherGetWindow?.()?.webContents?.send('sync:local-changed', String(filename));
     });
     return true;

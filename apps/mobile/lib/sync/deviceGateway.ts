@@ -55,7 +55,10 @@ async function myDeviceInfo(): Promise<{ id: string; name: string } | null> {
   return window.vaults.deviceInfo();
 }
 
-async function myAppVersion(): Promise<string | null> {
+// Exportée : version installée sur TOUTES les plateformes (Android :
+// constantes natives ; desktop : updater.getVersion) — utilisée aussi par
+// le journal publié (sync_journals.app_version).
+export async function myAppVersion(): Promise<string | null> {
   if (Platform.OS === 'android') {
     const constants = Platform.constants as { appVersion?: string };
     if (typeof constants.appVersion === 'string' && constants.appVersion) return constants.appVersion;
