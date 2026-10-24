@@ -578,8 +578,11 @@ export function buildTreeFromIndex(index: Map<string, { isDirectory: boolean }> 
   const contaminé = (relPath: string): boolean => relPath.includes('\\');
   for (const [relPath, entry] of index) {
     if (!entry.isDirectory || contaminé(relPath)) continue;
-    const slash = relPath.lastIndexOf('/');
-    builderFor(slash >= 0 ? relPath.slice(0, slash) : '', isHiddenRoot(relPath));
+    // Le dossier LUI-MÊME (pas seulement son parent) : sinon un dossier
+    // vide n'apparaît jamais. Dossiers cachés (.obsidian, …) exclus,
+    // comme visibleFolders (sync).
+    if (relPath.split('/').some((seg) => seg.startsWith('.')) && !isHiddenRoot(relPath)) continue;
+    builderFor(relPath, isHiddenRoot(relPath));
   }
   for (const [relPath, entry] of index) {
     if (entry.isDirectory) continue;
