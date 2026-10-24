@@ -144,9 +144,9 @@ describe('dossiers reçus du cloud (régression Android 0.4.96-test.3)', () => {
     expect(plan.actions.filter((a) => a.kind === 'tombstone-remote')).toEqual([]);
   });
 
-  it('dossier du cloud absent ici mais présent dans la base : RECRÉÉ, jamais tombstoné', () => {
+  it('dossier supprimé ici (présent dans la base) : tombstone comme une note', () => {
     const plan = planSync({ local: [], remote, base });
-    expect(plan.actions.map((a) => a.kind)).toEqual(['pull']);
+    expect(plan.actions.map((a) => a.kind)).toEqual(['tombstone-remote']);
   });
 
   it('chemin distant hors du périmètre de hachage local : exclu du plan (pas de pull en boucle)', () => {

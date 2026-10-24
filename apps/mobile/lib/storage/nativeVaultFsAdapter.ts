@@ -608,6 +608,7 @@ export function createVaultFsAdapter(deps: VaultFsAdapterDeps) {
       permissionLost = false;
     },
     isPermissionLost: () => permissionLost,
+    isFullyIndexed: () => fullyIndexed,
     getIndexKeys: () => [...index.keys()],
     getIndexEntry: (relPath: string) => index.get(relPath),
     // Dossiers illisibles au dernier parcours : leurs fichiers sont « inconnus ».

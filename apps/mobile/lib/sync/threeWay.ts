@@ -118,12 +118,7 @@ export function planSync(args: {
       else if (tomb) actions.push({ kind: 'review', relPath, entryKind, reason: 'modifié ici, supprimé ailleurs — conservé, à valider' });
       else actions.push(push('modifié ici, disparu du cloud — renvoyé'));
     } else if (!l && r && b) {
-      if (entryKind === 'folder') {
-        // Un DOSSIER du cloud absent ici est RECRÉÉ, jamais tombstoné : le
-        // parcours local peut l'avoir manqué (index partiel) et un dossier
-        // vide ne coûte rien — le cloud n'est jamais vidé de ses dossiers.
-        actions.push({ kind: 'pull', relPath, entryKind, reason: 'dossier du cloud absent ici — recréé' });
-      } else if (r.hash === b.hash) {
+      if (r.hash === b.hash) {
         actions.push({ kind: 'tombstone-remote', relPath, entryKind, expectedVersion: r.version ?? null, reason: 'supprimé ici' });
       } else actions.push({ kind: 'pull', relPath, entryKind, reason: 'supprimé ici mais modifié ailleurs — rapatrié' });
     } else if (!l && !r && b) actions.push({ kind: 'drop-base', relPath, entryKind, reason: 'disparu des deux côtés' });

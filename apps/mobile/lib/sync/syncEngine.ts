@@ -3,6 +3,7 @@ import { planSync, type SyncPlan } from './threeWay';
 import type { SyncDecision } from './diff';
 import { isSyncAllowed, isVaultSyncEnabled, loadSyncSettings, saveSyncSettings } from './syncSettings';
 import { isHashableRelPath } from './syncRules';
+import { holdDeletionsUntilIndexed, migrateSyncStateFiles, SYNC_STATE_VERSION } from './stateMigration';
 import { EMPTY_SHA256, folderToMarker, isFolderMarker, markerToFolder } from './folderMarker';
 import { splitEditHot } from './editQuiet';
 import { errorMessage } from '../errorMessage';
@@ -116,6 +117,8 @@ const SYNC_STATE_REL_PATH = '.123ecriture/sync-state.json';
 type SyncState = {
   files: Record<string, string>;
   rootPath?: string | null;
+  // Version du format/des migrations (stateMigration.ts) ; absent = 1.
+  version?: number;
 };
 
 // Hermes (Android) n'expose PAS `AbortSignal.timeout` (méthode statique du
@@ -139,10 +142,10 @@ async function loadSyncState(): Promise<SyncState> {
       if (isTrashRelPath(relPath)) continue;
       files[relPath] = hash;
     }
-    return { files, rootPath: parsed.rootPath ?? null };
+    return { files, rootPath: parsed.rootPath ?? null, version: typeof parsed.version === 'number' ? parsed.version : 1 };
   } catch {
     // Absent à la première synchro du coffre — repart à vide.
-    return { files: {} };
+    return { files: {}, version: SYNC_STATE_VERSION };
   }
 }
 
@@ -631,6 +634,26 @@ async function runLockedCycle(
     }
   }
   const localFolderSet = new Set(localFolders);
+  // PREMIER PARCOURS COMPLET réussi ? Sinon (index partiel) : aucune
+  // suppression propagée ce cycle, et la migration v2 attend.
+  const fullyIndexed = bridges.sync.isFullyIndexed ? bridges.sync.isFullyIndexed() : true;
+  let stateVersion = syncState.version ?? 1;
+  if (stateVersion < SYNC_STATE_VERSION && foldersKnown && fullyIndexed) {
+    const migrated = migrateSyncStateFiles(
+      syncState.files,
+      stateVersion,
+      new Set(localFolders.map((f) => folderToMarker(f))),
+    );
+    syncState.files = migrated.files;
+    stateVersion = SYNC_STATE_VERSION;
+    if (migrated.dropped.length > 0) {
+      journal.push(
+        makeJournalEntry('info', {
+          detail: `Migration de l'état : ${migrated.dropped.length} dossier(s) du cloud absent(s) ici seront recréés (jamais supprimés du cloud).`,
+        }),
+      );
+    }
+  }
 
 //////// 9. runSync : les suppressions — tombestones et revue //////////////
 
@@ -685,7 +708,7 @@ async function runLockedCycle(
     isSyncAllowed(relPath, syncSettings) &&
     !hotPaths.has(relPath) &&
     (isFolderMarker(relPath) ? foldersKnown : isHashableRelPath(relPath));
-  const plan: SyncPlan = planSync({
+  let plan: SyncPlan = planSync({
     local: [
       ...localFilesCold.map((n) => ({ relPath: n.relPath, hash: n.contentHash, size: n.sizeBytes, mtime: n.modifiedAt })),
       ...localFolders.map((f) => ({ relPath: folderToMarker(f), hash: EMPTY_SHA256, kind: 'folder' as const })),
@@ -703,6 +726,19 @@ async function runLockedCycle(
     ),
     allow,
   });
+  const heldDeletions = new Set<string>();
+  {
+    const held = holdDeletionsUntilIndexed(plan, fullyIndexed);
+    plan = held.plan;
+    for (const p of held.held) heldDeletions.add(p);
+    if (held.held.length > 0) {
+      journal.push(
+        makeJournalEntry('info', {
+          detail: `${held.held.length} suppression(s) retenue(s) : premier parcours complet du coffre pas encore réussi.`,
+        }),
+      );
+    }
+  }
   const locallyDeleted = plan.actions.filter((x) => x.kind === 'tombstone-remote').map((x) => x.relPath);
   if (plan.guard.suspended) {
     const review: PendingReview = {
@@ -773,7 +809,7 @@ async function runLockedCycle(
   //    est conservé.
   const appliedDeletions = new Set<string>();
   const revueSuppressionsDistantes: { path: string; modified: boolean; at: string }[] = [];
-  for (const relPath of plan.guard.suspended ? [] : tombstonedPaths) {
+  for (const relPath of plan.guard.suspended || !fullyIndexed ? [] : tombstonedPaths) {
     if (!allow(relPath)) continue;
     const local = localByPath.get(relPath);
     if (!local) continue;
@@ -1179,6 +1215,11 @@ async function runLockedCycle(
   // écrit, pas celui de l'indexation d'avant la fusion — sinon le cycle
   // suivant re-détecte une divergence déjà résolue et re-annonce le
   // conflit, en boucle.
+  // Suppressions RETENUES (index partiel) : leur base est conservée pour
+  // être rejugées au cycle suivant, une fois le parcours complet réussi.
+  for (const relPath of heldDeletions) {
+    if (!(relPath in nextFiles) && relPath in syncState.files) nextFiles[relPath] = syncState.files[relPath];
+  }
   for (const [relPath, mergedHash] of Object.entries(mergedHashes)) {
     nextFiles[relPath] = mergedHash;
   }
@@ -1195,7 +1236,7 @@ async function runLockedCycle(
     else delete nextFiles[relPath];
   }
   try {
-    await saveSyncState({ files: nextFiles, rootPath: vaultRootPath });
+    await saveSyncState({ files: nextFiles, rootPath: vaultRootPath, version: stateVersion });
     if (syncSettings.linkPreference[remoteVaultId]) {
       const { [remoteVaultId]: _done, ...rest } = syncSettings.linkPreference;
       saveSyncSettings({ ...loadSyncSettings(), linkPreference: rest });
@@ -1231,7 +1272,7 @@ async function runLockedCycle(
     const device = (await bridges.vaults.deviceInfo?.()) ?? { id: remoteVaultId, name: 'appareil' };
     const { supabase: client } = requireBridges();
     const { installedAppVersion: versionInstallée } = await import('../updaterAndroid');
-    await client.from('sync_journals').upsert({
+    const { error: journalError } = await client.schema(APP_SCHEMA).from('sync_journals').upsert({
       vault_id: remoteVaultId,
       device_id: device.id,
       device_name: device.name ?? 'appareil',
@@ -1239,6 +1280,7 @@ async function runLockedCycle(
       entries: journal,
       updated_at: new Date().toISOString(),
     }, { onConflict: 'vault_id,device_id' });
+    if (journalError) throw journalError;
   } catch (error) {
     console.error('[sync] publication du journal (sync_journals) :', error);
   }

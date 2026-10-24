@@ -9,6 +9,7 @@ import {
   ensureActiveVaultIndexed as ensureVaultIndexed,
   getActiveVaultIndexEntry as getVaultIndexEntry,
   getActiveVaultIndexKeys as getVaultIndexKeys,
+  isActiveVaultFullyIndexed,
 } from './vaultBackend';
 import { sha256Hex, utf8Bytes } from '../sync/nativeSha256';
 import { isHashableRelPath } from '../sync/syncRules';
@@ -128,6 +129,7 @@ export const nativeSyncAdapter = {
     await ensureVaultIndexed();
     return visibleFolders(getVaultIndexKeys(), (p) => getVaultIndexEntry(p));
   },
+  isFullyIndexed: () => isActiveVaultFullyIndexed(),
   hashVaultTree: async (): Promise<HashedNote[]> => {
     // Android cloud : l'« arbre local » est le CACHE privé (inventaire).
     if (cloudSyncHandle) return cloudSyncHandle.inventory();
