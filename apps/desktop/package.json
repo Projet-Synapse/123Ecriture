@@ -1,7 +1,8 @@
 {
   "name": "123ecriture-desktop",
-"version": "0.4.90",  "description": "123Ecriture — application d'écriture et de productivité (version desktop)",
-  "author": "Catelina",
+  "version": "0.4.90",
+  "description": "123Ecriture — application d'écriture et de productivité (version desktop)",
+  "author": "Catelyn2332",
   "repository": "https://github.com/Projet-Synapse/123Ecriture.git",
   "private": true,
   "main": "electron-dist/main.js",
@@ -82,6 +83,7 @@
         "dmg"
       ],
       "category": "public.app-category.productivity"
-    }
+    },
+    "copyright": "Copyright © 2026 Catelyn2332"
   }
 }
