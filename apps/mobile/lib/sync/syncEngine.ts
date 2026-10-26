@@ -5,7 +5,8 @@ import { isSyncAllowed, isVaultSyncEnabled, loadSyncSettings, saveSyncSettings }
 import { isHashableRelPath } from './syncRules';
 import { holdDeletionsUntilIndexed, migrateSyncStateFiles, SYNC_STATE_VERSION } from './stateMigration';
 import { EMPTY_SHA256, folderToMarker, isFolderMarker, markerToFolder } from './folderMarker';
-import { splitEditHot, quietRetryAt } from './editQuiet';
+import { splitEditHot, quietRetryAt, preserveHotBases } from './editQuiet';
+import { isGuardedConfigFile, validateConfigText } from './configGuard';
 import { errorMessage } from '../errorMessage';
 import { APP_SCHEMA, VAULT_FILES_TABLE } from './supabaseClient';
 import {
@@ -359,6 +360,9 @@ async function attemptConflictMerge(
     } catch {
       return null;
     }
+    // JSON.parse accepte une clé en double : garde complète pour les
+    // métadonnées synchronisées (configGuard.ts).
+    if (isGuardedConfigFile(relPath) && !validateConfigText(relPath, merged.text).ok) return null;
   }
 
   const { vault, sync } = requireBridges();
@@ -687,7 +691,7 @@ async function runLockedCycle(
     summary.retryAfterMs = quietRetryAt(localFiles, hotPaths);
     journal.push(
       makeJournalEntry('info', {
-        detail: `${hotPaths.size} fichier(s) en cours d'édition — synchronisation différée (silence de 60 s requis) : ${[...hotPaths].slice(0, 2).join(' | ').slice(0, 140)}`,
+        detail: `${hotPaths.size} fichier(s) en cours d'édition — synchronisation différée (silence requis : 5 s pour les tâches/réglages, 60 s sinon) : ${[...hotPaths].slice(0, 2).join(' | ').slice(0, 140)}`,
       }),
     );
   }
@@ -1134,6 +1138,11 @@ async function runLockedCycle(
   // cycle suivant que le fichier a été « supprimé localement » — et la
   // revue des suppressions massives reviendrait en boucle.
   const pulledPaths = new Set<string>();
+  // Chemins dont l'action N'A PAS abouti (refus de la garde JSON, erreur
+  // réseau…) : base CONSERVÉE (comme un fichier chaud), pour que le cycle
+  // suivant rejuge le même écart. Sinon un envoi raté ferait passer le
+  // hash local pour « synchronisé » et un pull l'écraserait ensuite.
+  const keepBasePaths = new Set<string>();
 
   // Les étapes réseau : le journal raconte le cycle comme Obsidian Sync
   // (« upload en cours », « upload terminé »).
@@ -1169,6 +1178,30 @@ async function runLockedCycle(
       progressDone += 1;
     }
     try {
+      // GARDE DES MÉTADONNÉES JSON (configGuard.ts) : une version abîmée
+      // (clé en double, forme inattendue) n'est ni reçue, ni fusionnée, ni
+      // envoyée. Rien n'est écrit ; la base est conservée (keepBasePaths).
+      if (
+        (decision.kind === 'push' || decision.kind === 'pull' || decision.kind === 'conflict-push-wins' || decision.kind === 'conflict-pull-wins') &&
+        isGuardedConfigFile(decision.relPath)
+      ) {
+        const sendsLocal = decision.kind === 'push';
+        const text = sendsLocal
+          ? await bridges.vault.readNote(decision.relPath)
+          : await downloadRemoteText(remoteVaultId, decision.relPath, remoteByPath.get(decision.relPath)?.storageObjectPath);
+        const verdict = validateConfigText(decision.relPath, text);
+        if (!verdict.ok) {
+          keepBasePaths.add(decision.relPath);
+          summary.errors.push(`${decision.relPath} : ${verdict.reason}`);
+          journal.push(
+            makeJournalEntry('error', {
+              path: decision.relPath,
+              detail: `${sendsLocal ? 'envoi' : 'réception'} refusé(e) : version ${sendsLocal ? 'locale' : 'du cloud'} invalide (${verdict.reason}) — fichier local conservé`,
+            }),
+          );
+          return;
+        }
+      }
       switch (decision.kind) {
         case 'noop':
           break;
@@ -1320,6 +1353,7 @@ async function runLockedCycle(
       }
     } catch (error) {
       console.error(`[sync] échec sur ${decision.relPath} (${decision.kind}) :`, error);
+      keepBasePaths.add(decision.relPath);
       summary.errors.push(`${decision.relPath} : ${errorMessage(error)}`);
       journal.push(makeJournalEntry('error', { path: decision.relPath, detail: `${decision.kind} : ${errorMessage(error)}` }));
     }
@@ -1361,6 +1395,11 @@ async function runLockedCycle(
   for (const [relPath, mergedHash] of Object.entries(mergedHashes)) {
     nextFiles[relPath] = mergedHash;
   }
+  // Fichiers EN ÉDITION (sortis du cycle) : base = ANCIENNE base, jamais
+  // leur hash actuel — sinon leur modif, jamais envoyée, serait prise pour
+  // la version synchronisée et écrasée par un pull au cycle suivant.
+  preserveHotBases(nextFiles, hotPaths, syncState.files);
+  preserveHotBases(nextFiles, keepBasePaths, syncState.files);
   // Types désactivés / fichiers en édition : leur base est CONSERVÉE telle
   // quelle (sinon les réactiver ressemblerait à une suppression).
   for (const [relPath, hash] of Object.entries(syncState.files)) {
