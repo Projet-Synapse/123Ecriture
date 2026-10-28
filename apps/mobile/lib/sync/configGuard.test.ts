@@ -39,3 +39,13 @@ describe('configGuard — forme', () => {
     expect(validateConfigText('.123ecriture/appearance.json', '[]').ok).toBe(false);
   });
 });
+
+describe('events.json (Calendrier)', () => {
+  it('accepte un tableau d’évènements avec id', () => {
+    expect(validateConfigText('.123ecriture/events.json', '[{"id":"e1","title":"A","date":"2026-10-28"}]').ok).toBe(true);
+  });
+  it('refuse un objet ou un évènement sans id', () => {
+    expect(validateConfigText('.123ecriture/events.json', '{}').ok).toBe(false);
+    expect(validateConfigText('.123ecriture/events.json', '[{"title":"A"}]').ok).toBe(false);
+  });
+});
