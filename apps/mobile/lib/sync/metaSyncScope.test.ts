@@ -4,7 +4,7 @@ import { DEFAULT_SYNC_SETTINGS, isSyncAllowed } from './syncSettings';
 
 // Périmètre .123ecriture/ synchronisé : explicite et figé.
 describe('fichiers .123ecriture synchronisés', () => {
-  const ok = ['.123ecriture/tasks.json', '.123ecriture/tasklists.json', '.123ecriture/preferences.json', '.123ecriture/appearance.json'];
+  const ok = ['.123ecriture/tasks.json', '.123ecriture/tasklists.json', '.123ecriture/events.json', '.123ecriture/preferences.json', '.123ecriture/appearance.json'];
   const non = [
     '.123ecriture/state.json',
     '.123ecriture/sync-state.json',

@@ -24,6 +24,7 @@ import { sha256HexOfText } from './nativeSha256';
 export const STRUCTURED_CONFIG_FILES = [
   '.123ecriture/tasks.json',
   '.123ecriture/tasklists.json',
+  '.123ecriture/events.json',
   '.123ecriture/preferences.json',
 ];
 
