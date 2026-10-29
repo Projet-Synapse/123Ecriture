@@ -10,7 +10,7 @@ const REPORT: DiagnosticsReport = {
   activeVaultPath: null,
   vaults: [{ name: '✒️ WORLDBUILDING', path: '/storage/emulated/0/✒️ 123Ecriture', cloudLinked: true, remoteVaultId: 'bbce9f43' }],
   syncStateFileCount: 980,
-  pendingReview: { syncBlocked: { at: '2026-10-18T19:00:00.000Z', errorCount: 911, samples: ['…'] } },
+  pendingReview: { suspiciousDeletions: { paths: ['a.md'] } },
   journalTail: [{ t: '2026-10-18T19:00:01.000Z', type: 'error', detail: 'pull bloqué : permission' }],
   collectionErrors: [],
 };

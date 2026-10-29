@@ -1,0 +1,75 @@
+name: Desktop Windows (test, prerelease)
+
+# Build de TEST Windows uniquement. Déclenché par un tag « desktop-test-* »
+# (le workflow « Release desktop » ne réagit qu'aux tags « v* »).
+# N'utilise JAMAIS --publish : aucun latest.yml n'est publié, la release
+# publique et « latest » ne sont pas touchées, l'auto-update des clients
+# existants ne voit rien. Seul l'installeur .exe est attaché à un
+# prerelease dédié (test-desktop-pr202).
+on:
+  push:
+    tags:
+      - "desktop-test-*"
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: node scripts/check-versions.mjs
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+
+  build-win:
+    needs: verify
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @123ecriture/mobile build:web
+        env:
+          EXPO_PUBLIC_SUPABASE_URL: ${{ secrets.EXPO_PUBLIC_SUPABASE_URL }}
+          EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_ANON_KEY }}
+      - run: pnpm --filter 123ecriture-desktop run build:electron
+      - run: pnpm --filter 123ecriture-desktop exec electron-builder --win --publish never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-win
+          path: apps/desktop/release/*.exe
+          if-no-files-found: error
+
+  attach:
+    needs: build-win
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: desktop-win
+          path: out
+      - name: Attache l'installeur au prerelease de test (rien d'autre)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          REL: test-desktop-pr202
+        run: |
+          ls -l out
+          gh release view "$REL" --repo "$REPO" >/dev/null 2>&1 || \
+            gh release create "$REL" --repo "$REPO" --prerelease --latest=false \
+              --target "${{ github.sha }}" \
+              --title "TEST desktop PR #202 (ne pas utiliser en prod)" \
+              --notes "Installeur Windows de test, hors auto-update."
+          gh release upload "$REL" out/*.exe --repo "$REPO" --clobber

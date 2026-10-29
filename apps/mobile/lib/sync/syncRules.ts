@@ -38,6 +38,7 @@ export const SYNCED_META_FILES = [
   '.123ecriture/appearance.json',
   '.123ecriture/tasks.json',
   '.123ecriture/tasklists.json',
+  '.123ecriture/events.json',
   '.123ecriture/preferences.json',
 ];
 
@@ -72,4 +73,22 @@ export function isHashableRelPath(relPath: string): boolean {
   // appareil (mettre à la corbeille = suppression propagée normalement).
   if (segments.some((segment) => segment.startsWith('.'))) return false;
   return true;
+}
+
+//////// 3. La surveillance desktop (shouldWatchTrigger) ///////////
+
+// Un événement du watcher desktop (chemin relatif, séparateurs `/` ou `\`)
+// doit-il déclencher un cycle ? Contenu visible et `.trash/` : oui. Dans
+// `.123ecriture/`, SEULES les métadonnées synchronisées (SYNCED_META_FILES :
+// tâches, listes, préférences, apparence) — jamais sync-journal, sync-state,
+// bases/, devices/, *.conflict-*.json : ce sont des écritures du moteur, les
+// laisser passer relancerait la synchro en boucle. Autres dossiers cachés :
+// non.
+export function shouldWatchTrigger(filename: string): boolean {
+  const rel = filename.split('\\').join('/').replace(/^\/+/, '');
+  if (!rel) return false;
+  if (SYNCED_META_FILES.includes(rel)) return true;
+  const parts = rel.split('/');
+  if (parts[0] === '.trash') return true;
+  return !parts.some((p) => p.startsWith('.'));
 }

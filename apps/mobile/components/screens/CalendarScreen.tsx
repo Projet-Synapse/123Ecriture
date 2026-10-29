@@ -29,7 +29,8 @@ import { errorMessage } from '../../lib/errorMessage';
 // notes, via calendar:update-event) et en ajoute de nouveaux.
 //
 // Invariants du fichier :
-//   • Desktop/web uniquement (window.vault / window.calendar) — les écrans
+//   • Desktop, web et Android (window.vault / window.calendar, pont natif
+//     nativeCalendarAdapter.ts sur Android) — les écrans
 //     de repli couvrent l'absence de pont et l'absence de coffre actif.
 //   • Les heures saisies sont normalisées (normalizeTimeInput) ou refusées
 //     avec message — jamais de valeur libre entrée dans calendar.json.
@@ -430,7 +431,7 @@ export function CalendarScreen({
       <View style={styles.centered}>
         <Text style={[styles.title, { color: theme.text }]}>📅 Calendrier</Text>
         <Text style={[styles.muted, { color: theme.textMuted }]}>
-          Disponible sur la version desktop pour l’instant (Phase 2 pour mobile/web).
+          Aucun coffre disponible pour l’instant sur cet appareil.
         </Text>
       </View>
     );
