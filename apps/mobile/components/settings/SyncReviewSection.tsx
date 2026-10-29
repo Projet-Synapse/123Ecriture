@@ -3,7 +3,15 @@ import { Pressable, Text, View } from 'react-native';
 
 import { errorMessage } from '../../lib/errorMessage';
 import { setRemoteRowsDeleted } from '../../lib/sync/deviceGateway';
-import { loadPendingReview, savePendingReview, type PendingReview } from '../../lib/sync/pendingReview';
+import { restoreRemoteFile } from '../../lib/sync/cloud';
+import { clearPendingReviewSyncBlock, loadPendingReview, savePendingReview, type PendingReview } from '../../lib/sync/pendingReview';
+import {
+  approveRemoteDeletions,
+  describeFailures,
+  refuseRemoteDeletions,
+  type DecisionDeps,
+} from '../../lib/sync/remoteDeletionDecisions';
+import { useSyncStatus } from '../../lib/sync/SyncStatusContext';
 import { useVaults } from '../../lib/sync/VaultsContext';
 import { usePreferences } from '../../preferences/PreferencesContext';
 import { settingsStyles as s } from './settingsStyles';
@@ -40,12 +48,17 @@ export function SyncReviewSection() {
   const [review, setReview] = useState<PendingReview | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const syncStatus = useSyncStatus();
 
   const remoteVaultId = activeVault?.remoteVaultId ?? null;
 
   const reload = useCallback(async () => {
     if (typeof window === 'undefined' || !window.vault) return;
-    setReview(await loadPendingReview(window.vault).catch(() => null));
+    try {
+      setReview(await loadPendingReview(window.vault));
+    } catch (e) {
+      setError(errorMessage(e));
+    }
   }, []); // rechargé aussi par l'effet ci-dessous
 
 
@@ -53,8 +66,12 @@ export function SyncReviewSection() {
     let cancelled = false;
     const load = async () => {
       if (typeof window === 'undefined' || !window.vault) return;
-      const loaded = await loadPendingReview(window.vault).catch(() => null);
-      if (!cancelled) setReview(loaded);
+      try {
+        const loaded = await loadPendingReview(window.vault);
+        if (!cancelled) setReview(loaded);
+      } catch (e) {
+        if (!cancelled) setError(errorMessage(e));
+      }
     };
     void load();
     const timer = setInterval(() => void load(), 2500);
@@ -80,10 +97,12 @@ export function SyncReviewSection() {
     [reload],
   );
 
+  // Levée du disjoncteur : la file est RELUE (jamais l'état affiché, qui
+  // peut dater de 2,5 s) — seul le bloc est retiré, rien d'autre écrasé.
   const leverDisjoncteur = () =>
     run(async () => {
       if (typeof window === 'undefined' || !window.vault) throw new Error('Pont vault absent.');
-      await savePendingReview(window.vault, { ...(review ?? {}), syncBlocked: undefined });
+      await clearPendingReviewSyncBlock(window.vault);
     });
 
   const confirmerSuppressionsMassives = () =>
@@ -96,7 +115,15 @@ export function SyncReviewSection() {
       // applique maintenant, en connaissance de cause).
       const supabaseMod = await import('../../lib/sync/deviceGateway');
       await supabaseMod.setRemoteRowsDeleted(remoteVaultId, paths, true);
-      await savePendingReview(window.vault, { ...(review ?? {}), suspiciousDeletions: undefined });
+      // APPROBATION PERSISTÉE : sans elle, le moteur recalcule la même liste
+      // au cycle suivant (fichiers encore présents ici quand ils ont été
+      // supprimés dans le cloud) et relève le garde-fou aussitôt.
+      const approved = new Set([...(review?.approvedDeletions?.paths ?? []), ...paths]);
+      await savePendingReview(window.vault, {
+        ...(review ?? {}),
+        suspiciousDeletions: undefined,
+        approvedDeletions: { at: new Date().toISOString(), paths: [...approved] },
+      });
     });
 
   const annulerSuppressionsMassives = () =>
@@ -107,21 +134,29 @@ export function SyncReviewSection() {
       await savePendingReview(window.vault, { ...(review ?? {}), suspiciousDeletions: undefined });
     });
 
-  const supprimerVraiment = (relPath: string) =>
+  // Décisions sur les suppressions distantes — HORS de tout cycle
+  // (runSyncExclusive) : le moteur réécrit la même file.
+  const decisionDeps = (): DecisionDeps => {
+    if (typeof window === 'undefined' || !window.vault) throw new Error('Pont vault absent.');
+    if (!remoteVaultId) throw new Error('Aucun coffre distant lié — décision impossible depuis cet appareil.');
+    const vault = window.vault;
+    return {
+      vault,
+      restoreRemote: (relPath) => restoreRemoteFile(remoteVaultId, relPath),
+      legacyUndelete: (relPaths) => setRemoteRowsDeleted(remoteVaultId, relPaths, false),
+    };
+  };
+  const approuver = (paths: string[]) =>
     run(async () => {
-      if (typeof window === 'undefined' || !window.vault) throw new Error('Pont vault absent.');
-      await window.vault.delete(relPath, { silent: true });
-      const remaining = (review?.remoteDeletions ?? []).filter((r) => r.path !== relPath);
-      await savePendingReview(window.vault, { ...(review ?? {}), remoteDeletions: remaining });
+      const outcome = await syncStatus.runSyncExclusive(() => approveRemoteDeletions(decisionDeps(), paths));
+      const failure = describeFailures(outcome);
+      if (failure) throw new Error(failure);
     });
-
-  const restaurerDansCloud = (relPath: string) =>
+  const refuser = (paths: string[]) =>
     run(async () => {
-      if (!remoteVaultId) throw new Error('Aucun coffre distant lié — restauration impossible.');
-      await setRemoteRowsDeleted(remoteVaultId, [relPath], false);
-      const remaining = (review?.remoteDeletions ?? []).filter((r) => r.path !== relPath);
-      if (typeof window === 'undefined' || !window.vault) throw new Error('Pont vault absent.');
-      await savePendingReview(window.vault, { ...(review ?? {}), remoteDeletions: remaining });
+      const outcome = await syncStatus.runSyncExclusive(() => refuseRemoteDeletions(decisionDeps(), paths));
+      const failure = describeFailures(outcome);
+      if (failure) throw new Error(failure);
     });
 
   //////// 2. Le rendu (disjoncteur / suppressions massives / suppressions distantes) ///////
@@ -188,23 +223,52 @@ export function SyncReviewSection() {
           <Text style={{ color: theme.danger, fontWeight: '600' }}>
             📥 {review.remoteDeletions?.length} suppression(s) venue(s) d’autres appareils — en attente
           </Text>
+          <Text style={{ color: theme.textMuted, fontSize: 12 }}>
+            Les fichiers restent intacts ici tant que vous n’avez pas décidé. Approuver = corbeille locale ; Refuser = le
+            fichier est restauré dans le cloud.
+          </Text>
+          {(review.remoteDeletions ?? []).length > 1 && (
+            <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+              <Pressable
+                disabled={busy}
+                onPress={() => void approuver((review.remoteDeletions ?? []).map((r) => r.path))}
+                style={[s.modeButton, { borderColor: theme.border, alignSelf: 'flex-start' }]}
+              >
+                <Text style={{ color: theme.text }}>🗑️ Tout approuver</Text>
+              </Pressable>
+              <Pressable
+                disabled={busy}
+                onPress={() => void refuser((review.remoteDeletions ?? []).map((r) => r.path))}
+                style={[s.modeButton, { borderColor: theme.border, alignSelf: 'flex-start' }]}
+              >
+                <Text style={{ color: theme.text }}>♻️ Tout refuser</Text>
+              </Pressable>
+            </View>
+          )}
           {(review.remoteDeletions ?? []).map((r) => (
             <View key={r.path} style={{ gap: 2 }}>
-              <Text style={{ color: theme.textMuted, fontSize: 12 }}>· {r.path}{r.modified ? ' (modifié ici ⚠)' : ''}</Text>
-              <View style={{ flexDirection: 'row', gap: 8 }}>
+              <Text style={{ color: theme.text, fontSize: 13 }}>
+                · {r.path}
+                {r.modified ? ' (modifié ici ⚠)' : ''}
+              </Text>
+              <Text style={{ color: theme.textMuted, fontSize: 11 }}>
+                supprimé sur {r.deletedByDevice ?? 'un autre appareil'}
+                {` · ${new Date(r.deletedAt ?? r.at).toLocaleString()}`}
+              </Text>
+              <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
                 <Pressable
                   disabled={busy}
-                  onPress={() => void supprimerVraiment(r.path)}
+                  onPress={() => void approuver([r.path])}
                   style={[s.modeButton, { borderColor: theme.border, alignSelf: 'flex-start' }]}
                 >
-                  <Text style={{ color: theme.text }}>🗑️ Supprimer vraiment</Text>
+                  <Text style={{ color: theme.text }}>🗑️ Approuver (corbeille)</Text>
                 </Pressable>
                 <Pressable
                   disabled={busy}
-                  onPress={() => void restaurerDansCloud(r.path)}
+                  onPress={() => void refuser([r.path])}
                   style={[s.modeButton, { borderColor: theme.border, alignSelf: 'flex-start' }]}
                 >
-                  <Text style={{ color: theme.text }}>♻️ Restaurer dans le cloud</Text>
+                  <Text style={{ color: theme.text }}>♻️ Refuser (restaurer)</Text>
                 </Pressable>
               </View>
             </View>

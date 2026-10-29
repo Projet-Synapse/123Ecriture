@@ -64,7 +64,11 @@ export function VaultSwitcherSection() {
                 {vault.name}
                 {actif ? '  ✅' : ''}
               </Text>
-              {vault.cloudLinked ? <Text style={styles.cloud}>☁️ connecté au cloud</Text> : null}
+              {vault.cloudLinked ? (
+                <Text style={styles.cloud}>☁️ connecté au cloud</Text>
+              ) : typeof window !== 'undefined' && window.vaults?.cloudOnly ? (
+                <Text style={styles.cloud}>📦 à importer (Réglages → Synchronisation)</Text>
+              ) : null}
             </View>
             {!actif ? (
               <Pressable
@@ -82,7 +86,11 @@ export function VaultSwitcherSection() {
           </View>
         );
       })}
-      <Pressable
+      {/* Android 100 % cloud : pas de dossier local à ajouter — les coffres
+          se connectent depuis Synchronisation (coffres distants du compte). */}
+      {typeof window !== 'undefined' && window.vaults?.cloudOnly ? (
+        <Text style={styles.hint}>Nouveaux coffres : Réglages → Synchronisation → Coffres distants.</Text>
+      ) : <Pressable
         style={[styles.buttonAjouter, busy === '__ajout__' && styles.buttonBusy]}
         disabled={busy !== null}
         onPress={() => {
@@ -90,7 +98,7 @@ export function VaultSwitcherSection() {
         }}
       >
         <Text style={styles.buttonLabel}>+ Ajouter un coffre sur cet appareil</Text>
-      </Pressable>
+      </Pressable>}
     </View>
   );
 }

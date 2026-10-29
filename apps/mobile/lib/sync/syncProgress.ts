@@ -43,7 +43,7 @@ export function subscribeSyncProgress(listener: (progress: SyncProgress | null) 
 
 export function formatSyncProgress(progress: SyncProgress | null): string | null {
   if (!progress) return null;
-  if (progress.total > 0) return `${progress.phase} ${progress.done}/${progress.total} fichiers`;
+  if (progress.total > 0) return `${progress.phase} ${progress.done}/${progress.total}${/dossier/i.test(progress.phase) ? '' : ' fichiers'}`;
   return progress.phase;
 }
 
