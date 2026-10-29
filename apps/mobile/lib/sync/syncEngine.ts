@@ -1,30 +1,37 @@
 
-import { diffVault } from './diff';
-import { splitEditHot } from './editQuiet';
+import { planSync, type SyncPlan } from './threeWay';
+import type { SyncDecision } from './diff';
+import { isSyncAllowed, isVaultSyncEnabled, loadSyncSettings, saveSyncSettings } from './syncSettings';
+import { isHashableRelPath } from './syncRules';
+import { holdDeletionsUntilIndexed, migrateSyncStateFiles, SYNC_STATE_VERSION } from './stateMigration';
+import { EMPTY_SHA256, folderToMarker, isFolderMarker, markerToFolder } from './folderMarker';
+import { splitEditHot, quietRetryAt, preserveHotBases } from './editQuiet';
+import { isGuardedConfigFile, validateConfigText } from './configGuard';
 import { errorMessage } from '../errorMessage';
 import { APP_SCHEMA, VAULT_FILES_TABLE } from './supabaseClient';
 import {
   fetchRemoteFiles,
   downloadRemoteText,
-    pushFile,
+  pushFile,
+  tombstoneRemoteFile,
   pullFile,
   isBinaryAttachmentRelPath,
-  loadSyncBase,
- heartbeatDevice, fetchMyDeviceLock, restoreRemoteFile, tombstoneRemoteFile } from './cloud';
-import { buildNextReference, isVersionConflictError, parseSyncState } from './versionLock';
+  loadVerifiedSyncBase,
+  saveSyncBase,
+ heartbeatDevice, fetchMyDeviceLock, pushFolderMarkers, runPool, restoreRemoteFile } from './cloud';
+import { isVersionConflictError } from './versionLock';
 import { requireBridges } from './bridges';
 
 import { type SyncSummary } from './syncTypes';
-import { selectRemoteRows } from './relPath';
-import { computeLocalDeletions, isMassiveDeletion } from './deletions';
+import { isTrashRelPath, selectRemoteRows } from './relPath';
 import {
   loadPendingReview,
   savePendingReview,
-  SYNC_ERROR_BLOCK_THRESHOLD,
   reconcileRemoteDeletions,
   sameRemoteDeletions,
-  type RemoteDeletionReview,
+  type PendingReview,
 } from './pendingReview';
+import { collectRemoteDeletionCandidates, shouldTripBreaker } from './safetyNet';
 import { pickActiveRemoteVault } from './activeVault';
 import {
   capJournalEntries,
@@ -33,7 +40,21 @@ import {
   type SyncJournalEntry,
 } from './journal';
 import { tryThreeWayMerge } from './merge';
+import { configConflictBackupPath, isStructuredConfigFile, newerSide, planConfigResolution, type Side } from './configMerge';
 import { processDeviceCommands } from './deviceGateway';
+import { FILE_OP_TIMEOUT_MS, STEP_TIMEOUT_MS, setSyncProgress, withTimeout } from './syncProgress';
+
+// Cycle moteur EN COURS (module) : un cycle révoqué par le watchdog de l'UI
+// continue en arrière-plan — on n'en lance jamais un second par-dessus.
+let engineCycleRunning = false;
+// Heartbeat + passerelle PENDANT le cycle (toutes les N secondes) : un long
+// premier pull reste visible (« vu à … ») et pilotable (dump-diagnostics).
+const CYCLE_TICK_MS = 30_000;
+// Journal de progression écrit AU FIL DU CYCLE (pas seulement à la fin).
+const PROGRESS_JOURNAL_EVERY = 20;
+const PROGRESS_JOURNAL_MIN_MS = 30_000;
+// Fichiers envoyés/reçus en parallèle (réseau + SAF : borne prudente).
+const FILE_PARALLEL = 4;
 // Le compte de lignes backslashed signalé au cycle précédent : le signal
 // « N lignes ignorées » ne se répète que si le nombre change.
 let lastBackslashReport = -1;
@@ -46,7 +67,7 @@ let lastBackslashReport = -1;
 //
 // Un cycle (runSync) déroule toujours la même séquence : résoudre ENSEMBLE
 // le coffre local actif et sa ligne distante, passer les gardes d'entrée
-// (disjoncteur, verrou à distance, verrou anti-bascule), hacher le coffre
+// (verrou à distance, verrou anti-bascule), hacher le coffre
 // via le pont, paginer les lignes distantes, propager les suppressions,
 // calculer le diff à trois voix (local / distant / état du dernier cycle),
 // appliquer les décisions (push, pull, fusion de conflit), puis réécrire
@@ -76,7 +97,7 @@ let lastBackslashReport = -1;
 // SOMMAIRE :
 //   1. L'état de synchro et le journal du cycle (persistés dans le coffre)
 //   2. La liaison et le catalogue des coffres distants
-//   3. Les appareils : heartbeat, verrou à distance, levée du disjoncteur
+//   3. Les appareils : heartbeat, verrou à distance
 //   4. La lecture du cloud : pagination et téléchargements
 //   5. Les pièces jointes binaires (détection, MIME, base64)
 //   6. Le push, le pull et les bases de fusion
@@ -105,6 +126,8 @@ type SyncState = {
   // Absent dans les anciens états = version inconnue (comportement prudent).
   versions?: Record<string, number>;
   rootPath?: string | null;
+  // Version du format/des migrations (stateMigration.ts) ; absent = 1.
+  version?: number;
 };
 
 // Hermes (Android) n'expose PAS `AbortSignal.timeout` (méthode statique du
@@ -116,13 +139,22 @@ async function loadSyncState(): Promise<SyncState> {
   const { vault } = requireBridges();
   try {
     const raw = await vault.readNote(SYNC_STATE_REL_PATH);
-    // Lecture tolérante (versionLock.parseSyncState) : ancien format sans
-    // `versions` accepté ; clés backslashed jetées (résidus du bug de
-    // séparateurs desktop — jamais de tombestones fantômes).
-    return parseSyncState(raw);
+    const parsed = JSON.parse(raw) as Partial<SyncState>;
+    // Jette les clés backslashed (résidus du bug de séparateurs desktop) :
+    // elles ne matcheront jamais les chemins normalisés et ne doivent pas
+    // générer de tombestones fantômes.
+    const files: Record<string, string> = {};
+    for (const [relPath, hash] of Object.entries(parsed.files ?? {})) {
+      if (relPath.includes('\\')) continue;
+      // `.trash/` n'est plus synchronisé : ses anciennes références ne
+      // doivent pas devenir des « suppressions locales » (tombstones).
+      if (isTrashRelPath(relPath)) continue;
+      files[relPath] = hash;
+    }
+    return { files, rootPath: parsed.rootPath ?? null, version: typeof parsed.version === 'number' ? parsed.version : 1 };
   } catch {
     // Absent à la première synchro du coffre — repart à vide.
-    return { files: {} };
+    return { files: {}, version: SYNC_STATE_VERSION };
   }
 }
 
@@ -228,6 +260,8 @@ export async function restoreFromTrash(
   if (!trashRelPath.startsWith('.trash/')) {
     throw new Error('Ce chemin n’est pas dans la corbeille.');
   }
+  // Android cloud : restore_file (tombstone levée côté serveur, verrou optimiste).
+  if (vault.cloudSync) return vault.cloudSync.restore(trashRelPath);
   const normalize = (p: string) => p.replace(/\\/g, '/');
   const originalBase = trashRelPath.slice('.trash/'.length);
 
@@ -292,7 +326,7 @@ export async function restoreFromTrash(
   const localFiles = await sync.hashVaultTree();
   const restored = localFiles.find((note) => note.relPath === moved.relPath);
   if (restored) {
-    await pushFile(remoteVaultId, ownerId, restored, [], null, null, expectedVersion);
+    await pushFile(remoteVaultId, ownerId, restored, [], null, expectedVersion !== null ? { expectedVersion } : undefined);
   }
   await appendJournalEntries([makeJournalEntry('restore', { path: moved.relPath })]);
   return moved.relPath;
@@ -309,19 +343,27 @@ export async function restoreFromTrash(
 // n'y a pas de base de fusion ou que les modifications se chevauchent
 // réellement : l'appelant retombe sur le comportement gagnant/perdant
 // archivé.
+// Contexte d'un conflit : hash de la dernière version synchronisée (pour
+// vérifier la base) et côté le plus récent (newerSide, tolérance d'horloge).
+type ConflictContext = { expectedBaseHash: string | undefined; newer: Side };
+
 async function attemptConflictMerge(
   remoteVaultId: string,
   ownerId: string,
   relPath: string,
   remoteObjectPath: string | undefined,
   journal: SyncJournalEntry[],
-  // Verrou optimiste : version distante sur laquelle la fusion est bâtie ;
-  // la version obtenue est consignée dans `pushedVersions`.
-  expectedVersion: number | null = null,
-  pushedVersions: Record<string, number> = {},
+  preferLocal = false,
+  onLocalChanged?: () => void,
+  ctx: ConflictContext = { expectedBaseHash: undefined, newer: 'remote' },
 ): Promise<string | null> {
   if (isBinaryAttachmentRelPath(relPath)) return null; // jamais de fusion binaire
-  const base = await loadSyncBase(relPath);
+  if (isStructuredConfigFile(relPath)) {
+    return resolveConfigConflict(remoteVaultId, ownerId, relPath, remoteObjectPath, journal, preferLocal, onLocalChanged, ctx);
+  }
+  // Base VÉRIFIÉE (hash = sync-state) : une base périmée produirait une
+  // fusion fausse (passages réintroduits ou perdus).
+  const base = await loadVerifiedSyncBase(relPath, ctx.expectedBaseHash);
   if (base === null) return null;
   let local: string;
   let remote: string;
@@ -344,6 +386,9 @@ async function attemptConflictMerge(
     } catch {
       return null;
     }
+    // JSON.parse accepte une clé en double : garde complète pour les
+    // métadonnées synchronisées (configGuard.ts).
+    if (isGuardedConfigFile(relPath) && !validateConfigText(relPath, merged.text).ok) return null;
   }
 
   const { vault, sync } = requireBridges();
@@ -351,14 +396,73 @@ async function attemptConflictMerge(
   const tree = await sync.hashVaultTree();
   const note = tree.find((n) => n.relPath === relPath);
   if (!note) return null;
-  const mergedVersion = await pushFile(remoteVaultId, ownerId, note, journal, null, null, expectedVersion);
-  if (mergedVersion !== null) pushedVersions[relPath] = mergedVersion;
+  await pushFile(remoteVaultId, ownerId, note, journal);
   journal.push(
     makeJournalEntry('conflict', {
       path: relPath,
       detail: 'fusion automatique des deux versions (diff-match-patch)',
     }),
   );
+  return note.contentHash;
+}
+
+// Conflit sur un fichier de CONFIGURATION JSON (tasks/tasklists/
+// preferences) : fusion STRUCTURÉE (configMerge.ts), jamais
+// diff-match-patch. Retourne TOUJOURS le hash du fichier local final (le
+// conflit est résolu ici, pas de repli gagnant/perdant). Le résultat
+// fusionné devient la nouvelle base (pushFile/pullFile/saveSyncBase) :
+// une suppression ne revient pas au conflit suivant. Sans base ou avec un
+// côté illisible : le cloud gagne (sauf priorité « local » explicite du
+// dialogue de fusion) et la version perdante est gardée LOCALEMENT en
+// `.123ecriture/<nom>.conflict-<horodatage>.json` (jamais synchronisé).
+async function resolveConfigConflict(
+  remoteVaultId: string,
+  ownerId: string,
+  relPath: string,
+  remoteObjectPath: string | undefined,
+  journal: SyncJournalEntry[],
+  preferLocal: boolean,
+  onLocalChanged: (() => void) | undefined,
+  ctx: ConflictContext,
+): Promise<string | null> {
+  const { vault, sync } = requireBridges();
+  const local = await vault.readNote(relPath);
+  const remote = await downloadRemoteText(remoteVaultId, relPath, remoteObjectPath);
+  // Base VÉRIFIÉE : hash du texte = hash du sync-state, sinon « pas de base ».
+  const base = await loadVerifiedSyncBase(relPath, ctx.expectedBaseHash);
+  const rehash = async () => {
+    const tree = await sync.hashVaultTree();
+    return tree.find((n) => n.relPath === relPath) ?? null;
+  };
+  // Priorité « local » du dialogue de fusion = le local est réputé le plus récent.
+  const newer: Side = preferLocal ? 'local' : ctx.newer;
+  // Plan PUR (configMerge.planConfigResolution, testé) puis exécution.
+  const plan = planConfigResolution(base, local, remote, newer);
+  if (plan.backupLocal) await vault.writeNote(configConflictBackupPath(relPath), local);
+  if (plan.backupCloud) await vault.writeNote(configConflictBackupPath(relPath, new Date(), 'cloud'), remote);
+  if (plan.pull) {
+    await withTimeout(pullFile(remoteVaultId, relPath, remoteObjectPath), FILE_OP_TIMEOUT_MS, `réception ${relPath}`);
+    onLocalChanged?.();
+  } else if (plan.final !== local) {
+    await vault.writeNote(relPath, plan.final);
+    onLocalChanged?.();
+  }
+  const note = await rehash();
+  if (!note) return null;
+  if (plan.push) {
+    // Résultat ≠ cloud : TOUJOURS envoyé (pushFile enregistre aussi la base).
+    await withTimeout(pushFile(remoteVaultId, ownerId, note, journal, remote), FILE_OP_TIMEOUT_MS, `envoi ${relPath}`);
+  } else if (!plan.pull) {
+    // Le cloud porte déjà le résultat : base = résultat (même texte que le
+    // fichier local re-haché → hash cohérent au cycle suivant).
+    await saveSyncBase(relPath, plan.final);
+  }
+  const qui = plan.newer === 'local' ? 'cet appareil' : 'le cloud';
+  const detail =
+    plan.reason === 'merged'
+      ? `fusion structurée de la configuration (par identifiant / par clé ; valeur en conflit : la plus récente gagne — ${qui})${plan.push ? ', envoyée' : ''}`
+      : `configuration ${plan.reason === 'no-base' ? 'sans base de fusion fiable' : 'illisible'} : version la plus récente conservée (${qui})${plan.push ? ' et envoyée' : ''}, l'autre sauvegardée (.conflict)`;
+  journal.push(makeJournalEntry('conflict', { path: relPath, detail }));
   return note.contentHash;
 }
 
@@ -404,6 +508,18 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
     return summary;
   }
   const remoteVaultId = activeEntry.remoteVaultId;
+
+  // PARAMÈTRES DE SYNCHRONISATION (syncSettings.ts) : sync globale ou de ce
+  // coffre désactivée → cycle ignoré SANS erreur (l'app reste 100 % locale).
+  const syncSettings = loadSyncSettings();
+  if (!isVaultSyncEnabled(syncSettings, remoteVaultId) || syncSettings.pausedAfterUpdate) {
+    return summary;
+  }
+  // Wi-Fi uniquement : sur réseau mobile, cycle ignoré (aucune erreur).
+  const connection = (globalThis as { navigator?: { connection?: { type?: string } } }).navigator?.connection;
+  if (syncSettings.wifiOnly && connection?.type === 'cellular') {
+    return summary;
+  }
 
   // GARDE « AUCUN COFFRE LOCAL ACTIF » : sans coffre LOCAL actif et
   // résolvable, il n'y a rien à afficher ni où écrire — le cycle est refusé
@@ -483,7 +599,93 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   // s'écrit sur le disque de B. Pendant le cycle, `vaults:switch` est donc
   // REFUSÉ par le main process (TTL de 10 min : un crash du renderer ne
   // bloque pas l'app pour toujours).
-  await bridges.sync.setVaultLock?.(true);
+  if (engineCycleRunning) {
+    const message = 'Cycle ignoré : le cycle précédent est encore en cours sur cet appareil.';
+    summary.errors.push(message);
+    console.error('[sync]', message);
+    return summary;
+  }
+  engineCycleRunning = true;
+  // VERROU LIBÉRÉ DANS UN FINALLY : une exception ou un délai dépassé ne
+  // laisse plus jamais le coffre verrouillé ni le moteur « occupé ».
+  let ticking = false;
+  const tick = async () => {
+    if (ticking) return;
+    ticking = true;
+    try {
+      await withTimeout(heartbeatDevice(remoteVaultId, ownerId), 20_000, 'heartbeat');
+      await withTimeout(processDeviceCommands(remoteVaultId, ownerId), 120_000, 'commandes appareil');
+    } catch (error) {
+      console.warn('[sync] tick de cycle :', errorMessage(error));
+    } finally {
+      ticking = false;
+    }
+  };
+  void tick();
+  const ticker = setInterval(() => void tick(), CYCLE_TICK_MS);
+  try {
+    // ANDROID 100 % CLOUD : pas de diff disque ↔ cloud — on rejoue la file
+    // d'opérations du cache (verrou optimiste côté serveur) puis on relit
+    // le catalogue distant. Aucune suppression distante ne naît d'ici.
+    if (bridges.vault.cloudSync) {
+      return await runCloudCycle(bridges.vault.cloudSync, ownerId, remoteVaultId, summary, trigger);
+    }
+    await bridges.sync.setVaultLock?.(true);
+    return await runLockedCycle(bridges, ownerId, remoteVaultId, summary, syncSettings);
+  } finally {
+    clearInterval(ticker);
+    setSyncProgress(null);
+    engineCycleRunning = false;
+    try {
+      await bridges.sync.setVaultLock?.(false);
+    } catch (error) {
+      console.error('[sync] libération du verrou de coffre :', errorMessage(error));
+    }
+  }
+}
+
+async function runCloudCycle(
+  cloudSync: NonNullable<VaultBridge['cloudSync']>,
+  ownerId: string,
+  remoteVaultId: string,
+  summary: SyncSummary,
+  trigger: string,
+): Promise<SyncSummary> {
+  const result = await withTimeout(cloudSync.flush(), 10 * 60_000, 'synchronisation cloud');
+  summary.pushed = result.pushed;
+  summary.deleted = result.deleted;
+  summary.conflicts = result.conflicts;
+  summary.errors.push(...result.errors);
+  if (result.offline) summary.errors.push(`Hors ligne : ${result.pending} modification(s) en attente, envoyées au retour du réseau.`);
+  try {
+    await appendJournalEntries([
+      makeJournalEntry(result.errors.length ? 'error' : 'info', {
+        detail: `cycle cloud (${trigger}) : ${result.pushed} envoyé(s), ${result.deleted} en corbeille, ${result.restored} restauré(s), ${result.conflicts} conflit(s), ${result.pending} en attente${result.offline ? ' — hors ligne' : ''}`,
+      }),
+    ]);
+  } catch {
+    // journal best-effort
+  }
+  if (!result.offline) {
+    await withTimeout(heartbeatDevice(remoteVaultId, ownerId, summary), 30_000, 'heartbeat de fin').catch(() => undefined);
+    await withTimeout(processDeviceCommands(remoteVaultId, ownerId), 120_000, 'commandes appareil').catch(() => undefined);
+    try {
+      const { publishDeviceInventory } = await import('./deviceInventory');
+      await publishDeviceInventory(remoteVaultId, await cloudSync.inventory());
+    } catch (error) {
+      console.warn('[sync] inventaire du cache :', errorMessage(error));
+    }
+  }
+  return summary;
+}
+
+async function runLockedCycle(
+  bridges: ReturnType<typeof requireBridges>,
+  ownerId: string,
+  remoteVaultId: string,
+  summary: SyncSummary,
+  syncSettings: ReturnType<typeof loadSyncSettings>,
+): Promise<SyncSummary> {
 
   // Le journal PROGRESSIF raconte le cycle comme Obsidian Sync (« connexion
   // au serveur », « upload en cours », « upload terminé ») : la connexion
@@ -503,10 +705,12 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   const journalStartLength = await journalLength();
   await appendJournalEntries(journal);
 
-  const [remoteFiles, syncState] = await Promise.all([
-    fetchRemoteFiles(remoteVaultId),
-    loadSyncState(),
-  ]);
+  setSyncProgress({ phase: 'Lecture de la liste distante…', done: 0, total: 0 });
+  const [remoteFiles, syncState] = await withTimeout(
+    Promise.all([fetchRemoteFiles(remoteVaultId), loadSyncState()]),
+    STEP_TIMEOUT_MS,
+    'liste distante',
+  );
 
   // SYNC-STATE HONNÊTE : l'état ne vaut que pour LE dossier qu'il décrit.
   // Un rootPath différent (dossier reconnecté, migration du socle,
@@ -517,7 +721,6 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   const vaultRootPath = (await bridges.vault.getCurrentPath?.()) ?? null;
   if (syncState.rootPath && syncState.rootPath !== vaultRootPath) {
     syncState.files = {};
-    syncState.versions = {};
     journal.push(
       makeJournalEntry('info', {
         detail: `État de synchro d'un autre dossier ignoré (${syncState.rootPath}) — reconstruit à vide pour ${vaultRootPath ?? 'coffre inconnu'}.`,
@@ -529,7 +732,8 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   // POSIX quel que soit le pont — un relPath backslashed crée des doublons
   // cloud jamais matchés, des tombestones jamais envoyées et des
   // résurrections en boucle (le fix à la source vit dans sync.ts).
-  const localFiles = (await bridges.sync.hashVaultTree()).map((note) => ({
+  setSyncProgress({ phase: 'Analyse du coffre local…', done: 0, total: 0 });
+  const localFiles = (await withTimeout(bridges.sync.hashVaultTree(), STEP_TIMEOUT_MS, 'analyse du coffre local')).map((note) => ({
     ...note,
     relPath: note.relPath.split('\\').join('/'),
   }));
@@ -541,14 +745,52 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   // sinon, conflit à chaque frappe pendant l'écriture.
   const { cold: localFilesCold, hotPaths } = splitEditHot(localFiles, Date.now());
   if (hotPaths.size > 0) {
+    summary.retryAfterMs = quietRetryAt(localFiles, hotPaths);
     journal.push(
       makeJournalEntry('info', {
-        detail: `${hotPaths.size} fichier(s) en cours d'édition — synchronisation différée (silence de 60 s requis) : ${[...hotPaths].slice(0, 2).join(' | ').slice(0, 140)}`,
+        detail: `${hotPaths.size} fichier(s) en cours d'édition — synchronisation différée (silence requis : 5 s pour les tâches/réglages, 60 s sinon) : ${[...hotPaths].slice(0, 2).join(' | ').slice(0, 140)}`,
       }),
     );
   }
   const localByPath = new Map(localFilesCold.map((note) => [note.relPath, note]));
-  const localPaths = new Set(localFilesCold.map((note) => note.relPath));
+  // DOSSIERS DE PREMIÈRE CLASSE (folderMarker.ts) : chaque dossier local
+  // est représenté par son marqueur ; le cloud en garde une ligne vide.
+  let localFolders: string[] = [];
+  // Liste FIABLE des dossiers locaux ? Sinon (pont sans listFolders, échec
+  // de lecture) les marqueurs sortent ENTIÈREMENT du plan : une liste
+  // absente n'est jamais « aucun dossier » (sinon tombstone de tous les
+  // dossiers reçus au cycle précédent).
+  let foldersKnown = false;
+  if (syncSettings.emptyFolders && bridges.sync.listFolders) {
+    try {
+      localFolders = (await bridges.sync.listFolders()).map((f: string) => f.split('\\').join('/'));
+      foldersKnown = true;
+    } catch (error) {
+      console.warn('[sync] liste des dossiers :', errorMessage(error));
+      journal.push(makeJournalEntry('info', { detail: `Dossiers locaux illisibles ce cycle — dossiers non synchronisés : ${errorMessage(error).slice(0, 120)}` }));
+    }
+  }
+  const localFolderSet = new Set(localFolders);
+  // PREMIER PARCOURS COMPLET réussi ? Sinon (index partiel) : aucune
+  // suppression propagée ce cycle, et la migration v2 attend.
+  const fullyIndexed = bridges.sync.isFullyIndexed ? bridges.sync.isFullyIndexed() : true;
+  let stateVersion = syncState.version ?? 1;
+  if (stateVersion < SYNC_STATE_VERSION && foldersKnown && fullyIndexed) {
+    const migrated = migrateSyncStateFiles(
+      syncState.files,
+      stateVersion,
+      new Set(localFolders.map((f) => folderToMarker(f))),
+    );
+    syncState.files = migrated.files;
+    stateVersion = SYNC_STATE_VERSION;
+    if (migrated.dropped.length > 0) {
+      journal.push(
+        makeJournalEntry('info', {
+          detail: `Migration de l'état : ${migrated.dropped.length} dossier(s) du cloud absent(s) ici seront recréés (jamais supprimés du cloud).`,
+        }),
+      );
+    }
+  }
 
 //////// 9. runSync : les suppressions — tombestones et revue //////////////
 
@@ -601,22 +843,82 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   // coffre) et le cycle se termine sans supprimer ; jamais de confirmation
   // par un simple « relancer une fois ». La levée se fait par une action
   // humaine explicite depuis l'écran de revue.
-  // Chemins dont l'issue du cycle n'est pas confirmée : leur référence
-  // (hash + version) précédente est conservée telle quelle.
+  // ---- MOTEUR À TROIS ÉTATS (threeWay.ts) ------------------------------
+  // L = disque, R = cloud, B = base (sync-state). Une absence ne vaut
+  // suppression QUE si le chemin était dans la base. Les fichiers en cours
+  // d'édition et les types désactivés sortent entièrement du plan.
+  const allow = (relPath: string) =>
+    isSyncAllowed(relPath, syncSettings) &&
+    // Marqueurs de dossier : JAMAIS soumis à la garde « en cours d'édition »
+    // (un dossier ne se « tape » pas) — toujours tirés/poussés.
+    (isFolderMarker(relPath) ? foldersKnown : !hotPaths.has(relPath) && isHashableRelPath(relPath));
+  // Suppressions CONFIRMÉES depuis l'écran de revue (sinon la confirmation
+  // n'a aucun effet : le cycle suivant recalcule la même liste et relève le
+  // garde-fou — la demande « revient » toutes les 30 s).
+  // Illisible : aucune approbation (= aucune suppression approuvée) ; déjà
+  // signalé par la lecture du disjoncteur en début de cycle.
+  const reviewBefore: PendingReview = await loadPendingReview(bridges.vault).catch(() => ({}) as PendingReview);
+  // Chemins dont l'issue du cycle n'est pas confirmée : leur base
+  // précédente est conservée telle quelle (voir nouvel état de référence).
   const keepPreviousRef = new Set<string>();
-  const locallyDeleted = computeLocalDeletions(syncState.files, localPaths);
-  if (isMassiveDeletion(locallyDeleted.length, localFiles.length)) {
-    // Fusion (jamais d'écrasement : la file porte aussi les suppressions
-    // distantes en attente). Un échec d'écriture est VISIBLE (erreur du
-    // cycle + journal) — les suppressions restent bloquées dans tous les cas.
+  const approvedDeletions = new Set(reviewBefore.approvedDeletions?.paths ?? []);
+  let plan: SyncPlan = planSync({
+    local: [
+      ...localFilesCold.map((n) => ({ relPath: n.relPath, hash: n.contentHash, size: n.sizeBytes, mtime: n.modifiedAt })),
+      ...localFolders.map((f) => ({ relPath: folderToMarker(f), hash: EMPTY_SHA256, kind: 'folder' as const })),
+    ],
+    remote: visibleRemoteFiles.map((r) => ({
+      relPath: r.relPath,
+      hash: r.contentHash,
+      updatedAt: r.updatedAt,
+      version: r.version ?? null,
+      deleted: r.deleted,
+      kind: isFolderMarker(r.relPath) ? ('folder' as const) : ('file' as const),
+    })),
+    base: Object.fromEntries(
+      Object.entries(syncState.files).map(([p, h]) => [p, { hash: h, kind: isFolderMarker(p) ? ('folder' as const) : ('file' as const) }]),
+    ),
+    allow,
+    guard: { approved: approvedDeletions },
+  });
+  {
+    // OBSERVABILITÉ DOSSIERS : ce que le plan décide pour les marqueurs.
+    const counts: Record<string, number> = {};
+    for (const a of plan.actions) if (a.entryKind === 'folder') counts[a.kind] = (counts[a.kind] ?? 0) + 1;
+    const remoteMarkers = visibleRemoteFiles.filter((r) => !r.deleted && isFolderMarker(r.relPath)).length;
+    journal.push(
+      makeJournalEntry('info', {
+        detail: `Dossiers : ${localFolders.length} ici, ${remoteMarkers} dans le cloud${foldersKnown ? '' : ' (liste locale indisponible)'} — plan : ${Object.entries(counts).map(([k, n]) => `${k} ${n}`).join(', ') || 'rien'}`,
+      }),
+    );
+  }
+  const heldDeletions = new Set<string>();
+  {
+    const held = holdDeletionsUntilIndexed(plan, fullyIndexed);
+    plan = held.plan;
+    for (const p of held.held) heldDeletions.add(p);
+    if (held.held.length > 0) {
+      journal.push(
+        makeJournalEntry('info', {
+          detail: `${held.held.length} suppression(s) retenue(s) : premier parcours complet du coffre pas encore réussi.`,
+        }),
+      );
+    }
+  }
+  const locallyDeleted = plan.actions.filter((x) => x.kind === 'tombstone-remote').map((x) => x.relPath);
+  if (plan.guard.suspended) {
+    // FUSION (jamais d'écrasement) : les suppressions distantes en revue et
+    // les approbations déjà données sont conservées ; liste COMPLÈTE.
+    // File illisible : JAMAIS écrasée (PendingReviewUnreadableError) — les
+    // suppressions restent suspendues dans tous les cas.
     try {
-      const review = await loadPendingReview(bridges.vault);
+      const current = await loadPendingReview(bridges.vault);
       await savePendingReview(bridges.vault, {
-        ...review,
+        ...current,
         suspiciousDeletions: {
           at: new Date().toISOString(),
-          count: locallyDeleted.length,
-          paths: locallyDeleted.slice(0, 200),
+          count: plan.guard.deletions.length,
+          paths: plan.guard.deletions,
         },
       });
     } catch (error) {
@@ -624,10 +926,12 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
       summary.errors.push(`revue de suppression massive non enregistrée : ${errorMessage(error)}`);
       journal.push(makeJournalEntry('error', { detail: `revue non enregistrée : ${errorMessage(error)}` }));
     }
-    const message = `${locallyDeleted.length} fichier(s) manquent localement (coffre : ${localFiles.length} fichiers) — suppressions BLOQUÉES et mises EN REVUE MANUELLE (pending-review.json). Si cette suppression est VOLONTAIRE, valide-la depuis Paramètres → Journal de synchronisation ; sinon, relance la synchro : tes fichiers seront restaurés depuis le cloud.`;
-    summary.errors.push(message);
-    journal.push(makeJournalEntry('error', { detail: message }));
-  } else {
+    const message = `Garde-fou : ${plan.guard.reason} Les suppressions sont SUSPENDUES (rien n'est effacé, ni ici ni dans le cloud) ; les fichiers manquants sont rapatriés. Valide depuis Paramètres → Journal de synchronisation si c'est volontaire.`;
+    // Pas une ERREUR de l'interface : un avertissement du journal.
+    journal.push(makeJournalEntry('info', { detail: message }));
+  }
+  {
+    // Garde levé : le plan ne contient plus que les suppressions APPROUVÉES.
     for (const relPath of locallyDeleted) {
       try {
         // REVÉRIFICATION DIRECTE AVANT TOUTE TOMBSTONE : un parcours peut
@@ -636,6 +940,7 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
         // ne détruit rien et on le signale — sinon les AUTRES appareils
         // effacent un fichier vivant.
         try {
+          if (isFolderMarker(relPath)) throw new Error('introuvable');
           await bridges.vault.readNote(relPath);
           journal.push(
             makeJournalEntry('info', {
@@ -656,46 +961,16 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
             continue;
           }
         }
-        const remoteRow = remoteByPath.get(relPath);
-        // Modifié AILLEURS depuis notre dernier cycle (hash ou version
-        // distants ≠ référence) : supprimer ici effacerait ce travail.
-        // Tombstone annulée ; le fichier revient par pull au cycle suivant.
-        const knownVersion = syncState.versions?.[relPath];
-        const changedElsewhere =
-          !!remoteRow &&
-          (remoteRow.contentHash !== syncState.files[relPath] ||
-            (typeof knownVersion === 'number' && typeof remoteRow.version === 'number' && knownVersion !== remoteRow.version));
-        if (changedElsewhere) {
-          journal.push(
-            makeJournalEntry('conflict', {
-              path: relPath,
-              detail: 'supprimé ici mais modifié sur un autre appareil — suppression annulée, la version du cloud reviendra',
-            }),
-          );
-          continue;
-        }
-        const lockResult = remoteRow
-          ? await tombstoneRemoteFile(remoteVaultId, remoteRow.rawRelPath ?? relPath, (remoteRow.version === undefined ? null : knownVersion) ?? remoteRow.version ?? null)
-          : null;
-        if (lockResult && !lockResult.ok) {
-          journal.push(
-            makeJournalEntry('conflict', {
-              path: relPath,
-              detail: 'suppression refusée : version plus récente dans le cloud — rien supprimé, elle reviendra',
-            }),
-          );
-          continue;
-        }
-        if (remoteRow && !lockResult) {
-          const { error } = await bridges.supabase
-            .schema(APP_SCHEMA)
-            .from(VAULT_FILES_TABLE)
-            .update({ deleted: true, updated_at: new Date().toISOString() })
-            .eq('vault_id', remoteVaultId)
-            // Clé EXACTE en base : une ligne héritée à backslash est
-            // tombstonée sous sa forme brute (sinon elle ressusciterait).
-            .eq('rel_path', remoteByPath.get(relPath)?.rawRelPath ?? relPath);
-          if (error) throw error;
+        if (remoteByPath.has(relPath)) {
+          // RPC tombstone_file UNIQUEMENT (verrou optimiste) — clé EXACTE en
+          // base : une ligne héritée à backslash est tombstonée sous sa
+          // forme brute (sinon elle ressusciterait).
+          const row = remoteByPath.get(relPath);
+          const result = await tombstoneRemoteFile(remoteVaultId, row?.rawRelPath ?? relPath, row?.version ?? null, null);
+          if (!result.ok) {
+            journal.push(makeJournalEntry('info', { path: relPath, detail: 'modifié ailleurs entre-temps — suppression annulée' }));
+            continue;
+          }
         }
         tombstonedPaths.add(relPath);
         summary.deleted += 1;
@@ -708,62 +983,63 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
     }
   }
 
-  // 2) Tombestones distantes — AUCUNE suppression locale automatique.
-  //    Toute pierre tombale venue d'un autre appareil dont le fichier existe
-  //    encore ici part en REVUE (pending-review.json → Paramètres → Journal
-  //    de synchronisation : Approuver = corbeille locale, Refuser =
-  //    restore_file dans le cloud). Pendant l'attente l'état est STABLE :
-  //    • ni push (le diff exclut les tombstonedPaths — un push ressusciterait
-  //      la ligne sans décision humaine) ;
-  //    • ni suppression locale ;
-  //    • la référence (hash + version) du dernier cycle est CONSERVÉE
-  //      (keepPreviousRef) : après un refus, le cycle suivant compare le
-  //      fichier local à cette référence comme si rien ne s'était passé.
-  const pendingRemoteDeletionPaths = new Set<string>();
-  const remoteDeletionCandidates: RemoteDeletionReview[] = [];
-  const tombstoneRows = new Map(visibleRemoteFiles.filter((f) => f.deleted).map((f) => [f.relPath, f]));
-  const queuedAt = new Date().toISOString();
-  for (const relPath of tombstonedPaths) {
-    const local = localByPath.get(relPath);
-    if (!local) continue;
-    const row = tombstoneRows.get(relPath);
-    pendingRemoteDeletionPaths.add(relPath);
-    keepPreviousRef.add(relPath);
-    remoteDeletionCandidates.push({
-      path: relPath,
-      modified: syncState.files[relPath] !== local.contentHash,
-      at: queuedAt,
-      deletedByDevice: row?.deletedByDevice ?? null,
-      deletedAt: row?.deletedAt ?? null,
-      remoteVersion: row?.version ?? null,
-    });
-  }
+  // 2) Tombestones distantes — AUCUNE suppression locale automatique
+  //    (comme main, #193). Toute pierre tombale venue d'un autre appareil
+  //    dont le fichier existe encore ici part en REVUE (pending-review.json
+  //    → Paramètres → Journal de synchronisation : Approuver = corbeille
+  //    locale, Refuser = restore_file dans le cloud). Pendant l'attente :
+  //    ni push (le plan exclut les tombstonedPaths), ni suppression locale,
+  //    et la base du dernier cycle est CONSERVÉE (keepPreviousRef).
+  //    Index partiel : rien n'est mis en file (le fichier peut exister sans
+  //    avoir été vu) — la file est reconstruite au premier parcours complet.
+  const tombstoneRows = new Map(
+    visibleRemoteFiles.filter((f) => f.deleted && tombstonedPaths.has(f.relPath)).map((f) => [f.relPath, f]),
+  );
+  const { paths: pendingRemoteDeletionPaths, candidates: remoteDeletionCandidates } = collectRemoteDeletionCandidates({
+    tombstones: tombstoneRows,
+    local: localByPath,
+    base: syncState.files,
+    queuedAt: new Date().toISOString(),
+  });
+  for (const relPath of pendingRemoteDeletionPaths) keepPreviousRef.add(relPath);
   summary.pendingRemoteDeletions = pendingRemoteDeletionPaths.size;
+
+  // Une SEULE lecture/écriture de la file pour ce cycle. Illisible
+  // (PendingReviewUnreadableError) : JAMAIS traitée comme vide ni écrasée —
+  // erreur du cycle, rien n'est supprimé.
   try {
     const review = await loadPendingReview(bridges.vault);
-    const { entries, added } = reconcileRemoteDeletions(
-      review.remoteDeletions ?? [],
-      remoteDeletionCandidates,
-      pendingRemoteDeletionPaths,
-    );
-    if (!sameRemoteDeletions(review.remoteDeletions, entries)) {
-      await savePendingReview(bridges.vault, { ...review, remoteDeletions: entries });
-    }
-    for (const entry of added) {
-      journal.push(
-        makeJournalEntry('delete', {
-          path: entry.path,
-          detail: `supprimé sur ${entry.deletedByDevice ?? 'un autre appareil'} — EN ATTENTE DE VALIDATION (fichier conservé${entry.modified ? ', modifié ici' : ''})`,
-        }),
+    let next: PendingReview = review;
+    if (fullyIndexed) {
+      const { entries, added } = reconcileRemoteDeletions(
+        review.remoteDeletions ?? [],
+        remoteDeletionCandidates,
+        pendingRemoteDeletionPaths,
       );
+      if (!sameRemoteDeletions(review.remoteDeletions, entries)) next = { ...next, remoteDeletions: entries };
+      for (const entry of added) {
+        journal.push(
+          makeJournalEntry('delete', {
+            path: entry.path,
+            detail: `supprimé sur ${entry.deletedByDevice ?? 'un autre appareil'} — EN ATTENTE DE VALIDATION (fichier conservé${entry.modified ? ', modifié ici' : ''})`,
+          }),
+        );
+      }
+      if (added.length > 0) {
+        console.error(`[sync] ${added.length} suppression(s) distante(s) EN ATTENTE DE VALIDATION (fichiers conservés)`);
+      }
     }
-    if (added.length > 0) {
-      console.error(`[sync] ${added.length} suppression(s) distante(s) EN ATTENTE DE VALIDATION (fichiers conservés)`);
+    if (approvedDeletions.size > 0) {
+      // Approbations (garde-fou des suppressions LOCALES) consommées : on
+      // ne garde que celles pas encore propagées (échec ponctuel).
+      const stillPending = [...approvedDeletions].filter((p) => !tombstonedPaths.has(p) && !localByPath.has(p));
+      next = {
+        ...next,
+        approvedDeletions: stillPending.length > 0 ? { at: new Date().toISOString(), paths: stillPending } : undefined,
+      };
     }
+    if (next !== review) await savePendingReview(bridges.vault, next);
   } catch (error) {
-    // File illisible ou non inscriptible : RIEN n'est supprimé (les
-    // fichiers restent en place et hors push), mais l'utilisateur doit le
-    // savoir — erreur du cycle, journal et logcat.
     console.error('[sync] file de revue des suppressions distantes :', error);
     summary.errors.push(`suppressions distantes en attente non enregistrées : ${errorMessage(error)}`);
     journal.push(makeJournalEntry('error', { detail: `file de revue : ${errorMessage(error)}` }));
@@ -776,9 +1052,121 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   //    supprimés localement (absents du disque). Le sync-state sert de
   //    RÉFÉRENCE au diff (3 voies) : une modification d'un fichier dont le
   //    cloud porte encore le hash connu est un push, pas un conflit.
-  const diffLocalFiles = localFiles.filter((note) => !tombstonedPaths.has(note.relPath));
-  const diffRemoteFiles = activeRemoteFiles.filter((file) => !tombstonedPaths.has(file.relPath));
-  const decisions = diffVault(diffLocalFiles, diffRemoteFiles, syncState.files, syncState.versions);
+  // Décisions de contenu issues du plan à trois états. Les conflits gardent
+  // TOUJOURS les deux versions (fusion, sinon copie « (conflit …) »).
+  const decisions = plan.actions
+    .filter((x) => x.entryKind === 'file' && !tombstonedPaths.has(x.relPath))
+    .flatMap((x): SyncDecision[] => {
+      if (x.kind === 'push' || x.kind === 'pull') return [{ kind: x.kind, relPath: x.relPath }];
+      if (x.kind === 'conflict') {
+        const l = localByPath.get(x.relPath);
+        const r = remoteByPath.get(x.relPath);
+        const remoteTime = r ? new Date(r.updatedAt).getTime() : 0;
+        // Premier cycle après la liaison d'un dossier non vide : la
+        // priorité choisie dans le dialogue de fusion tranche (la version
+        // perdante est TOUJOURS sauvegardée par le gestionnaire de conflit).
+        const pref = syncSettings.linkPreference[remoteVaultId];
+        if (pref === 'local') return [{ kind: 'conflict-push-wins', relPath: x.relPath }];
+        if (pref === 'remote') return [{ kind: 'conflict-pull-wins', relPath: x.relPath }];
+        return [{ kind: l && l.modifiedAt >= remoteTime ? 'conflict-push-wins' : 'conflict-pull-wins', relPath: x.relPath }];
+      }
+      return [{ kind: 'noop' as const, relPath: x.relPath }];
+    });
+  const pushOptions = new Map(
+    plan.actions.filter((x) => x.kind === 'push').map((x) => [x.relPath, { expectedVersion: x.restore ? undefined : (x.expectedVersion ?? null), restore: x.restore }]),
+  );
+  // DOSSIERS : marqueurs poussés (vides) / dossiers créés localement.
+  const folderStates: Record<string, string | null> = {};
+  const folderActions = plan.actions.filter((a) => a.entryKind === 'folder');
+  // ENVOI GROUPÉ : tous les marqueurs à pousser partent en une (ou quelques)
+  // requête(s), sans upload Storage ; progression + journal en direct.
+  const folderPushes = folderActions.filter((a) => a.kind === 'push');
+  if (folderPushes.length > 0) {
+    const label = 'Envoi des dossiers';
+    setSyncProgress({ phase: label, done: 0, total: folderPushes.length });
+    await appendJournalEntries([
+      makeJournalEntry('upload-start', { detail: `${folderPushes.length} dossier(s)` }),
+    ]).catch(() => undefined);
+    let lastJournalAt = Date.now();
+    const results = await withTimeout(
+      pushFolderMarkers(
+        remoteVaultId,
+        ownerId,
+        folderPushes.map((x) => ({ relPath: x.relPath, expectedVersion: x.expectedVersion ?? null, restore: x.restore })),
+        (done, total) => {
+          setSyncProgress({ phase: label, done, total });
+          if (Date.now() - lastJournalAt >= PROGRESS_JOURNAL_MIN_MS) {
+            lastJournalAt = Date.now();
+            void appendJournalEntries([makeJournalEntry('info', { detail: `${label} : ${done}/${total}` })]).catch(() => undefined);
+          }
+        },
+      ),
+      STEP_TIMEOUT_MS,
+      'envoi des dossiers',
+    ).catch((error) => folderPushes.map((x) => ({ relPath: x.relPath, ok: false, error: errorMessage(error) })));
+    let sent = 0;
+    for (const r of results) {
+      if (r.ok) {
+        folderStates[r.relPath] = EMPTY_SHA256;
+        sent += 1;
+      } else {
+        summary.errors.push(`${r.relPath} (dossier) : ${r.error ?? 'échec'}`);
+        journal.push(makeJournalEntry('error', { path: r.relPath, detail: `dossier : ${r.error ?? 'échec'}` }));
+      }
+    }
+    summary.pushed += sent;
+    await appendJournalEntries([
+      makeJournalEntry('upload-end', { detail: `${sent}/${folderPushes.length} dossier(s) envoyé(s)` }),
+    ]).catch(() => undefined);
+  }
+  // Parents avant enfants : un dossier reçu dont le parent arrive au même
+  // cycle doit trouver ce parent déjà créé.
+  const otherFolderActions = folderActions
+    .filter((a) => a.kind !== 'push')
+    .sort((a, b) => a.relPath.split('/').length - b.relPath.split('/').length);
+  const folderPullTotal = otherFolderActions.filter((a) => a.kind === 'pull').length;
+  let folderPullDone = 0;
+  if (folderPullTotal > 0) setSyncProgress({ phase: 'Réception des dossiers', done: 0, total: folderPullTotal });
+  for (const x of otherFolderActions) {
+    try {
+      if (x.kind === 'pull') {
+        folderPullDone += 1;
+        setSyncProgress({ phase: 'Réception des dossiers', done: folderPullDone, total: folderPullTotal, current: markerToFolder(x.relPath) });
+        const folder = markerToFolder(x.relPath);
+        const cut = folder.lastIndexOf('/');
+        // Idempotent : createFolder choisit un nom libre (« X 2 ») si le
+        // dossier existe déjà. Échec = PAS de base (sinon le cycle suivant
+        // le croit supprimé ici et le tombstone dans le cloud).
+        if (!localFolderSet.has(folder)) {
+          if (!bridges.vault.createFolder) throw new Error('création de dossier indisponible');
+          const created = await bridges.vault.createFolder(folder.slice(cut + 1), cut >= 0 ? folder.slice(0, cut) : undefined);
+          if (created && created.relPath !== folder) throw new Error(`créé sous un autre nom : ${created.relPath}`);
+          localFolderSet.add(folder);
+        }
+        folderStates[x.relPath] = EMPTY_SHA256;
+        journal.push(makeJournalEntry('modification-reçue', { path: folder, detail: 'dossier reçu' }));
+      } else if (x.kind === 'noop') {
+        folderStates[x.relPath] = EMPTY_SHA256;
+      } else if (x.kind === 'delete-local') {
+        // Dossier supprimé ailleurs : retiré ici SEULEMENT s'il est vide.
+        const folder = markerToFolder(x.relPath);
+        const prefix = `${folder}/`;
+        const hasContent = localFilesCold.some((n) => n.relPath.startsWith(prefix)) || localFolders.some((f) => f.startsWith(prefix));
+        if (!hasContent) await bridges.vault.delete(folder, { silent: true }).catch(() => undefined);
+        folderStates[x.relPath] = null;
+      } else if (x.kind === 'drop-base' || x.kind === 'tombstone-remote') {
+        folderStates[x.relPath] = null;
+      }
+    } catch (error) {
+      summary.errors.push(`${x.relPath} (dossier) : ${errorMessage(error)}`);
+      journal.push(makeJournalEntry('error', { path: x.relPath, detail: `dossier : ${errorMessage(error)}` }));
+    }
+  }
+  if (folderPullTotal > 0) {
+    await appendJournalEntries([
+      makeJournalEntry('info', { detail: `Réception des dossiers : ${folderPullDone}/${folderPullTotal}` }),
+    ]).catch(() => undefined);
+  }
   // Les fichiers VIVANTS passent avant les chemins `.trash/…` : sinon le
   // tri alphabétique place la corbeille du cloud (des centaines de lignes)
   // devant tout le contenu utile — le mobile y passe le cycle entier sans
@@ -788,13 +1176,28 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
     (a, b) => Number(a.relPath.startsWith('.trash/')) - Number(b.relPath.startsWith('.trash/')),
   );
   const mergedHashes: Record<string, string> = {};
+  // Contexte de conflit : base attendue = hash du sync-state AU DÉBUT du
+  // cycle (dernière version synchronisée) ; plus récent = mtime local vs
+  // updated_at cloud, tolérance CLOCK_TOLERANCE_MS (configMerge.ts). La
+  // priorité « cloud » du dialogue de fusion force le cloud.
+  const conflictContext = (relPath: string): ConflictContext => ({
+    expectedBaseHash: syncState.files[relPath],
+    newer:
+      syncSettings.linkPreference[remoteVaultId] === 'remote'
+        ? 'remote'
+        : newerSide(localByPath.get(relPath)?.modifiedAt, remoteByPath.get(relPath)?.updatedAt),
+  });
   // Chemins RÉELLEMENT écrits sur le disque par un pull de ce cycle. Seuls
   // eux entrent dans le nouvel état de référence : un pull différé ou en
   // échec (ex. écriture SAF rejetée) référencé quand même ferait croire au
   // cycle suivant que le fichier a été « supprimé localement » — et la
   // revue des suppressions massives reviendrait en boucle.
   const pulledPaths = new Set<string>();
-  const pushedVersions: Record<string, number> = {};
+  // Chemins dont l'action N'A PAS abouti (refus de la garde JSON, erreur
+  // réseau…) : base CONSERVÉE (comme un fichier chaud), pour que le cycle
+  // suivant rejuge le même écart. Sinon un envoi raté ferait passer le
+  // hash local pour « synchronisé » et un pull l'écraserait ensuite.
+  const keepBasePaths = new Set<string>();
 
   // Les étapes réseau : le journal raconte le cycle comme Obsidian Sync
   // (« upload en cours », « upload terminé »).
@@ -803,8 +1206,57 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   if (pushCount > 0) journal.push(makeJournalEntry('upload-start', { detail: `${pushCount} fichier(s)` }));
   if (pullCount > 0) journal.push(makeJournalEntry('download-start', { detail: `${pullCount} fichier(s)` }));
 
-  for (const decision of orderedDecisions) {
+  const actionable = orderedDecisions.filter((d) => d.kind !== 'noop').length;
+  let progressDone = 0;
+  let lastProgressJournalAt = Date.now();
+  let lastProgressJournalDone = 0;
+  const phase = pullCount > 0 && pushCount === 0 ? 'Téléchargement' : pushCount > 0 && pullCount === 0 ? 'Envoi' : 'Synchronisation';
+  if (actionable > 0) setSyncProgress({ phase, done: 0, total: actionable });
+  // PARALLÉLISME RAISONNABLE : envois/réceptions simples par FILE_PARALLEL
+  // en vol ; les conflits (archivage local + push) restent séquentiels.
+  const isConflict = (d: (typeof orderedDecisions)[number]) => d.kind === 'conflict-push-wins' || d.kind === 'conflict-pull-wins';
+  const runDecision = async (decision: (typeof orderedDecisions)[number]) => {
+    if (decision.kind !== 'noop') {
+      setSyncProgress({ phase, done: progressDone, total: actionable, current: decision.relPath });
+      // JOURNAL PROGRESSIF : écrit pendant le cycle (toutes les N actions
+      // ou 30 s), visible dans Paramètres → Journal sans attendre la fin.
+      if (
+        progressDone > lastProgressJournalDone &&
+        (progressDone - lastProgressJournalDone >= PROGRESS_JOURNAL_EVERY || Date.now() - lastProgressJournalAt >= PROGRESS_JOURNAL_MIN_MS)
+      ) {
+        lastProgressJournalDone = progressDone;
+        lastProgressJournalAt = Date.now();
+        await appendJournalEntries([
+          makeJournalEntry('info', { detail: `${phase} en cours : ${progressDone}/${actionable} fichiers` }),
+        ]).catch(() => undefined);
+      }
+      progressDone += 1;
+    }
     try {
+      // GARDE DES MÉTADONNÉES JSON (configGuard.ts) : une version abîmée
+      // (clé en double, forme inattendue) n'est ni reçue, ni fusionnée, ni
+      // envoyée. Rien n'est écrit ; la base est conservée (keepBasePaths).
+      if (
+        (decision.kind === 'push' || decision.kind === 'pull' || decision.kind === 'conflict-push-wins' || decision.kind === 'conflict-pull-wins') &&
+        isGuardedConfigFile(decision.relPath)
+      ) {
+        const sendsLocal = decision.kind === 'push';
+        const text = sendsLocal
+          ? await bridges.vault.readNote(decision.relPath)
+          : await downloadRemoteText(remoteVaultId, decision.relPath, remoteByPath.get(decision.relPath)?.storageObjectPath);
+        const verdict = validateConfigText(decision.relPath, text);
+        if (!verdict.ok) {
+          keepBasePaths.add(decision.relPath);
+          summary.errors.push(`${decision.relPath} : ${verdict.reason}`);
+          journal.push(
+            makeJournalEntry('error', {
+              path: decision.relPath,
+              detail: `${sendsLocal ? 'envoi' : 'réception'} refusé(e) : version ${sendsLocal ? 'locale' : 'du cloud'} invalide (${verdict.reason}) — fichier local conservé`,
+            }),
+          );
+          return;
+        }
+      }
       switch (decision.kind) {
         case 'noop':
           break;
@@ -822,16 +1274,7 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
               remoteRow.storageObjectPath,
             ).catch(() => null);
           }
-          const pushedVersion = await pushFile(
-            remoteVaultId,
-            ownerId,
-            note,
-            journal,
-            previousRemoteContent,
-            remoteRow,
-            remoteRow?.version ?? null,
-          );
-          if (pushedVersion !== null) pushedVersions[decision.relPath] = pushedVersion;
+          await withTimeout(pushFile(remoteVaultId, ownerId, note, journal, previousRemoteContent, pushOptions.get(decision.relPath)), FILE_OP_TIMEOUT_MS, `envoi ${note.relPath}`);
           // Un push sous `.trash/` est le continu d'un déplacement en
           // corbeille — compté À PART, pas dans « envoyé(s) ».
           if (decision.relPath.startsWith('.trash/')) {
@@ -880,7 +1323,7 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
               // réellement absent du disque : le pull est légitime
             }
           }
-          await pullFile(remoteVaultId, decision.relPath, remoteByPath.get(decision.relPath)?.storageObjectPath);
+          await withTimeout(pullFile(remoteVaultId, decision.relPath, remoteByPath.get(decision.relPath)?.storageObjectPath), FILE_OP_TIMEOUT_MS, `réception ${decision.relPath}`);
           pulledPaths.add(decision.relPath);
           summary.pulled += 1;
           summary.modifications += 1;
@@ -907,8 +1350,9 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
             decision.relPath,
             remoteByPath.get(decision.relPath)?.storageObjectPath,
             journal,
-            remoteByPath.get(decision.relPath)?.version ?? null,
-            pushedVersions,
+            syncSettings.linkPreference[remoteVaultId] === 'local',
+            () => { summary.pulled += 1; },
+            conflictContext(decision.relPath),
           );
           if (mergedPushHash) {
             mergedHashes[decision.relPath] = mergedPushHash;
@@ -925,17 +1369,7 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
           await backupLosingSide(decision.relPath, losingRemoteContent);
           // La version distante perdante sert aussi au journal
           // « modification » (+/− caractères de la version conservée).
-          const conflictRow = remoteByPath.get(decision.relPath);
-          const winVersion = await pushFile(
-            remoteVaultId,
-            ownerId,
-            note,
-            journal,
-            losingRemoteContent,
-            conflictRow,
-            conflictRow?.version ?? null,
-          );
-          if (winVersion !== null) pushedVersions[decision.relPath] = winVersion;
+          await withTimeout(pushFile(remoteVaultId, ownerId, note, journal, losingRemoteContent), FILE_OP_TIMEOUT_MS, `envoi ${note.relPath}`);
           summary.pushed += 1;
           summary.conflicts += 1;
           journal.push(makeJournalEntry('conflict', { path: decision.relPath, detail: 'version locale conservée, distante archivée' }));
@@ -948,8 +1382,9 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
             decision.relPath,
             remoteByPath.get(decision.relPath)?.storageObjectPath,
             journal,
-            remoteByPath.get(decision.relPath)?.version ?? null,
-            pushedVersions,
+            syncSettings.linkPreference[remoteVaultId] === 'local',
+            () => { summary.pulled += 1; },
+            conflictContext(decision.relPath),
           );
           if (mergedPullHash) {
             mergedHashes[decision.relPath] = mergedPullHash;
@@ -967,7 +1402,7 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
             break;
           }
           await backupLosingSide(decision.relPath, losingLocalContent);
-          await pullFile(remoteVaultId, decision.relPath, remoteByPath.get(decision.relPath)?.storageObjectPath);
+          await withTimeout(pullFile(remoteVaultId, decision.relPath, remoteByPath.get(decision.relPath)?.storageObjectPath), FILE_OP_TIMEOUT_MS, `réception ${decision.relPath}`);
           pulledPaths.add(decision.relPath);
           summary.pulled += 1;
           summary.conflicts += 1;
@@ -988,14 +1423,18 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
         journal.push(
           makeJournalEntry('conflict', { path: decision.relPath, detail: `${errorMessage(error)} — résolu au prochain cycle` }),
         );
-        continue;
+        return;
       }
       console.error(`[sync] échec sur ${decision.relPath} (${decision.kind}) :`, error);
+      keepBasePaths.add(decision.relPath);
       summary.errors.push(`${decision.relPath} : ${errorMessage(error)}`);
       journal.push(makeJournalEntry('error', { path: decision.relPath, detail: `${decision.kind} : ${errorMessage(error)}` }));
     }
-  }
+  };
+  await runPool(orderedDecisions.filter((d) => !isConflict(d)), FILE_PARALLEL, runDecision);
+  for (const decision of orderedDecisions.filter(isConflict)) await runDecision(decision);
 
+  if (actionable > 0) setSyncProgress({ phase, done: actionable, total: actionable });
   if (pushCount > 0) journal.push(makeJournalEntry('upload-end', { detail: `${pushCount} fichier(s)` }));
   if (pullCount > 0) journal.push(makeJournalEntry('download-end', { detail: `${pullCount} fichier(s)` }));
 
@@ -1021,18 +1460,44 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   // écrit, pas celui de l'indexation d'avant la fusion — sinon le cycle
   // suivant re-détecte une divergence déjà résolue et re-annonce le
   // conflit, en boucle.
+  // Suppressions RETENUES (index partiel) : leur base est conservée pour
+  // être rejugées au cycle suivant, une fois le parcours complet réussi.
+  for (const relPath of heldDeletions) {
+    if (!(relPath in nextFiles) && relPath in syncState.files) nextFiles[relPath] = syncState.files[relPath];
+  }
   for (const [relPath, mergedHash] of Object.entries(mergedHashes)) {
     nextFiles[relPath] = mergedHash;
   }
+  // Fichiers EN ÉDITION (sortis du cycle) : base = ANCIENNE base, jamais
+  // leur hash actuel — sinon leur modif, jamais envoyée, serait prise pour
+  // la version synchronisée et écrasée par un pull au cycle suivant.
+  preserveHotBases(nextFiles, hotPaths, syncState.files);
+  preserveHotBases(nextFiles, keepBasePaths, syncState.files);
+  // Types désactivés / fichiers en édition : leur base est CONSERVÉE telle
+  // quelle (sinon les réactiver ressemblerait à une suppression).
+  for (const [relPath, hash] of Object.entries(syncState.files)) {
+    if (!allow(relPath) && !(relPath in nextFiles) && !isFolderMarker(relPath)) nextFiles[relPath] = hash;
+  }
+  for (const [relPath, hash] of Object.entries(syncState.files)) {
+    if (isFolderMarker(relPath) && !(relPath in folderStates)) nextFiles[relPath] = hash;
+  }
+  for (const [relPath, hash] of Object.entries(folderStates)) {
+    if (hash) nextFiles[relPath] = hash;
+    else delete nextFiles[relPath];
+  }
+  // Issue non confirmée (suppression distante en attente, pull différé,
+  // relecture contradictoire…) : base précédente conservée à l'identique.
+  for (const relPath of keepPreviousRef) {
+    if (isFolderMarker(relPath)) continue;
+    if (relPath in syncState.files) nextFiles[relPath] = syncState.files[relPath];
+    else delete nextFiles[relPath];
+  }
   try {
-    const nextReference = buildNextReference({
-      candidateFiles: nextFiles,
-      previous: { files: syncState.files, versions: syncState.versions ?? {} },
-      keepPrevious: keepPreviousRef,
-      pushedVersions,
-      remoteVersions: Object.fromEntries(activeRemoteFiles.map((file) => [file.relPath, file.version])),
-    });
-    await saveSyncState({ files: nextReference.files, versions: nextReference.versions, rootPath: vaultRootPath });
+    await saveSyncState({ files: nextFiles, rootPath: vaultRootPath, version: stateVersion });
+    if (syncSettings.linkPreference[remoteVaultId]) {
+      const { [remoteVaultId]: _done, ...rest } = syncSettings.linkPreference;
+      saveSyncSettings({ ...loadSyncSettings(), linkPreference: rest });
+    }
   } catch (error) {
     console.error('[sync] échec de la sauvegarde de l’état de synchro :', error);
     journal.push(makeJournalEntry('error', { detail: `sauvegarde de l'état : ${errorMessage(error)}` }));
@@ -1043,7 +1508,7 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   // de resynchronisation par-dessus un appareil en échec). Le message et
   // son ORIGINE partent dans le journal ET dans les logs (console.error
   // visible en logcat release).
-  if (summary.errors.length >= SYNC_ERROR_BLOCK_THRESHOLD) {
+  if (shouldTripBreaker(summary.errors.length)) {
     const blocked = {
       at: new Date().toISOString(),
       errorCount: summary.errors.length,
@@ -1070,12 +1535,12 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   // « Appareils connectés » (Paramètres → Coffres distants) : heartbeat
   // best-effort APRÈS le cycle de fichiers — jamais dans les erreurs du
   // résumé (voir heartbeatDevice).
-  await heartbeatDevice(remoteVaultId, ownerId, summary);
+  await withTimeout(heartbeatDevice(remoteVaultId, ownerId, summary), 30_000, 'heartbeat de fin').catch(() => undefined);
 
   // PASSERELLE À DISTANCE : exécute les commandes adressées à CET
   // appareil (dump-diagnostics, levée de bloc…) via le canal Supabase —
   // best-effort, jamais bloquant, sans adb (voir deviceGateway.ts).
-  await processDeviceCommands(remoteVaultId, ownerId);
+  await withTimeout(processDeviceCommands(remoteVaultId, ownerId), 120_000, 'commandes appareil').catch(() => undefined);
 
   journal.push(
     makeJournalEntry('cycle-end', {
@@ -1092,17 +1557,31 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   try {
     const device = (await bridges.vaults.deviceInfo?.()) ?? { id: remoteVaultId, name: 'appareil' };
     const { supabase: client } = requireBridges();
-    const { installedAppVersion: versionInstallée } = await import('../updaterAndroid');
-    await client.from('sync_journals').upsert({
+    // Android : version native (inchangé) ; desktop : updater.getVersion
+    // via myAppVersion — avant, null sur desktop (fonction Android seule).
+    const { installedAppVersion } = await import('../updaterAndroid');
+    const { myAppVersion } = await import('./deviceGateway');
+    const appVersion = installedAppVersion() ?? (await myAppVersion().catch(() => null));
+    const { error: journalError } = await client.schema(APP_SCHEMA).from('sync_journals').upsert({
       vault_id: remoteVaultId,
       device_id: device.id,
       device_name: device.name ?? 'appareil',
-      app_version: versionInstallée(),
+      app_version: appVersion,
       entries: journal,
       updated_at: new Date().toISOString(),
     }, { onConflict: 'vault_id,device_id' });
+    if (journalError) throw journalError;
   } catch (error) {
     console.error('[sync] publication du journal (sync_journals) :', error);
+  }
+
+  // INVENTAIRE PAR APPAREIL (deviceInventory.ts) : ce que CE disque
+  // contient réellement, publié à chaque fin de cycle. Best-effort.
+  try {
+    const { publishDeviceInventory } = await import('./deviceInventory');
+    await publishDeviceInventory(remoteVaultId, localFiles);
+  } catch (error) {
+    console.error('[sync] inventaire appareil :', error);
   }
 
   // Cycle SANS aucune action : la « Connexion au serveur » est retirée — le
@@ -1114,6 +1593,5 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
     await truncateJournalEntries(journalStartLength);
   }
 
-  await bridges.sync.setVaultLock?.(false);
   return summary;
 }

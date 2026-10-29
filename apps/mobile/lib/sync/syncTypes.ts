@@ -28,6 +28,10 @@ export type SyncSummary = {
   modifications: number;
   conflicts: number;
   errors: string[];
+  // Fichiers différés (« en cours d'édition ») : instant (ms) où le
+  // dernier redevient silencieux — l'appelant relance alors un cycle,
+  // sinon une modif de tâches/préférences attend un déclencheur externe.
+  retryAfterMs?: number;
   // Suppressions venues d'un autre appareil EN ATTENTE DE VALIDATION ici
   // (fichiers conservés) — badge de l'indicateur de synchro.
   pendingRemoteDeletions?: number;

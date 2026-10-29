@@ -1,0 +1,7 @@
+{
+  "name": "vault-fs",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Accès fichiers Android du coffre 123Ecriture (SAF via DocumentsContract) — module local embarqué dans l'APK",
+  "main": "src/index.ts"
+}

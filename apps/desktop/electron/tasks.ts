@@ -85,10 +85,23 @@ function findTaskOrThrow(tasks: Task[], id: string): Task {
   return task;
 }
 
+// Jamais de réécriture à contenu identique : le mtime ne bouge pas et la
+// synchro ne voit pas un faux « modifié » (risque de conflit sur un
+// fichier de configuration pourtant inchangé).
+export function writeFileIfChanged(filePath: string, content: string): boolean {
+  try {
+    if (fsSync.readFileSync(filePath, 'utf8') === content) return false;
+  } catch {
+    // absent : on écrit
+  }
+  fsSync.writeFileSync(filePath, content, 'utf8');
+  return true;
+}
+
 async function writeTasks(vaultPath: string, tasks: Task[]): Promise<Task[]> {
   const filePath = getTasksFilePath(vaultPath);
   await fs.mkdir(path.dirname(filePath), { recursive: true });
-  await fs.writeFile(filePath, JSON.stringify(tasks, null, 2), 'utf8');
+  writeFileIfChanged(filePath, JSON.stringify(tasks, null, 2));
   return tasks;
 }
 
@@ -103,7 +116,7 @@ function readTaskListsRaw(vaultPath: string): TaskListsData | null {
 function writeTaskLists(vaultPath: string, data: TaskListsData): TaskListsData {
   const filePath = getTaskListsFilePath(vaultPath);
   fsSync.mkdirSync(path.dirname(filePath), { recursive: true });
-  fsSync.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf8');
+  writeFileIfChanged(filePath, JSON.stringify(data, null, 2));
   return data;
 }
 
@@ -126,7 +139,7 @@ function migrateTaskLists(vaultPath: string): TaskListsData {
     // Synchrone (pas d'await ici, cette fonction est volontairement non
     // async pour rester appelable depuis n'importe quel accesseur sans
     // propager `async` partout) — fs.writeFileSync plutôt que writeTasks().
-    fsSync.writeFileSync(getTasksFilePath(vaultPath), JSON.stringify(migratedTasks, null, 2), 'utf8');
+    writeFileIfChanged(getTasksFilePath(vaultPath), JSON.stringify(migratedTasks, null, 2));
   }
 
   return data;
