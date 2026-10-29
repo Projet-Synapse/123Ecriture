@@ -222,7 +222,7 @@ async function executeCommand(
       await clearPendingReviewSyncBlock(vault);
       return 'disjoncteur levé';
     case 'lock-sync': {
-      const review = await loadPendingReview(vault).catch(() => ({}) as PendingReview);
+      const review = await loadPendingReview(vault);
       const next: PendingReview = {
         ...review,
         syncBlocked: {

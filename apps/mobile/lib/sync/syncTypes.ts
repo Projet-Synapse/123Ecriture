@@ -28,6 +28,9 @@ export type SyncSummary = {
   modifications: number;
   conflicts: number;
   errors: string[];
+  // Suppressions venues d'un autre appareil EN ATTENTE DE VALIDATION ici
+  // (fichiers conservés) — badge de l'indicateur de synchro.
+  pendingRemoteDeletions?: number;
 };
 
 // État de synchro par coffre : ensemble des fichiers présents à la fin du
