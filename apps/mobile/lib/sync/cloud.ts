@@ -34,7 +34,9 @@ import {
   VAULTS_TABLE,
  VAULT_DEVICES_TABLE } from './supabaseClient';
 import type { LocalHashedNote, RemoteVaultFile } from './diff';
-import { vaultStorageObjectKey } from './storageKeys';
+import { vaultStorageObjectKey, vaultVersionObjectPath } from './storageKeys';
+import { shouldArchiveBeforeOverwrite, type ArchiveCandidate } from './safetyNet';
+import { isMissingRpcError, parseLockResult, VersionConflictError, type LockResult } from './versionLock';
 import { SYNC_ATTACHMENT_EXTENSIONS } from '../storage/nativeVaultAdapter';
 import { errorMessage } from '../errorMessage';
 import { installedAppVersion } from '../updaterAndroid';
@@ -235,7 +237,9 @@ export async function fetchRemoteFiles(remoteVaultId: string): Promise<RemoteVau
     let query = client
       .schema(APP_SCHEMA)
       .from(VAULT_FILES_TABLE)
-      .select('rel_path, content_hash, size_bytes, updated_at, deleted, storage_object_path, version')
+      // `*` et non une liste : `version` n'existe qu'après la migration
+      // vault_optimistic_lock — une colonne nommée absente casserait le cycle.
+      .select('*')
       .eq('vault_id', remoteVaultId)
       .order('rel_path', { ascending: true })
       .range(from, from + REMOTE_FILES_PAGE_SIZE - 1);
@@ -269,6 +273,8 @@ export async function fetchRemoteFiles(remoteVaultId: string): Promise<RemoteVau
     storageObjectPath:
       (row.storage_object_path as string | null) ??
       ((row.rel_path as string).includes('\\') ? storageObjectPath(remoteVaultId, row.rel_path as string) : undefined),
+    deletedByDevice: (row.deleted_by_device as string | null | undefined) ?? null,
+    deletedAt: (row.deleted_at as string | null | undefined) ?? null,
   }));
 }
 
@@ -544,6 +550,32 @@ export async function pushFolderMarkers(
   return results;
 }
 
+// FILET DE SÉCURITÉ (docs/vault-safety-net.md) : copie l'objet distant
+// courant vers `<vault>/.versions/<clé>@<ancien hash>` AVANT de l'écraser.
+// JAMAIS bloquant : un échec est journalisé et le push continue (comportement
+// identique à avant). « already exists » = version déjà archivée → OK.
+export async function archivePreviousObject(
+  client: ReturnType<typeof requireBridges>['supabase'],
+  remoteVaultId: string,
+  relPath: string,
+  previous: Pick<RemoteVaultFile, 'contentHash' | 'storageObjectPath'>,
+  journal: SyncJournalEntry[],
+): Promise<boolean> {
+  try {
+    const source = previous.storageObjectPath ?? storageObjectPath(remoteVaultId, relPath);
+    const target = vaultVersionObjectPath(remoteVaultId, relPath, previous.contentHash);
+    const { error } = await client.storage.from(VAULT_FILES_BUCKET).copy(source, target);
+    if (error && !/already exists|duplicate/i.test(error.message ?? '')) throw error;
+    return true;
+  } catch (error) {
+    console.error(`[sync] archivage de version impossible ${relPath} :`, error);
+    journal.push(
+      makeJournalEntry('info', { path: relPath, detail: `version précédente non archivée (push poursuivi) : ${errorMessage(error)}` }),
+    );
+    return false;
+  }
+}
+
 export async function pushFile(
   remoteVaultId: string,
   ownerId: string,
@@ -580,6 +612,29 @@ export async function pushFile(
   // Marqueur de dossier : taille 0, AUCUN objet Storage (le pull d'un
   // marqueur ne télécharge jamais rien) — seule la ligne vault_files compte.
   if (!isFolderMarker(relPath)) {
+    // FILET DE SÉCURITÉ (#191, docs/vault-safety-net.md) : l'objet Storage
+    // est écrasé en place AVANT le contrôle de version de push_file — la
+    // version distante courante est donc copiée vers `.versions/` d'abord
+    // (jamais bloquant, voir archivePreviousObject).
+    const { data: current } = await client
+      .schema(APP_SCHEMA)
+      .from(VAULT_FILES_TABLE)
+      .select('content_hash, storage_object_path, deleted')
+      .eq('vault_id', remoteVaultId)
+      .eq('rel_path', relPath)
+      .maybeSingle();
+    if (shouldArchiveBeforeOverwrite(current as ArchiveCandidate | null, note.contentHash)) {
+      await archivePreviousObject(
+        client,
+        remoteVaultId,
+        relPath,
+        {
+          contentHash: (current as ArchiveCandidate).content_hash,
+          storageObjectPath: (current as ArchiveCandidate).storage_object_path ?? undefined,
+        },
+        journal,
+      );
+    }
     const { error: uploadError } = await client.storage
       .from(VAULT_FILES_BUCKET)
       .upload(storageObjectPath(remoteVaultId, relPath), uploadBody, {
@@ -635,8 +690,9 @@ export async function pushFile(
   if (upsertError) throw upsertError;
   if (lock && typeof lock === 'object' && (lock as { ok?: boolean }).ok === false) {
     // Quelqu'un a modifié le fichier entre la lecture du catalogue et le
-    // push : rien n'est écrasé, le cycle suivant le traitera en conflit.
-    throw new Error('version distante plus récente — rien écrasé, conflit traité au prochain cycle');
+    // push : rien n'est écrasé, le cycle suivant le traitera en conflit
+    // (VersionConflictError : pas une erreur du cycle → pas de disjoncteur).
+    throw new VersionConflictError(relPath, parseLockResult(lock));
   }
   void ownerId;
 
@@ -911,12 +967,34 @@ export async function tombstoneRemoteFile(
   deviceId: string | null,
 ): Promise<{ ok: boolean }> {
   const { supabase: client } = requireBridges();
+  // Traçabilité (#193) : l'appareil auteur de la suppression est consigné
+  // (vault_files.deleted_by_device) — affiché dans la revue des autres.
+  let device = deviceId;
+  if (!device && typeof window !== 'undefined' && window.vaults?.deviceInfo) {
+    const info = await window.vaults.deviceInfo().catch(() => null);
+    device = info ? info.name || info.id : null;
+  }
   const { data, error } = await client.schema(APP_SCHEMA).rpc('tombstone_file', {
     p_vault_id: remoteVaultId,
     p_rel_path: rawRelPath,
     p_expected_version: expectedVersion,
-    p_device_id: deviceId,
+    p_device_id: device,
   });
   if (error) throw error;
   return { ok: (data as { ok?: boolean } | null)?.ok !== false };
+}
+
+// Refus d'une suppression distante (#193) : la ligne est restaurée
+// (deleted = false) — l'objet Storage n'a jamais été effacé.
+export async function restoreRemoteFile(remoteVaultId: string, relPath: string): Promise<LockResult | null> {
+  const { supabase: client } = requireBridges();
+  const { data, error } = await client.schema(APP_SCHEMA).rpc('restore_file', {
+    p_vault_id: remoteVaultId,
+    p_rel_path: relPath,
+  });
+  if (error) {
+    if (isMissingRpcError(error)) return null;
+    throw error;
+  }
+  return parseLockResult(data);
 }

@@ -17,17 +17,20 @@ import {
   isBinaryAttachmentRelPath,
   loadVerifiedSyncBase,
   saveSyncBase,
- heartbeatDevice, fetchMyDeviceLock, pushFolderMarkers, runPool } from './cloud';
+ heartbeatDevice, fetchMyDeviceLock, pushFolderMarkers, runPool, restoreRemoteFile } from './cloud';
+import { isVersionConflictError } from './versionLock';
 import { requireBridges } from './bridges';
 
 import { type SyncSummary } from './syncTypes';
 import { isTrashRelPath, selectRemoteRows } from './relPath';
-import { remoteDeletionAction } from './deletions';
 import {
   loadPendingReview,
   savePendingReview,
+  reconcileRemoteDeletions,
+  sameRemoteDeletions,
   type PendingReview,
 } from './pendingReview';
+import { collectRemoteDeletionCandidates, shouldTripBreaker } from './safetyNet';
 import { pickActiveRemoteVault } from './activeVault';
 import {
   capJournalEntries,
@@ -118,6 +121,9 @@ const SYNC_STATE_REL_PATH = '.123ecriture/sync-state.json';
 
 type SyncState = {
   files: Record<string, string>;
+  // Verrou optimiste : version serveur connue par chemin au dernier cycle.
+  // Absent dans les anciens états = version inconnue (comportement prudent).
+  versions?: Record<string, number>;
   rootPath?: string | null;
   // Version du format/des migrations (stateMigration.ts) ; absent = 1.
   version?: number;
@@ -285,7 +291,27 @@ export async function restoreFromTrash(
   // Sinon, on détruit la tombestone du chemin d'origine (la ligne .trash,
   // elle, disparaîtra d'elle-même au cycle suivant : absente du disque,
   // présente dans l'état → tombestone automatique).
+  let expectedVersion: number | null = null;
+  let legacyServer = false;
   if (!wasDeduped) {
+    // Verrou optimiste : la pierre tombale est LEVÉE par la RPC
+    // restore_file (version+1), jamais détruite. Ligne vivante entre-temps
+    // (autre appareil) → refus : on ne pousse rien par-dessus.
+    const restoredRow = await restoreRemoteFile(remoteVaultId, moved.relPath);
+    if (restoredRow && !restoredRow.ok) {
+      await appendJournalEntries([
+        makeJournalEntry('conflict', {
+          path: moved.relPath,
+          detail: 'restauré localement ; une version plus récente existe dans le cloud — rien écrasé, résolu au prochain cycle',
+        }),
+      ]);
+      return moved.relPath;
+    }
+    if (restoredRow) expectedVersion = restoredRow.currentVersion;
+    else legacyServer = true;
+  }
+  if (!wasDeduped && legacyServer) {
+    // Ancien serveur (migration absente) : comportement historique.
     const { error: deleteError } = await client
       .schema(APP_SCHEMA)
       .from(VAULT_FILES_TABLE)
@@ -299,7 +325,7 @@ export async function restoreFromTrash(
   const localFiles = await sync.hashVaultTree();
   const restored = localFiles.find((note) => note.relPath === moved.relPath);
   if (restored) {
-    await pushFile(remoteVaultId, ownerId, restored);
+    await pushFile(remoteVaultId, ownerId, restored, [], null, expectedVersion !== null ? { expectedVersion } : undefined);
   }
   await appendJournalEntries([makeJournalEntry('restore', { path: moved.relPath })]);
   return moved.relPath;
@@ -512,8 +538,39 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
     // Pont sans getCurrentPath (vieux pont) : on laisse passer le cycle.
   }
 
-  // (Disjoncteur de synchro SUPPRIMÉ : des erreurs n'interrompent plus
-  // les cycles suivants ; seul le garde-fou de suppressions reste.)
+  // DISJONCTEUR DE SYNCHRO : si le cycle PRÉCÉDENT s'est terminé en rafale
+  // d'erreurs, « Synchroniser » est REFUSÉ d'office — on ne resynchronise
+  // jamais par-dessus un appareil en échec. La levée est manuelle (revue,
+  // ou opérateur via le fichier).
+  // File illisible : signalée (erreur du cycle + journal), jamais écrasée ;
+  // le cycle continue sans disjoncteur connu — aucune suppression distante
+  // ne sera appliquée de toute façon (section 2).
+  let pendingReview: { syncBlocked?: { at: string; errorCount: number; samples: string[] } } = {};
+  try {
+    pendingReview = await loadPendingReview(bridges.vault);
+  } catch (error) {
+    console.error('[sync] file de revue illisible :', error);
+    summary.errors.push(errorMessage(error));
+    try {
+      await appendJournalEntries([makeJournalEntry('error', { detail: errorMessage(error) })]);
+    } catch (journalError) {
+      console.error('[sync] journal indisponible :', journalError);
+    }
+  }
+  if (pendingReview.syncBlocked) {
+    const blocked = pendingReview.syncBlocked;
+    const message = `Synchronisation BLOQUÉE par le disjoncteur : ${blocked.errorCount} erreur(s) au dernier cycle (${blocked.at}). Exemple : « ${blocked.samples[0] ?? '…'} ». Validez ou corrigez depuis Paramètres → Journal de synchronisation avant de resynchroniser.`;
+    summary.errors.push(message);
+    // Log visible dans logcat release (console.error) : message + origine,
+    // pour diagnostic à distance sans devinettes.
+    console.error('[sync] disjoncteur ouvert :', message);
+    try {
+      await appendJournalEntries([makeJournalEntry('error', { detail: message })]);
+    } catch {
+      // Le journal ne doit pas masquer le refus.
+    }
+    return summary;
+  }
 
   // VERROU À DISTANCE : si CET appareil a été verrouillé (carte
   // « Appareils connectés » d'un autre appareil, ou SQL/API d'urgence),
@@ -760,7 +817,13 @@ async function runLockedCycle(
   // sur Android) ; avec jumelle, elle est masquée. Aucune réécriture des
   // données ici (script de migration dédié : scripts/migrate-backslash-relpaths.mjs).
   const selected = selectRemoteRows(remoteFiles);
-  const visibleRemoteFiles = selected.rows;
+  // Ligne héritée lue sous son chemin POSIX : sa version (verrou optimiste)
+  // est celle de la ligne BRUTE — la réutiliser pour pousser le chemin POSIX
+  // échouerait à chaque cycle. Sans version : le push crée la ligne POSIX
+  // (qui masquera ensuite l'héritée), la tombstone vise la clé brute.
+  const visibleRemoteFiles = selected.rows.map((file) =>
+    (file.rawRelPath ?? '').includes('\\') ? { ...file, version: undefined } : file,
+  );
   const activeRemoteFiles = visibleRemoteFiles.filter((file) => !file.deleted);
   const remoteByPath = new Map(activeRemoteFiles.map((file) => [file.relPath, file]));
   const tombstonedPaths = new Set(
@@ -788,7 +851,12 @@ async function runLockedCycle(
   // Suppressions CONFIRMÉES depuis l'écran de revue (sinon la confirmation
   // n'a aucun effet : le cycle suivant recalcule la même liste et relève le
   // garde-fou — la demande « revient » toutes les 30 s).
-  const reviewBefore = await loadPendingReview(bridges.vault).catch(() => ({}) as PendingReview);
+  // Illisible : aucune approbation (= aucune suppression approuvée) ; déjà
+  // signalé par la lecture du disjoncteur en début de cycle.
+  const reviewBefore: PendingReview = await loadPendingReview(bridges.vault).catch(() => ({}) as PendingReview);
+  // Chemins dont l'issue du cycle n'est pas confirmée : leur base
+  // précédente est conservée telle quelle (voir nouvel état de référence).
+  const keepPreviousRef = new Set<string>();
   const approvedDeletions = new Set(reviewBefore.approvedDeletions?.paths ?? []);
   let plan: SyncPlan = planSync({
     local: [
@@ -837,16 +905,23 @@ async function runLockedCycle(
   if (plan.guard.suspended) {
     // FUSION (jamais d'écrasement) : les suppressions distantes en revue et
     // les approbations déjà données sont conservées ; liste COMPLÈTE.
-    const current = await loadPendingReview(bridges.vault).catch(() => ({}) as PendingReview);
-    const review: PendingReview = {
-      ...current,
-      suspiciousDeletions: {
-        at: new Date().toISOString(),
-        count: plan.guard.deletions.length,
-        paths: plan.guard.deletions,
-      },
-    };
-    await savePendingReview(bridges.vault, review).catch(() => undefined);
+    // File illisible : JAMAIS écrasée (PendingReviewUnreadableError) — les
+    // suppressions restent suspendues dans tous les cas.
+    try {
+      const current = await loadPendingReview(bridges.vault);
+      await savePendingReview(bridges.vault, {
+        ...current,
+        suspiciousDeletions: {
+          at: new Date().toISOString(),
+          count: plan.guard.deletions.length,
+          paths: plan.guard.deletions,
+        },
+      });
+    } catch (error) {
+      console.error('[sync] revue de suppression massive non persistée :', error);
+      summary.errors.push(`revue de suppression massive non enregistrée : ${errorMessage(error)}`);
+      journal.push(makeJournalEntry('error', { detail: `revue non enregistrée : ${errorMessage(error)}` }));
+    }
     const message = `Garde-fou : ${plan.guard.reason} Les suppressions sont SUSPENDUES (rien n'est effacé, ni ici ni dans le cloud) ; les fichiers manquants sont rapatriés. Valide depuis Paramètres → Journal de synchronisation si c'est volontaire.`;
     // Pas une ERREUR de l'interface : un avertissement du journal.
     journal.push(makeJournalEntry('info', { detail: message }));
@@ -869,6 +944,7 @@ async function runLockedCycle(
               detail: 'présent à la relecture directe — tombstone annulée (parcours du cycle non fiable)',
             }),
           );
+          keepPreviousRef.add(relPath);
           continue;
         } catch (readError) {
           const brut = readError instanceof Error ? readError.message : String(readError);
@@ -877,6 +953,7 @@ async function runLockedCycle(
             journal.push(
               makeJournalEntry('info', { path: relPath, detail: `lecture en échec — fichier conservé ce cycle : ${brut.slice(0, 120)}` }),
             );
+            keepPreviousRef.add(relPath);
             continue;
           }
         }
@@ -902,88 +979,66 @@ async function runLockedCycle(
     }
   }
 
-  // 2) Tombestones distantes — PROPAGATION NORMALE, application locale
-  //    CONSERVATRICE (remoteDeletionAction) : un fichier jamais apporté par
-  //    la synchro n'est jamais effacé, un fichier modifié laisse une copie
-  //    « (conflit …) » avant de partir. L'élagueur de dossiers parents vides
-  //    est conservé.
-  const appliedDeletions = new Set<string>();
-  const revueSuppressionsDistantes: { path: string; modified: boolean; at: string }[] = [];
-  const remoteToApply = !fullyIndexed
-    ? []
-    : plan.guard.suspended
-      ? [...tombstonedPaths].filter((p) => approvedDeletions.has(p))
-      : [...tombstonedPaths];
-  for (const relPath of remoteToApply) {
-    if (!allow(relPath)) continue;
-    const local = localByPath.get(relPath);
-    if (!local) continue;
-    try {
-      const action = remoteDeletionAction({
-        localExists: true,
-        lastSyncedHash: syncState.files[relPath],
-        localHash: local.contentHash,
-      });
-      if (action === 'skip') continue;
-      if (action === 'keep-copy') {
-        // RÈGLE ABSOLUE : un fichier modifié ici et supprimé ailleurs n'est
-        // JAMAIS archivé ni effacé automatiquement — il reste en place et
-        // part en REVUE (l'écran « Revue de sécurité » propose « Supprimer
-        // vraiment » ou « Restaurer dans le cloud »).
+  // 2) Tombestones distantes — AUCUNE suppression locale automatique
+  //    (comme main, #193). Toute pierre tombale venue d'un autre appareil
+  //    dont le fichier existe encore ici part en REVUE (pending-review.json
+  //    → Paramètres → Journal de synchronisation : Approuver = corbeille
+  //    locale, Refuser = restore_file dans le cloud). Pendant l'attente :
+  //    ni push (le plan exclut les tombstonedPaths), ni suppression locale,
+  //    et la base du dernier cycle est CONSERVÉE (keepPreviousRef).
+  //    Index partiel : rien n'est mis en file (le fichier peut exister sans
+  //    avoir été vu) — la file est reconstruite au premier parcours complet.
+  const tombstoneRows = new Map(
+    visibleRemoteFiles.filter((f) => f.deleted && tombstonedPaths.has(f.relPath)).map((f) => [f.relPath, f]),
+  );
+  const { paths: pendingRemoteDeletionPaths, candidates: remoteDeletionCandidates } = collectRemoteDeletionCandidates({
+    tombstones: tombstoneRows,
+    local: localByPath,
+    base: syncState.files,
+    queuedAt: new Date().toISOString(),
+  });
+  for (const relPath of pendingRemoteDeletionPaths) keepPreviousRef.add(relPath);
+  summary.pendingRemoteDeletions = pendingRemoteDeletionPaths.size;
+
+  // Une SEULE lecture/écriture de la file pour ce cycle. Illisible
+  // (PendingReviewUnreadableError) : JAMAIS traitée comme vide ni écrasée —
+  // erreur du cycle, rien n'est supprimé.
+  try {
+    const review = await loadPendingReview(bridges.vault);
+    let next: PendingReview = review;
+    if (fullyIndexed) {
+      const { entries, added } = reconcileRemoteDeletions(
+        review.remoteDeletions ?? [],
+        remoteDeletionCandidates,
+        pendingRemoteDeletionPaths,
+      );
+      if (!sameRemoteDeletions(review.remoteDeletions, entries)) next = { ...next, remoteDeletions: entries };
+      for (const entry of added) {
         journal.push(
-          makeJournalEntry('modification', {
-            path: relPath,
-            detail: 'modifié ici, supprimé ailleurs — EN ATTENTE DE VALIDATION (fichier conservé)',
+          makeJournalEntry('delete', {
+            path: entry.path,
+            detail: `supprimé sur ${entry.deletedByDevice ?? 'un autre appareil'} — EN ATTENTE DE VALIDATION (fichier conservé${entry.modified ? ', modifié ici' : ''})`,
           }),
         );
-        revueSuppressionsDistantes.push({ path: relPath, modified: true, at: new Date().toISOString() });
-        continue;
       }
-      await bridges.vault.delete(relPath, { silent: true });
-      appliedDeletions.add(relPath);
-      summary.deleted += 1;
-      journal.push(makeJournalEntry('delete', { path: relPath, detail: 'suppression distante appliquée (corbeille)' }));
-    } catch (error) {
-      console.error(`[sync] échec de la suppression distante ${relPath} :`, error);
-      summary.errors.push(`${relPath} (suppression distante) : ${errorMessage(error)}`);
-      journal.push(makeJournalEntry('error', { path: relPath, detail: `suppression distante : ${errorMessage(error)}` }));
+      if (added.length > 0) {
+        console.error(`[sync] ${added.length} suppression(s) distante(s) EN ATTENTE DE VALIDATION (fichiers conservés)`);
+      }
     }
-  }
-
-  // Les suppressions distantes en attente de validation sont publiées dans
-  // pending-review.json (l'écran « Revue de sécurité » les affiche avec
-  // « Supprimer vraiment / Restaurer dans le cloud »).
-  if (approvedDeletions.size > 0 && fullyIndexed) {
-    // Approbations consommées : on ne garde que celles encore en attente
-    // (échec ponctuel d'effacement) pour le cycle suivant.
-    try {
-      const review = await loadPendingReview(bridges.vault).catch(() => ({}) as PendingReview);
-      const stillPresent = [...approvedDeletions].filter(
-        (p) => !appliedDeletions.has(p) && !locallyDeleted.includes(p) && localByPath.has(p) && tombstonedPaths.has(p),
-      );
-      await savePendingReview(bridges.vault, {
-        ...review,
-        approvedDeletions: stillPresent.length > 0 ? { at: new Date().toISOString(), paths: stillPresent } : undefined,
-      });
-    } catch (error) {
-      console.error('[sync] mise à jour des approbations :', error);
+    if (approvedDeletions.size > 0) {
+      // Approbations (garde-fou des suppressions LOCALES) consommées : on
+      // ne garde que celles pas encore propagées (échec ponctuel).
+      const stillPending = [...approvedDeletions].filter((p) => !tombstonedPaths.has(p) && !localByPath.has(p));
+      next = {
+        ...next,
+        approvedDeletions: stillPending.length > 0 ? { at: new Date().toISOString(), paths: stillPending } : undefined,
+      };
     }
-  }
-  if (revueSuppressionsDistantes.length > 0) {
-    try {
-      const review = await loadPendingReview(bridges.vault).catch(() => ({}) as PendingReview);
-      const byPath = new Map((review.remoteDeletions ?? []).map((r) => [r.path, r]));
-      for (const entry of revueSuppressionsDistantes) byPath.set(entry.path, entry);
-      await savePendingReview(bridges.vault, {
-        ...review,
-        remoteDeletions: [...byPath.values()].slice(0, 500),
-      });
-      console.error(
-        `[sync] ${revueSuppressionsDistantes.length} suppression(s) distante(s) EN ATTENTE DE VALIDATION (fichiers conservés)`,
-      );
-    } catch (error) {
-      console.error('[sync] écriture de la file de revue :', error);
-    }
+    if (next !== review) await savePendingReview(bridges.vault, next);
+  } catch (error) {
+    console.error('[sync] file de revue des suppressions distantes :', error);
+    summary.errors.push(`suppressions distantes en attente non enregistrées : ${errorMessage(error)}`);
+    journal.push(makeJournalEntry('error', { detail: `file de revue : ${errorMessage(error)}` }));
   }
 
 //////// 10. runSync : diff, décisions, nouvel état et clôture //////////////
@@ -1215,6 +1270,7 @@ async function runLockedCycle(
             journal.push(
               makeJournalEntry('info', { path: decision.relPath, detail: 'pull différé : fichier en cours d’édition sur cet appareil' }),
             );
+            keepPreviousRef.add(decision.relPath);
             break;
           }
           // v0.4.84 (§15 du journal d'incidents) : un pull sur un fichier
@@ -1228,6 +1284,7 @@ async function runLockedCycle(
               journal.push(
                 makeJournalEntry('info', { path: decision.relPath, detail: 'pull différé : le fichier répond localement (parcours du cycle non fiable)' }),
               );
+              keepPreviousRef.add(decision.relPath);
               break;
             } catch {
               // réellement absent du disque : le pull est légitime
@@ -1248,6 +1305,7 @@ async function runLockedCycle(
             journal.push(
               makeJournalEntry('info', { path: decision.relPath, detail: 'conflit différé : fichier en cours d’édition sur cet appareil' }),
             );
+            keepPreviousRef.add(decision.relPath);
             break;
           }
           // Fusion à trois voix d'abord (diff-match-patch) — deux
@@ -1307,6 +1365,7 @@ async function runLockedCycle(
             journal.push(
               makeJournalEntry('info', { path: decision.relPath, detail: 'conflit différé : fichier en cours d’édition sur cet appareil' }),
             );
+            keepPreviousRef.add(decision.relPath);
             break;
           }
           await backupLosingSide(decision.relPath, losingLocalContent);
@@ -1319,6 +1378,20 @@ async function runLockedCycle(
         }
       }
     } catch (error) {
+      // Issue non confirmée : l'ancienne référence est conservée — sinon le
+      // cycle suivant prendrait le hash local pour référence et TIRERAIT
+      // le cloud par-dessus la modification locale non poussée.
+      keepPreviousRef.add(decision.relPath);
+      if (isVersionConflictError(error)) {
+        // Verrou optimiste : quelqu'un a écrit entre notre lecture et notre
+        // écriture. RIEN n'est écrasé ; pas une erreur (pas de disjoncteur) :
+        // le cycle suivant voit la nouvelle version et passe par fusion /
+        // copie de conflit.
+        journal.push(
+          makeJournalEntry('conflict', { path: decision.relPath, detail: `${errorMessage(error)} — résolu au prochain cycle` }),
+        );
+        return;
+      }
       console.error(`[sync] échec sur ${decision.relPath} (${decision.kind}) :`, error);
       summary.errors.push(`${decision.relPath} : ${errorMessage(error)}`);
       journal.push(makeJournalEntry('error', { path: decision.relPath, detail: `${decision.kind} : ${errorMessage(error)}` }));
@@ -1339,7 +1412,7 @@ async function runLockedCycle(
   // idempotemment.
   const nextFiles: Record<string, string> = {};
   for (const note of localFiles) {
-    if (locallyDeleted.includes(note.relPath) || appliedDeletions.has(note.relPath)) continue;
+    if (locallyDeleted.includes(note.relPath)) continue;
     nextFiles[note.relPath] = note.contentHash;
   }
   for (const decision of orderedDecisions) {
@@ -1373,6 +1446,13 @@ async function runLockedCycle(
     if (hash) nextFiles[relPath] = hash;
     else delete nextFiles[relPath];
   }
+  // Issue non confirmée (suppression distante en attente, pull différé,
+  // relecture contradictoire…) : base précédente conservée à l'identique.
+  for (const relPath of keepPreviousRef) {
+    if (isFolderMarker(relPath)) continue;
+    if (relPath in syncState.files) nextFiles[relPath] = syncState.files[relPath];
+    else delete nextFiles[relPath];
+  }
   try {
     await saveSyncState({ files: nextFiles, rootPath: vaultRootPath, version: stateVersion });
     if (syncSettings.linkPreference[remoteVaultId]) {
@@ -1382,6 +1462,35 @@ async function runLockedCycle(
   } catch (error) {
     console.error('[sync] échec de la sauvegarde de l’état de synchro :', error);
     journal.push(makeJournalEntry('error', { detail: `sauvegarde de l'état : ${errorMessage(error)}` }));
+  }
+
+  // DISJONCTEUR : une rafale d'erreurs dans un cycle FERME le
+  // circuit pour les cycles suivants (revue manuelle pour rouvrir — jamais
+  // de resynchronisation par-dessus un appareil en échec). Le message et
+  // son ORIGINE partent dans le journal ET dans les logs (console.error
+  // visible en logcat release).
+  if (shouldTripBreaker(summary.errors.length)) {
+    const blocked = {
+      at: new Date().toISOString(),
+      errorCount: summary.errors.length,
+      samples: summary.errors.slice(0, 3),
+    };
+    try {
+      const review = await loadPendingReview(bridges.vault);
+      await savePendingReview(bridges.vault, { ...review, syncBlocked: blocked });
+    } catch (error) {
+      // Le bloc n'a pas pu être persisté (écritures en échec — c'est
+      // justement le cas typique) : le log et le journal restent la trace.
+      console.error('[sync] disjoncteur non persistable :', error);
+    }
+    console.error(
+      `[sync] DISJONCTEUR OUVERT : ${blocked.errorCount} erreurs ce cycle — synchro bloquée jusqu'à revue. Origines : ${blocked.samples.join(' | ').slice(0, 400)}`,
+    );
+    journal.push(
+      makeJournalEntry('error', {
+        detail: `Disjoncteur ouvert : ${blocked.errorCount} erreur(s) — synchronisation bloquée jusqu'à revue manuelle. Ex. ${blocked.samples[0] ?? ''}`,
+      }),
+    );
   }
 
   // « Appareils connectés » (Paramètres → Coffres distants) : heartbeat
