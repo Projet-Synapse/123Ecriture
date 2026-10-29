@@ -12,6 +12,7 @@ import {
 import { orderAfterDrop, pendingTaskCount, sortNavigatorItems } from '../../lib/tasks/tasksNavigator';
 import { getNotificationsPermission, syncTaskDueNotifications } from '../../lib/tasks/taskNotifications';
 import { usePreferences } from '../../preferences/PreferencesContext';
+import { ActionMenu, type ActionMenuItem } from '../dialogs/ActionMenu';
 import { ConfirmDialog } from '../dialogs/ConfirmDialog';
 import { DraftTextField } from '../editors/DraftTextField';
 import { errorMessage } from '../../lib/errorMessage';
@@ -113,6 +114,30 @@ export function TasksScreen({
   const taskListsBridge = typeof window !== 'undefined' ? window.taskLists : undefined;
   const contextMenuBridge = typeof window !== 'undefined' ? window.contextMenu : undefined;
   const { vaults, switchVault, activeVaultPath: vaultPath } = useVaults();
+
+  // Menu du navigateur : menu natif Electron sur desktop (window.contextMenu),
+  // carte tactile ActionMenu sur mobile (le pont n'existe pas en natif —
+  // sans ce repli, « ⋯ », « Déplacer vers… » et le choix liste/dossier du
+  // « + » ne faisaient RIEN sur Android). Même contrat `show(items)`.
+  const [touchMenu, setTouchMenu] = useState<ActionMenuItem[] | null>(null);
+  const touchMenuResolveRef = useRef<((choice: string | null) => void) | null>(null);
+  const [touchMenuBridge] = useState(() => ({
+    show: (items: ActionMenuItem[]) =>
+      new Promise<string | null>((resolve) => {
+        touchMenuResolveRef.current?.(null);
+        touchMenuResolveRef.current = resolve;
+        setTouchMenu(items);
+      }),
+  }));
+  const closeTouchMenu = useCallback((choice: string | null) => {
+    const resolve = touchMenuResolveRef.current;
+    touchMenuResolveRef.current = null;
+    setTouchMenu(null);
+    // Résolution APRÈS fermeture : un sous-menu (« Déplacer vers… ») peut
+    // se rouvrir aussitôt sans être écrasé.
+    if (resolve) setTimeout(() => resolve(choice), 0);
+  }, []);
+  const menuBridge = contextMenuBridge ?? touchMenuBridge;
 
   const [taskLists, setTaskLists] = useState<TaskList[]>([]);
   const [activeListId, setActiveListId] = useState<string | null>(null);
@@ -642,12 +667,27 @@ export function TasksScreen({
     });
   }, [taskLists]);
 
+  // Monter/descendre d'un cran dans son scope (repli tactile du DnD) —
+  // même ordre dense que commitDrop (orderAfterDrop).
+  const moveInScope = useCallback(
+    (item: TaskList, delta: -1 | 1) => {
+      const scope = taskLists.filter((entry) => (entry.folderId ?? null) === (item.folderId ?? null));
+      const ids = sortNavigatorItems(scope).map((entry) => entry.id);
+      const index = ids.indexOf(item.id);
+      if (index === -1) return;
+      if (delta === -1 && index === 0) return;
+      if (delta === 1 && index === ids.length - 1) return;
+      const beforeId = delta === -1 ? ids[index - 1] : (ids[index + 2] ?? null);
+      void handleSetOrder(orderAfterDrop(scope, item.id, beforeId));
+    },
+    [taskLists, handleSetOrder],
+  );
+
   // « Déplacer vers… » : racine ou l'un des dossiers (jamais soi-même ni
   // ses descendants — le pont refuse de toute façon les cycles). Déclaré
   // AVANT showNavigatorMenu qui l'appelle.
   const showMoveToMenu = useCallback(
     (item: TaskList) => {
-      if (!contextMenuBridge) return;
       const descendants = (folderId: string): string[] => {
         const direct = taskLists.filter((entry) => entry.folderId === folderId).map((entry) => entry.id);
         return [folderId, ...direct.flatMap(descendants)];
@@ -659,12 +699,12 @@ export function TasksScreen({
           (folder) => ({ id: folder.id, label: `📁 ${folder.name}` }),
         ),
       ];
-      void contextMenuBridge.show(destinations).then((choice) => {
+      void menuBridge.show(destinations).then((choice) => {
         if (!choice) return;
         void handleMoveList(item.id, choice === '__root__' ? null : choice);
       });
     },
-    [contextMenuBridge, taskLists, handleMoveList],
+    [menuBridge, taskLists, handleMoveList],
   );
 
   // Menu contextuel (clic droit délégué + bouton « ⋯ ») d'un item du
@@ -674,22 +714,29 @@ export function TasksScreen({
   // ConfirmDialog (panier jetable).
   const showNavigatorMenu = useCallback(
     (item: TaskList) => {
-      if (!contextMenuBridge) return;
+      // Réordonner : le glisser-déposer est web uniquement (DOM) — sur
+      // mobile, « Monter »/« Descendre » dans le menu le remplacent.
+      const reorderItems = Platform.OS === 'web' ? [] : [
+        { id: 'move-up', label: '⬆️ Monter' },
+        { id: 'move-down', label: '⬇️ Descendre' },
+      ];
       const menuItems: { id: string; label: string }[] = item.isFolder
         ? [
             { id: 'new-list-here', label: 'Nouvelle liste ici' },
             { id: 'new-folder-here', label: 'Nouveau dossier ici' },
             { id: 'rename', label: 'Renommer' },
             { id: 'move', label: 'Déplacer vers…' },
+            ...reorderItems,
             { id: 'delete', label: 'Supprimer le dossier (les listes remontent)' },
           ]
         : [
             { id: 'new-task', label: 'Nouvelle tâche' },
             { id: 'rename', label: 'Renommer' },
             { id: 'move', label: 'Déplacer vers…' },
+            ...reorderItems,
             { id: 'delete', label: 'Supprimer la liste' },
           ];
-      void contextMenuBridge.show(menuItems).then((choice) => {
+      void menuBridge.show(menuItems).then((choice) => {
         if (!choice) return;
         if (choice === 'rename') startRenameList(item);
         if (choice === 'delete') {
@@ -697,6 +744,8 @@ export function TasksScreen({
           else setConfirmDeleteList(item);
         }
         if (choice === 'move') showMoveToMenu(item);
+        if (choice === 'move-up') moveInScope(item, -1);
+        if (choice === 'move-down') moveInScope(item, 1);
         if (choice === 'new-list-here') setCreateTarget({ isFolder: false, folderId: item.id });
         if (choice === 'new-folder-here') setCreateTarget({ isFolder: true, folderId: item.id });
         if (choice === 'new-task') {
@@ -705,7 +754,7 @@ export function TasksScreen({
         }
       });
     },
-    [contextMenuBridge, startRenameList, handleRemoveList, showMoveToMenu, selectList, requestFocusListField],
+    [menuBridge, startRenameList, handleRemoveList, showMoveToMenu, selectList, requestFocusListField, moveInScope],
   );
 
   // Clic droit délégué sur tout le navigateur (même mécanique que
@@ -960,8 +1009,7 @@ export function TasksScreen({
             {taskLists.length > 1 && (
               <Pressable
                 onPress={() => {
-                  if (!contextMenuBridge) return;
-                  void contextMenuBridge
+                  void menuBridge
                     .show(taskLists.filter((list) => list.id !== task.listId).map((list) => ({ id: list.id, label: list.name })))
                     .then((choice) => {
                       if (choice) void handleMoveTaskToList(task.id, choice);
@@ -1060,7 +1108,11 @@ export function TasksScreen({
               <Pressable onPress={() => toggleFolder(item.id)} style={styles.chevronButton}>
                 <Text style={{ color: theme.textMuted }}>{isOpen ? '▾' : '▸'}</Text>
               </Pressable>
-              <Pressable onPress={() => toggleFolder(item.id)} style={styles.navigatorNameButton}>
+              <Pressable
+                onPress={() => toggleFolder(item.id)}
+                onLongPress={Platform.OS === 'web' ? undefined : () => showNavigatorMenu(item)}
+                style={styles.navigatorNameButton}
+              >
                 <Text style={{ color: theme.text, fontSize: 13, fontWeight: '600', flex: 1 }} numberOfLines={1}>
                   📁 {item.name}
                 </Text>
@@ -1130,6 +1182,7 @@ export function TasksScreen({
           >
             <Pressable
               onPress={() => void selectList(item.id)}
+              onLongPress={Platform.OS === 'web' ? undefined : () => showNavigatorMenu(item)}
               style={styles.navigatorNameButton}
               accessibilityRole="button"
             >
@@ -1225,11 +1278,7 @@ export function TasksScreen({
         <View style={styles.headerActions}>
           <Pressable
             onPress={() => {
-              if (!contextMenuBridge) {
-                setCreateTarget({ isFolder: false, folderId: null });
-                return;
-              }
-              void contextMenuBridge
+              void menuBridge
                 .show([
                   { id: 'list', label: 'Nouvelle liste' },
                   { id: 'folder', label: 'Nouveau dossier' },
@@ -1364,6 +1413,15 @@ export function TasksScreen({
           onConfirm={() => handleRemoveList(confirmDeleteList.id)}
           onCancel={() => setConfirmDeleteList(null)}
           onSettled={() => setConfirmDeleteList(null)}
+        />
+      )}
+      {touchMenu && (
+        <ActionMenu
+          visible
+          theme={theme}
+          items={touchMenu}
+          onPick={(id) => closeTouchMenu(id)}
+          onClose={() => closeTouchMenu(null)}
         />
       )}
     </View>
