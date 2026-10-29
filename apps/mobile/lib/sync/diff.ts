@@ -53,6 +53,8 @@ export type RemoteVaultFile = {
   // rel_path BRUT tel qu'en base (peut contenir des `\` — résidus du bug de
   // séparateurs desktop à purger). `relPath`, lui, est normalisé.
   rawRelPath?: string;
+  deletedByDevice?: string | null;
+  deletedAt?: string | null;
 };
 
 export type SyncDecisionKind = 'push' | 'pull' | 'noop' | 'conflict-push-wins' | 'conflict-pull-wins';
@@ -79,6 +81,7 @@ export function diffVault(
   local: LocalHashedNote[],
   remote: RemoteVaultFile[],
   lastSynced?: Record<string, string>,
+  lastVersions?: Record<string, number>,
 ): SyncDecision[] {
   const localByPath = new Map(local.map((note) => [note.relPath, note]));
   const remoteByPath = new Map(remote.filter((file) => !file.deleted).map((file) => [file.relPath, file]));
@@ -98,22 +101,24 @@ export function diffVault(
         decisions.push({ kind: 'noop', relPath });
       } else {
         const referenceHash = lastSynced?.[relPath];
-        if (referenceHash === remoteFile.contentHash) {
-          // Le cloud est exactement là où on l'avait laissé : tout le
-          // changement est chez nous → pousser. Sans cette référence, le
-          // classement mtime seul re-déclarerait un conflit à chaque
-          // modification dès que l'horodatage du fichier passe devant
-          // celui du push précédent.
+        const referenceVersion = lastVersions?.[relPath];
+        // Le cloud n'a pas bougé depuis le dernier cycle : par la VERSION
+        // serveur quand elle est connue (autorité), sinon par le hash.
+        const remoteUnchanged =
+          typeof referenceVersion === 'number' && typeof remoteFile.version === 'number'
+            ? referenceVersion === remoteFile.version
+            : referenceHash === remoteFile.contentHash;
+        if (remoteUnchanged) {
           decisions.push({ kind: 'push', relPath });
         } else if (referenceHash === localNote.contentHash) {
           decisions.push({ kind: 'pull', relPath });
         } else {
-          const localTime = localNote.modifiedAt;
-          const remoteTime = new Date(remoteFile.updatedAt).getTime();
-          decisions.push({
-            kind: localTime >= remoteTime ? 'conflict-push-wins' : 'conflict-pull-wins',
-            relPath,
-          });
+          // Divergence des deux côtés, ou référence inconnue (premier
+          // cycle, ancien état) : JAMAIS d'arbitrage par mtime (horloges
+          // d'appareils non fiables). Conflit prudent : fusion à trois voix
+          // d'abord ; à défaut le cloud est conservé et la version locale
+          // ARCHIVÉE en copie de conflit — rien n'est écrasé dans le cloud.
+          decisions.push({ kind: 'conflict-pull-wins', relPath });
         }
       }
     }

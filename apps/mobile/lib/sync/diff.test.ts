@@ -43,13 +43,13 @@ describe('diffVault', () => {
     expect(decisions).toEqual([]);
   });
 
-  it('en conflit, le local gagne si son timestamp est plus récent', () => {
+  it('en conflit sans référence, le cloud est conservé même si le local est plus récent (plus de mtime)', () => {
     const localTime = new Date('2026-01-02T00:00:00.000Z').getTime();
     const decisions = diffVault(
       [local('a.mdx', 'local-hash', localTime)],
       [remote('a.mdx', 'remote-hash', '2026-01-01T00:00:00.000Z')],
     );
-    expect(decisions).toEqual([{ kind: 'conflict-push-wins', relPath: 'a.mdx' }]);
+    expect(decisions).toEqual([{ kind: 'conflict-pull-wins', relPath: 'a.mdx' }]);
   });
 
   it('en conflit, le distant gagne si son timestamp est plus récent', () => {
@@ -61,13 +61,13 @@ describe('diffVault', () => {
     expect(decisions).toEqual([{ kind: 'conflict-pull-wins', relPath: 'a.mdx' }]);
   });
 
-  it('en conflit à égalité stricte, le local gagne (évite un aller-retour infini)', () => {
+  it('en conflit à égalité stricte, conflit prudent (cloud conservé)', () => {
     const sameTime = new Date('2026-01-01T00:00:00.000Z').getTime();
     const decisions = diffVault(
       [local('a.mdx', 'local-hash', sameTime)],
       [remote('a.mdx', 'remote-hash', '2026-01-01T00:00:00.000Z')],
     );
-    expect(decisions).toEqual([{ kind: 'conflict-push-wins', relPath: 'a.mdx' }]);
+    expect(decisions).toEqual([{ kind: 'conflict-pull-wins', relPath: 'a.mdx' }]);
   });
 
   it('traite plusieurs notes indépendamment et trie le résultat par chemin', () => {
@@ -121,17 +121,17 @@ describe('diffVault', () => {
       expect(decisions).toEqual([{ kind: 'noop', relPath: 'a.mdx' }]);
     });
 
-    it('sans référence pour ce fichier (premier cycle), retombe sur le classement mtime', () => {
+    it('sans référence pour ce fichier (premier cycle), conflit prudent — jamais d’arbitrage mtime', () => {
       const localTime = new Date('2026-01-02T00:00:00.000Z').getTime();
       const decisions = diffVault(
         [local('a.mdx', 'local-hash', localTime)],
         [remote('a.mdx', 'remote-hash', '2026-01-01T00:00:00.000Z')],
         {},
       );
-      expect(decisions).toEqual([{ kind: 'conflict-push-wins', relPath: 'a.mdx' }]);
+      expect(decisions).toEqual([{ kind: 'conflict-pull-wins', relPath: 'a.mdx' }]);
     });
 
-    it('une référence inconnue du cloud ne classe plus en push : le fichier est traité comme divergent', () => {
+    it('une référence inconnue du cloud ne classe plus en push : le fichier est traité comme divergent (conflit prudent)', () => {
       // C'est le cas « clé inconnue du state » (fichier déplacé/renommé) :
       // sans référence fiable, le mtime départage — un fichier fraîchement
       // modifié gagne, mais le verdict est bien celui d'un conflit réel et
@@ -143,7 +143,37 @@ describe('diffVault', () => {
         [remote('a.mdx', 'remote-hash', '2026-01-01T00:00:00.000Z')],
         { 'autre.mdx': 'reference' },
       );
-      expect(decisions).toEqual([{ kind: 'conflict-push-wins', relPath: 'a.mdx' }]);
+      expect(decisions).toEqual([{ kind: 'conflict-pull-wins', relPath: 'a.mdx' }]);
+    });
+  });
+
+  describe('verrou optimiste : version serveur', () => {
+    it('version distante == version de référence → push, même si la référence hash manque', () => {
+      const decisions = diffVault(
+        [local('a.mdx', 'local-new', 1)],
+        [{ ...remote('a.mdx', 'cloud', '2026-01-01T00:00:00.000Z'), version: 4 }],
+        {},
+        { 'a.mdx': 4 },
+      );
+      expect(decisions).toEqual([{ kind: 'push', relPath: 'a.mdx' }]);
+    });
+    it('version distante avancée → jamais push, même si le hash cloud égale la référence', () => {
+      const decisions = diffVault(
+        [local('a.mdx', 'local-new', 9e12)],
+        [{ ...remote('a.mdx', 'ref', '2026-01-01T00:00:00.000Z'), version: 5 }],
+        { 'a.mdx': 'ref' },
+        { 'a.mdx': 4 },
+      );
+      expect(decisions).toEqual([{ kind: 'conflict-pull-wins', relPath: 'a.mdx' }]);
+    });
+    it('version avancée et local inchangé → pull', () => {
+      const decisions = diffVault(
+        [local('a.mdx', 'ref', 1)],
+        [{ ...remote('a.mdx', 'cloud2', '2026-01-01T00:00:00.000Z'), version: 5 }],
+        { 'a.mdx': 'ref' },
+        { 'a.mdx': 4 },
+      );
+      expect(decisions).toEqual([{ kind: 'pull', relPath: 'a.mdx' }]);
     });
   });
 });
