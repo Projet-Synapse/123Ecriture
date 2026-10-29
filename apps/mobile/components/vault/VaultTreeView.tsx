@@ -226,7 +226,7 @@ function VaultTreeViewImpl({
                 style={[styles.renameInput, { color: theme.text, borderColor: theme.accent }]}
               />
             ) : (
-              <Text style={{ color: theme.text }} numberOfLines={1}>
+              <Text style={{ color: theme.text, flexShrink: 1 }} numberOfLines={1} ellipsizeMode="tail">
                 {node.name}
                 {/* EXTENSION du fichier (v0.4.36) : .mdx, .canvas… —
                     affichée à la fin du nom, plus discrete. */}

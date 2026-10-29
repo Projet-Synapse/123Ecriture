@@ -21,6 +21,7 @@ import {
 } from '../lib/theme/appearance';
 import { useVaults } from '../lib/sync/VaultsContext';
 import { darkTheme, lightTheme, type Theme } from '../theme';
+import { writeNoteIfChanged } from '../lib/storage/writeIfChanged';
 
 // Point central de la personnalisation de l'interface (voir
 // docs/ARCHITECTURE.md §7 et l'écran Paramètres → Personnalisation) :
@@ -310,9 +311,14 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     if (!preferencesLoaded || !vaultPrefsSyncAllowed) return;
     const vault = typeof window !== 'undefined' ? window.vault : undefined;
     if (!vault?.writeNote) return;
-    void vault
-      .writeNote('.123ecriture/preferences.json', JSON.stringify(preferences, null, 2))
-      .catch((error) => console.error('[preferences] échec d’écriture dans le coffre :', error));
+    // Contenu identique (démarrage, rechargement après synchro) : AUCUNE
+    // réécriture — le mtime ne bouge pas, la synchro ne voit rien.
+    void writeNoteIfChanged(
+      (p) => vault.readNote(p),
+      (p, c) => vault.writeNote(p, c),
+      '.123ecriture/preferences.json',
+      JSON.stringify(preferences, null, 2),
+    ).catch((error) => console.error('[preferences] échec d’écriture dans le coffre :', error));
   }, [preferences, preferencesLoaded, vaultPrefsSyncAllowed]);
 
   const persist = useCallback(
@@ -533,7 +539,13 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     pendingVaultFile.current = null;
     if (!toWrite) return; // rien à enregistrer (aucun réglage du coffre)
     if (typeof window === 'undefined' || !window.vault?.writeNote) return;
-    await window.vault.writeNote('.123ecriture/appearance.json', JSON.stringify(toWrite, null, 2));
+    const vaultApi = window.vault;
+    await writeNoteIfChanged(
+      (p) => vaultApi.readNote(p),
+      (p, c) => vaultApi.writeNote(p, c),
+      '.123ecriture/appearance.json',
+      JSON.stringify(toWrite, null, 2),
+    );
     // Le rechargement n'est pas nécessaire ici : setVaultAppearance a déjà
     // appliqué l'état (et writeNote invalide l'arbre côté adaptateur).
   }, [vaultAppearance]);

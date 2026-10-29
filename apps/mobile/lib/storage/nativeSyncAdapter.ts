@@ -1,14 +1,22 @@
 import * as FileSystem from 'expo-file-system/legacy';
 
 import { getActiveVaultRootUri } from './nativeVaultsAdapter';
-import { SYNC_ATTACHMENT_EXTENSIONS, SYNCED_META_FILES, takeDirtyPathsForRoot } from './nativeVaultAdapter';
+import { SYNC_ATTACHMENT_EXTENSIONS, takeDirtyPathsForRoot } from './nativeVaultAdapter';
 import {
   activeVaultAdapter as nativeVaultAdapter,
+  assertActiveVaultAccess,
+  cloudSyncHandle,
   ensureActiveVaultIndexed as ensureVaultIndexed,
   getActiveVaultIndexEntry as getVaultIndexEntry,
   getActiveVaultIndexKeys as getVaultIndexKeys,
+  hashActiveVaultFile,
+  isActiveVaultFullyIndexed,
 } from './vaultBackend';
 import { sha256Hex, utf8Bytes } from '../sync/nativeSha256';
+import { isHashableRelPath } from '../sync/syncRules';
+import { visibleFolders } from '../sync/folderMarker';
+import { setSyncProgress } from '../sync/syncProgress';
+import { indexedModifiedAt } from '../sync/editQuiet';
 
 // ✒️ 123ECRITURE — lib/storage/nativeSyncAdapter.ts — hachage de sync natif (Android)
 //////////////////////////////////////////////////////////////////////////////
@@ -48,7 +56,6 @@ import { sha256Hex, utf8Bytes } from '../sync/nativeSha256';
 //////////////////////////////////////////////////////////////////////////////
 
 //////// 1. Règles de hachage et baseline hors coffre //////////////////////////////////
-const SYNC_EXTENSIONS = ['.mdx', '.md', '.canvas', '.chart', '.excalidraw', '.base'];
 
 // Baseline hors coffre (documentDirectory), clé par URI racine : changer de
 // coffre actif ou reconnecter un dossier invalide l'ancienne.
@@ -82,23 +89,9 @@ async function saveBaseline(rootUri: string, entries: BaselineEntries): Promise<
 // MÉTADONNÉES SYNCHRONISÉES (SYNCED_META_FILES, importée de
 // nativeVaultAdapter : apparence, tâches/listes, préférences).
 function hashableRelPath(relPath: string): boolean {
-  if (SYNCED_META_FILES.includes(relPath)) return true;
-  // ANTI-CONTAMINATION : un nom contenant un `\` est un FICHIER PLAT créé
-  // par un ancien pull d'une ligne backslashed (le `\` est légal dans un
-  // nom Android, pas dans un vrai arbre) — le pousser re-imbriquerait la
-  // contamination dans le cloud (dossiers fantômes chez les autres
-  // appareils). Jamais hachés, jamais poussés ; ils restent locaux jusqu'à
-  // purge manuelle.
-  if (relPath.includes('\\')) return false;
-  const segments = relPath.split('/');
-  // `.trash/` local uniquement (plus synchronisé, comme syncRules.ts).
-  if (segments.some((segment) => segment.startsWith('.'))) return false;
-  const name = segments[segments.length - 1].toLowerCase();
-  // Pièces jointes synchronisées : images/PDF/audio — la taille par
-  // fichier est plafonnée côté desktop ; le mobile hache ce que son index
-  // connaît.
-  if (SYNC_ATTACHMENT_EXTENSIONS.some((ext) => name.endsWith(ext))) return true;
-  return SYNC_EXTENSIONS.some((ext) => name.endsWith(ext));
+  // RÈGLE UNIQUE (syncRules.isHashableRelPath) partagée avec le moteur : un
+  // chemin distant que le hachage local ignorerait serait tiré en boucle.
+  return isHashableRelPath(relPath);
 }
 
 // Décodage base64 → octets (pur JS : Hermes n'a pas `atob` garanti) —
@@ -128,9 +121,27 @@ function base64ToBytes(base64: string): Uint8Array {
 //////// 2. hashVaultTree — le hachage incrémental du coffre actif //////////////////////
 
 export const nativeSyncAdapter = {
+  // DOSSIERS (folderMarker.ts) : sans cette liste, le moteur croyait
+  // qu'AUCUN dossier n'existait sur Android — un dossier reçu au cycle N
+  // était donc tombstoné au cycle N+1 (« supprimé ici »). Source : l'index
+  // du coffre (vault-fs ou SAF), dossiers visibles uniquement.
+  listFolders: async (): Promise<string[]> => {
+    const rootUri = await getActiveVaultRootUri();
+    // Pas de coffre = liste INCONNUE (jamais « aucun dossier » : sinon les
+    // marqueurs de la base seraient tombstonés dans le cloud).
+    if (!rootUri) throw new Error('aucun coffre actif');
+    await assertActiveVaultAccess();
+    await ensureVaultIndexed();
+    return visibleFolders(getVaultIndexKeys(), (p) => getVaultIndexEntry(p));
+  },
+  isFullyIndexed: () => isActiveVaultFullyIndexed(),
   hashVaultTree: async (): Promise<HashedNote[]> => {
+    // Android cloud : l'« arbre local » est le CACHE privé (inventaire).
+    if (cloudSyncHandle) return cloudSyncHandle.inventory();
     const rootUri = await getActiveVaultRootUri();
     if (!rootUri) return []; // pas de coffre actif : rien à hacher
+    // Permission perdue : on REFUSE le cycle (jamais « coffre vide » ⇒ aucune suppression).
+    await assertActiveVaultAccess();
     await ensureVaultIndexed();
 
     const baseline = await loadBaseline();
@@ -140,13 +151,36 @@ export const nativeSyncAdapter = {
     // Première exécution pour ce coffre (baseline vide) : passe complète
     // sur tout l'index. Sinon : uniquement les fichiers marqués modifiés.
     const targets = new Set(dirty);
-    if (Object.keys(entries).length === 0) {
-      for (const relPath of getVaultIndexKeys()) {
-        if (hashableRelPath(relPath)) targets.add(relPath);
-      }
+    // Rattrapage à CHAQUE cycle (pas seulement au premier) : tout fichier
+    // présent dans l'index mais absent de la baseline est haché, et toute
+    // entrée de baseline que l'index ne connaît plus est re-vérifiée. Sans
+    // ça, un fichier jamais marqué « dirty » (reçu, indexé par un parcours)
+    // restait invisible au moteur : pull → « répond localement » → différé,
+    // en boucle à chaque cycle.
+    const indexKeys = getVaultIndexKeys();
+    for (const relPath of indexKeys) {
+      if (hashableRelPath(relPath) && !entries[relPath]) targets.add(relPath);
+    }
+    const indexSet = new Set(indexKeys);
+    for (const relPath of Object.keys(entries)) {
+      if (!indexSet.has(relPath)) targets.add(relPath);
     }
 
+    // PROGRESSION + SAUVEGARDE AU FIL DE L'EAU : un rattrapage de centaines
+    // de fichiers n'est plus muet (watchdog d'inactivité) et ce qui est haché
+    // reste acquis si le cycle est interrompu (délai, app tuée).
+    const total = targets.size;
+    let done = 0;
+    let lastSave = Date.now();
     for (const relPath of targets) {
+      done += 1;
+      if (total > 20 && (done % 10 === 0 || done === total)) {
+        setSyncProgress({ phase: 'Analyse du coffre local…', done, total, current: relPath });
+      }
+      if (Date.now() - lastSave > 5_000) {
+        await saveBaseline(rootUri, entries);
+        lastSave = Date.now();
+      }
       const entry = getVaultIndexEntry(relPath);
       if (!entry || entry.isDirectory) {
         delete entries[relPath]; // supprimé/déplacé depuis le dernier cycle
@@ -157,6 +191,11 @@ export const nativeSyncAdapter = {
         continue;
       }
       try {
+        if (hashActiveVaultFile) {
+          const hashed = await hashActiveVaultFile(relPath);
+          entries[relPath] = { hash: hashed.hash, size: hashed.size };
+          continue;
+        }
         let bytes: number[] | Uint8Array;
         if (SYNC_ATTACHMENT_EXTENSIONS.some((ext) => relPath.toLowerCase().endsWith(ext))) {
           // Binaire (image/PDF/audio…) : hachage sur les OCTETS décodés du
@@ -187,7 +226,8 @@ export const nativeSyncAdapter = {
       relPath,
       contentHash: value.hash,
       sizeBytes: value.size,
-      modifiedAt: Date.now(),
+      modifiedAt: indexedModifiedAt(getVaultIndexEntry(relPath), relPath),
     }));
   },
 };
+
