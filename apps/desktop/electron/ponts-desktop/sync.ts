@@ -35,7 +35,7 @@ import path from 'path';
 
 import * as vaults from './vaults';
 import type { HashedNote } from '../types';
-import { isHashableRelPath } from '../../../mobile/lib/sync/syncRules';
+import { isHashableRelPath, shouldWatchTrigger } from '../../../mobile/lib/sync/syncRules';
 import { normalizeRelPath } from '../../../mobile/lib/sync/relPath';
 
 // Ce module duplique volontairement une petite partie du parcours de
@@ -178,6 +178,32 @@ export function registerSyncHandlers(getWindow?: () => BrowserWindow | null): vo
     vaults.setSyncLock(Boolean(active));
     return vaults.isSyncLocked();
   });
+  // Dossiers du coffre (y compris VIDES) : entrées de première classe de la
+  // synchronisation (marqueurs .123ecriture-dossier côté cloud). Dossiers
+  // cachés et corbeille exclus. Liste vide si le coffre est introuvable —
+  // jamais d'exception (une erreur ici ne doit RIEN bloquer).
+  ipcMain.handle('sync:list-folders', async () => {
+    const vaultPath = vaults.getActiveVaultPath();
+    if (!vaultPath || !fsSync.existsSync(vaultPath)) return [];
+    const out: string[] = [];
+    const walk = async (dir: string, rel: string): Promise<void> => {
+      let entries: fsSync.Dirent[];
+      try {
+        entries = await fs.readdir(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const entry of entries) {
+        if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+        const childRel = rel ? `${rel}/${entry.name}` : entry.name;
+        out.push(childRel);
+        await walk(path.join(dir, entry.name), childRel);
+      }
+    };
+    await walk(vaultPath, '');
+    return out;
+  });
+
   ipcMain.handle('sync:hash-vault', async () => {
     const vaultPath = vaults.getActiveVaultPath();
     if (!vaultPath) return [];
@@ -208,11 +234,12 @@ export function registerSyncHandlers(getWindow?: () => BrowserWindow | null): vo
     if (!vaultPath || !fsSync.existsSync(vaultPath)) return false;
     activeWatcher = fsSync.watch(vaultPath, { recursive: true }, (_event, filename) => {
       if (watcherPaused || !filename) return;
-      // Les métadonnées de l'app (.123ecriture, état/ordre/identité) ne
-      // comptent pas comme du contenu à propager — mais `.trash` oui : la
-      // corbeille est synchronisée.
-      const parts = String(filename).split(path.sep);
-      if (parts[0] !== '.trash' && parts.some((p) => p.startsWith('.'))) return;
+      // Règle partagée (syncRules.shouldWatchTrigger) : contenu, `.trash`,
+      // et les 4 métadonnées synchronisées de .123ecriture (tâches, listes,
+      // préférences, apparence) — sans elles une modif de tâche ou de thème
+      // attendait le cycle périodique. Fichiers internes du moteur exclus
+      // (pas de boucle) ; le watcher reste en pause pendant un cycle.
+      if (!shouldWatchTrigger(String(filename))) return;
       watcherGetWindow?.()?.webContents?.send('sync:local-changed', String(filename));
     });
     return true;

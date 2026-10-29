@@ -134,6 +134,7 @@ contextBridge.exposeInMainWorld('sync', {
     return () => ipcRenderer.removeListener('sync:local-changed', handler);
   },
   hashVaultTree: () => ipcRenderer.invoke('sync:hash-vault'),
+  listFolders: () => ipcRenderer.invoke('sync:list-folders'),
   // Verrou anti-bascule (v0.4.54) : posé au début de chaque cycle de
   // synchro, retiré à la fin — refuse le changement de coffre pendant.
   setVaultLock: (active: boolean) => ipcRenderer.invoke('sync:set-vault-lock', active),

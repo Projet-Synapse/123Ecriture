@@ -43,6 +43,8 @@ export type RemoteVaultFile = {
   sizeBytes: number;
   updatedAt: string; // ISO 8601
   deleted: boolean;
+  // Version serveur (verrou optimiste push_file / tombstone_file).
+  version?: number | null;
   // Clé d'objet Storage EFFECTIVEMENT enregistrée au moment du push (encodée
   // base64url — les noms bruts avec émojis/accents sont rejetés par Storage,
   // voir storageKeys.ts). Optionnel : les lignes anciennes peuvent
@@ -51,9 +53,6 @@ export type RemoteVaultFile = {
   // rel_path BRUT tel qu'en base (peut contenir des `\` — résidus du bug de
   // séparateurs desktop à purger). `relPath`, lui, est normalisé.
   rawRelPath?: string;
-  // Version serveur (verrou optimiste, migration vault_optimistic_lock).
-  // Absente tant que la migration n'est pas appliquée.
-  version?: number;
   deletedByDevice?: string | null;
   deletedAt?: string | null;
 };

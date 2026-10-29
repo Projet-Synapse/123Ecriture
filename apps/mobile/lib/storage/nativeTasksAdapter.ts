@@ -27,7 +27,8 @@
 
 //////// 1. Lectures tolérantes, ids et migration paresseuse des listes ///////////////
 
-import { nativeVaultAdapter } from './nativeVaultAdapter';
+import { activeVaultAdapter as nativeVaultAdapter } from './vaultBackend';
+import { writeNoteIfChanged } from './writeIfChanged';
 
 const TASKS_PATH = '.123ecriture/tasks.json';
 const LISTS_PATH = '.123ecriture/tasklists.json';
@@ -90,8 +91,19 @@ async function readTasks(): Promise<Task[]> {
   return (raw as Task[]).map(normalizeTask);
 }
 
+// Jamais de réécriture à contenu identique (mtime inchangé → pas de
+// faux « modifié » pour la synchro) — voir writeIfChanged.ts.
+function writeConfig(relPath: string, content: string): Promise<boolean> {
+  return writeNoteIfChanged(
+    (p) => nativeVaultAdapter.readNote(p),
+    (p, c) => nativeVaultAdapter.writeNote(p, c),
+    relPath,
+    content,
+  );
+}
+
 async function writeTasks(tasks: Task[]): Promise<void> {
-  await nativeVaultAdapter.writeNote(TASKS_PATH, JSON.stringify(tasks, null, 2));
+  await writeConfig(TASKS_PATH, JSON.stringify(tasks, null, 2));
 }
 
 function filterActive(tasks: Task[], activeListId: string | null): Task[] {
@@ -119,12 +131,12 @@ async function readListsData(): Promise<NativeTaskListsData> {
   // / `tasklists:switch` échouent (« Liste introuvable » — l'identifiant
   // affiché à l'écran n'existe plus à l'appel suivant). Desktop fait la
   // même écriture dans migrateTaskLists (tasks.ts).
-  await nativeVaultAdapter.writeNote(LISTS_PATH, JSON.stringify(data, null, 2));
+  await writeConfig(LISTS_PATH, JSON.stringify(data, null, 2));
   return data;
 }
 
 async function writeListsData(data: NativeTaskListsData): Promise<NativeTaskListsData> {
-  await nativeVaultAdapter.writeNote(LISTS_PATH, JSON.stringify(data, null, 2));
+  await writeConfig(LISTS_PATH, JSON.stringify(data, null, 2));
   for (const listener of listListeners) listener(data.lists);
   return data;
 }

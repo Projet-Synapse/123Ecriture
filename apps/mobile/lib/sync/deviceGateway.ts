@@ -19,7 +19,7 @@
 //
 // Commandes v1 :
 //   - dump-diagnostics  → rapport complet (diagnostics.ts) en résultat
-//   - clear-sync-block  → lève le disjoncteur (après revue)
+//   - clear-sync-block  → réactive la synchronisation (ancien disjoncteur supprimé)
 //   - lock-sync         → pose le bloc local (motif dans params.reason)
 //   - unlock-sync       → lève le bloc local
 //
@@ -32,11 +32,11 @@
 
 //////// 1. La boucle d'exécution (processDeviceCommands, buildLocalDiagnostics, setRemoteRowsDeleted) ///////////
 
+import { clearPendingReviewSyncBlock, loadPendingReview, savePendingReview, type PendingReview } from './pendingReview';
 import { Platform } from 'react-native';
 
 import { APP_SCHEMA, DEVICE_COMMANDS_TABLE, VAULT_FILES_TABLE, supabase } from './supabaseClient';
 import { errorMessage } from '../errorMessage';
-import { clearPendingReviewSyncBlock, loadPendingReview, savePendingReview, type PendingReview } from './pendingReview';
 import type { DiagnosticsReport } from './diagnostics';
 // Le chemin du journal est défini dans syncEngine (repris ici sans
 // import pour éviter un cycle : syncEngine importe cette passerelle).
@@ -55,7 +55,10 @@ async function myDeviceInfo(): Promise<{ id: string; name: string } | null> {
   return window.vaults.deviceInfo();
 }
 
-async function myAppVersion(): Promise<string | null> {
+// Exportée : version installée sur TOUTES les plateformes (Android :
+// constantes natives ; desktop : updater.getVersion) — utilisée aussi par
+// le journal publié (sync_journals.app_version).
+export async function myAppVersion(): Promise<string | null> {
   if (Platform.OS === 'android') {
     const constants = Platform.constants as { appVersion?: string };
     if (typeof constants.appVersion === 'string' && constants.appVersion) return constants.appVersion;
@@ -212,6 +215,13 @@ async function executeCommand(
       const chemin = await exporterDiagnosticDansCoffre();
       return 'diagnostic exporté : ' + chemin;
     }
+    case 'export-index': {
+      // Inventaire local (fichiers + dossiers) : .123ecriture/devices/<id>.json
+      // + table vault_device_inventories.
+      const { publishDeviceInventory } = await import('./deviceInventory');
+      return 'inventaire exporté : ' + (await publishDeviceInventory(remoteVaultId));
+    }
+    // Disjoncteur (comme main) : bloc persistant dans pending-review.json.
     case 'clear-sync-block':
       await clearPendingReviewSyncBlock(vault);
       return 'disjoncteur levé';

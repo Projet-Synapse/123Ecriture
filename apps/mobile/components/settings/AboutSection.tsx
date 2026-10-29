@@ -9,6 +9,7 @@ import {
 import {
   fetchLatestRelease,
   installedAppVersion,
+  installedBuildNumber,
   isNewerVersion,
   openUrl,
   type LatestRelease,
@@ -85,7 +86,7 @@ function MobileUpdateCard() {
       {latest ? (
         <>
           {aJour ? (
-            <Text style={{ color: theme.textMuted }}>✅ À jour (dernière publiée : v{latest.version}).</Text>
+            <Text style={{ color: theme.textMuted }}>✅ À jour (v{installed}) — dernière stable publiée : v{latest.version}.</Text>
           ) : (
             <>
               <Text style={{ color: theme.text }}>⬆️ Nouvelle version disponible : v{latest.version}</Text>
@@ -228,6 +229,7 @@ export function AboutSection() {
           <Text style={[s.cardTitle, { color: theme.text }]}>Version installée</Text>
           <Text style={[s.cardValue, { color: theme.textMuted }]}>
             123Ecriture {installedVersion ? `v${installedVersion}` : '(version inconnue)'}
+            {installedBuildNumber() !== null ? ` (build ${installedBuildNumber()})` : ''}
           </Text>
         </View>
         {shortcuts}

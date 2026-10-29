@@ -57,6 +57,11 @@ jobs:
       - name: Installer le SDK Android
         uses: android-actions/setup-android@v4
 
+      # versionName/versionCode RÉELS (avant : versionCode toujours 1 et
+      # versionName figé → l'updater comparait de fausses versions).
+      - name: Fixer versionName / versionCode
+        run: node scripts/set-android-version.mjs
+
       - name: Générer le projet natif Android (expo prebuild)
         working-directory: apps/mobile
         run: npx expo prebuild --platform android --no-install

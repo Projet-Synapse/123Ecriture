@@ -37,6 +37,12 @@ function applyAutoFlags(): void {
 }
 
 applyAutoFlags();
+// Version de TEST (ex. 0.4.96-test.9) : electron-updater active alors
+// allowPrerelease tout seul et irait chercher les prereleases de test
+// (sans latest.yml). On le force à false : seule la release publique
+// « latest » est consultée ; 0.4.95 < 0.4.96-test.9 → pas de retour en
+// arrière, et la future 0.4.96 publique sera proposée normalement.
+autoUpdater.allowPrerelease = false;
 // Diagnostic : sans logger, electron-updater ne journalise quasiment rien.
 // console suffit comme logger (il expose bien info/warn/error/debug) —
 // visible dans la console de l'app en dev, et dans les logs du processus en
