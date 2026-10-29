@@ -1,6 +1,6 @@
 {
   "name": "@123ecriture/mobile",
-  "version": "0.4.90",
+  "version": "0.4.96-test.12",
   "author": "Catelyn2332",
   "private": true,
   "main": "index.ts",
@@ -42,6 +42,7 @@
     "@uiw/react-codemirror": "^4.25.12",
     "diff-match-patch": "^1.0.5",
     "expo": "~57.0.25",
+    "expo-application": "~57.0.3",
     "expo-document-picker": "~57.0.3",
     "expo-file-system": "~57.0.4",
     "expo-notifications": "~57.0.22",

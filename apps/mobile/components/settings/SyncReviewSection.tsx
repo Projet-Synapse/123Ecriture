@@ -4,7 +4,7 @@ import { Pressable, Text, View } from 'react-native';
 import { errorMessage } from '../../lib/errorMessage';
 import { setRemoteRowsDeleted } from '../../lib/sync/deviceGateway';
 import { restoreRemoteFile } from '../../lib/sync/cloud';
-import { loadPendingReview, savePendingReview, type PendingReview } from '../../lib/sync/pendingReview';
+import { clearPendingReviewSyncBlock, loadPendingReview, savePendingReview, type PendingReview } from '../../lib/sync/pendingReview';
 import {
   approveRemoteDeletions,
   describeFailures,
@@ -97,10 +97,12 @@ export function SyncReviewSection() {
     [reload],
   );
 
+  // Levée du disjoncteur : la file est RELUE (jamais l'état affiché, qui
+  // peut dater de 2,5 s) — seul le bloc est retiré, rien d'autre écrasé.
   const leverDisjoncteur = () =>
     run(async () => {
       if (typeof window === 'undefined' || !window.vault) throw new Error('Pont vault absent.');
-      await savePendingReview(window.vault, { ...(review ?? {}), syncBlocked: undefined });
+      await clearPendingReviewSyncBlock(window.vault);
     });
 
   const confirmerSuppressionsMassives = () =>
@@ -113,7 +115,15 @@ export function SyncReviewSection() {
       // applique maintenant, en connaissance de cause).
       const supabaseMod = await import('../../lib/sync/deviceGateway');
       await supabaseMod.setRemoteRowsDeleted(remoteVaultId, paths, true);
-      await savePendingReview(window.vault, { ...(review ?? {}), suspiciousDeletions: undefined });
+      // APPROBATION PERSISTÉE : sans elle, le moteur recalcule la même liste
+      // au cycle suivant (fichiers encore présents ici quand ils ont été
+      // supprimés dans le cloud) et relève le garde-fou aussitôt.
+      const approved = new Set([...(review?.approvedDeletions?.paths ?? []), ...paths]);
+      await savePendingReview(window.vault, {
+        ...(review ?? {}),
+        suspiciousDeletions: undefined,
+        approvedDeletions: { at: new Date().toISOString(), paths: [...approved] },
+      });
     });
 
   const annulerSuppressionsMassives = () =>
