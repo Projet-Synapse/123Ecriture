@@ -32,6 +32,9 @@ export type SyncSummary = {
   // dernier redevient silencieux — l'appelant relance alors un cycle,
   // sinon une modif de tâches/préférences attend un déclencheur externe.
   retryAfterMs?: number;
+  // Suppressions venues d'un autre appareil EN ATTENTE DE VALIDATION ici
+  // (fichiers conservés) — badge de l'indicateur de synchro.
+  pendingRemoteDeletions?: number;
 };
 
 // État de synchro par coffre : ensemble des fichiers présents à la fin du
