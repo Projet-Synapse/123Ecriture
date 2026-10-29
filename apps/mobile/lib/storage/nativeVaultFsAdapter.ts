@@ -1,4 +1,5 @@
 import { Alert } from "react-native";
+import { emitVaultTreeRefreshed } from './vaultTreeEvents';
 import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system/legacy";
 
@@ -54,7 +55,23 @@ export type VaultFsAdapterDeps = {
   getRootUri: () => Promise<string | null>;
   markDirty: (relPath: string) => void;
   confirm: (title: string, message: string) => Promise<boolean>;
+  // Cache d'index PERSISTÉ (hors du coffre) : l'UI reste lisible même si
+  // l'accès au dossier est perdu (permission SAF révoquée, carte retirée…).
+  loadIndexCache?: (rootUri: string) => Promise<[string, VaultFsIndexEntry][] | null>;
+  saveIndexCache?: (rootUri: string, entries: [string, VaultFsIndexEntry][]) => Promise<void>;
+  onPermissionLost?: (rootUri: string) => void;
+  // Parcours complet terminé APRÈS un affichage depuis le cache.
+  onIndexRefreshed?: () => void;
 };
+
+// Accès au dossier du coffre PERDU : jamais interprété comme « coffre vide »
+// (aucune suppression, aucune tombstone) — l'utilisateur doit re-sélectionner.
+export class VaultPermissionLostError extends Error {
+  constructor() {
+    super("Accès au dossier du coffre perdu : re-sélectionne le dossier (Réglages → Coffres). Rien n'a été supprimé.");
+    this.name = "VaultPermissionLostError";
+  }
+}
 
 // Fichiers temporaires de writeFileAtomic (VaultFsCore.kt) : jamais indexés.
 const TEMP_PREFIX = ".vfs-";
@@ -103,6 +120,13 @@ export function createVaultFsAdapter(deps: VaultFsAdapterDeps) {
   let indexedRoot: string | null = null;
   let lastErrors: { relPath: string; message: string }[] = [];
   let cachedTree: VaultTreeNode[] | null = null;
+  let permissionLost = false;
+  // Index COMPLET (parcours natif ou cache chargé) ? read()/write() ajoutent
+  // des entrées isolées à l'index : sa taille ne prouve PAS qu'il est complet.
+  let fullyIndexed = false;
+  // Cache d'index déjà tenté pour ce coffre (affichage instantané).
+  let cacheTried = false;
+  let refreshing: Promise<void> | null = null;
 
   async function root(): Promise<string> {
     const uri = await deps.getRootUri();
@@ -111,12 +135,33 @@ export function createVaultFsAdapter(deps: VaultFsAdapterDeps) {
       index = new Map();
       indexedRoot = uri;
       cachedTree = null;
+      fullyIndexed = false;
+      cacheTried = false;
     }
     return uri;
   }
 
-  async function refresh(): Promise<void> {
+  // Un seul parcours natif à la fois (arrière-plan + appel direct).
+  function refresh(): Promise<void> {
+    if (!refreshing) refreshing = doRefresh().finally(() => { refreshing = null; });
+    return refreshing;
+  }
+
+  async function doRefresh(): Promise<void> {
     const treeUri = await root();
+    let allowed = true;
+    try {
+      allowed = await fs.hasPermission(treeUri);
+    } catch {
+      allowed = false;
+    }
+    if (!allowed) {
+      // On GARDE l'index connu (cache) : lecture seule, rien ne paraît supprimé.
+      if (!permissionLost) deps.onPermissionLost?.(treeUri);
+      permissionLost = true;
+      throw new VaultPermissionLostError();
+    }
+    permissionLost = false;
     const { entries, errors } = await fs.listTree(treeUri);
     const next = new Map<string, VaultFsIndexEntry>();
     for (const e of entries as VaultFsTreeEntry[]) {
@@ -138,8 +183,10 @@ export function createVaultFsAdapter(deps: VaultFsAdapterDeps) {
       }
     }
     index = next;
+    fullyIndexed = true;
     lastErrors = errors;
     cachedTree = null;
+    await deps.saveIndexCache?.(treeUri, [...index.entries()]).catch(() => undefined);
   }
 
   function invalidate(): void {
@@ -253,10 +300,30 @@ export function createVaultFsAdapter(deps: VaultFsAdapterDeps) {
       return liste.length > 0 ? liste[liste.length - 1].path : null;
     },
     getCurrentPath: () => deps.getRootUri(),
+    // AFFICHAGE IMMÉDIAT : premier appel = cache d'index persisté (aucun
+    // parcours SAF bloquant), parcours complet en arrière-plan puis
+    // onIndexRefreshed. Le cache ne rend PAS l'index « complet » : la
+    // synchro (suppressions) attend toujours le vrai parcours.
     listTree: async () => {
-      await root();
+      const uri = await root();
       if (cachedTree) return cachedTree;
-      if (index.size === 0) await refresh();
+      if (!fullyIndexed && !cacheTried) {
+        cacheTried = true;
+        const cached = await deps.loadIndexCache?.(uri).catch(() => null);
+        if (cached && cached.length > 0) {
+          index = new Map([...cached, ...index]);
+          cachedTree = buildTreeFromIndex(index);
+          void refresh().then(() => deps.onIndexRefreshed?.(), () => undefined);
+          return cachedTree;
+        }
+      }
+      if (!fullyIndexed) {
+        try {
+          await refresh();
+        } catch (error) {
+          if (!(error instanceof VaultPermissionLostError) || index.size === 0) throw error;
+        }
+      }
       cachedTree = buildTreeFromIndex(index);
       return cachedTree;
     },
@@ -546,8 +613,41 @@ export function createVaultFsAdapter(deps: VaultFsAdapterDeps) {
   return {
     adapter,
     ensureIndexed: async () => {
-      await root();
-      if (index.size === 0) await refresh();
+      const uri = await root();
+      if (fullyIndexed) return;
+      const cached = await deps.loadIndexCache?.(uri).catch(() => null);
+      if (cached && cached.length > 0) index = new Map([...cached, ...index]);
+      try {
+        await refresh();
+      } catch (error) {
+        // Permission perdue mais cache présent : l'UI reste lisible.
+        if (!(error instanceof VaultPermissionLostError) || index.size === 0) throw error;
+      }
+    },
+    // Vérifie l'accès AVANT un cycle de synchro : lève VaultPermissionLostError.
+    assertAccess: async () => {
+      const uri = await root();
+      let ok = false;
+      try {
+        ok = await fs.hasPermission(uri);
+      } catch {
+        ok = false;
+      }
+      if (!ok) {
+        if (!permissionLost) deps.onPermissionLost?.(uri);
+        permissionLost = true;
+        throw new VaultPermissionLostError();
+      }
+      permissionLost = false;
+    },
+    isPermissionLost: () => permissionLost,
+    isFullyIndexed: () => fullyIndexed,
+    // Hachage CÔTÉ NATIF (Kotlin) : le JS ne construit plus de tableau
+    // d'octets (une note de 36 Mo = des centaines de Mo en Hermes).
+    hashFile: async (relPathRaw: string): Promise<{ hash: string; size: number }> => {
+      const relPath = normalizeRelPath(relPathRaw);
+      const res = await fs.readFile(await root(), relPath, "base64");
+      return { hash: res.sha256, size: res.size };
     },
     getIndexKeys: () => [...index.keys()],
     getIndexEntry: (relPath: string) => index.get(relPath),
@@ -574,11 +674,32 @@ export function alertConfirm(title: string, message: string): Promise<boolean> {
   });
 }
 
+function indexCachePath(rootUri: string): string {
+  let h = 0;
+  for (let i = 0; i < rootUri.length; i++) h = (h * 31 + rootUri.charCodeAt(i)) | 0;
+  return `${FileSystem.documentDirectory}vaultfs-index-${(h >>> 0).toString(36)}.json`;
+}
+
 export function createDefaultVaultFsAdapter(fs: VaultFsNativeModule) {
   return createVaultFsAdapter({
     fs,
     getRootUri: getActiveVaultRootUri,
     markDirty: markVaultFileDirty,
     confirm: alertConfirm,
+    loadIndexCache: async (rootUri) => {
+      const raw = await FileSystem.readAsStringAsync(indexCachePath(rootUri));
+      const parsed = JSON.parse(raw) as { rootUri: string; entries: [string, VaultFsIndexEntry][] };
+      return parsed.rootUri === rootUri ? parsed.entries : null;
+    },
+    saveIndexCache: (rootUri, entries) =>
+      FileSystem.writeAsStringAsync(indexCachePath(rootUri), JSON.stringify({ rootUri, entries })),
+    onIndexRefreshed: emitVaultTreeRefreshed,
+    onPermissionLost: () => {
+      Alert.alert(
+        "Accès au coffre perdu",
+        "Android a retiré l'accès au dossier du coffre. Tes notes restent lisibles depuis le cache et RIEN n'a été supprimé. Re-sélectionne le dossier pour reprendre (Réglages → Coffres → Ouvrir un coffre existant).",
+        [{ text: "OK" }],
+      );
+    },
   });
 }

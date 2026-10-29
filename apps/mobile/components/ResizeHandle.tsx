@@ -38,9 +38,11 @@ type Props = {
   onTouchMove?: (x: number) => void;
   onTouchEnd?: () => void;
   onToggleCollapsed: () => void;
+  /** Masque le chevron ◀ (l'explorateur a désormais son bouton en haut). */
+  hideChevron?: boolean;
 };
 
-export function ResizeHandle({ theme, side, collapsed, isDragging, onMouseDown, onTouchStart, onTouchMove, onTouchEnd, onToggleCollapsed }: Props) {
+export function ResizeHandle({ theme, side, collapsed, isDragging, onMouseDown, onTouchStart, onTouchMove, onTouchEnd, onToggleCollapsed, hideChevron }: Props) {
   const touchEnabled = Platform.OS !== 'web' && Boolean(onTouchStart && onTouchMove && onTouchEnd);
   const handleTouchGrant = (event: GestureResponderEvent) => onTouchStart?.(event.nativeEvent.pageX);
   const handleTouchMove = (event: GestureResponderEvent) => onTouchMove?.(event.nativeEvent.pageX);
@@ -75,6 +77,7 @@ export function ResizeHandle({ theme, side, collapsed, isDragging, onMouseDown, 
         : {})}
     >
       <View style={[styles.grip, { backgroundColor: theme.border }]} />
+      {!hideChevron && (
       <Pressable
         onPress={onToggleCollapsed}
         style={[
@@ -88,6 +91,7 @@ export function ResizeHandle({ theme, side, collapsed, isDragging, onMouseDown, 
           {side === 'left' ? (collapsed ? '▶' : '◀') : collapsed ? '◀' : '▶'}
         </Text>
       </Pressable>
+      )}
     </View>
   );
 }

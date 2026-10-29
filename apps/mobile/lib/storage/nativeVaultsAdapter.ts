@@ -1,5 +1,4 @@
 import * as FileSystem from 'expo-file-system/legacy';
-import { Platform } from 'react-native';
 
 import {
   addVault,
@@ -112,7 +111,8 @@ function decodeFolderNameFromUri(uri: string): string {
 // Android est une entrée de registre « cloud:… » liée à un coffre distant ;
 // les anciennes entrées SAF restent dans le registre (« à importer » si non
 // liées) et leurs dossiers ne sont JAMAIS modifiés ni vidés.
-const CLOUD_ONLY = Platform.OS === 'android';
+// test.3 : retour au coffre LOCAL sur Android (vault-fs) — mode cloud-only désactivé.
+const CLOUD_ONLY = false as boolean;
 export const CLOUD_ONLY_ADD_EXISTING_MESSAGE =
   'Sur Android, les coffres vivent dans le cloud : connecte un coffre de ton compte (Réglages → Synchronisation). Un ancien dossier du téléphone peut être importé une fois, sans y écrire.';
 

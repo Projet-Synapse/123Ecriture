@@ -12,7 +12,7 @@ import { PrivacyDataSection } from './settings/PrivacyDataSection';
 import { PropertiesManagementSection } from './settings/PropertiesManagementSection';
 import { SyncJournalSection } from './settings/SyncJournalSection';
 import { TrashSection } from './settings/TrashSection';
-import { VaultSwitcherSection } from './settings/VaultSwitcherSection';
+import { SyncSettingsSection } from './settings/SyncSettingsSection';
 
 // ✒️ 123ECRITURE — components/SettingsScreen.tsx — l'écran Paramètres
 //////////////////////////////////////////////////////////////////////////////
@@ -61,8 +61,9 @@ type SettingsSectionDef = {
 
 const SETTINGS_SECTIONS: SettingsSectionDef[] = [
   { id: 'personalization', label: 'Personnalisation de l’UI', icon: '🎨' },
-  // La bascule entre les coffres — absente du mobile ailleurs, elle vit ici.
-  { id: 'coffres', label: 'Coffres', icon: '📚' },
+  // Les VRAIS paramètres de synchronisation (types, coffres, dossiers vides,
+  // Wi-Fi) + la bascule entre coffres.
+  { id: 'coffres', label: 'Synchronisation', icon: '🔄' },
   { id: 'account', label: 'Compte et synchronisation', icon: '👤' },
   { id: 'journal', label: 'Journal de synchronisation', icon: '🔄' },
   { id: 'files', label: 'Gestion des fichiers et des liens', icon: '🗂️' },
@@ -78,7 +79,7 @@ function renderSection(id: SettingsSectionId) {
     case 'personalization':
       return <PersonalizationCard />;
     case 'coffres':
-      return <VaultSwitcherSection />;
+      return <SyncSettingsSection />;
     case 'account':
       return <AccountSyncSection />;
     case 'journal':

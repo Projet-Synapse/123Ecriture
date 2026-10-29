@@ -207,6 +207,23 @@ describe("adaptateur VaultFs", () => {
     expect(getIndexKeys()).toEqual(["note.md"]);
   });
 
+  it("ensureIndexed : un index partiel (lecture isolée) déclenche quand même le parcours complet", async () => {
+    fs.dirs.add("🌲 ENVIRONNEMENT");
+    fs.files.set(".123ecriture/state.json", "{}");
+    fs.files.set("Sans titre.base", "b");
+    const { adapter, getIndexKeys, ensureIndexed } = make();
+    await adapter.readNote(".123ecriture/state.json");
+    expect(getIndexKeys()).toEqual([".123ecriture/state.json"]);
+    await ensureIndexed();
+    expect(getIndexKeys()).toEqual(expect.arrayContaining(["🌲 ENVIRONNEMENT", "Sans titre.base"]));
+  });
+
+  it("hashFile : empreinte calculée côté natif (aucun tableau d'octets en JS), chemin Windows normalisé", async () => {
+    fs.files.set("A/grosse note.md", "contenu");
+    const { hashFile } = make();
+    await expect(hashFile("A\\grosse note.md")).resolves.toEqual({ hash: "x", size: 7 });
+  });
+
   it("dossier illisible = contenu INCONNU : les fichiers déjà indexés ne disparaissent pas", async () => {
     fs.dirs.add("WORLDBUILDING");
     fs.files.set("WORLDBUILDING/carte.md", "c");
@@ -288,5 +305,49 @@ describe("adaptateur VaultFs", () => {
     await adapter.listTree();
     const created = await adapter.createNote("Note", undefined, "markdown");
     expect(created.relPath).toBe("Note 2.mdx");
+  });
+});
+
+describe("explorateur instantané (cache d'index)", () => {
+  it("listTree rend le cache SANS attendre le parcours, puis notifie ; le cache ne vaut pas index complet", async () => {
+    fs.dirs.add("Réel");
+    fs.dirs.add("Réel/Vide");
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const realList = fs.listTree.bind(fs);
+    fs.listTree = async (u: string) => {
+      await gate;
+      return realList(u);
+    };
+    let refreshed = 0;
+    const { adapter, isFullyIndexed } = createVaultFsAdapter({
+      fs,
+      getRootUri: async () => ROOT,
+      markDirty: () => undefined,
+      confirm: async () => true,
+      loadIndexCache: async () => [
+        ["Ancien", { uri: "u1", isDirectory: true }],
+        ["Ancien/Dossier vide", { uri: "u2", isDirectory: true }],
+      ],
+      onIndexRefreshed: () => refreshed++,
+    });
+    const first = await adapter.listTree();
+    expect(JSON.stringify(first)).toContain("Dossier vide");
+    expect(isFullyIndexed()).toBe(false);
+    release();
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(refreshed).toBe(1);
+    expect(isFullyIndexed()).toBe(true);
+    const second = JSON.stringify(await adapter.listTree());
+    expect(second).toContain("Réel/Vide");
+    expect(second).not.toContain("Ancien");
+  });
+
+  it("sans cache : parcours complet comme avant", async () => {
+    fs.dirs.add("D");
+    const { adapter, isFullyIndexed } = make();
+    expect(JSON.stringify(await adapter.listTree())).toContain('"D"');
+    expect(isFullyIndexed()).toBe(true);
   });
 });

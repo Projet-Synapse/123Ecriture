@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { onVaultTreeRefreshed } from '../../lib/storage/vaultTreeEvents';
 import {
   AppState,
   GestureResponderEvent,
@@ -54,6 +55,8 @@ import { OccurrencesPanel } from '../OccurrencesPanel';
 import { PropertiesBlock } from '../properties/PropertiesBlock';
 import { PropertiesPanel } from '../properties/PropertiesPanel';
 import { ResizeHandle } from '../ResizeHandle';
+import { ExplorerPager, type ExplorerPagerHandle } from '../explorer/ExplorerPager';
+import { ExplorerToggleButton } from '../explorer/ExplorerToggleButton';
 import { RightSidebar, type SidebarTab } from '../vault/RightSidebar';
 import { OutlinePanel } from '../vault/OutlinePanel';
 import { SearchDialog } from '../dialogs/SearchDialog';
@@ -300,11 +303,33 @@ export function NotesScreen({
   const explorerPanel = useResizablePanel('explorer', { min: 180, max: 480, edge: 1 });
   // Largeur RÉELLE de l'explorateur (la même que le style du panneau plus
   // bas) — pilote l'entassement des icônes de l'en-tête.
-  const explorerWidth = Math.min(explorerPanel.width, windowWidth * 0.6);
+  // Mobile (natif) : l'explorateur occupe tout l'écran (pager, voir plus bas).
+  const explorerWidth = Platform.OS !== 'web' ? windowWidth : Math.min(explorerPanel.width, windowWidth * 0.6);
   // Sous ~280 dp, la rangée de 5 icônes (créer, recherche, tri, actualiser,
   // tags) ne tient pas à 34 dp fixes (sur un téléphone l'explorateur fait
   // ~162 dp) : elles se partagent la largeur (searchButtonFlex).
   const explorerHeaderStacked = explorerWidth < 280;
+  // MOBILE (natif) : l'explorateur n'a plus de largeur réglable — il prend
+  // tout l'écran dans un pager horizontal (ExplorerPager) et l'éditeur est la
+  // page suivante. « Masquer » = aller à l'éditeur. Desktop/web : repli
+  // classique via useResizablePanel (inchangé).
+  const isNativeLayout = Platform.OS !== 'web';
+  const pagerRef = useRef<ExplorerPagerHandle>(null);
+  const [pagerPage, setPagerPage] = useState<0 | 1>(0);
+  const explorerHidden = isNativeLayout ? pagerPage === 1 : explorerPanel.collapsed;
+  const hideExplorer = useCallback(() => {
+    if (isNativeLayout) pagerRef.current?.showEditor();
+    else if (!explorerPanel.collapsed) explorerPanel.toggleCollapsed();
+  }, [isNativeLayout, explorerPanel]);
+  const showExplorer = useCallback(() => {
+    if (isNativeLayout) pagerRef.current?.showExplorer();
+    else if (explorerPanel.collapsed) explorerPanel.toggleCollapsed();
+  }, [isNativeLayout, explorerPanel]);
+  // Ouvrir une note depuis l'explorateur (arbre, favoris, tags) fait
+  // défiler jusqu'à l'éditeur sur mobile. No-op sur desktop.
+  const revealEditor = useCallback(() => {
+    if (isNativeLayout) pagerRef.current?.showEditor();
+  }, [isNativeLayout]);
   const rightPanelWidth = useResizablePanel('rightPanel', {
     min: 220,
     max: 480,
@@ -469,6 +494,12 @@ export function NotesScreen({
   // ajoutés depuis l'explorateur Windows pendant que l'app était en
   // arrière-plan apparaissent au retour (walkTree relit le disque à chaque
   // appel, pas de cache). Natif : voir rescanVault (parcours SAF).
+  // Natif : arbre affiché depuis le cache d'index, relu après le parcours.
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    return onVaultTreeRefreshed(() => void refreshTree());
+  }, [refreshTree]);
+
   useEffect(() => {
     if (Platform.OS !== 'web') return;
     const onFocus = () => void refreshTree();
@@ -2044,8 +2075,9 @@ export function NotesScreen({
       setSelectedRelPaths(new Set());
       setLastClickedRelPath(node.relPath);
       void openNote(node);
+      revealEditor();
     },
-    [tree, collapsedPaths, lastClickedRelPath, openNote],
+    [tree, collapsedPaths, lastClickedRelPath, openNote, revealEditor],
   );
 
   // Changer de coffre invalide toute sélection en cours — les relPaths
@@ -2216,10 +2248,9 @@ export function NotesScreen({
 
   const activeNoteIsRenaming = activeNote !== null && renamingRelPath === activeNote.relPath;
 
-  return (
-    // paddingTop : rien ne réservait la hauteur de la barre système — le
-    // chemin du coffre et le titre inline passaient SOUS l'horloge.
-    <View style={[styles.row, { paddingTop: StatusBar.currentHeight ?? 0 }]}>
+  // Explorateur et éditeur extraits en constantes : rendus soit dans la
+  // rangée desktop/web (inchangée), soit dans le pager horizontal mobile.
+  const renderExplorer = (pagerWidth?: number) => (
       <View
         ref={listAreaRef}
         style={[
@@ -2227,16 +2258,20 @@ export function NotesScreen({
           {
             // Même largeur que explorerWidth (plus haut) — qui pilote aussi
             // l'empilement de l'en-tête.
-            width: explorerWidth,
+            width: pagerWidth ?? explorerWidth,
+            borderRightWidth: pagerWidth ? 0 : 1,
             borderColor: theme.border,
             backgroundColor: theme.surface,
           },
         ]}
       >
         <View style={styles.listHeader}>
-          <Text style={[styles.vaultPath, { color: theme.textMuted }]} numberOfLines={1}>
-            {vaultPath}
-          </Text>
+          <View style={styles.listHeaderTop}>
+            <ExplorerToggleButton theme={theme} open onPress={hideExplorer} />
+            <Text style={[styles.vaultPath, { color: theme.textMuted, flex: 1 }]} numberOfLines={1}>
+              {vaultPath}
+            </Text>
+          </View>
           {/* Bouton « + » (v0.4.50, demande : remplacer le large « + Nouvelle
               note » par une icône à côté des autres) — il ouvre le MÊME menu
               de création que le clic droit dans le vide de l'explorateur
@@ -2331,14 +2366,17 @@ export function NotesScreen({
             {favoriteNotes.map((node) => (
               <Pressable
                 key={node.relPath}
-                onPress={() => void openNote(node)}
+                onPress={() => {
+                  void openNote(node);
+                  revealEditor();
+                }}
                 style={[
                   styles.favoriteRow,
                   node.relPath === activeNote?.relPath && { backgroundColor: `${theme.accent}22` },
                 ]}
               >
                 <Text style={styles.icon}><NoteIconByKind kind={node.kind} size={14} /></Text>
-                <Text style={{ color: theme.text }} numberOfLines={1}>
+                <Text style={{ color: theme.text, flexShrink: 1 }} numberOfLines={1} ellipsizeMode="tail">
                   {node.name}
                 </Text>
               </Pressable>
@@ -2396,7 +2434,7 @@ export function NotesScreen({
                   <View key={group.tag}>
                     <Pressable onPress={() => toggleExpandedTag(group.tag)} style={styles.tagRow}>
                       <Text style={styles.icon}>{isExpanded ? '📂' : '📁'}</Text>
-                      <Text style={{ color: theme.text }} numberOfLines={1}>
+                      <Text style={{ color: theme.text, flexShrink: 1 }} numberOfLines={1} ellipsizeMode="tail">
                         #{group.tag} ({group.notes.length})
                       </Text>
                     </Pressable>
@@ -2404,11 +2442,14 @@ export function NotesScreen({
                       group.notes.map((note) => (
                         <Pressable
                           key={note.relPath}
-                          onPress={() => openNoteByRelPath(note.relPath)}
+                          onPress={() => {
+                            openNoteByRelPath(note.relPath);
+                            revealEditor();
+                          }}
                           style={styles.tagNoteRow}
                         >
                           <Text style={styles.icon}>📝</Text>
-                          <Text style={{ color: theme.text }} numberOfLines={1}>
+                          <Text style={{ color: theme.text, flexShrink: 1 }} numberOfLines={1} ellipsizeMode="tail">
                             {note.name}
                           </Text>
                         </Pressable>
@@ -2419,17 +2460,17 @@ export function NotesScreen({
           </ScrollView>
         )}
       </View>
-      <ResizeHandle
-        theme={theme}
-        side="left"
-        collapsed={explorerPanel.collapsed}
-        isDragging={explorerPanel.isDragging}
-        onMouseDown={explorerPanel.onHandleMouseDown}
-        onTouchStart={explorerPanel.onHandleTouchStart}
-        onTouchMove={explorerPanel.onHandleTouchMove}
-        onTouchEnd={explorerPanel.onHandleTouchEnd}
-        onToggleCollapsed={explorerPanel.toggleCollapsed}
-      />
+  );
+
+  const editorArea = (
+    <View style={styles.row}>
+      {explorerHidden && (
+        // Rail de réouverture (explorateur masqué, ou page éditeur sur
+        // mobile) : le même bouton façon Obsidian, en haut à gauche.
+        <View style={[styles.reopenRail, { borderColor: theme.border, backgroundColor: theme.surface }]}>
+          <ExplorerToggleButton theme={theme} open={false} onPress={showExplorer} />
+        </View>
+      )}
       <View style={styles.editor}>
         {activeNote ? (
           <>
@@ -2962,6 +3003,43 @@ export function NotesScreen({
           </View>
         )}
       </View>
+    </View>
+  );
+
+  return (
+    // paddingTop : rien ne réservait la hauteur de la barre système — le
+    // chemin du coffre et le titre inline passaient SOUS l'horloge.
+    <View style={[styles.row, { paddingTop: StatusBar.currentHeight ?? 0 }]}>
+      {/* MOBILE (natif) : pager plein écran explorateur ⇄ éditeur, barre de
+          défilement horizontale à la place de la poignée. DESKTOP/WEB :
+          rangée explorateur | poignée | éditeur, inchangée. */}
+      {isNativeLayout ? (
+        <ExplorerPager
+          ref={pagerRef}
+          theme={theme}
+          scrollEnabled={draggingRelPath === null}
+          onPageChange={setPagerPage}
+          explorer={renderExplorer}
+          editor={editorArea}
+        />
+      ) : (
+        <>
+          {renderExplorer()}
+      <ResizeHandle
+        theme={theme}
+        side="left"
+        collapsed={explorerPanel.collapsed}
+        isDragging={explorerPanel.isDragging}
+        onMouseDown={explorerPanel.onHandleMouseDown}
+        onTouchStart={explorerPanel.onHandleTouchStart}
+        onTouchMove={explorerPanel.onHandleTouchMove}
+        onTouchEnd={explorerPanel.onHandleTouchEnd}
+        onToggleCollapsed={explorerPanel.toggleCollapsed}
+        hideChevron
+      />
+          {editorArea}
+        </>
+      )}
 
       {/* Un seul MoveDialog pour les deux usages — "Déplacer vers…" sur UN
           élément (movingNode) et "Déplacer…" groupé sur la multi-sélection
@@ -3191,6 +3269,18 @@ const styles = StyleSheet.create({
   listHeader: {
     padding: 12,
     gap: 8,
+  },
+  listHeaderTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginLeft: -6,
+  },
+  reopenRail: {
+    width: 40,
+    alignItems: 'center',
+    paddingTop: 8,
+    borderRightWidth: 1,
   },
   vaultPath: {
     fontSize: 11,

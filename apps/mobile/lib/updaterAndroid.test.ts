@@ -13,7 +13,7 @@ describe('semver de l’updater Android', () => {
     expect(isNewerVersion('0.4.95', '0.4.96-test.1')).toBe(false);
     expect(isNewerVersion('0.4.96', '0.4.96-test.2')).toBe(true);
     expect(isNewerVersion('0.4.96-test.1', '0.4.96-test.2')).toBe(false);
-    expect(compareSemver('0.4.96-test.10', '0.4.96-test.2')).toBe(1);
+    expect(compareSemver('0.4.96-test.12', '0.4.96-test.2')).toBe(1);
   });
   it('jamais proposer une version ≤ installée', () => {
     expect(isNewerVersion('0.4.90', '0.4.95')).toBe(false);
