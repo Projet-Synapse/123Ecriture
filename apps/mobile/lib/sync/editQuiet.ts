@@ -26,15 +26,26 @@
 
 //////// 1. Le seuil et le test « chaud » (SYNC_EDIT_QUIET_MS, isEditHot) ///////////
 
+import { SYNCED_META_FILES } from './syncRules';
+
 export const SYNC_EDIT_QUIET_MS = 60_000;
+// Métadonnées synchronisées (tâches, listes, préférences, apparence) :
+// jamais « tapées » dans un éditeur, écrites d'un bloc par l'app — 5 s
+// suffisent à absorber une rafale d'écritures (création + réordonnancement)
+// sans retarder d'une minute l'envoi d'une tâche.
+export const SYNC_META_EDIT_QUIET_MS = 5_000;
+
+export function editQuietMsFor(relPath: string): number {
+  return SYNCED_META_FILES.includes(relPath.split('\\').join('/')) ? SYNC_META_EDIT_QUIET_MS : SYNC_EDIT_QUIET_MS;
+}
 
 // « Chaud » = modifié trop récemment pour être synchronisé sans risque.
 // Un horodatage FUTUR (horloge de l'appareil décalée en avant) n'est JAMAIS
 // chaud : un fichier ne doit pas rester bloqué éternellement à cause d'une
 // horloge fausse — il est traité comme froid et synchronisé normalement.
-export function isEditHot(modifiedAt: number, nowMs: number): boolean {
+export function isEditHot(modifiedAt: number, nowMs: number, quietMs: number = SYNC_EDIT_QUIET_MS): boolean {
   const age = nowMs - modifiedAt;
-  return age >= 0 && age < SYNC_EDIT_QUIET_MS;
+  return age >= 0 && age < quietMs;
 }
 
 //////// 2. Le partage froid/chaud des notes du cycle (splitEditHot) ///////////
@@ -49,7 +60,7 @@ export function splitEditHot<T extends { relPath: string; modifiedAt: number }>(
   const cold: T[] = [];
   const hotPaths = new Set<string>();
   for (const file of files) {
-    if (isEditHot(file.modifiedAt, nowMs)) hotPaths.add(file.relPath);
+    if (isEditHot(file.modifiedAt, nowMs, editQuietMsFor(file.relPath))) hotPaths.add(file.relPath);
     else cold.push(file);
   }
   return { cold, hotPaths };
@@ -69,8 +80,34 @@ export function noteLocalWrite(relPath: string, nowMs: number = Date.now()): voi
 // Instant (ms) où TOUS les fichiers chauds seront silencieux (+1 s de marge).
 export function quietRetryAt(files: { relPath: string; modifiedAt: number }[], hotPaths: Set<string>): number | undefined {
   let latest = 0;
-  for (const f of files) if (hotPaths.has(f.relPath) && f.modifiedAt > latest) latest = f.modifiedAt;
-  return latest > 0 ? latest + SYNC_EDIT_QUIET_MS + 1_000 : undefined;
+  for (const f of files) {
+    if (!hotPaths.has(f.relPath) || !(f.modifiedAt > 0)) continue;
+    const quietAt = f.modifiedAt + editQuietMsFor(f.relPath);
+    if (quietAt > latest) latest = quietAt;
+  }
+  return latest > 0 ? latest + 1_000 : undefined;
+}
+
+//////// 3. La base des fichiers chauds (preserveHotBases) ///////////
+
+// Un fichier CHAUD est sorti du cycle : il n'a été ni poussé ni tiré. Sa
+// base (sync-state) doit donc rester la DERNIÈRE VERSION SYNCHRONISÉE, pas
+// son hash actuel. Sinon le cycle suivant voit « local = base, cloud ≠
+// base » → pull « modifié ailleurs » qui ÉCRASE la modif jamais envoyée
+// (incident du 26/10 : tâche créée sur LORDI qui disparaît). Jamais vu
+// synchronisé (pas d'ancienne base) → aucune entrée : le cycle suivant le
+// traite en nouveau fichier (push, ou conflit si le cloud l'a aussi) —
+// jamais en suppression, puisqu'il est toujours sur le disque.
+export function preserveHotBases(
+  nextFiles: Record<string, string>,
+  hotPaths: Iterable<string>,
+  previousFiles: Record<string, string>,
+): Record<string, string> {
+  for (const relPath of hotPaths) {
+    if (relPath in previousFiles) nextFiles[relPath] = previousFiles[relPath];
+    else delete nextFiles[relPath];
+  }
+  return nextFiles;
 }
 
 export function indexedModifiedAt(entry: unknown, relPath?: string): number {

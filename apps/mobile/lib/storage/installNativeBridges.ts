@@ -5,6 +5,7 @@ import { nativeVaultsAdapter } from './nativeVaultsAdapter';
 import { nativeSyncAdapter } from './nativeSyncAdapter';
 import { nativePreferencesAdapter } from './nativePreferencesAdapter';
 import { nativeTaskListsBridge, nativeTasksBridge } from './nativeTasksAdapter';
+import { nativeCalendarBridge } from './nativeCalendarAdapter';
 import { installNativeAuthBridge } from './nativeAuthBridge';
 
 // ✒️ 123ECRITURE — lib/storage/installNativeBridges.ts — installation des ponts natifs (Android)
@@ -60,5 +61,7 @@ export function installNativeBridges(): void {
   // Tâches PAR COFFRE — voir nativeTasksAdapter.ts.
   window.tasks = nativeTasksBridge;
   window.taskLists = nativeTaskListsBridge;
+  // Calendrier PAR COFFRE (.123ecriture/events.json) — voir nativeCalendarAdapter.ts.
+  window.calendar = nativeCalendarBridge;
   installNativeAuthBridge();
 }

@@ -59,7 +59,7 @@ describe('relance après édition (tasklists.json différé)', () => {
       { relPath: 'froid.md', modifiedAt: 9_999_999 },
     ];
     const hot = new Set(['.123ecriture/tasklists.json', '.123ecriture/preferences.json']);
-    expect(quietRetryAt(files, hot)).toBe(1_005_000 + 60_000 + 1_000);
+    expect(quietRetryAt(files, hot)).toBe(1_005_000 + 5_000 + 1_000);
     expect(quietRetryAt(files, new Set())).toBeUndefined();
   });
 });

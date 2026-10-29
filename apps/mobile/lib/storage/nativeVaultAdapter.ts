@@ -178,6 +178,7 @@ export const SYNCED_META_FILES = [
   '.123ecriture/appearance.json',
   '.123ecriture/tasks.json',
   '.123ecriture/tasklists.json',
+  '.123ecriture/events.json',
   '.123ecriture/preferences.json',
 ];
 
