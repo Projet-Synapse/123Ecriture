@@ -10,17 +10,20 @@ import {
   pullFile,
   isBinaryAttachmentRelPath,
   loadSyncBase,
- heartbeatDevice, fetchMyDeviceLock } from './cloud';
+ heartbeatDevice, fetchMyDeviceLock, restoreRemoteFile, tombstoneRemoteFile } from './cloud';
+import { buildNextReference, isVersionConflictError, parseSyncState } from './versionLock';
 import { requireBridges } from './bridges';
 
 import { type SyncSummary } from './syncTypes';
-import { isTrashRelPath, selectRemoteRows } from './relPath';
-import { computeLocalDeletions, isMassiveDeletion, remoteDeletionAction } from './deletions';
+import { selectRemoteRows } from './relPath';
+import { computeLocalDeletions, isMassiveDeletion } from './deletions';
 import {
   loadPendingReview,
   savePendingReview,
   SYNC_ERROR_BLOCK_THRESHOLD,
-  type PendingReview,
+  reconcileRemoteDeletions,
+  sameRemoteDeletions,
+  type RemoteDeletionReview,
 } from './pendingReview';
 import { pickActiveRemoteVault } from './activeVault';
 import {
@@ -98,6 +101,9 @@ const SYNC_STATE_REL_PATH = '.123ecriture/sync-state.json';
 
 type SyncState = {
   files: Record<string, string>;
+  // Verrou optimiste : version serveur connue par chemin au dernier cycle.
+  // Absent dans les anciens états = version inconnue (comportement prudent).
+  versions?: Record<string, number>;
   rootPath?: string | null;
 };
 
@@ -110,19 +116,10 @@ async function loadSyncState(): Promise<SyncState> {
   const { vault } = requireBridges();
   try {
     const raw = await vault.readNote(SYNC_STATE_REL_PATH);
-    const parsed = JSON.parse(raw) as Partial<SyncState>;
-    // Jette les clés backslashed (résidus du bug de séparateurs desktop) :
-    // elles ne matcheront jamais les chemins normalisés et ne doivent pas
-    // générer de tombestones fantômes.
-    const files: Record<string, string> = {};
-    for (const [relPath, hash] of Object.entries(parsed.files ?? {})) {
-      if (relPath.includes('\\')) continue;
-      // `.trash/` n'est plus synchronisé : ses anciennes références ne
-      // doivent pas devenir des « suppressions locales » (tombstones).
-      if (isTrashRelPath(relPath)) continue;
-      files[relPath] = hash;
-    }
-    return { files, rootPath: parsed.rootPath ?? null };
+    // Lecture tolérante (versionLock.parseSyncState) : ancien format sans
+    // `versions` accepté ; clés backslashed jetées (résidus du bug de
+    // séparateurs desktop — jamais de tombestones fantômes).
+    return parseSyncState(raw);
   } catch {
     // Absent à la première synchro du coffre — repart à vide.
     return { files: {} };
@@ -261,7 +258,27 @@ export async function restoreFromTrash(
   // Sinon, on détruit la tombestone du chemin d'origine (la ligne .trash,
   // elle, disparaîtra d'elle-même au cycle suivant : absente du disque,
   // présente dans l'état → tombestone automatique).
+  let expectedVersion: number | null = null;
+  let legacyServer = false;
   if (!wasDeduped) {
+    // Verrou optimiste : la pierre tombale est LEVÉE par la RPC
+    // restore_file (version+1), jamais détruite. Ligne vivante entre-temps
+    // (autre appareil) → refus : on ne pousse rien par-dessus.
+    const restoredRow = await restoreRemoteFile(remoteVaultId, moved.relPath);
+    if (restoredRow && !restoredRow.ok) {
+      await appendJournalEntries([
+        makeJournalEntry('conflict', {
+          path: moved.relPath,
+          detail: 'restauré localement ; une version plus récente existe dans le cloud — rien écrasé, résolu au prochain cycle',
+        }),
+      ]);
+      return moved.relPath;
+    }
+    if (restoredRow) expectedVersion = restoredRow.currentVersion;
+    else legacyServer = true;
+  }
+  if (!wasDeduped && legacyServer) {
+    // Ancien serveur (migration absente) : comportement historique.
     const { error: deleteError } = await client
       .schema(APP_SCHEMA)
       .from(VAULT_FILES_TABLE)
@@ -275,7 +292,7 @@ export async function restoreFromTrash(
   const localFiles = await sync.hashVaultTree();
   const restored = localFiles.find((note) => note.relPath === moved.relPath);
   if (restored) {
-    await pushFile(remoteVaultId, ownerId, restored);
+    await pushFile(remoteVaultId, ownerId, restored, [], null, null, expectedVersion);
   }
   await appendJournalEntries([makeJournalEntry('restore', { path: moved.relPath })]);
   return moved.relPath;
@@ -298,6 +315,10 @@ async function attemptConflictMerge(
   relPath: string,
   remoteObjectPath: string | undefined,
   journal: SyncJournalEntry[],
+  // Verrou optimiste : version distante sur laquelle la fusion est bâtie ;
+  // la version obtenue est consignée dans `pushedVersions`.
+  expectedVersion: number | null = null,
+  pushedVersions: Record<string, number> = {},
 ): Promise<string | null> {
   if (isBinaryAttachmentRelPath(relPath)) return null; // jamais de fusion binaire
   const base = await loadSyncBase(relPath);
@@ -330,7 +351,8 @@ async function attemptConflictMerge(
   const tree = await sync.hashVaultTree();
   const note = tree.find((n) => n.relPath === relPath);
   if (!note) return null;
-  await pushFile(remoteVaultId, ownerId, note, journal);
+  const mergedVersion = await pushFile(remoteVaultId, ownerId, note, journal, null, null, expectedVersion);
+  if (mergedVersion !== null) pushedVersions[relPath] = mergedVersion;
   journal.push(
     makeJournalEntry('conflict', {
       path: relPath,
@@ -408,7 +430,21 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   // d'erreurs, « Synchroniser » est REFUSÉ d'office — on ne resynchronise
   // jamais par-dessus un appareil en échec. La levée est manuelle (revue,
   // ou opérateur via le fichier).
-  const pendingReview = await loadPendingReview(bridges.vault).catch(() => ({}) as PendingReview);
+  // File illisible : signalée (erreur du cycle + journal), jamais écrasée ;
+  // le cycle continue sans disjoncteur connu — aucune suppression distante
+  // ne sera appliquée de toute façon (section 2).
+  let pendingReview: { syncBlocked?: { at: string; errorCount: number; samples: string[] } } = {};
+  try {
+    pendingReview = await loadPendingReview(bridges.vault);
+  } catch (error) {
+    console.error('[sync] file de revue illisible :', error);
+    summary.errors.push(errorMessage(error));
+    try {
+      await appendJournalEntries([makeJournalEntry('error', { detail: errorMessage(error) })]);
+    } catch (journalError) {
+      console.error('[sync] journal indisponible :', journalError);
+    }
+  }
   if (pendingReview.syncBlocked) {
     const blocked = pendingReview.syncBlocked;
     const message = `Synchronisation BLOQUÉE par le disjoncteur : ${blocked.errorCount} erreur(s) au dernier cycle (${blocked.at}). Exemple : « ${blocked.samples[0] ?? '…'} ». Validez ou corrigez depuis Paramètres → Journal de synchronisation avant de resynchroniser.`;
@@ -481,6 +517,7 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   const vaultRootPath = (await bridges.vault.getCurrentPath?.()) ?? null;
   if (syncState.rootPath && syncState.rootPath !== vaultRootPath) {
     syncState.files = {};
+    syncState.versions = {};
     journal.push(
       makeJournalEntry('info', {
         detail: `État de synchro d'un autre dossier ignoré (${syncState.rootPath}) — reconstruit à vide pour ${vaultRootPath ?? 'coffre inconnu'}.`,
@@ -542,7 +579,13 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   // sur Android) ; avec jumelle, elle est masquée. Aucune réécriture des
   // données ici (script de migration dédié : scripts/migrate-backslash-relpaths.mjs).
   const selected = selectRemoteRows(remoteFiles);
-  const visibleRemoteFiles = selected.rows;
+  // Ligne héritée lue sous son chemin POSIX : sa version (verrou optimiste)
+  // est celle de la ligne BRUTE — la réutiliser pour pousser le chemin POSIX
+  // échouerait à chaque cycle. Sans version : le push crée la ligne POSIX
+  // (qui masquera ensuite l'héritée), la tombstone vise la clé brute.
+  const visibleRemoteFiles = selected.rows.map((file) =>
+    (file.rawRelPath ?? '').includes('\\') ? { ...file, version: undefined } : file,
+  );
   const activeRemoteFiles = visibleRemoteFiles.filter((file) => !file.deleted);
   const remoteByPath = new Map(activeRemoteFiles.map((file) => [file.relPath, file]));
   const tombstonedPaths = new Set(
@@ -558,16 +601,29 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   // coffre) et le cycle se termine sans supprimer ; jamais de confirmation
   // par un simple « relancer une fois ». La levée se fait par une action
   // humaine explicite depuis l'écran de revue.
+  // Chemins dont l'issue du cycle n'est pas confirmée : leur référence
+  // (hash + version) précédente est conservée telle quelle.
+  const keepPreviousRef = new Set<string>();
   const locallyDeleted = computeLocalDeletions(syncState.files, localPaths);
   if (isMassiveDeletion(locallyDeleted.length, localFiles.length)) {
-    const review: PendingReview = {
-      suspiciousDeletions: {
-        at: new Date().toISOString(),
-        count: locallyDeleted.length,
-        paths: locallyDeleted.slice(0, 200),
-      },
-    };
-    await savePendingReview(bridges.vault, review).catch(() => undefined);
+    // Fusion (jamais d'écrasement : la file porte aussi les suppressions
+    // distantes en attente). Un échec d'écriture est VISIBLE (erreur du
+    // cycle + journal) — les suppressions restent bloquées dans tous les cas.
+    try {
+      const review = await loadPendingReview(bridges.vault);
+      await savePendingReview(bridges.vault, {
+        ...review,
+        suspiciousDeletions: {
+          at: new Date().toISOString(),
+          count: locallyDeleted.length,
+          paths: locallyDeleted.slice(0, 200),
+        },
+      });
+    } catch (error) {
+      console.error('[sync] revue de suppression massive non persistée :', error);
+      summary.errors.push(`revue de suppression massive non enregistrée : ${errorMessage(error)}`);
+      journal.push(makeJournalEntry('error', { detail: `revue non enregistrée : ${errorMessage(error)}` }));
+    }
     const message = `${locallyDeleted.length} fichier(s) manquent localement (coffre : ${localFiles.length} fichiers) — suppressions BLOQUÉES et mises EN REVUE MANUELLE (pending-review.json). Si cette suppression est VOLONTAIRE, valide-la depuis Paramètres → Journal de synchronisation ; sinon, relance la synchro : tes fichiers seront restaurés depuis le cloud.`;
     summary.errors.push(message);
     journal.push(makeJournalEntry('error', { detail: message }));
@@ -587,6 +643,7 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
               detail: 'présent à la relecture directe — tombstone annulée (parcours du cycle non fiable)',
             }),
           );
+          keepPreviousRef.add(relPath);
           continue;
         } catch (readError) {
           const brut = readError instanceof Error ? readError.message : String(readError);
@@ -595,10 +652,41 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
             journal.push(
               makeJournalEntry('info', { path: relPath, detail: `lecture en échec — fichier conservé ce cycle : ${brut.slice(0, 120)}` }),
             );
+            keepPreviousRef.add(relPath);
             continue;
           }
         }
-        if (remoteByPath.has(relPath)) {
+        const remoteRow = remoteByPath.get(relPath);
+        // Modifié AILLEURS depuis notre dernier cycle (hash ou version
+        // distants ≠ référence) : supprimer ici effacerait ce travail.
+        // Tombstone annulée ; le fichier revient par pull au cycle suivant.
+        const knownVersion = syncState.versions?.[relPath];
+        const changedElsewhere =
+          !!remoteRow &&
+          (remoteRow.contentHash !== syncState.files[relPath] ||
+            (typeof knownVersion === 'number' && typeof remoteRow.version === 'number' && knownVersion !== remoteRow.version));
+        if (changedElsewhere) {
+          journal.push(
+            makeJournalEntry('conflict', {
+              path: relPath,
+              detail: 'supprimé ici mais modifié sur un autre appareil — suppression annulée, la version du cloud reviendra',
+            }),
+          );
+          continue;
+        }
+        const lockResult = remoteRow
+          ? await tombstoneRemoteFile(remoteVaultId, remoteRow.rawRelPath ?? relPath, (remoteRow.version === undefined ? null : knownVersion) ?? remoteRow.version ?? null)
+          : null;
+        if (lockResult && !lockResult.ok) {
+          journal.push(
+            makeJournalEntry('conflict', {
+              path: relPath,
+              detail: 'suppression refusée : version plus récente dans le cloud — rien supprimé, elle reviendra',
+            }),
+          );
+          continue;
+        }
+        if (remoteRow && !lockResult) {
           const { error } = await bridges.supabase
             .schema(APP_SCHEMA)
             .from(VAULT_FILES_TABLE)
@@ -620,66 +708,65 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
     }
   }
 
-  // 2) Tombestones distantes — PROPAGATION NORMALE, application locale
-  //    CONSERVATRICE (remoteDeletionAction) : un fichier jamais apporté par
-  //    la synchro n'est jamais effacé, un fichier modifié laisse une copie
-  //    « (conflit …) » avant de partir. L'élagueur de dossiers parents vides
-  //    est conservé.
-  const appliedDeletions = new Set<string>();
-  const revueSuppressionsDistantes: { path: string; modified: boolean; at: string }[] = [];
+  // 2) Tombestones distantes — AUCUNE suppression locale automatique.
+  //    Toute pierre tombale venue d'un autre appareil dont le fichier existe
+  //    encore ici part en REVUE (pending-review.json → Paramètres → Journal
+  //    de synchronisation : Approuver = corbeille locale, Refuser =
+  //    restore_file dans le cloud). Pendant l'attente l'état est STABLE :
+  //    • ni push (le diff exclut les tombstonedPaths — un push ressusciterait
+  //      la ligne sans décision humaine) ;
+  //    • ni suppression locale ;
+  //    • la référence (hash + version) du dernier cycle est CONSERVÉE
+  //      (keepPreviousRef) : après un refus, le cycle suivant compare le
+  //      fichier local à cette référence comme si rien ne s'était passé.
+  const pendingRemoteDeletionPaths = new Set<string>();
+  const remoteDeletionCandidates: RemoteDeletionReview[] = [];
+  const tombstoneRows = new Map(visibleRemoteFiles.filter((f) => f.deleted).map((f) => [f.relPath, f]));
+  const queuedAt = new Date().toISOString();
   for (const relPath of tombstonedPaths) {
     const local = localByPath.get(relPath);
     if (!local) continue;
-    try {
-      const action = remoteDeletionAction({
-        localExists: true,
-        lastSyncedHash: syncState.files[relPath],
-        localHash: local.contentHash,
-      });
-      if (action === 'skip') continue;
-      if (action === 'keep-copy') {
-        // RÈGLE ABSOLUE : un fichier modifié ici et supprimé ailleurs n'est
-        // JAMAIS archivé ni effacé automatiquement — il reste en place et
-        // part en REVUE (l'écran « Revue de sécurité » propose « Supprimer
-        // vraiment » ou « Restaurer dans le cloud »).
-        journal.push(
-          makeJournalEntry('modification', {
-            path: relPath,
-            detail: 'modifié ici, supprimé ailleurs — EN ATTENTE DE VALIDATION (fichier conservé)',
-          }),
-        );
-        revueSuppressionsDistantes.push({ path: relPath, modified: true, at: new Date().toISOString() });
-        continue;
-      }
-      await bridges.vault.delete(relPath, { silent: true });
-      appliedDeletions.add(relPath);
-      summary.deleted += 1;
-      journal.push(makeJournalEntry('delete', { path: relPath, detail: 'suppression distante appliquée (corbeille)' }));
-    } catch (error) {
-      console.error(`[sync] échec de la suppression distante ${relPath} :`, error);
-      summary.errors.push(`${relPath} (suppression distante) : ${errorMessage(error)}`);
-      journal.push(makeJournalEntry('error', { path: relPath, detail: `suppression distante : ${errorMessage(error)}` }));
-    }
+    const row = tombstoneRows.get(relPath);
+    pendingRemoteDeletionPaths.add(relPath);
+    keepPreviousRef.add(relPath);
+    remoteDeletionCandidates.push({
+      path: relPath,
+      modified: syncState.files[relPath] !== local.contentHash,
+      at: queuedAt,
+      deletedByDevice: row?.deletedByDevice ?? null,
+      deletedAt: row?.deletedAt ?? null,
+      remoteVersion: row?.version ?? null,
+    });
   }
-
-  // Les suppressions distantes en attente de validation sont publiées dans
-  // pending-review.json (l'écran « Revue de sécurité » les affiche avec
-  // « Supprimer vraiment / Restaurer dans le cloud »).
-  if (revueSuppressionsDistantes.length > 0) {
-    try {
-      const review = await loadPendingReview(bridges.vault).catch(() => ({}) as PendingReview);
-      const byPath = new Map((review.remoteDeletions ?? []).map((r) => [r.path, r]));
-      for (const entry of revueSuppressionsDistantes) byPath.set(entry.path, entry);
-      await savePendingReview(bridges.vault, {
-        ...review,
-        remoteDeletions: [...byPath.values()].slice(0, 500),
-      });
-      console.error(
-        `[sync] ${revueSuppressionsDistantes.length} suppression(s) distante(s) EN ATTENTE DE VALIDATION (fichiers conservés)`,
-      );
-    } catch (error) {
-      console.error('[sync] écriture de la file de revue :', error);
+  summary.pendingRemoteDeletions = pendingRemoteDeletionPaths.size;
+  try {
+    const review = await loadPendingReview(bridges.vault);
+    const { entries, added } = reconcileRemoteDeletions(
+      review.remoteDeletions ?? [],
+      remoteDeletionCandidates,
+      pendingRemoteDeletionPaths,
+    );
+    if (!sameRemoteDeletions(review.remoteDeletions, entries)) {
+      await savePendingReview(bridges.vault, { ...review, remoteDeletions: entries });
     }
+    for (const entry of added) {
+      journal.push(
+        makeJournalEntry('delete', {
+          path: entry.path,
+          detail: `supprimé sur ${entry.deletedByDevice ?? 'un autre appareil'} — EN ATTENTE DE VALIDATION (fichier conservé${entry.modified ? ', modifié ici' : ''})`,
+        }),
+      );
+    }
+    if (added.length > 0) {
+      console.error(`[sync] ${added.length} suppression(s) distante(s) EN ATTENTE DE VALIDATION (fichiers conservés)`);
+    }
+  } catch (error) {
+    // File illisible ou non inscriptible : RIEN n'est supprimé (les
+    // fichiers restent en place et hors push), mais l'utilisateur doit le
+    // savoir — erreur du cycle, journal et logcat.
+    console.error('[sync] file de revue des suppressions distantes :', error);
+    summary.errors.push(`suppressions distantes en attente non enregistrées : ${errorMessage(error)}`);
+    journal.push(makeJournalEntry('error', { detail: `file de revue : ${errorMessage(error)}` }));
   }
 
 //////// 10. runSync : diff, décisions, nouvel état et clôture //////////////
@@ -691,7 +778,7 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   //    cloud porte encore le hash connu est un push, pas un conflit.
   const diffLocalFiles = localFiles.filter((note) => !tombstonedPaths.has(note.relPath));
   const diffRemoteFiles = activeRemoteFiles.filter((file) => !tombstonedPaths.has(file.relPath));
-  const decisions = diffVault(diffLocalFiles, diffRemoteFiles, syncState.files);
+  const decisions = diffVault(diffLocalFiles, diffRemoteFiles, syncState.files, syncState.versions);
   // Les fichiers VIVANTS passent avant les chemins `.trash/…` : sinon le
   // tri alphabétique place la corbeille du cloud (des centaines de lignes)
   // devant tout le contenu utile — le mobile y passe le cycle entier sans
@@ -707,6 +794,7 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   // cycle suivant que le fichier a été « supprimé localement » — et la
   // revue des suppressions massives reviendrait en boucle.
   const pulledPaths = new Set<string>();
+  const pushedVersions: Record<string, number> = {};
 
   // Les étapes réseau : le journal raconte le cycle comme Obsidian Sync
   // (« upload en cours », « upload terminé »).
@@ -734,7 +822,16 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
               remoteRow.storageObjectPath,
             ).catch(() => null);
           }
-          await pushFile(remoteVaultId, ownerId, note, journal, previousRemoteContent);
+          const pushedVersion = await pushFile(
+            remoteVaultId,
+            ownerId,
+            note,
+            journal,
+            previousRemoteContent,
+            remoteRow,
+            remoteRow?.version ?? null,
+          );
+          if (pushedVersion !== null) pushedVersions[decision.relPath] = pushedVersion;
           // Un push sous `.trash/` est le continu d'un déplacement en
           // corbeille — compté À PART, pas dans « envoyé(s) ».
           if (decision.relPath.startsWith('.trash/')) {
@@ -763,6 +860,7 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
             journal.push(
               makeJournalEntry('info', { path: decision.relPath, detail: 'pull différé : fichier en cours d’édition sur cet appareil' }),
             );
+            keepPreviousRef.add(decision.relPath);
             break;
           }
           // v0.4.84 (§15 du journal d'incidents) : un pull sur un fichier
@@ -776,6 +874,7 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
               journal.push(
                 makeJournalEntry('info', { path: decision.relPath, detail: 'pull différé : le fichier répond localement (parcours du cycle non fiable)' }),
               );
+              keepPreviousRef.add(decision.relPath);
               break;
             } catch {
               // réellement absent du disque : le pull est légitime
@@ -796,6 +895,7 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
             journal.push(
               makeJournalEntry('info', { path: decision.relPath, detail: 'conflit différé : fichier en cours d’édition sur cet appareil' }),
             );
+            keepPreviousRef.add(decision.relPath);
             break;
           }
           // Fusion à trois voix d'abord (diff-match-patch) — deux
@@ -807,6 +907,8 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
             decision.relPath,
             remoteByPath.get(decision.relPath)?.storageObjectPath,
             journal,
+            remoteByPath.get(decision.relPath)?.version ?? null,
+            pushedVersions,
           );
           if (mergedPushHash) {
             mergedHashes[decision.relPath] = mergedPushHash;
@@ -823,7 +925,17 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
           await backupLosingSide(decision.relPath, losingRemoteContent);
           // La version distante perdante sert aussi au journal
           // « modification » (+/− caractères de la version conservée).
-          await pushFile(remoteVaultId, ownerId, note, journal, losingRemoteContent);
+          const conflictRow = remoteByPath.get(decision.relPath);
+          const winVersion = await pushFile(
+            remoteVaultId,
+            ownerId,
+            note,
+            journal,
+            losingRemoteContent,
+            conflictRow,
+            conflictRow?.version ?? null,
+          );
+          if (winVersion !== null) pushedVersions[decision.relPath] = winVersion;
           summary.pushed += 1;
           summary.conflicts += 1;
           journal.push(makeJournalEntry('conflict', { path: decision.relPath, detail: 'version locale conservée, distante archivée' }));
@@ -836,6 +948,8 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
             decision.relPath,
             remoteByPath.get(decision.relPath)?.storageObjectPath,
             journal,
+            remoteByPath.get(decision.relPath)?.version ?? null,
+            pushedVersions,
           );
           if (mergedPullHash) {
             mergedHashes[decision.relPath] = mergedPullHash;
@@ -849,6 +963,7 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
             journal.push(
               makeJournalEntry('info', { path: decision.relPath, detail: 'conflit différé : fichier en cours d’édition sur cet appareil' }),
             );
+            keepPreviousRef.add(decision.relPath);
             break;
           }
           await backupLosingSide(decision.relPath, losingLocalContent);
@@ -861,6 +976,20 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
         }
       }
     } catch (error) {
+      // Issue non confirmée : l'ancienne référence est conservée — sinon le
+      // cycle suivant prendrait le hash local pour référence et TIRERAIT
+      // le cloud par-dessus la modification locale non poussée.
+      keepPreviousRef.add(decision.relPath);
+      if (isVersionConflictError(error)) {
+        // Verrou optimiste : quelqu'un a écrit entre notre lecture et notre
+        // écriture. RIEN n'est écrasé ; pas une erreur (pas de disjoncteur) :
+        // le cycle suivant voit la nouvelle version et passe par fusion /
+        // copie de conflit.
+        journal.push(
+          makeJournalEntry('conflict', { path: decision.relPath, detail: `${errorMessage(error)} — résolu au prochain cycle` }),
+        );
+        continue;
+      }
       console.error(`[sync] échec sur ${decision.relPath} (${decision.kind}) :`, error);
       summary.errors.push(`${decision.relPath} : ${errorMessage(error)}`);
       journal.push(makeJournalEntry('error', { path: decision.relPath, detail: `${decision.kind} : ${errorMessage(error)}` }));
@@ -878,7 +1007,7 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   // idempotemment.
   const nextFiles: Record<string, string> = {};
   for (const note of localFiles) {
-    if (locallyDeleted.includes(note.relPath) || appliedDeletions.has(note.relPath)) continue;
+    if (locallyDeleted.includes(note.relPath)) continue;
     nextFiles[note.relPath] = note.contentHash;
   }
   for (const decision of orderedDecisions) {
@@ -896,7 +1025,14 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
     nextFiles[relPath] = mergedHash;
   }
   try {
-    await saveSyncState({ files: nextFiles, rootPath: vaultRootPath });
+    const nextReference = buildNextReference({
+      candidateFiles: nextFiles,
+      previous: { files: syncState.files, versions: syncState.versions ?? {} },
+      keepPrevious: keepPreviousRef,
+      pushedVersions,
+      remoteVersions: Object.fromEntries(activeRemoteFiles.map((file) => [file.relPath, file.version])),
+    });
+    await saveSyncState({ files: nextReference.files, versions: nextReference.versions, rootPath: vaultRootPath });
   } catch (error) {
     console.error('[sync] échec de la sauvegarde de l’état de synchro :', error);
     journal.push(makeJournalEntry('error', { detail: `sauvegarde de l'état : ${errorMessage(error)}` }));
@@ -914,7 +1050,7 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
       samples: summary.errors.slice(0, 3),
     };
     try {
-      const review = await loadPendingReview(bridges.vault).catch(() => ({}) as PendingReview);
+      const review = await loadPendingReview(bridges.vault);
       await savePendingReview(bridges.vault, { ...review, syncBlocked: blocked });
     } catch (error) {
       // Le bloc n'a pas pu être persisté (écritures en échec — c'est
