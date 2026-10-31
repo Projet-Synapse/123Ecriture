@@ -167,6 +167,9 @@ type PreferencesContextValue = {
   // "une fois par coffre" empêchait tout second essai une fois les vraies
   // préférences arrivées.
   preferencesLoaded: boolean;
+  // Vrai quand les préférences DU COFFRE actif ont été lues (ou qu'il n'y a
+  // pas de coffre) — « fichier ouvert par défaut » l'attend.
+  vaultPreferencesLoaded: boolean;
 };
 
 const PreferencesReactContext = createContext<PreferencesContextValue | null>(null);
@@ -570,6 +573,9 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     () => ({
       preferences,
       preferencesLoaded,
+      vaultPreferencesLoaded:
+        preferencesLoaded &&
+        (!activeVault || vaultPrefsSyncAllowed || typeof window === 'undefined' || !window.vault?.readNote),
       theme,
       colorScheme,
       wallpapers,
@@ -615,6 +621,8 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     [
       preferences,
       preferencesLoaded,
+      activeVault,
+      vaultPrefsSyncAllowed,
       theme,
       colorScheme,
       wallpapers,
