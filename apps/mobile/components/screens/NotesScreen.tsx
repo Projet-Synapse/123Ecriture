@@ -183,7 +183,7 @@ export function NotesScreen({
   onRequestOpenCalendarDate,
   onRegisterActions,
 }: Props = {}) {
-  const { preferences, preferencesLoaded, theme, setFileSortMode, toggleFavorite } = usePreferences();
+  const { preferences, preferencesLoaded, vaultPreferencesLoaded, theme, setFileSortMode, toggleFavorite } = usePreferences();
   const vault = typeof window !== 'undefined' ? window.vault : undefined;
   // Gel des cycles de synchronisation pendant les actions structurantes
   // (suppression, renommage, déplacement) : un cycle partant au milieu
@@ -941,6 +941,12 @@ export function NotesScreen({
     // verrou ci-dessous, et le VRAI mode configuré (ex. 'specific')
     // n'avait alors plus jamais l'occasion de s'appliquer.
     if (!preferencesLoaded) return;
+    // MOBILE : les préférences du COFFRE (.123ecriture/preferences.json,
+    // synchronisées) arrivent APRÈS `preferencesLoaded` — sans cette
+    // attente, l'effet tournait avec les préférences locales/par défaut,
+    // posait le verrou, et le mode réellement choisi n'était jamais
+    // appliqué. Desktop : vrai dès que `preferencesLoaded` l'est.
+    if (!vaultPreferencesLoaded) return;
     if (defaultOpenAttemptedForVaultRef.current === vaultPath) return;
     defaultOpenAttemptedForVaultRef.current = vaultPath;
 
@@ -948,15 +954,24 @@ export function NotesScreen({
       try {
         if (preferences.defaultOpenMode === 'newNote') {
           await handleCreateNote();
+          revealEditor();
           return;
         }
 
         const freshTree = await vault.listTree();
+        // Coffre pas encore lisible (permission SAF / montage en cours sur
+        // Android) : on libère le verrou pour réessayer au prochain
+        // changement de `vault`/`tree` au lieu d'abandonner pour la session.
+        if (freshTree.length === 0) {
+          defaultOpenAttemptedForVaultRef.current = null;
+          return;
+        }
 
         if (preferences.defaultOpenMode === 'specific' && preferences.defaultOpenSpecificPath) {
           const found = findNodeByPath(freshTree, preferences.defaultOpenSpecificPath);
           if (found && found.type === 'note') {
             await openNote(found);
+            revealEditor();
             return;
           }
           // Chemin configuré mais introuvable (renommé/supprimé depuis) —
@@ -970,9 +985,14 @@ export function NotesScreen({
         const lastRelPath = await vault.getLastOpened();
         if (lastRelPath) {
           const found = findNodeByPath(freshTree, lastRelPath);
-          if (found && found.type === 'note') await openNote(found);
+          if (found && found.type === 'note') {
+            await openNote(found);
+            revealEditor();
+          }
         }
       } catch (error) {
+        // Échec transitoire (coffre pas encore prêt) : réessai possible.
+        defaultOpenAttemptedForVaultRef.current = null;
         console.error('[vault] échec de l’ouverture par défaut :', error);
       }
     })();
@@ -980,6 +1000,9 @@ export function NotesScreen({
     vault,
     vaultPath,
     preferencesLoaded,
+    vaultPreferencesLoaded,
+    revealEditor,
+    tree.length,
     preferences.defaultOpenMode,
     preferences.defaultOpenSpecificPath,
     handleCreateNote,
@@ -2260,6 +2283,10 @@ export function NotesScreen({
             // l'empilement de l'en-tête.
             width: pagerWidth ?? explorerWidth,
             borderRightWidth: pagerWidth ? 0 : 1,
+            // Mobile : la page du pager a une hauteur fixe — la liste la
+            // remplit pour que son ScrollView soit borné (défilement jusqu'au
+            // dernier élément).
+            ...(pagerWidth ? { flex: 1 } : null),
             borderColor: theme.border,
             backgroundColor: theme.surface,
           },
@@ -2385,7 +2412,7 @@ export function NotesScreen({
         )}
 
         {explorerViewMode === 'files' ? (
-          <ScrollView>
+          <ScrollView style={isNativeLayout ? styles.explorerScroll : undefined} contentContainerStyle={isNativeLayout ? styles.explorerScrollContent : undefined}>
             <VaultTreeView
               onOpenFolder={openFolder}
               activeFolderRelPath={previewFolderRelPath}
@@ -2418,7 +2445,7 @@ export function NotesScreen({
             )}
           </ScrollView>
         ) : (
-          <ScrollView>
+          <ScrollView style={isNativeLayout ? styles.explorerScroll : undefined} contentContainerStyle={isNativeLayout ? styles.explorerScrollContent : undefined}>
             {tagsLoading && (
               <Text style={[styles.muted, { color: theme.textMuted, padding: 16 }]}>Chargement des tags…</Text>
             )}
@@ -2464,9 +2491,16 @@ export function NotesScreen({
 
   const editorArea = (
     <View style={styles.row}>
-      {explorerHidden && (
-        // Rail de réouverture (explorateur masqué, ou page éditeur sur
-        // mobile) : le même bouton façon Obsidian, en haut à gauche.
+      {explorerHidden && isNativeLayout && (
+        // MOBILE : plus de rail (la bande verticale blanche rapportée) —
+        // seulement le bouton de réouverture, flottant tout en haut à gauche.
+        <View style={styles.reopenFloating} pointerEvents="box-none">
+          <ExplorerToggleButton theme={theme} open={false} onPress={showExplorer} />
+        </View>
+      )}
+      {explorerHidden && !isNativeLayout && (
+        // Rail de réouverture (explorateur masqué, desktop) : le même bouton
+        // façon Obsidian, en haut à gauche.
         <View style={[styles.reopenRail, { borderColor: theme.border, backgroundColor: theme.surface }]}>
           <ExplorerToggleButton theme={theme} open={false} onPress={showExplorer} />
         </View>
@@ -2474,7 +2508,7 @@ export function NotesScreen({
       <View style={styles.editor}>
         {activeNote ? (
           <>
-            <View style={styles.editorHeader}>
+            <View style={[styles.editorHeader, explorerHidden && isNativeLayout && styles.editorHeaderWithFloatingToggle]}>
               {/* Paramètres → Éditeur → "Titre en ligne" : pour une note
                   markdown, le titre est alors rendu plus bas, à l'intérieur
                   du contenu (voir juste avant le sélecteur de mode), et
@@ -3275,6 +3309,23 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 6,
     marginLeft: -6,
+  },
+  explorerScroll: {
+    flex: 1,
+  },
+  // Marge basse : le dernier dossier/fichier ne doit jamais rester collé
+  // sous la piste du pager ou la barre de navigation Android.
+  explorerScrollContent: {
+    paddingBottom: 48,
+  },
+  reopenFloating: {
+    position: 'absolute',
+    top: 8,
+    left: 8,
+    zIndex: 10,
+  },
+  editorHeaderWithFloatingToggle: {
+    paddingLeft: 52,
   },
   reopenRail: {
     width: 40,

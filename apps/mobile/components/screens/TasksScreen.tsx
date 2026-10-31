@@ -14,6 +14,8 @@ import { getNotificationsPermission, syncTaskDueNotifications } from '../../lib/
 import { usePreferences } from '../../preferences/PreferencesContext';
 import { ActionMenu, type ActionMenuItem } from '../dialogs/ActionMenu';
 import { ConfirmDialog } from '../dialogs/ConfirmDialog';
+import { ExplorerPager, type ExplorerPagerHandle } from '../explorer/ExplorerPager';
+import { ExplorerToggleButton } from '../explorer/ExplorerToggleButton';
 import { DraftTextField } from '../editors/DraftTextField';
 import { errorMessage } from '../../lib/errorMessage';
 
@@ -141,6 +143,10 @@ export function TasksScreen({
 
   const [taskLists, setTaskLists] = useState<TaskList[]>([]);
   const [activeListId, setActiveListId] = useState<string | null>(null);
+  // Mobile (natif) : pager plein écran navigateur ⇄ liste, identique à
+  // l'explorateur de notes (ExplorerPager). Desktop/web : inchangé.
+  const isNativeLayout = Platform.OS !== 'web';
+  const pagerRef = useRef<ExplorerPagerHandle>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [addError, setAddError] = useState<string | null>(null);
   const [listActionError, setListActionError] = useState<string | null>(null);
@@ -374,8 +380,11 @@ export function TasksScreen({
   // champ ciblé est déjà monté (les sections de listes sont rendues en
   // permanence), un micro-délai suffit après le changement d'état.
   const requestFocusListField = useCallback((listId: string) => {
-    setTimeout(() => quickAddInputRefs.current[listId]?.focus(), 0);
-  }, []);
+    // Mobile : le champ vit sur la page « liste » du pager — on l'ouvre.
+    if (Platform.OS !== 'web' && listId !== activeListId) void handleSwitchList(listId);
+    if (Platform.OS !== 'web') pagerRef.current?.showEditor();
+    setTimeout(() => quickAddInputRefs.current[listId]?.focus(), Platform.OS !== 'web' ? 300 : 0);
+  }, [activeListId, handleSwitchList]);
 
   const handleAddTaskFor = useCallback(
     async (listId: string) => {
@@ -1089,6 +1098,60 @@ export function TasksScreen({
     );
   };
 
+  // Bloc « tâches d'une liste » (champ de création + tâches filtrées et
+  // triées) : sous chaque liste dans le navigateur desktop, ou seul sur la
+  // page « éditeur » du pager mobile (liste active).
+  const renderListTasks = (item: TaskList): ReactNode => {
+    const listTasksAll = tasksByList[item.id] ?? [];
+    const pendingAll = listTasksAll.filter((task) => !task.done);
+    const doneAll = listTasksAll.filter((task) => task.done);
+    const pending = filterActive ? pendingAll.filter(matchesFilter) : pendingAll;
+    const done = filterActive ? doneAll.filter(matchesFilter) : doneAll;
+    const sortedPending = sortByDueDate
+      ? [...pending].sort((a, b) => compareByDueDate(a.dueDate, b.dueDate))
+      : pending;
+    const visibleTasks = [...sortedPending, ...(hideCompleted ? [] : done)];
+    return (
+      <View style={[styles.listTasksBlock, { paddingLeft: 16 }]}>
+        <View style={styles.addRow}>
+          <TextInput
+            ref={(input) => {
+              quickAddInputRefs.current[item.id] = input;
+            }}
+            value={draftsByList[item.id] ?? ''}
+            onChangeText={(text) => {
+              setDraftsByList((prev) => ({ ...prev, [item.id]: text }));
+              if (addError) setAddError(null);
+            }}
+            onSubmitEditing={() => void handleAddTaskFor(item.id)}
+            placeholder="Nouvelle tâche…"
+            placeholderTextColor={theme.textMuted}
+            style={[styles.input, { color: theme.text, borderColor: theme.border }]}
+          />
+          <Pressable
+            onPress={() => void handleAddTaskFor(item.id)}
+            style={[styles.addButton, { backgroundColor: theme.accent }]}
+          >
+            <Text style={styles.buttonText}>Ajouter</Text>
+          </Pressable>
+        </View>
+        {visibleTasks.map((task) => (
+          <TaskSectionBoundary key={task.id} label={`tâche ${String(task.id).slice(-4)}`}>
+            {renderTask(task)}
+          </TaskSectionBoundary>
+        ))}
+        {listTasksAll.length === 0 && (
+          <Text style={[styles.navigatorMuted, { color: theme.textMuted }]}>Aucune tâche pour l’instant.</Text>
+        )}
+        {filterActive && listTasksAll.length > 0 && visibleTasks.length === 0 && (
+          <Text style={[styles.navigatorMuted, { color: theme.textMuted }]}>
+            Aucune tâche ne correspond au filtre.
+          </Text>
+        )}
+      </View>
+    );
+  };
+
   // Rendu RÉCURSIF du navigateur : dossiers (repliables) puis listes ;
   // chaque liste affiche TOUJOURS ses tâches : champ de création, aperçu
   // cochable (description grise, sous-étapes) et fiche dépliable.
@@ -1160,14 +1223,6 @@ export function TasksScreen({
       // et triées selon les préférences de l'en-tête).
       const isRenamingList = renamingListId === item.id;
       const listTasksAll = tasksByList[item.id] ?? [];
-      const pendingAll = listTasksAll.filter((task) => !task.done);
-      const doneAll = listTasksAll.filter((task) => task.done);
-      const pending = filterActive ? pendingAll.filter(matchesFilter) : pendingAll;
-      const done = filterActive ? doneAll.filter(matchesFilter) : doneAll;
-      const sortedPending = sortByDueDate
-        ? [...pending].sort((a, b) => compareByDueDate(a.dueDate, b.dueDate))
-        : pending;
-      const visibleTasks = [...sortedPending, ...(hideCompleted ? [] : done)];
 
       return (
         <View key={item.id} style={indentStyle}>
@@ -1181,7 +1236,12 @@ export function TasksScreen({
             dataSet={{ tlId: item.id }}
           >
             <Pressable
-              onPress={() => void selectList(item.id)}
+              onPress={() => {
+                void selectList(item.id);
+                // Mobile : comme ouvrir une note depuis l'explorateur —
+                // la liste s'ouvre sur la page « éditeur » du pager.
+                if (isNativeLayout) pagerRef.current?.showEditor();
+              }}
               onLongPress={Platform.OS === 'web' ? undefined : () => showNavigatorMenu(item)}
               style={styles.navigatorNameButton}
               accessibilityRole="button"
@@ -1222,43 +1282,7 @@ export function TasksScreen({
             </Pressable>
           </View>
 
-          <View style={[styles.listTasksBlock, { paddingLeft: 16 }]}>
-            <View style={styles.addRow}>
-              <TextInput
-                ref={(input) => {
-                  quickAddInputRefs.current[item.id] = input;
-                }}
-                value={draftsByList[item.id] ?? ''}
-                onChangeText={(text) => {
-                  setDraftsByList((prev) => ({ ...prev, [item.id]: text }));
-                  if (addError) setAddError(null);
-                }}
-                onSubmitEditing={() => void handleAddTaskFor(item.id)}
-                placeholder="Nouvelle tâche…"
-                placeholderTextColor={theme.textMuted}
-                style={[styles.input, { color: theme.text, borderColor: theme.border }]}
-              />
-              <Pressable
-                onPress={() => void handleAddTaskFor(item.id)}
-                style={[styles.addButton, { backgroundColor: theme.accent }]}
-              >
-                <Text style={styles.buttonText}>Ajouter</Text>
-              </Pressable>
-            </View>
-            {visibleTasks.map((task) => (
-              <TaskSectionBoundary key={task.id} label={`tâche ${String(task.id).slice(-4)}`}>
-                {renderTask(task)}
-              </TaskSectionBoundary>
-            ))}
-            {listTasksAll.length === 0 && (
-              <Text style={[styles.navigatorMuted, { color: theme.textMuted }]}>Aucune tâche pour l’instant.</Text>
-            )}
-            {filterActive && listTasksAll.length > 0 && visibleTasks.length === 0 && (
-              <Text style={[styles.navigatorMuted, { color: theme.textMuted }]}>
-                Aucune tâche ne correspond au filtre.
-              </Text>
-            )}
-          </View>
+          {!isNativeLayout && renderListTasks(item)}
         </View>
       );
     });
@@ -1267,8 +1291,10 @@ export function TasksScreen({
   // Frontières d'erreur par section : un crash dans l'en-tête ou dans le
   // navigateur affiche le message + la section à l'écran au lieu de vider
   // tout l'écran (le stack release est anonyme, illisible).
-  return (
-    <View style={[styles.container, styles.navigatorScreen]}>
+  // Header + filtre + navigateur : tout l'écran sur desktop (inchangé) ;
+  // page « explorateur » du pager sur mobile, comme l'explorateur de notes.
+  const navigatorSections = (
+    <>
       <TaskSectionBoundary label="en-tête">
       {/* En-tête : titre + créations (menu « + » : liste/dossier) + filtre +
           préférences de lecture (tri échéance / masquage des terminées —
@@ -1401,6 +1427,54 @@ export function TasksScreen({
         </View>
       </ScrollView>
       </TaskSectionBoundary>
+    </>
+  );
+
+  // MOBILE : page « éditeur » — la liste active seule, avec le même bouton
+  // de réouverture flottant que l'éditeur de notes (pas de rail).
+  const activeList = taskLists.find((entry) => entry.id === activeListId && !entry.isFolder) ?? null;
+  const tasksEditorPage = (
+    <View style={styles.editorPage}>
+      <View style={styles.editorPageHeader}>
+        <ExplorerToggleButton theme={theme} open={false} onPress={() => pagerRef.current?.showExplorer()} />
+        <Text style={[styles.screenTitle, { color: theme.text, flex: 1 }]} numberOfLines={1}>
+          {activeList ? `📋 ${activeList.name}` : 'Tâches'}
+        </Text>
+      </View>
+      <TaskSectionBoundary label="liste">
+        <ScrollView style={styles.navigatorScroll} contentContainerStyle={styles.navigator} nestedScrollEnabled>
+          {activeList ? (
+            renderListTasks(activeList)
+          ) : (
+            <Text style={[styles.navigatorMuted, { color: theme.textMuted }]}>
+              Sélectionne une liste dans le navigateur.
+            </Text>
+          )}
+        </ScrollView>
+      </TaskSectionBoundary>
+    </View>
+  );
+
+  return (
+    <View style={[styles.container, !isNativeLayout && styles.navigatorScreen]}>
+      {isNativeLayout ? (
+        <ExplorerPager
+          ref={pagerRef}
+          theme={theme}
+          scrollEnabled
+          explorer={(pageWidth) => (
+            <View style={[styles.container, styles.navigatorScreen, { width: pageWidth }]}>
+              <View style={styles.editorPageHeader}>
+                <ExplorerToggleButton theme={theme} open onPress={() => pagerRef.current?.showEditor()} />
+              </View>
+              {navigatorSections}
+            </View>
+          )}
+          editor={tasksEditorPage}
+        />
+      ) : (
+        navigatorSections
+      )}
 
       {/* Confirmation de suppression de LISTE (panier jetable — les tâches
           partent avec) ; un DOSSIER ne passe pas ici : sa suppression est
@@ -1466,6 +1540,16 @@ const styles = StyleSheet.create({
   },
   navigatorScroll: {
     flex: 1,
+  },
+  editorPage: {
+    flex: 1,
+    gap: 10,
+    padding: 12,
+  },
+  editorPageHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   navigator: {
     gap: 2,
