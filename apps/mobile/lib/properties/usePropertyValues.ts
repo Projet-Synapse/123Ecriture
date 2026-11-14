@@ -1,6 +1,6 @@
 import { useCallback, useMemo } from 'react';
 
-import { parseFrontmatter, reorderFrontmatterData, serializeFrontmatter, type FrontmatterData } from './frontmatter';
+import { parseFrontmatter, reorderFrontmatterData, replaceFrontmatterData, type FrontmatterData } from './frontmatter';
 import { defaultValueForType } from './propertyTypes';
 
 // ✒️ 123ECRITURE — lib/properties/usePropertyValues.ts — édition des valeurs de propriétés d'une note
@@ -10,7 +10,7 @@ import { defaultValueForType } from './propertyTypes';
 // (lecture/écriture de son frontmatter) — utilisée par PropertiesPanel.tsx
 // (barre latérale) ET PropertiesBlock.tsx (bloc en haut de note), pour
 // rester synchronisées sur les mêmes données sans dupliquer
-// parseFrontmatter/serializeFrontmatter à deux endroits (voir
+// parseFrontmatter/replaceFrontmatterData à deux endroits (voir
 // lib/properties/frontmatter.ts).
 //
 // Invariants du fichier :
@@ -55,13 +55,16 @@ export function usePropertyValues(
   onChangeContent: (text: string) => void,
   definitions: PropertyDefinition[],
 ) {
-  const { data, body } = useMemo(() => parseFrontmatter(content), [content]);
+  const { data } = useMemo(() => parseFrontmatter(content), [content]);
 
+  // replaceFrontmatterData (et non serializeFrontmatter(data, body)) : seul
+  // le bloc est réécrit — BOM, fins de ligne CRLF et corps du fichier
+  // restent identiques à l'octet près.
   const commitData = useCallback(
     (nextData: FrontmatterData) => {
-      onChangeContent(serializeFrontmatter(nextData, body));
+      onChangeContent(replaceFrontmatterData(content, nextData));
     },
-    [onChangeContent, body],
+    [onChangeContent, content],
   );
 
   const usedNames = useMemo(() => new Set(Object.keys(data)), [data]);
