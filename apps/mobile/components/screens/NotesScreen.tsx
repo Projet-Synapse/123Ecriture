@@ -18,8 +18,10 @@ import { EditorView, type ReactCodeMirrorRef } from '@uiw/react-codemirror';
 
 import {
   ensureTimestamps,
+  joinFrontmatter,
   parseFrontmatter,
-  serializeFrontmatter,
+  replaceFrontmatterData,
+  splitFrontmatter,
 } from '../../lib/properties/frontmatter';
 import { applyPathChange, isPathAffected, mergeRestoredOpenTabs } from '../../lib/notes/openTabs';
 import type { FormattingResult, Selection } from '../../lib/editor/mdxFormatting';
@@ -406,10 +408,11 @@ export function NotesScreen({
       if (kind && kind !== 'markdown') return text;
       if (!vault?.getTimestamps) return text;
       try {
-        const { data, body } = parseFrontmatter(text);
+        const { data } = parseFrontmatter(text);
         const timestamps = await vault.getTimestamps(relPath).catch(() => null);
         const next = ensureTimestamps(data, timestamps?.createdAt ?? Date.now(), Date.now());
-        const serialized = serializeFrontmatter(next, body);
+        // Seul le bloc est réécrit (BOM, CRLF et corps conservés).
+        const serialized = replaceFrontmatterData(text, next);
         return serialized === text ? text : serialized;
       } catch (error) {
         console.error('[properties] échec de la matérialisation des dates :', error);
@@ -1420,7 +1423,8 @@ export function NotesScreen({
       if (!vault || !activeNote) return;
       try {
         const raw = await vault.readNote(relPath);
-        const body = raw.startsWith('---\n') ? raw.slice(raw.indexOf('\n---\n', 4) + 6) : raw;
+        // Même découpe que partout ailleurs (CRLF, BOM, espaces après ---).
+        const { body } = splitFrontmatter(raw);
         const view = viewRef.current;
         if (!view) {
           setWikilinkNotice("L'insertion se fait depuis un éditeur Source ou Intermédiaire.");
@@ -1873,16 +1877,18 @@ export function NotesScreen({
 
   // Le bloc "Propriétés" (PropertiesBlock.tsx) affiche déjà le frontmatter
   // de façon structurée en mode Intermédiaire/Aperçu — sans ce retrait, le
-  // bloc YAML brut ("---\ntitre: ...\n---") apparaîtrait EN PLUS, en texte
-  // littéral, juste en dessous : deux représentations de la même donnée à
-  // l'écran. En mode Source, `content` reste
-  // inchangé (le YAML brut redevient la seule représentation, directement
-  // éditable). `bodyOnly`/`handleChangeBody` reconstruisent le frontmatter
-  // complet à l'écriture à partir du dernier `data` connu (le bloc
-  // Propriétés écrit lui-même dans `content` en parallèle via son propre
-  // serializeFrontmatter — les deux restent cohérents puisqu'ils partent du
-  // même state `content`).
-  const { data: frontmatterData, body: bodyOnly } = useMemo(() => parseFrontmatter(content), [content]);
+  // bloc YAML brut ("---\ncreated: ...\n---") apparaîtrait EN PLUS, en texte
+  // littéral, juste en dessous (vu en titre setext gras souligné) : deux
+  // représentations de la même donnée à l'écran. En mode Source, `content`
+  // reste inchangé (le YAML brut redevient la seule représentation,
+  // directement éditable).
+  // ⚠️ TOUS les éditeurs du mode Intermédiaire reçoivent `bodyOnly` et
+  // écrivent par `handleChangeBody` — y compris la WebView Android
+  // (MdxEditorWeb). Le correctif d'août 2026 (c48dacc) ne visait que
+  // l'éditeur web/desktop ; la branche Android ajoutée en v0.4.42 recevait
+  // de nouveau `content` complet, d'où le doublon revenu sur téléphone
+  // (rapporté le 2026-11-14).
+  const bodyOnly = useMemo(() => splitFrontmatter(content).body, [content]);
   // Compteur mots/caractères (barre bas d'éditeur, markdown uniquement) —
   // compté sur le CORPS (frontmatter exclu) quel que soit le mode
   // d'affichage : c'est le texte lu/écrit qui compte, pas la config YAML.
@@ -1897,7 +1903,19 @@ export function NotesScreen({
     }, 400);
     return () => clearTimeout(timer);
   }, [bodyOnly]);
-  const handleChangeBody = (newBody: string) => handleChangeContent(serializeFrontmatter(frontmatterData, newBody));
+  // Recompose bloc BRUT + nouveau corps (joinFrontmatter : aucun re-dump
+  // YAML, le frontmatter du fichier reste identique à l'octet près). Mise à
+  // jour FONCTIONNELLE : le bloc est lu dans le state le plus récent, pas
+  // dans la closure du rendu — un `change` throttlé de la WebView qui arrive
+  // juste après une édition de la carte Propriétés n'écrase donc pas
+  // celle-ci. scheduleSave lit contentRef au déclenchement du minuteur.
+  const handleChangeBody = useCallback(
+    (newBody: string) => {
+      setContent((previous) => joinFrontmatter(splitFrontmatter(previous).block, newBody));
+      scheduleSave();
+    },
+    [scheduleSave],
+  );
 
   // Dispatché directement sur l'EditorView (pas de setContent/scheduleSave
   // ici) : le changement + la nouvelle sélection partent dans UNE seule
@@ -2816,9 +2834,11 @@ export function NotesScreen({
                             onChangeContent={handleChangeContent}
                             tree={tree}
                           />
+                          {/* Corps SEUL (frontmatter retiré, affiché par la
+                              carte ci-dessus) — voir bodyOnly/handleChangeBody. */}
                           <MdxEditorWeb
-                            value={content}
-                            onChange={handleChangeContent}
+                            value={bodyOnly}
+                            onChange={handleChangeBody}
                             onOpenWikilink={(t) => void handleOpenWikilink(t)}
                             onCreateOccurrence={handleCreateOccurrence}
                             occurrenceWords={occurrenceWordList}

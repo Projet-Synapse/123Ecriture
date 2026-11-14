@@ -5,13 +5,15 @@
 import { ipcMain } from 'electron';
 import fs from 'fs/promises';
 import path from 'path';
-import { load } from 'js-yaml';
 
 import { readEvents } from './calendar';
 import { getTaskLists, readTasks } from './tasks';
 import * as vaults from './ponts-desktop/vaults';
 import type { SearchOptions, SearchResult, SearchResultKind, TagGroup, VaultEntryKind } from './types';
 import { normalizeRelPath } from '../../mobile/lib/sync/relPath';
+// Découpe du frontmatter PARTAGÉE avec le renderer (autrefois dupliquée
+// ici : la copie avait divergé — ni BOM, ni espaces après `---`).
+import { parseFrontmatter } from '../../mobile/lib/properties/frontmatter';
 
 // Module "Recherche globale" (voir .claude/References/Sources.md §2,
 // bouton en haut de l'explorateur de fichiers) : parcourt le coffre à la
@@ -71,24 +73,6 @@ async function walkAll(dir: string, vaultRoot: string, out: WalkedEntry[] = []):
   return out;
 }
 
-// Même découpage frontmatter que apps/mobile/lib/frontmatter.ts, dupliqué
-// ici (le process principal Electron et le renderer sont deux paquets
-// séparés, pas de package partagé aujourd'hui — voir la même convention
-// pour walkAndHash/walkMdxFiles dans sync.ts/occurrences.ts).
-const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/;
-
-function parseFrontmatter(content: string): { data: Record<string, unknown>; body: string } {
-  const match = FRONTMATTER_PATTERN.exec(content);
-  if (!match) return { data: {}, body: content };
-  try {
-    const parsed: unknown = load(match[1]);
-    const data = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
-    return { data, body: content.slice(match[0].length).replace(/^\n+/, '') };
-  } catch {
-    return { data: {}, body: content };
-  }
-}
-
 // Même règle de limite de mot que TAG_PATTERN dans
 // apps/mobile/lib/markdownPlugins.ts (précédé d'un espace/saut de
 // ligne/tabulation ou début de texte), reproduite ici en scan global sur
@@ -121,9 +105,8 @@ function buildSnippet(text: string, matchIndex: number, matchLength: number): st
 // porter une) : en ISO (2026-09-14 — un préfixe "2026-09" marche donc
 // aussi) ET en formatage français ("14 sept. 2026" / "14 sept."), pour ne
 // pas obliger à connaître le format de stockage. Même tableau de mois que
-// lib/taskDueDates.ts (formatDueDate côté renderer), dupliqué ici — même
-// convention que parseFrontmatter ci-dessus : deux paquets séparés, pas de
-// package partagé.
+// lib/taskDueDates.ts (formatDueDate côté renderer), dupliqué ici (deux
+// paquets séparés, pas de package partagé).
 const MONTHS_SHORT_FR = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
 
 function formatDueDateFr(dueDate: string): string | null {

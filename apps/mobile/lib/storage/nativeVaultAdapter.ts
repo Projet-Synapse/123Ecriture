@@ -4,7 +4,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import { StorageAccessFramework } from 'expo-file-system/legacy';
 
-import { parseFrontmatter } from '../properties/frontmatter';
+import { newNoteFrontmatter, parseFrontmatter } from '../properties/frontmatter';
 import { CODE_FILE_EXTENSIONS } from '../editor/codeLanguages';
 import { getActiveVaultRootUri, requestAndRegisterVault } from './nativeVaultsAdapter';
 import { vaultStorageObjectKey } from '../sync/storageKeys';
@@ -646,7 +646,8 @@ const MIME_FOR_KIND: Record<VaultEntryKind, string> = {
 export const TAG_PATTERN = /(^|[\s])#([\p{L}\p{N}_-]+)/gu;
 
 export function defaultContentForKind(kind: VaultEntryKind, title: string): string {
-  if (kind === 'markdown') return `---\ntitle: ${title}\ncreated: ${new Date().toISOString()}\n---\n\n`;
+  // Plus de `title` (gabarit partagé, voir newNoteFrontmatter).
+  if (kind === 'markdown') return newNoteFrontmatter();
   if (kind === 'canvas') return JSON.stringify({ nodes: [], edges: [] }, null, 2);
   if (kind === 'excalidraw') return JSON.stringify({ type: 'excalidraw', elements: [], appState: {} }, null, 2);
   if (kind === 'code') return ''; // fichier code vide, comme VS Code

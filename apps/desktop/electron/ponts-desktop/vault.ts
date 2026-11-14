@@ -77,6 +77,7 @@ import * as vaults from './vaults';
 import type { VaultEntryKind } from '../types';
 import { isCodeFile } from '../../../mobile/lib/editor/codeLanguages';
 import { normalizeRelPath } from '../../../mobile/lib/sync/relPath';
+import { newNoteFrontmatter } from '../../../mobile/lib/properties/frontmatter';
 export { EXTENSION_TO_KIND, resolveInVault, getVaultPath, walkTree } from './coffre-outils';
 // Critères de résolution des cibles d'embed façon Obsidian (chemin exact →
 // suffixe → nom seul, casse ignorée) — fonction PURE partagée avec le port
@@ -296,7 +297,7 @@ export function registerVaultHandlers(getWindow: GetWindow): void {
     const fullPath = fsSync.existsSync(mdPath) && !fsSync.existsSync(mdxPath) ? mdPath : mdxPath;
 
     if (!fsSync.existsSync(fullPath)) {
-      const template = `---\ntitle: ${dateIso}\ncreated: ${new Date().toISOString()}\n---\n\n`;
+      const template = newNoteFrontmatter();
       await fs.writeFile(fullPath, template, 'utf8');
     }
     const stat = await fs.stat(fullPath);
