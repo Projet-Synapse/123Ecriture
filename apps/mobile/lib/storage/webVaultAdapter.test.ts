@@ -108,7 +108,9 @@ describe('webVaultAdapter — création', () => {
     const first = await webVaultAdapter.createNote('Idée');
     expect(first.kind).toBe('markdown');
     expect(first.relPath).toBe('Idée.mdx');
-    expect(fs.contentOf('Idée.mdx')).toContain('title: Idée');
+    // Plus de `title` dans le gabarit (demande 2026-11-14) : `created` seul.
+    expect(fs.contentOf('Idée.mdx')).toContain('created: ');
+    expect(fs.contentOf('Idée.mdx')).not.toContain('title:');
 
     const second = await webVaultAdapter.createNote('Idée');
     expect(second.relPath).toBe('Idée 2.mdx');
@@ -138,7 +140,9 @@ describe('webVaultAdapter — création', () => {
   it('ensureDailyNote crée Journal/AAAA-MM-JJ.mdx une seule fois', async () => {
     const first = await webVaultAdapter.ensureDailyNote('2026-09-15');
     expect(first.relPath).toBe('Journal/2026-09-15.mdx');
-    expect(fs.contentOf('Journal/2026-09-15.mdx')).toContain('title: 2026-09-15');
+    // Gabarit sans `title` (demande 2026-11-14) : seulement `created`.
+    expect(fs.contentOf('Journal/2026-09-15.mdx')).toMatch(/^---\ncreated: \d{4}-\d{2}-\d{2}T[^\n]+\n---\n\n$/);
+    expect(fs.contentOf('Journal/2026-09-15.mdx')).not.toContain('title:');
 
     await expect(webVaultAdapter.ensureDailyNote('15/09/2026')).rejects.toThrow('Date invalide');
     // Idempotent : pas d'écrasement (le contenu restera celui du premier appel).

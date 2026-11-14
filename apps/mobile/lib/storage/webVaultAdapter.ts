@@ -36,7 +36,7 @@
 // Les types des ponts (VaultBridge, VaultTreeNode...) sont GLOBAUX (voir
 // types/global.d.ts) — comme partout dans l'app, pas d'import nécessaire.
 
-import { parseFrontmatter } from '../properties/frontmatter';
+import { newNoteFrontmatter, parseFrontmatter } from '../properties/frontmatter';
 import { matchesEmbedTarget } from '../notes/embedResolution';
 import { CODE_FILE_EXTENSIONS, isCodeFile } from '../editor/codeLanguages';
 import {
@@ -183,7 +183,8 @@ function defaultContentForKind(kind: VaultEntryKind, safeName: string): string {
     // Port du desktop : un fichier code naît VIDE (comme dans VS Code).
     return '';
   }
-  return `---\ntitle: ${safeName}\ncreated: ${new Date().toISOString()}\n---\n\n`;
+  // Plus de `title` (gabarit partagé, voir newNoteFrontmatter).
+  return newNoteFrontmatter();
 }
 
 // Mode de tri des fichiers : l'équivalent de getFileSortMode() (config
@@ -459,7 +460,7 @@ export const webVaultAdapter = {
     const targetRelPath = mdExists && !mdxExists ? mdRelPath : mdxRelPath;
 
     if (!(await entryExists(root, targetRelPath))) {
-      const template = `---\ntitle: ${dateIso}\ncreated: ${new Date().toISOString()}\n---\n\n`;
+      const template = newNoteFrontmatter();
       await writeFileText(root, targetRelPath, template);
     }
     return {

@@ -33,6 +33,7 @@ import type { FileSortMode, VaultEntryKind, VaultOrder, VaultTreeNode } from '..
 import { matchesEmbedTarget } from '../../../mobile/lib/notes/embedResolution';
 import { CODE_FILE_EXTENSIONS } from '../../../mobile/lib/editor/codeLanguages';
 import { normalizeRelPath } from '../../../mobile/lib/sync/relPath';
+import { newNoteFrontmatter } from '../../../mobile/lib/properties/frontmatter';
 
 
 //////// 1. Types de fichiers et gabarits //////////////////////////////////
@@ -153,7 +154,9 @@ export function defaultContentForKind(kind: VaultEntryKind, safeName: string): s
     // dans tous.
     return '';
   }
-  return `---\ntitle: ${safeName}\ncreated: ${new Date().toISOString()}\n---\n\n`;
+  // Plus de `title` : gabarit partagé avec le web et Android (voir
+  // newNoteFrontmatter dans apps/mobile/lib/properties/frontmatter.ts).
+  return newNoteFrontmatter();
 }
 
 //////// 2. Résolution de chemin et utilitaires ////////////////////////////
