@@ -26,6 +26,7 @@ import {
 import { applyPathChange, isPathAffected, mergeRestoredOpenTabs } from '../../lib/notes/openTabs';
 import type { FormattingResult, Selection } from '../../lib/editor/mdxFormatting';
 import { NOTES_TOOLBAR_ACTIONS, type ToolbarAction } from '../../lib/editor/notesToolbarActions';
+import { resolveNewNoteParent, wikilinkCreationTarget } from '../../lib/notes/newNotePath';
 import { openSearchResult } from '../../lib/notes/searchResults';
 import { useResizablePanel } from '../../lib/ui/useResizablePanel';
 import { collectFolderRelPaths } from '../../lib/notes/treeExpansion';
@@ -905,15 +906,11 @@ export function NotesScreen({
     // autres kinds gardent « Sans titre » + leur extension fixe.
     async (parentRelPath?: string, kind?: VaultEntryKind, name?: string) => {
       if (!vault) return;
+      // Réglage appliqué par la MÊME fonction que la création depuis un
+      // [[lien]] (createNoteFromLink) — lib/notes/newNotePath.ts.
       const resolvedParent =
         parentRelPath ??
-        (preferences.newNoteLocation === 'sameFolder'
-          ? activeNote
-            ? getParentRelPath(activeNote.relPath)
-            : undefined
-          : preferences.newNoteLocation === 'custom'
-            ? preferences.newNoteCustomFolder || undefined
-            : undefined);
+        resolveNewNoteParent(preferences.newNoteLocation, preferences.newNoteCustomFolder, activeNote?.relPath);
       try {
         const entry = await vault.createNote(name ?? 'Sans titre', resolvedParent, kind);
         await refreshTree();
@@ -923,6 +920,44 @@ export function NotesScreen({
       }
     },
     [vault, refreshTree, openNote, activeNote, preferences.newNoteLocation, preferences.newNoteCustomFolder],
+  );
+
+  // Création d'une fiche depuis un [[lien]] vers une cible inexistante
+  // (clic dans l'Aperçu, l'Intermédiaire ou la WebView Android — tous
+  // passent par handleOpenWikilink ci-dessous). Avant : `createNote(cible)`
+  // à la RACINE, réglage « Emplacement par défaut des nouvelles notes »
+  // ignoré, et alias/ancre gardés dans le nom. Désormais : nom sans alias,
+  // ancre ni extension ; chemin explicite du lien gardé, sinon le dossier
+  // du réglage (MÊME fonction que le bouton « + Nouvelle note ») ; le
+  // dossier manquant est créé par l'adaptateur. Si une fiche existe déjà à
+  // ce chemin exact (casse ignorée), elle est ouverte au lieu d'en créer une
+  // « Nom 2 ».
+  const createNoteFromLink = useCallback(
+    async (target: string) => {
+      if (!vault) return;
+      const currentRelPath = activeNoteRef.current?.relPath ?? null;
+      const defaultParent = resolveNewNoteParent(
+        preferences.newNoteLocation,
+        preferences.newNoteCustomFolder,
+        currentRelPath,
+      );
+      const destination = wikilinkCreationTarget(target, defaultParent, currentRelPath);
+      if (!destination) return;
+      const wanted = (
+        destination.parentRelPath ? `${destination.parentRelPath}/${destination.name}` : destination.name
+      ).toLowerCase();
+      const already = flattenNotes(tree).find(
+        (note) => note.relPath.toLowerCase().replace(/\.(mdx|md)$/, '') === wanted,
+      );
+      if (already) {
+        await openNote(already);
+        return;
+      }
+      const entry = await vault.createNote(destination.name, destination.parentRelPath, 'markdown');
+      await refreshTree();
+      await openNote({ type: 'note', ...entry });
+    },
+    [vault, tree, openNote, refreshTree, preferences.newNoteLocation, preferences.newNoteCustomFolder],
   );
 
 
@@ -1960,14 +1995,12 @@ export function NotesScreen({
           );
           return;
         }
-        const entry = await vault.createNote(target);
-        await refreshTree();
-        await openNote({ type: 'note', ...entry });
+        await createNoteFromLink(target);
       } catch (error) {
         console.error('[vault] échec de l’ouverture du lien interne :', error);
       }
     },
-    [vault, tree, openNote, refreshTree, preferences.autoCreateWikilinkTarget],
+    [vault, tree, openNote, preferences.autoCreateWikilinkTarget, createNoteFromLink],
   );
 
   // Ouvre une note par relPath — utilisé par CanvasEditor quand on clique
