@@ -129,6 +129,10 @@ type Props = {
   // chaque caractère tapé relirait le fichier image). Optionnel : sans
   // elle, les embeds image gardent la pastille 📎 historique.
   resolveEmbedUrl?: (target: string) => Promise<string | null>;
+  // Cible d'un [[lien]] existante ? false = pastille atténuée (voir
+  // mdxLivePreview.ts). Nouvelle fonction à chaque changement de l'arbre :
+  // l'aperçu vivant est alors recréé (pastilles recalculées).
+  isWikilinkResolved?: (target: string) => boolean;
   onReady?: (ref: ReactCodeMirrorRef) => void;
   // Paramètres → Éditeur (voir PreferencesContext.tsx). Valeurs par défaut
   // alignées sur DEFAULT_PREFERENCES pour rester utilisable si le composant
@@ -158,6 +162,7 @@ export function MdxEditor({
   onCreateOccurrence,
   noteNames,
   resolveEmbedUrl,
+  isWikilinkResolved,
   onReady,
   fontSize = 15,
   fontFamily = 'system',
@@ -229,9 +234,9 @@ export function MdxEditor({
     () =>
       createLivePreviewExtension(
         { accent: theme.accent, surface: theme.surface, border: theme.border, textMuted: theme.textMuted },
-        { onOpenWikilink, onOpenOccurrence, resolveEmbedUrl },
+        { onOpenWikilink, onOpenOccurrence, resolveEmbedUrl, isWikilinkResolved },
       ),
-    [theme, onOpenWikilink, onOpenOccurrence, resolveEmbedUrl],
+    [theme, onOpenWikilink, onOpenOccurrence, resolveEmbedUrl, isWikilinkResolved],
   );
 
   // Recréée seulement quand le dictionnaire, la liste de notes ou les
