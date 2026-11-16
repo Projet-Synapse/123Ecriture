@@ -50,6 +50,9 @@ export const DEFAULT_PREFERENCES: Preferences = {
   // persistés par coffre ; 'all' / 'none' déplient/replient tout au
   // chargement — voir NotesScreen.tsx pour l'application.
   explorerExpandMode: 'last',
+  // Paramètres › Gestion des propriétés : tri de la liste (bouton à côté de
+  // « Revérifier le coffre »), voir lib/properties/propertySort.ts.
+  propertiesSortMode: 'alpha-asc',
   // Écran Tâches : tri par échéance + masquage des terminées, persistés
   // (voir TasksScreen.tsx — c'étaient des états de session avant cette
   // préférence, une utilisatrice qui trie toujours par échéance ne devait
@@ -122,6 +125,7 @@ type PreferencesContextValue = {
   setNewNoteCustomFolder: (folder: string) => Promise<void>;
   setFileSortMode: (mode: FileSortMode) => Promise<void>;
   setExplorerExpandMode: (mode: ExplorerExpandMode) => Promise<void>;
+  setPropertiesSortMode: (mode: PropertySortMode) => Promise<void>;
   setTasksSortByDueDate: (value: boolean) => Promise<void>;
   setTasksHideCompleted: (value: boolean) => Promise<void>;
   setTasksNotifyEnabled: (value: boolean) => Promise<void>;
@@ -403,6 +407,10 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     (mode: ExplorerExpandMode) => persist({ explorerExpandMode: mode }),
     [persist],
   );
+  const setPropertiesSortMode = useCallback(
+    (mode: PropertySortMode) => persist({ propertiesSortMode: mode }),
+    [persist],
+  );
   const setTasksSortByDueDate = useCallback(
     (value: boolean) => persist({ tasksSortByDueDate: value }),
     [persist],
@@ -593,6 +601,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       setNewNoteCustomFolder,
       setFileSortMode,
       setExplorerExpandMode,
+      setPropertiesSortMode,
       setTasksSortByDueDate,
       setTasksHideCompleted,
       setTasksNotifyEnabled,
@@ -638,6 +647,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       setNewNoteCustomFolder,
       setFileSortMode,
       setExplorerExpandMode,
+      setPropertiesSortMode,
       setTasksSortByDueDate,
       setTasksHideCompleted,
       setTasksNotifyEnabled,
