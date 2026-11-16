@@ -53,8 +53,7 @@ import {
   readVaultIdentity,
   writeVaultIdentity,
 } from './coffre-registre';
-export { getActiveVaultPath } from './coffre-registre';
-import { dialog, ipcMain, type BrowserWindow } from 'electron';
+import { dialog, ipcMain, shell, type BrowserWindow } from 'electron';
 import crypto from 'crypto';
 import fs from 'fs/promises';
 import fsSync from 'fs';
@@ -63,6 +62,7 @@ import path from 'path';
 
 import { readConfig, writeConfig } from '../config';
 import type { DeviceInfo, VaultRegistryEntry } from '../types';
+export { getActiveVaultPath } from './coffre-registre';
 
 type GetWindow = () => BrowserWindow | null;
 //////// 4. Verrou de synchro et bascule ///////////////////////////////////
@@ -210,7 +210,8 @@ export async function clearVaultContent(id: string): Promise<void> {
   const entries = await fs.readdir(vault.path, { withFileTypes: true });
   for (const entry of entries) {
     if (entry.name.startsWith('.')) continue;
-    await fs.rm(path.join(vault.path, entry.name), { recursive: true, force: true });
+    // Corbeille de l'OS, jamais fs.rm : le contenu reste récupérable.
+    await shell.trashItem(path.join(vault.path, entry.name));
   }
 }
 

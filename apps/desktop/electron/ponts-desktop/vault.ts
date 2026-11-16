@@ -546,8 +546,9 @@ export function registerVaultHandlers(getWindow: GetWindow): void {
   // dossier caché (.123ecriture…), arrêt au premier dossier non vide.
   //
   // `options.permanent` (et toute suppression ciblant déjà `.trash/`) :
-  // destruction réelle — c'est le SEUL chemin destructif, réservé à
-  // « Supprimer définitivement » depuis la corbeille.
+  // sortie du coffre vers la CORBEILLE DE L'OS (shell.trashItem) — plus
+  // aucune destruction directe (incident du 16/11 : jamais de fs.rm sur un
+  // fichier de l'utilisatrice, il doit rester récupérable).
   ipcMain.handle(
     'vault:delete',
     async (
@@ -583,7 +584,9 @@ export function registerVaultHandlers(getWindow: GetWindow): void {
       }
 
       if (options?.permanent || alreadyInTrash) {
-        await fs.rm(fullPath, { recursive: true, force: true });
+        // Même « définitif », rien n'est détruit : CORBEILLE DE L'OS
+        // (Windows / macOS / Linux). Échec = erreur, jamais de repli fs.rm.
+        await shell.trashItem(fullPath);
       } else {
         await moveToVaultTrash(vaultPath, fullPath, relPath);
       }
