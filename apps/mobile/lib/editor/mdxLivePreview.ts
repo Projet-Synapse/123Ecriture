@@ -68,7 +68,16 @@ export type LivePreviewCallbacks = {
   // buildDecorations) vit chez le fournisseur (NotesScreen.tsx), qui sait
   // quand le coffre actif change et peut l'invalider.
   resolveEmbedUrl?: (target: string) => Promise<string | null>;
+  // La cible d'un [[lien]] existe-t-elle ? false = pastille ATTÉNUÉE
+  // (lien vers une fiche pas encore créée, façon Obsidian). Fourni par
+  // NotesScreen (même résolveur que le clic, lib/notes/
+  // wikilinkResolution.ts) ; absent = tous les liens au style normal.
+  isWikilinkResolved?: (target: string) => boolean;
 };
+
+// Opacité d'un lien non résolu — la couleur reste celle du thème (accent),
+// seulement plus claire. Même valeur que NoteRenderer (UNRESOLVED_LINK_ALPHA).
+const UNRESOLVED_LINK_OPACITY = '0.5';
 
 //////// 2. Widgets (pastille de token, image d'embed, tableau GFM) /////////////
 
@@ -79,12 +88,18 @@ class TokenPillWidget extends WidgetType {
     private readonly target: string,
     private readonly colors: LivePreviewColors,
     private readonly callbacks: LivePreviewCallbacks,
+    private readonly unresolved: boolean = false,
   ) {
     super();
   }
 
   eq(other: TokenPillWidget): boolean {
-    return other.type === this.type && other.label === this.label && other.target === this.target;
+    return (
+      other.type === this.type &&
+      other.label === this.label &&
+      other.target === this.target &&
+      other.unresolved === this.unresolved
+    );
   }
 
   toDOM(): HTMLElement {
@@ -97,6 +112,12 @@ class TokenPillWidget extends WidgetType {
     span.style.padding = '0 4px';
     span.style.fontSize = '0.9em';
     span.style.cursor = this.type === 'wikilink' || this.type === 'occurrence' ? 'pointer' : 'default';
+    if (this.unresolved) {
+      span.style.opacity = UNRESOLVED_LINK_OPACITY;
+      span.style.borderStyle = 'dashed';
+      span.title = 'Fiche inexistante — cliquer pour la créer';
+      span.dataset.unresolved = 'true';
+    }
     if (this.type === 'wikilink' && this.callbacks.onOpenWikilink) {
       const handler = this.callbacks.onOpenWikilink;
       span.addEventListener('mousedown', (event) => {
@@ -387,7 +408,16 @@ function buildDecorations(view: EditorView, colors: LivePreviewColors, callbacks
       if (active) continue; // texte brut révélé pendant l'édition
       const widget = isImageEmbedTarget(match.target)
         ? new EmbedImageWidget(match.target, colors, callbacks)
-        : new TokenPillWidget(match.type, match.label, match.target, colors, callbacks);
+        : new TokenPillWidget(
+            match.type,
+            match.label,
+            match.target,
+            colors,
+            callbacks,
+            match.type === 'wikilink' && callbacks.isWikilinkResolved
+              ? !callbacks.isWikilinkResolved(match.target)
+              : false,
+          );
       ranges.push({ from: match.from, to: match.to, decoration: Decoration.replace({ widget, side: 0 }) });
     }
   }

@@ -187,6 +187,10 @@ export function registerVaultHandlers(getWindow: GetWindow): void {
       const vaultPath = getVaultPath();
       if (!vaultPath) throw new Error('Aucun vault sélectionné');
       const parentFull = parentRelPath ? resolveInVault(vaultPath, parentRelPath) : vaultPath;
+      // Le dossier visé peut ne pas exister encore (dossier fixe du réglage
+      // « emplacement des nouvelles notes », chemin écrit dans un [[lien]]
+      // vers une fiche inexistante) : créé plutôt que d'échouer en ENOENT.
+      await fs.mkdir(parentFull, { recursive: true });
 
       const safeKind: VaultEntryKind = kind && kind in KIND_TO_EXTENSION ? (kind as VaultEntryKind) : 'markdown';
       const safeName = name && name.trim().length > 0 ? name.trim() : 'Sans titre';
