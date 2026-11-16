@@ -3316,6 +3316,9 @@ function NativeReadingScroll({ scrollbarColor, children }: { scrollbarColor: str
         onLayout={(event) => setViewHeight(event.nativeEvent.layout.height)}
         onContentSizeChange={(_, height) => setContentHeight(height)}
         scrollEventThrottle={16}
+        // Un tap sur une suggestion de valeur de propriété doit la choisir,
+        // pas seulement fermer le clavier (PropertyValueField).
+        keyboardShouldPersistTaps="handled"
       >
         {children}
       </ScrollView>
