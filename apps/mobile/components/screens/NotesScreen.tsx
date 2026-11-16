@@ -28,6 +28,7 @@ import { convertNoteFormat, formatConversionBetween, willConvertFormat } from '.
 import type { FormattingResult, Selection } from '../../lib/editor/mdxFormatting';
 import { NOTES_TOOLBAR_ACTIONS, type ToolbarAction } from '../../lib/editor/notesToolbarActions';
 import { toolbarRoute, type EditorCommand } from '../../lib/editor/editorCommands';
+import { buildNotesToolbarItems } from '../../lib/editor/toolbarItems';
 import { resolveNewNoteParent, wikilinkCreationTarget } from '../../lib/notes/newNotePath';
 import { openSearchResult } from '../../lib/notes/searchResults';
 import { useResizablePanel } from '../../lib/ui/useResizablePanel';
@@ -2888,30 +2889,7 @@ export function NotesScreen({
                         WebView (nativeEditorCommandRef, editorCommands.ts). */}
                     {effectiveViewMode !== 'reading' && (
                       <EditorToolbar
-                        items={(() => {
-                          const items: { id: string; label: string; divider?: boolean; subItems?: { id: string; label: string }[]; run?: { id: string; formatRun?: (text: string, selection: Selection) => FormattingResult } }[] = [];
-                          preferences.notesToolbarGroups.forEach((group, groupIndex) => {
-                            if (groupIndex > 0) {
-                              items.push({ id: `divider-${group.id}`, label: '', divider: true });
-                            }
-                            const resolved = group.buttons
-                              .map((id) => NOTES_TOOLBAR_ACTIONS.find((action) => action.id === id))
-                              .filter((action): action is ToolbarAction => Boolean(action));
-                            if (group.collapsible) {
-                              items.push({
-                                id: `group-${group.id}`,
-                                label: group.label,
-                                subItems: resolved.map((action) => ({ id: action.id, label: action.label })),
-                              });
-                            } else {
-                              resolved.forEach((action, index) => {
-                                if (index > 0) items.push({ id: `divider-${group.id}-${index}`, label: '', divider: true });
-                                items.push({ id: action.id, label: action.label, run: { id: action.id, formatRun: action.run } });
-                              });
-                            }
-                          });
-                          return items;
-                        })()}
+                        items={buildNotesToolbarItems(preferences.notesToolbarGroups)}
                         theme={theme}
                         onItemRun={(item) => {
                           if (!item.run) return;
