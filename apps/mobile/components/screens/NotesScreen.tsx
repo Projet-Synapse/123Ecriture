@@ -29,6 +29,7 @@ import { NOTES_TOOLBAR_ACTIONS, type ToolbarAction } from '../../lib/editor/note
 import { openSearchResult } from '../../lib/notes/searchResults';
 import { useResizablePanel } from '../../lib/ui/useResizablePanel';
 import { collectFolderRelPaths } from '../../lib/notes/treeExpansion';
+import { createWikilinkResolver, resolveWikilink } from '../../lib/notes/wikilinkResolution';
 import {
   findNodeByPath,
   flattenNotes,
@@ -669,6 +670,18 @@ export function NotesScreen({
   // lib/wikilinkAutocomplete.ts) — recalculé quand l'arbre change
   // (création/renommage/déplacement), pas à la frappe.
   const noteNameList = useMemo(() => flattenNotes(tree).map((note) => note.name), [tree]);
+  // Liens internes non résolus (affichés atténués, façon Obsidian) : MÊME
+  // résolveur que le clic (handleOpenWikilink) — voir
+  // lib/notes/wikilinkResolution.ts. Recréé quand l'arbre change
+  // (création/renommage/suppression/synchro) ou quand la note courante
+  // change (liens relatifs, homonymes) : les éditeurs reconstruisent alors
+  // leurs pastilles, pas à chaque frappe.
+  const notePathList = useMemo(() => flattenNotes(tree).map((note) => note.relPath), [tree]);
+  const activeNoteRelPath = activeNote?.relPath ?? null;
+  const isWikilinkResolved = useMemo(
+    () => createWikilinkResolver(flattenNotes(tree), activeNoteRelPath).isResolved,
+    [tree, activeNoteRelPath],
+  );
 
   // Résolution des embeds `![[...]]` en data URL (widget image du Live
   // Preview, voir MdxEditor.tsx/mdxLivePreview.ts) — MÊME bridge que
@@ -1936,8 +1949,8 @@ export function NotesScreen({
   };
 
   // Clic sur un [[lien interne]] (voir NoteRenderer.tsx) — résout par NOM
-  // de note (comme Obsidian, insensible à la casse) plutôt que par relPath
-  // exact, puisque c'est ce que la syntaxe du lien porte. Si la cible
+  // de note (comme Obsidian, insensible à la casse) ou par chemin quand le
+  // lien en porte un, alias et ancre ignorés (resolveWikilink). Si la cible
   // n'existe pas encore, la crée avant de l'ouvrir par défaut (façon
   // Obsidian : un lien vers une note absente n'est pas une impasse) — sauf
   // si Paramètres → Gestion des fichiers et des liens →
@@ -1948,8 +1961,10 @@ export function NotesScreen({
       if (!vault) return;
       setWikilinkNotice(null);
       try {
-        const notes = flattenNotes(tree);
-        const existing = notes.find((note) => note.name.toLowerCase() === target.toLowerCase());
+        // Même résolution que le style « non résolu » des pastilles (alias,
+        // ancre, extension, chemin, casse) — lib/notes/wikilinkResolution.ts.
+        const existing = resolveWikilink(target, flattenNotes(tree), activeNoteRef.current?.relPath);
+        if (existing === 'self') return;
         if (existing) {
           await openNote(existing);
           return;
@@ -2810,6 +2825,7 @@ export function NotesScreen({
                           />
                           <NoteRenderer
                             content={bodyOnly}
+                            isWikilinkResolved={isWikilinkResolved}
                             theme={theme}
                             onOpenWikilink={(t) => void handleOpenWikilink(t)}
                             knownOccurrenceWords={knownOccurrenceWords}
@@ -2843,6 +2859,8 @@ export function NotesScreen({
                             onCreateOccurrence={handleCreateOccurrence}
                             occurrenceWords={occurrenceWordList}
                             noteNames={noteNameList}
+                            notePaths={notePathList}
+                            currentRelPath={activeNoteRelPath}
                             theme={theme}
                             fontSize={preferences.editorFontSize}
                             fontFamily={preferences.editorFontFamily}
@@ -2893,6 +2911,7 @@ export function NotesScreen({
                             livePreview
                             autoHeight
                             theme={theme}
+                            isWikilinkResolved={isWikilinkResolved}
                             onOpenWikilink={(t) => void handleOpenWikilink(t)}
                             onOpenOccurrence={handleOpenOccurrence}
                             occurrenceWords={occurrenceWordList}
