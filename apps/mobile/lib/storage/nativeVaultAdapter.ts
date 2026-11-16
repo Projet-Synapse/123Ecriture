@@ -6,6 +6,7 @@ import { StorageAccessFramework } from 'expo-file-system/legacy';
 
 import { newNoteFrontmatter, parseFrontmatter } from '../properties/frontmatter';
 import { CODE_FILE_EXTENSIONS } from '../editor/codeLanguages';
+import { IMAGE_EXTENSIONS, mimeTypeForFile } from '../files/imageFormats';
 import { getActiveVaultRootUri, requestAndRegisterVault } from './nativeVaultsAdapter';
 import { vaultStorageObjectKey } from '../sync/storageKeys';
 
@@ -188,7 +189,8 @@ export const SYNCED_META_FILES = [
 // taille par fichier est appliquée au hachage desktop ; le mobile hache ce
 // que l'index connaît.)
 export const SYNC_ATTACHMENT_EXTENSIONS = [
-  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.heic',
+  // Toutes les images reconnues (lib/files/imageFormats.ts) : jfif, avif, tiff…
+  ...IMAGE_EXTENSIONS,
   '.pdf', '.txt', '.csv',
   '.mp3', '.wav', '.ogg', '.m4a', '.mp4', '.webm',
 ];
@@ -1364,10 +1366,9 @@ export const nativeVaultAdapter: VaultBridge = {
     try {
       await FileSystem.copyAsync({ from: uri, to: tmpPath });
       const base64 = await FileSystem.readAsStringAsync(tmpPath, { encoding: FileSystem.EncodingType.Base64 });
-      const ext = relPath.toLowerCase().split('.').pop() ?? '';
-      const mime =
-        ext === 'png' ? 'image/png' : ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : ext === 'gif' ? 'image/gif' : 'application/octet-stream';
-      return `data:${mime};base64,${base64}`;
+      // MIME partagé (lib/files/imageFormats.ts) — avant : png/jpg/gif
+      // seulement, un .webp/.jfif partait en octet-stream et ne s'affichait pas.
+      return `data:${mimeTypeForFile(relPath)};base64,${base64}`;
     } finally {
       await FileSystem.deleteAsync(tmpPath, { idempotent: true });
     }

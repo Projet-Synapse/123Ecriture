@@ -72,6 +72,7 @@ const DEFAULT_PREFERENCES: Preferences = {
   newNoteCustomFolder: '',
   fileSortMode: 'alphabetical',
   explorerExpandMode: 'last',
+  propertiesSortMode: 'alpha-asc',
   tasksSortByDueDate: false,
   tasksHideCompleted: false,
   tasksNotifyEnabled: false,

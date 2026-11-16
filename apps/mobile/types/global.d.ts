@@ -92,6 +92,10 @@ declare global {
     rescan?: () => Promise<void>;
     importAttachment: () => Promise<{ relPath: string; name: string } | null>;
     readAttachmentDataUrl: (relPath: string) => Promise<string>;
+    // Ouvre une pièce jointe hors de l'app (bouton « Ouvrir » des images non
+    // affichables) — desktop : application par défaut ; web : téléchargement.
+    // Absent sur Android (pas d'ouverture par intent pour l'instant).
+    openAttachment?: (relPath: string) => Promise<void>;
     // Voir "Dupliquer" dans le menu contextuel de NotesScreen.tsx — copie
     // dans le MÊME dossier, suffixée " (copie)"/" (copie 2)"...
     duplicate: (relPath: string) => Promise<VaultEntry>;
@@ -550,6 +554,10 @@ declare global {
   // 'all' déplie toute l'arborescence, 'none' la démarre entièrement repliée.
   type ExplorerExpandMode = 'last' | 'all' | 'none';
 
+  // Tri de la liste de Paramètres › Gestion des propriétés — voir
+  // lib/properties/propertySort.ts.
+  type PropertySortMode = 'alpha-asc' | 'alpha-desc' | 'type' | 'usage';
+
   interface Preferences {
     themeMode: ThemeMode;
     accentColor: string;
@@ -567,6 +575,10 @@ declare global {
     // voir ExplorerExpandMode ci-dessus et NotesScreen.tsx pour l'application
     // (au chargement ET à chaud quand le réglage change).
     explorerExpandMode: ExplorerExpandMode;
+    // Tri de la liste des propriétés (Paramètres › Gestion des propriétés),
+    // mémorisé — optionnel : absent des configurations plus anciennes et du
+    // côté Electron (qui conserve les champs qu'il ne connaît pas).
+    propertiesSortMode?: PropertySortMode;
     // Écran Tâches : tri par échéance et masquage des terminées — mémorisés
     // d'une session à l'autre (ce sont des préférences de lecture stables,
     // comme fileSortMode pour les fichiers, pas des besoins d'une session).

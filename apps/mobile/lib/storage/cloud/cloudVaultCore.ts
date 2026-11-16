@@ -1,4 +1,5 @@
 import { loadSyncSettings } from '../../sync/syncSettings';
+import { mimeTypeForFile } from '../../files/imageFormats';
 import { folderToMarker, isFolderMarker } from '../../sync/folderMarker';
 // ✒️ 123ECRITURE — lib/storage/cloud/cloudVaultCore.ts — le coffre Android 100 % cloud
 //////////////////////////////////////////////////////////////////////////////
@@ -791,9 +792,7 @@ export function createCloudVault(deps: CloudVaultDeps) {
 
     readAttachmentDataUrl: async (relPath) => {
       const base64 = await read(relPath, 'base64');
-      const ext = relPath.toLowerCase().split('.').pop() ?? '';
-      const mime = ext === 'png' ? 'image/png' : ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : ext === 'gif' ? 'image/gif' : ext === 'webp' ? 'image/webp' : ext === 'svg' ? 'image/svg+xml' : 'application/octet-stream';
-      return `data:${mime};base64,${base64}`;
+      return `data:${mimeTypeForFile(relPath)};base64,${base64}`;
     },
 
     duplicate: async (relPathRaw) => {

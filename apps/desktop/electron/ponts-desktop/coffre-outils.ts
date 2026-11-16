@@ -32,6 +32,7 @@ import * as vaults from './vaults';
 import type { FileSortMode, VaultEntryKind, VaultOrder, VaultTreeNode } from '../types';
 import { matchesEmbedTarget } from '../../../mobile/lib/notes/embedResolution';
 import { CODE_FILE_EXTENSIONS } from '../../../mobile/lib/editor/codeLanguages';
+import { mimeTypeForFile } from '../../../mobile/lib/files/imageFormats';
 import { normalizeRelPath } from '../../../mobile/lib/sync/relPath';
 import { resolveUnicodeSegments } from '../../../mobile/lib/sync/unicodePaths';
 import { newNoteFrontmatter } from '../../../mobile/lib/properties/frontmatter';
@@ -62,22 +63,10 @@ export function getFileSortMode(): FileSortMode {
   return readConfig().preferences?.fileSortMode ?? 'alphabetical';
 }
 
-const MIME_BY_EXTENSION: Record<string, string> = {
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.gif': 'image/gif',
-  '.webp': 'image/webp',
-  '.svg': 'image/svg+xml',
-  '.mp3': 'audio/mpeg',
-  '.wav': 'audio/wav',
-  '.ogg': 'audio/ogg',
-  '.m4a': 'audio/mp4',
-  '.flac': 'audio/flac',
-};
 
 export function guessMimeType(fileName: string): string {
-  return MIME_BY_EXTENSION[path.extname(fileName).toLowerCase()] ?? 'application/octet-stream';
+  // Table partagée (images jfif/avif/heic/tiff…, audio) : lib/files/imageFormats.ts.
+  return mimeTypeForFile(fileName);
 }
 
 // Un fichier du vault est reconnu comme "note" (feuille de l'arbre, ouvrable

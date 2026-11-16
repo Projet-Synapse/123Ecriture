@@ -14,6 +14,7 @@
 //////////////////////////////////////////////////////////////////////////////
 
 import { isFolderMarker } from './folderMarker';
+import { IMAGE_EXTENSIONS } from '../files/imageFormats';
 
 export type SyncFileCategory =
   | 'markdown'
@@ -64,7 +65,7 @@ export const DEFAULT_SYNC_SETTINGS: SyncSettings = {
 
 export const SYNC_CATEGORY_LABELS: Record<SyncFileCategory, string> = {
   markdown: 'Notes Markdown (.md)',
-  images: 'Images (PNG, JPG, GIF, WebP, SVG, HEIC)',
+  images: 'Images (PNG, JPG, GIF, WebP, AVIF, SVG, HEIC…)',
   pdf: 'PDF',
   audio: 'Audio (MP3, WAV, OGG, M4A)',
   video: 'Vidéo (MP4, WebM)',
@@ -75,7 +76,7 @@ export const SYNC_CATEGORY_LABELS: Record<SyncFileCategory, string> = {
 
 const EXT: Record<string, SyncFileCategory> = {
   '.md': 'markdown', '.mdx': 'markdown',
-  '.png': 'images', '.jpg': 'images', '.jpeg': 'images', '.gif': 'images', '.webp': 'images', '.svg': 'images', '.heic': 'images',
+  ...Object.fromEntries(IMAGE_EXTENSIONS.map((ext) => [ext, 'images' as const])),
   '.pdf': 'pdf',
   '.mp3': 'audio', '.wav': 'audio', '.ogg': 'audio', '.m4a': 'audio',
   '.mp4': 'video', '.webm': 'video',
