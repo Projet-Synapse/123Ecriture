@@ -35,7 +35,22 @@ export type SyncSummary = {
   // Suppressions venues d'un autre appareil EN ATTENTE DE VALIDATION ici
   // (fichiers conservés) — badge de l'indicateur de synchro.
   pendingRemoteDeletions?: number;
+  // Cycle NON exécuté parce que la synchro est EN PAUSE (désactivée, pause
+  // après mise à jour, Wi-Fi uniquement, disjoncteur, verrou à distance…).
+  // Avant : un résumé vide sans erreur → l'indicateur affichait « À jour »
+  // alors que rien n'était synchronisé. Voir syncPause.ts.
+  paused?: { reason: SyncPauseReason; detail: string };
 };
+
+export type SyncPauseReason =
+  | 'not-linked'
+  | 'disabled'
+  | 'vault-disabled'
+  | 'after-update'
+  | 'wifi-only'
+  | 'no-local-vault'
+  | 'circuit-breaker'
+  | 'device-locked';
 
 // État de synchro par coffre : ensemble des fichiers présents à la fin du
 // dernier cycle réussi (rel_path -> hash de contenu), persisté DANS le

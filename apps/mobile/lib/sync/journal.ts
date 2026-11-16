@@ -48,6 +48,10 @@ export type SyncJournalEntryType =
   | 'error'
   | 'pause'
   | 'resume'
+  // La SYNCHRO elle-même passe en pause / reprend (≠ 'pause'/'resume' =
+  // surveillance du dossier pendant un cycle). `reason` = SyncPauseKind.
+  | 'sync-pause'
+  | 'sync-resume'
   | 'restore'
   | 'info'
   // Étapes progressives d'un cycle (façon Obsidian Sync : lisible en direct)
@@ -62,6 +66,8 @@ export type SyncJournalEntry = {
   type: SyncJournalEntryType;
   path?: string;
   detail?: string;
+  // Raison machine d'une entrée 'sync-pause' (voir syncPause.ts).
+  reason?: string;
 };
 
 // Généreuses pour un cycle de masse (une rafale de suppressions produit
@@ -130,6 +136,10 @@ export function journalEntryLabel(entry: SyncJournalEntry): string {
       return 'Surveillance en pause (cycle en cours)';
     case 'resume':
       return 'Surveillance reprise';
+    case 'sync-pause':
+      return `Synchro EN PAUSE — ${entry.detail ?? ''}`.trim();
+    case 'sync-resume':
+      return `Synchro reprise${entry.detail ? ` — ${entry.detail}` : ''}`;
     case 'restore':
       return `Restauré : ${entry.path ?? ''}`;
     case 'info':

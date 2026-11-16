@@ -1,10 +1,13 @@
 import { installedAppVersion } from '../updaterAndroid';
-import { checkAppUpdate } from './syncSettings';
+import { checkAppUpdate, hydrateSyncSettings, loadSyncSettings, subscribeSyncSettings, type SyncSettings } from './syncSettings';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 
 import { useAuth } from './AuthContext';
-import { runSync as runSyncEngine } from './syncEngine';
+import { appendJournalEntries, runSync as runSyncEngine, SYNC_JOURNAL_READ_PATH } from './syncEngine';
+import { loadPendingReview, type PendingReview } from './pendingReview';
+import { derivePause, deriveWarning, lastLoggedPause, pauseTransitionEntries, type SyncPause } from './syncPause';
+import type { SyncJournalEntry } from './journal';
 import { formatSyncProgress, getSyncProgress, subscribeSyncProgress } from './syncProgress';
 import type { SyncSummary } from './syncTypes';
 import { supabase } from './supabaseClient';
@@ -71,7 +74,28 @@ type SyncStatusContextValue = {
   // L'appelant enchaîne ensuite un runSync() explicite pour tout pousser
   // d'un coup, dans un état final cohérent.
   runSyncExclusive: <T>(fn: () => Promise<T>) => Promise<T>;
+  // Synchro EN PAUSE (et pourquoi) — connue le plus souvent AVANT tout
+  // cycle (réglages, réseau, session, file de revue). null = elle tourne.
+  // Voir syncPause.ts. Chaque passage en pause / reprise est daté dans le
+  // journal de synchronisation.
+  pause: SyncPause | null;
+  // Avertissement AVANT une pause (erreurs qui approchent du disjoncteur).
+  pauseWarning: string | null;
 };
+
+// Délai de stabilité avant d'écrire une pause / reprise au journal : une
+// coupure réseau d'une seconde ne remplit pas le journal.
+const PAUSE_JOURNAL_SETTLE_MS = 2_000;
+
+function readOnline(): boolean | undefined {
+  const nav = (globalThis as { navigator?: { onLine?: boolean } }).navigator;
+  return typeof nav?.onLine === 'boolean' ? nav.onLine : undefined;
+}
+
+function readCellular(): boolean {
+  const nav = (globalThis as { navigator?: { connection?: { type?: string } } }).navigator;
+  return nav?.connection?.type === 'cellular';
+}
 
 const SyncStatusReactContext = createContext<SyncStatusContextValue | null>(null);
 
@@ -125,6 +149,54 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
   const userId = auth.user?.id ?? null;
   const remoteVaultId = activeVault?.cloudLinked ? activeVault.remoteVaultId : null;
   const cloudSyncConfigured = Boolean(userId && remoteVaultId);
+
+  // ÉTAT « EN PAUSE » (syncPause.ts) : ses sources sont suivies ICI, en
+  // direct, pour que l'indicateur le dise AVANT qu'un cycle ne soit tenté.
+  const [syncSettings, setSyncSettings] = useState<SyncSettings>(() => loadSyncSettings());
+  useEffect(() => {
+    void hydrateSyncSettings().then(setSyncSettings, () => undefined);
+    return subscribeSyncSettings(setSyncSettings);
+  }, []);
+  const [online, setOnline] = useState<boolean | undefined>(() => readOnline());
+  const [cellular, setCellular] = useState<boolean>(() => readCellular());
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return;
+    const update = () => {
+      setOnline(readOnline());
+      setCellular(readCellular());
+    };
+    window.addEventListener('online', update);
+    window.addEventListener('offline', update);
+    return () => {
+      window.removeEventListener('online', update);
+      window.removeEventListener('offline', update);
+    };
+  }, []);
+  // File de revue (disjoncteur, garde-fou des suppressions) : relue au
+  // changement de coffre, après chaque cycle (`status`) et toutes les 30 s
+  // (décisions prises dans Paramètres).
+  const [review, setReview] = useState<Pick<PendingReview, 'syncBlocked' | 'suspiciousDeletions'> | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      if (typeof window === 'undefined' || !window.vault || !remoteVaultId) {
+        if (!cancelled) setReview(null);
+        return;
+      }
+      try {
+        const r = await loadPendingReview(window.vault);
+        if (!cancelled) setReview({ syncBlocked: r.syncBlocked, suspiciousDeletions: r.suspiciousDeletions });
+      } catch {
+        // Illisible : déjà signalé par le moteur (erreur du cycle).
+      }
+    };
+    void load();
+    const timer = setInterval(() => void load(), 30_000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [remoteVaultId, status]);
 
   // Empêche un cycle auto de démarrer par-dessus un cycle déjà en cours
   // (manuel ou auto) — un ref plutôt qu'un dérivé de `status` : `runSync`
@@ -233,7 +305,9 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
       } else {
         setStatus('success');
         setLastError(null);
-        setLastSyncedAt(Date.now());
+        // Cycle NON exécuté (synchro en pause) : ce n'est PAS une synchro
+        // réussie — l'heure « À jour » ne doit pas avancer.
+        if (!summary.paused) setLastSyncedAt(Date.now());
         setLastConflicts(summary.conflicts);
         setLastResultSummary(summarizeSuccess(summary));
       }
@@ -451,6 +525,52 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
       return () => clearInterval(t);
     }, [preferences.autoSyncEnabled, cloudSyncConfigured, runSync]);
 
+  const pause = useMemo(
+    () =>
+      derivePause({
+        vaultCloudLinked: Boolean(remoteVaultId),
+        signedIn: Boolean(userId),
+        authLoading: auth.loading,
+        remoteVaultId,
+        online,
+        cellular,
+        settings: syncSettings,
+        autoSyncEnabled: preferences.autoSyncEnabled,
+        lastSummary,
+        lastError: status === 'error' ? lastError : null,
+        review,
+      }),
+    [remoteVaultId, userId, auth.loading, online, cellular, syncSettings, preferences.autoSyncEnabled, lastSummary, lastError, status, review],
+  );
+  const pauseWarning = useMemo(() => (pause?.blocking ? null : deriveWarning({ lastSummary })), [pause, lastSummary]);
+
+  // JOURNAL : entrée DATÉE à chaque passage en pause et à chaque reprise.
+  // Jamais pendant un cycle (le moteur retire du journal ce qu'un cycle à
+  // vide a ajouté) ; état stable PAUSE_JOURNAL_SETTLE_MS avant d'écrire ;
+  // dernier état relu du journal → pas de doublon à chaque lancement.
+  const pauseRef = useRef<SyncPause | null>(null);
+  useEffect(() => {
+    pauseRef.current = pause;
+  }, [pause]);
+  const pauseKind = pause?.kind ?? null;
+  useEffect(() => {
+    if (!remoteVaultId || status === 'syncing' || auth.loading) return;
+    const timer = setTimeout(() => {
+      void (async () => {
+        if (syncingRef.current || typeof window === 'undefined' || !window.vault) return;
+        let entries: SyncJournalEntry[] = [];
+        try {
+          const parsed = JSON.parse(await window.vault.readNote(SYNC_JOURNAL_READ_PATH)) as { entries?: SyncJournalEntry[] };
+          entries = Array.isArray(parsed.entries) ? parsed.entries : [];
+        } catch {
+          // Journal absent : aucune pause déjà notée.
+        }
+        await appendJournalEntries(pauseTransitionEntries(lastLoggedPause(entries), pauseRef.current));
+      })();
+    }, PAUSE_JOURNAL_SETTLE_MS);
+    return () => clearTimeout(timer);
+  }, [pauseKind, remoteVaultId, status, auth.loading]);
+
   const value = useMemo<SyncStatusContextValue>(
     () => ({
       status,
@@ -463,8 +583,23 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
       cloudSyncConfigured,
       runSync,
       runSyncExclusive,
+      pause,
+      pauseWarning,
     }),
-    [status, lastSyncedAt, lastResultSummary, progressLabel, lastConflicts, lastSummary, lastError, cloudSyncConfigured, runSync, runSyncExclusive],
+    [
+      status,
+      lastSyncedAt,
+      lastResultSummary,
+      progressLabel,
+      lastConflicts,
+      lastSummary,
+      lastError,
+      cloudSyncConfigured,
+      runSync,
+      runSyncExclusive,
+      pause,
+      pauseWarning,
+    ],
   );
 
   return <SyncStatusReactContext.Provider value={value}>{children}</SyncStatusReactContext.Provider>;
