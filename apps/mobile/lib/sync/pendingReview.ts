@@ -74,6 +74,9 @@ export type RemoteDeletionReview = {
   deletedByDevice?: string | null;
   deletedAt?: string | null;
   remoteVersion?: number | null;
+  // Renommé (ou converti .md ⇄ .mdx) sur l'autre appareil : nouveau chemin,
+  // déjà reçu ici (renamePairs.ts). Absent pour une vraie suppression.
+  renamedTo?: string;
 };
 
 // File illisible (JSON corrompu, lecture en échec) : JAMAIS confondue avec
@@ -168,7 +171,10 @@ export function reconcileRemoteDeletions(
     if (!stillPending.has(candidate.path)) continue;
     const old = previous.get(candidate.path);
     if (!old) added.push(candidate);
-    byPath.set(candidate.path, { ...candidate, at: old?.at ?? candidate.at });
+    // `renamedTo` n'est connu qu'au cycle où le nouveau chemin arrive : il
+    // est conservé aux cycles suivants.
+    const renamedTo = candidate.renamedTo ?? old?.renamedTo;
+    byPath.set(candidate.path, { ...candidate, at: old?.at ?? candidate.at, ...(renamedTo ? { renamedTo } : {}) });
   }
   const entries = [...byPath.values()].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
   return { entries, added };

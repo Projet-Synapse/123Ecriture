@@ -94,3 +94,23 @@ describe('pending-review.json strict', () => {
     expect(v.files[PENDING_REVIEW_REL_PATH]).toBe('{corrompu');
   });
 });
+
+describe('collectRemoteDeletionCandidates — renommages', () => {
+  it('annote le nouveau chemin d’un renommage apparié', () => {
+    const { candidates } = collectRemoteDeletionCandidates({
+      tombstones: new Map([
+        ['Note.md', { deletedByDevice: 'LORDI', version: 2 }],
+        ['Vraie.md', { deletedByDevice: 'LORDI', version: 2 }],
+      ]),
+      local: new Map([
+        ['Note.md', { contentHash: 'h' }],
+        ['Vraie.md', { contentHash: 'v' }],
+      ]),
+      base: { 'Note.md': 'h', 'Vraie.md': 'v' },
+      queuedAt: '2026-11-16T00:00:00.000Z',
+      renamedTo: new Map([['Note.md', 'Note.mdx']]),
+    });
+    expect(candidates.find((c) => c.path === 'Note.md')?.renamedTo).toBe('Note.mdx');
+    expect(candidates.find((c) => c.path === 'Vraie.md')).not.toHaveProperty('renamedTo');
+  });
+});

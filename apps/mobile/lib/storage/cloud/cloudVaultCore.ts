@@ -1,6 +1,7 @@
 import { loadSyncSettings } from '../../sync/syncSettings';
 import { mimeTypeForFile } from '../../files/imageFormats';
 import { folderToMarker, isFolderMarker } from '../../sync/folderMarker';
+import { resolveRenameName } from '../../notes/renameTarget';
 // ✒️ 123ECRITURE — lib/storage/cloud/cloudVaultCore.ts — le coffre Android 100 % cloud
 //////////////////////////////////////////////////////////////////////////////
 //
@@ -690,9 +691,9 @@ export function createCloudVault(deps: CloudVaultDeps) {
       const s = await load();
       const isDir = index(s).get(relPath)?.isDirectory ?? false;
       const name = nameOf(relPath);
-      const hadExt = isDir ? undefined : h.knownContentExts.find((k) => name.toLowerCase().endsWith(k));
-      const carries = h.knownContentExts.some((k) => newName.toLowerCase().endsWith(k));
-      const candidate = hadExt && !carries ? `${newName}${hadExt}` : newName;
+      // Règle partagée (lib/notes/renameTarget.ts) : `.md` ⇄ `.mdx` saisi
+      // l'emporte ; conversion du contenu faite par l'appelant.
+      const { finalName: candidate } = resolveRenameName(name, newName, { isDirectory: isDir });
       if (candidate === name) return { relPath, name: h.baseNameOf(name) };
       const sib = siblings(s, parentOf(relPath));
       sib.delete(name);
