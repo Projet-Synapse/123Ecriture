@@ -152,31 +152,28 @@ export function baseWithoutKept<T>(base: Record<string, T>, review: PendingRevie
 type ReviewVault = Parameters<typeof loadPendingReview>[0] & Parameters<typeof savePendingReview>[0];
 
 export type ConfirmOutcome = {
+  // Chemins approuvés : le MOTEUR les applique au cycle relancé juste après.
   count: number;
-  // Suppressions appliquées tout de suite dans le cloud (sinon : au cycle
-  // suivant, par le moteur — la décision est déjà enregistrée).
-  appliedNow: boolean;
-  cloudError: string | null;
 };
 
-export async function confirmMassDeletions(deps: {
-  vault: ReviewVault;
-  tombstone: (paths: string[]) => Promise<void>;
-  now?: () => Date;
-}): Promise<ConfirmOutcome> {
+// INCIDENT 2026-11-16 (01:12) : « Confirmer les suppressions » marquait
+// supprimées, d'un seul UPDATE direct, les 213 lignes cloud de la liste
+// affichée — sans relire le disque, sans verrou de version. Or ces fichiers
+// étaient (de nouveau) présents sur l'appareil : 213 notes vivantes
+// effacées du cloud, puis proposées à la suppression sur les autres
+// appareils. Désormais la confirmation ne fait QU'ENREGISTRER la décision ;
+// le moteur l'applique fichier par fichier avec ses garanties :
+//   • relecture directe du disque juste avant (fichier présent = rien) ;
+//   • tombstone_file avec la version attendue (modifié ailleurs = rien) ;
+//   • suppression locale seulement si le contenu est identique à la base.
+export async function confirmMassDeletions(deps: { vault: ReviewVault; now?: () => Date }): Promise<ConfirmOutcome> {
   const nowIso = (deps.now?.() ?? new Date()).toISOString();
-  // 1. Décision persistée sur la file RELUE, avant tout effet réseau.
+  // Décision persistée sur la file RELUE ; aucun effet réseau direct.
   const current = await loadPendingReview(deps.vault);
   const { next, paths } = withMassDeletionsConfirmed(current, nowIso);
-  if (paths.length === 0) return { count: 0, appliedNow: true, cloudError: null };
+  if (paths.length === 0) return { count: 0 };
   await savePendingReview(deps.vault, next);
-  // 2. Effet immédiat dans le cloud ; un échec n'annule PAS la décision.
-  try {
-    await deps.tombstone(paths);
-    return { count: paths.length, appliedNow: true, cloudError: null };
-  } catch (error) {
-    return { count: paths.length, appliedNow: false, cloudError: error instanceof Error ? error.message : String(error) };
-  }
+  return { count: paths.length };
 }
 
 export async function keepMassDeletions(deps: { vault: ReviewVault; now?: () => Date }): Promise<{ count: number }> {
