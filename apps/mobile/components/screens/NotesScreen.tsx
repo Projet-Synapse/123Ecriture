@@ -2696,12 +2696,10 @@ export function NotesScreen({
             <View style={styles.editorMainRow}>
               <View style={styles.noteContent}>
                 {activeNote.kind === 'canvas' ? (
+                  // Mobile aussi (v. CanvasEditor : affichage complet,
+                  // panoramique au doigt, zoom/recadrage aux boutons).
                   <View style={styles.editorBody}>
-                    {isNativeNotes ? (
-                      <NativeFileTypeUnavailable color={theme.textMuted} />
-                    ) : (
-                      <CanvasEditor relPath={activeNote.relPath} onOpenNote={openNoteByRelPath} />
-                    )}
+                    <CanvasEditor relPath={activeNote.relPath} onOpenNote={openNoteByRelPath} />
                   </View>
                 ) : activeNote.kind === 'chart' ? (
                   <View style={styles.editorBody}>

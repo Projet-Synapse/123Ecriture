@@ -1,0 +1,16 @@
+{
+	"nodes":[
+		{"id":"8a1c0f0e3b2d4c11","type":"group","x":-720,"y":-460,"width":1180,"height":640,"color":"6","label":"Les Eleven"},
+		{"id":"b2e4d6f8a0c21345","type":"text","text":"# Hiérarchie des Eleven\n\nChef : **Nora**","x":-660,"y":-400,"width":320,"height":160,"color":"1"},
+		{"id":"c3f5e7a9b1d32456","type":"file","file":"Personnages/Nora.md","x":-240,"y":-380,"width":400,"height":200},
+		{"id":"d4a6f8b0c2e43567","type":"file","file":"Personnages/Ilyan.md","subpath":"#Rôle","x":-240,"y":-120,"width":400,"height":200,"color":"#2f80ed"},
+		{"id":"e5b7a9c1d3f54678","type":"link","url":"https://jsoncanvas.org","x":520,"y":-120,"width":360,"height":180},
+		{"id":"f6c8b0d2e4a65789","type":"text","text":"Sans couleur","x":-660,"y":-60,"width":250,"height":60}
+	],
+	"edges":[
+		{"id":"0a1b2c3d4e5f6071","fromNode":"b2e4d6f8a0c21345","fromSide":"right","toNode":"c3f5e7a9b1d32456","toSide":"left"},
+		{"id":"1b2c3d4e5f607182","fromNode":"c3f5e7a9b1d32456","fromSide":"bottom","toNode":"d4a6f8b0c2e43567","toSide":"top","color":"4","label":"supérieur de"},
+		{"id":"2c3d4e5f60718293","fromNode":"d4a6f8b0c2e43567","fromSide":"right","toNode":"e5b7a9c1d3f54678","toSide":"left","fromEnd":"arrow","toEnd":"none"},
+		{"id":"3d4e5f6071829304","fromNode":"f6c8b0d2e4a65789","toNode":"inexistant"}
+	]
+}
