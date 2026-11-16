@@ -44,7 +44,7 @@
 //
 //////////////////////////////////////////////////////////////////////////////
 
-import { dialog, ipcMain, type BrowserWindow } from 'electron';
+import { dialog, ipcMain, shell, type BrowserWindow } from 'electron';
 import fs from 'fs/promises';
 import fsSync from 'fs';
 import path from 'path';
@@ -76,6 +76,7 @@ import {
 import * as vaults from './vaults';
 import type { VaultEntryKind } from '../types';
 import { isCodeFile } from '../../../mobile/lib/editor/codeLanguages';
+import { isImageFile } from '../../../mobile/lib/files/imageFormats';
 import { normalizeRelPath } from '../../../mobile/lib/sync/relPath';
 import { newNoteFrontmatter } from '../../../mobile/lib/properties/frontmatter';
 export { EXTENSION_TO_KIND, resolveInVault, getVaultPath, walkTree } from './coffre-outils';
@@ -350,7 +351,7 @@ export function registerVaultHandlers(getWindow: GetWindow): void {
   // alors que l'image vit n'importe où (« Pièces jointes/ », sous-dossier,
   // à côté de la note…) : sans l'étape 3, tout embed d'un coffre importé
   // reste « pièce jointe introuvable ».
-  ipcMain.handle('vault:read-attachment-data-url', async (_event, relPath: string) => {
+  const resolveAttachment = async (relPath: string): Promise<string> => {
     const vaultPath = getVaultPath();
     if (!vaultPath) throw new Error('Aucun vault sélectionné');
     const wanted = (relPath ?? '').trim();
@@ -360,16 +361,29 @@ export function registerVaultHandlers(getWindow: GetWindow): void {
     if (!wanted.includes('/')) candidates.push(path.join(getAttachmentsFolder(), wanted));
     for (const candidate of candidates) {
       const fullPath = resolveInVault(vaultPath, candidate);
-      if (fsSync.existsSync(fullPath) && fsSync.statSync(fullPath).isFile()) {
-        const buffer = await fs.readFile(fullPath);
-        return `data:${guessMimeType(fullPath)};base64,${buffer.toString('base64')}`;
-      }
+      if (fsSync.existsSync(fullPath) && fsSync.statSync(fullPath).isFile()) return fullPath;
     }
 
     const found = await findAttachmentByRelPath(vaultPath, wanted);
     if (!found) throw new Error(`Pièce jointe introuvable : ${wanted}`);
-    const buffer = await fs.readFile(found);
-    return `data:${guessMimeType(found)};base64,${buffer.toString('base64')}`;
+    return found;
+  };
+
+  ipcMain.handle('vault:read-attachment-data-url', async (_event, relPath: string) => {
+    const fullPath = await resolveAttachment(relPath);
+    const buffer = await fs.readFile(fullPath);
+    return `data:${guessMimeType(fullPath)};base64,${buffer.toString('base64')}`;
+  });
+
+  // Bouton « Ouvrir » de la carte de repli d'une image non affichable
+  // (TIFF/HEIC dans Chromium…) : même résolution que ci-dessus, puis
+  // l'application par défaut du système (Photos, Aperçu…).
+  ipcMain.handle('vault:open-attachment', async (_event, relPath: string) => {
+    const fullPath = await resolveAttachment(relPath);
+    // Images SEULEMENT : jamais d'exécutable lancé depuis un embed de note.
+    if (!isImageFile(fullPath)) throw new Error('Seules les images peuvent être ouvertes ainsi.');
+    const error = await shell.openPath(fullPath);
+    if (error) throw new Error(error);
   });
 
   //////// 8. Handlers IPC — organisation (renommer/déplacer/supprimer) ////

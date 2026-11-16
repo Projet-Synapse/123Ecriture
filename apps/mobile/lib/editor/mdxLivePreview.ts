@@ -2,6 +2,7 @@ import { Decoration, type DecorationSet, EditorView, ViewPlugin, type ViewUpdate
 import { EditorState, StateField } from '@codemirror/state';
 
 import { isImageEmbedTarget } from '../notes/embedResolution';
+import { unsupportedImageMessage, withImageMime } from '../files/imageFormats';
 import { findBold, findItalic, findLiveMatches, findTableBlocks, type LiveMatch, type TokenType } from './liveDecorations';
 
 // ✒️ 123ECRITURE — lib/editor/mdxLivePreview.ts — Live Preview inline CodeMirror (mode "Intermédiaire")
@@ -68,6 +69,9 @@ export type LivePreviewCallbacks = {
   // buildDecorations) vit chez le fournisseur (NotesScreen.tsx), qui sait
   // quand le coffre actif change et peut l'invalider.
   resolveEmbedUrl?: (target: string) => Promise<string | null>;
+  // Bouton « Ouvrir » de la carte de repli d'une image que ce moteur ne
+  // sait pas décoder (TIFF/HEIC dans Chromium…). Absent = pas de bouton.
+  onOpenAttachment?: (target: string) => void;
   // La cible d'un [[lien]] existe-t-elle ? false = pastille ATTÉNUÉE
   // (lien vers une fiche pas encore créée, façon Obsidian). Fourni par
   // NotesScreen (même résolveur que le clic, lib/notes/
@@ -148,6 +152,58 @@ class TokenPillWidget extends WidgetType {
 // retombe sur la pastille pièce jointe. Le widget est recréé à chaque
 // frappe : c'est le cache du RESOLVER (fourni par NotesScreen) qui
 // empêche la relecture disque.
+function buildImageFallback(target: string, colors: LivePreviewColors, callbacks: LivePreviewCallbacks): HTMLElement {
+  const card = document.createElement('span');
+  card.className = 'cm-embed-image-fallback';
+  card.style.display = 'inline-flex';
+  card.style.alignItems = 'center';
+  card.style.gap = '8px';
+  card.style.padding = '6px 10px';
+  card.style.border = `1px solid ${colors.border}`;
+  card.style.borderRadius = '6px';
+  card.style.background = colors.surface;
+  card.style.maxWidth = '100%';
+
+  const icon = document.createElement('span');
+  icon.textContent = '🖼️';
+  const text = document.createElement('span');
+  text.style.display = 'inline-flex';
+  text.style.flexDirection = 'column';
+  text.style.minWidth = '0';
+  const name = document.createElement('strong');
+  name.textContent = target.slice(target.lastIndexOf('/') + 1);
+  name.style.overflow = 'hidden';
+  name.style.textOverflow = 'ellipsis';
+  name.style.whiteSpace = 'nowrap';
+  const reason = document.createElement('span');
+  reason.textContent = unsupportedImageMessage(target, 'browser');
+  reason.style.fontSize = '0.8em';
+  reason.style.color = colors.textMuted;
+  text.append(name, reason);
+  card.append(icon, text);
+
+  const open = callbacks.onOpenAttachment;
+  if (open) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = 'Ouvrir';
+    button.style.border = `1px solid ${colors.accent}`;
+    button.style.color = colors.accent;
+    button.style.background = 'transparent';
+    button.style.borderRadius = '5px';
+    button.style.padding = '2px 8px';
+    button.style.cursor = 'pointer';
+    button.addEventListener('mousedown', (event) => event.preventDefault());
+    button.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      open(target);
+    });
+    card.append(button);
+  }
+  return card;
+}
+
 class EmbedImageWidget extends WidgetType {
   constructor(
     private readonly target: string,
@@ -183,10 +239,15 @@ class EmbedImageWidget extends WidgetType {
       wrap.textContent = `${ICON_BY_TOKEN_TYPE.embed} ${this.target}`;
       return wrap;
     }
+    // Format refusé par le moteur (TIFF/HEIC hors Safari…) : carte de repli
+    // lisible (nom + raison + « Ouvrir »), jamais un cadre vide.
+    img.onerror = () => {
+      wrap.replaceChildren(buildImageFallback(this.target, this.colors, this.callbacks));
+    };
     resolver(this.target)
       .then((url) => {
         if (url) {
-          img.src = url;
+          img.src = withImageMime(url, this.target);
         } else {
           wrap.textContent = `⚠️ ${this.target}`;
           wrap.style.color = this.colors.textMuted;

@@ -4,6 +4,7 @@ import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system/legacy";
 
 import { parseFrontmatter } from "../properties/frontmatter";
+import { mimeTypeForFile } from "../files/imageFormats";
 import {
   getActiveVaultRootUri,
   requestAndRegisterVault,
@@ -538,18 +539,7 @@ export function createVaultFsAdapter(deps: VaultFsAdapterDeps) {
 
     readAttachmentDataUrl: async (relPath) => {
       const base64 = await read(relPath, "base64");
-      const ext = relPath.toLowerCase().split(".").pop() ?? "";
-      const mime =
-        ext === "png"
-          ? "image/png"
-          : ext === "jpg" || ext === "jpeg"
-            ? "image/jpeg"
-            : ext === "gif"
-              ? "image/gif"
-              : ext === "webp"
-                ? "image/webp"
-                : "application/octet-stream";
-      return `data:${mime};base64,${base64}`;
+      return `data:${mimeTypeForFile(relPath)};base64,${base64}`;
     },
 
     duplicate: async (relPathRaw) => {

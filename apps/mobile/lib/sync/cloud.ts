@@ -39,6 +39,7 @@ import { shouldArchiveBeforeOverwrite, type ArchiveCandidate } from './safetyNet
 import { isMissingRpcError, parseLockResult, VersionConflictError, type LockResult } from './versionLock';
 import { SYNC_ATTACHMENT_EXTENSIONS } from '../storage/nativeVaultAdapter';
 import { errorMessage } from '../errorMessage';
+import { mimeTypeForFile } from '../files/imageFormats';
 import { installedAppVersion } from '../updaterAndroid';
 import { normalizeRelPath } from './relPath';
 import { runPool } from './pool';
@@ -315,16 +316,8 @@ export function isBinaryAttachmentRelPath(relPath: string): boolean {
 }
 
 export function mimeForAttachment(relPath: string): string {
-  const ext = relPath.toLowerCase().slice(relPath.lastIndexOf('.'));
-  const table: Record<string, string> = {
-    '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
-    '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml',
-    '.heic': 'image/heic', '.pdf': 'application/pdf', '.txt': 'text/plain',
-    '.csv': 'text/csv', '.mp3': 'audio/mpeg', '.wav': 'audio/wav',
-    '.ogg': 'audio/ogg', '.m4a': 'audio/mp4', '.mp4': 'video/mp4',
-    '.webm': 'video/webm',
-  };
-  return table[ext] ?? 'application/octet-stream';
+  // Table partagée : lib/files/imageFormats.ts (images, audio, vidéo, documents).
+  return mimeTypeForFile(relPath);
 }
 
 export function base64ToUint8Array(base64: string): Uint8Array {

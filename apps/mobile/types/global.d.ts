@@ -92,6 +92,10 @@ declare global {
     rescan?: () => Promise<void>;
     importAttachment: () => Promise<{ relPath: string; name: string } | null>;
     readAttachmentDataUrl: (relPath: string) => Promise<string>;
+    // Ouvre une pièce jointe hors de l'app (bouton « Ouvrir » des images non
+    // affichables) — desktop : application par défaut ; web : téléchargement.
+    // Absent sur Android (pas d'ouverture par intent pour l'instant).
+    openAttachment?: (relPath: string) => Promise<void>;
     // Voir "Dupliquer" dans le menu contextuel de NotesScreen.tsx — copie
     // dans le MÊME dossier, suffixée " (copie)"/" (copie 2)"...
     duplicate: (relPath: string) => Promise<VaultEntry>;

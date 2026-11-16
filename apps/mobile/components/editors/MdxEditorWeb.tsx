@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 
+import { withImageMime } from '../../lib/files/imageFormats';
 import { EDITOR_WEB_BUNDLE } from '../generated/editorWebBundle';
 import type { Theme } from '../../theme';
 
@@ -60,6 +61,10 @@ type Props = {
   // le web) et vit dans le ScrollView natif de l'éditeur — le bloc
   // Propriétés défile alors avec le texte, comme sur desktop.
   autoHeight?: boolean;
+  // Images des embeds `![[photo.jfif]]` dans l'aperçu vivant : la WebView
+  // demande la data URL par le pont (`resolveEmbed`), même résolveur (et
+  // même cache) que le desktop. Absent = pastille 📎 comme avant.
+  resolveEmbedUrl?: (target: string) => Promise<string | null>;
 };
 
 export function MdxEditorWeb({
@@ -77,6 +82,7 @@ export function MdxEditorWeb({
   closeBrackets,
   livePreview = true,
   autoHeight = false,
+  resolveEmbedUrl,
 }: Props) {
   const [webHeight, setWebHeight] = useState(200);
   const webRef = useRef<WebView>(null);
@@ -89,11 +95,13 @@ export function MdxEditorWeb({
   const onChangeRef = useRef(onChange);
   const onOpenWikilinkRef = useRef(onOpenWikilink);
   const onCreateOccurrenceRef = useRef(onCreateOccurrence);
+  const resolveEmbedUrlRef = useRef(resolveEmbedUrl);
   useEffect(() => {
     onChangeRef.current = onChange;
     onOpenWikilinkRef.current = onOpenWikilink;
     onCreateOccurrenceRef.current = onCreateOccurrence;
-  }, [onChange, onOpenWikilink, onCreateOccurrence]);
+    resolveEmbedUrlRef.current = resolveEmbedUrl;
+  }, [onChange, onOpenWikilink, onCreateOccurrence, resolveEmbedUrl]);
 
   const inject = useCallback((script: string) => {
     webRef.current?.injectJavaScript(`${script}; true;`);
@@ -113,6 +121,7 @@ export function MdxEditorWeb({
       closeBrackets,
       livePreview,
       autoHeight,
+      embeds: Boolean(resolveEmbedUrl),
       occurrenceWords,
       noteNames,
       notePaths: notePaths ?? null,
@@ -132,7 +141,7 @@ export function MdxEditorWeb({
     });
     inject(`window.__editorApi && window.__editorApi.applyConfig(${JSON.stringify(payload)});`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [inject, fontSize, fontFamily, closeBrackets, livePreview, occurrenceWords, noteNames, notePaths, currentRelPath, theme]);
+  }, [inject, fontSize, fontFamily, closeBrackets, livePreview, occurrenceWords, noteNames, notePaths, currentRelPath, theme, resolveEmbedUrl]);
 
 //////// 2. Pont web → RN (messages) et synchronisation externe ////////////
 
@@ -143,6 +152,7 @@ export function MdxEditorWeb({
         content?: string;
         target?: string;
         word?: string;
+        id?: number;
         height?: number;
         bg?: string;
         accent?: string;
@@ -191,11 +201,21 @@ export function MdxEditorWeb({
         onOpenWikilinkRef.current(message.target);
         return;
       }
+      if (message.type === 'resolveEmbed' && typeof message.id === 'number' && typeof message.target === 'string') {
+        const id = message.id;
+        const target = message.target;
+        const resolver = resolveEmbedUrlRef.current;
+        void (resolver ? resolver(target).catch(() => null) : Promise.resolve(null)).then((url) => {
+          const safeUrl = url ? withImageMime(url, target) : null;
+          inject(`window.__editorApi && window.__editorApi.embedResolved(${id}, ${JSON.stringify(safeUrl)});`);
+        });
+        return;
+      }
       if (message.type === 'createOccurrence' && typeof message.word === 'string') {
         void Promise.resolve(onCreateOccurrenceRef.current?.(message.word)).then(() => sendConfig());
       }
     },
-    [sendConfig, sendDoc, value],
+    [sendConfig, sendDoc, value, inject],
   );
 
   // Changement EXTERNE du contenu (changement de note, pull de synchro,

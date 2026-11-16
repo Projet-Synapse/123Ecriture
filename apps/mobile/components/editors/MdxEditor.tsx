@@ -150,6 +150,16 @@ type Props = {
   shortcuts?: { key: string; run: (text: string, selection: Selection) => FormattingResult }[];
 };
 
+// Bouton « Ouvrir » de la carte de repli des images non affichables
+// (aperçu vivant) — pont du coffre (desktop : application par défaut ; web :
+// téléchargement). Fonction de module : stable, pas de recréation de
+// l'extension à chaque rendu.
+function openAttachmentOutside(target: string): void {
+  const open = typeof window !== 'undefined' ? window.vault?.openAttachment : undefined;
+  if (!open) return;
+  open(target).catch((err: unknown) => console.error('[embed] ouverture impossible :', err));
+}
+
 export function MdxEditor({
   value,
   onChange,
@@ -234,7 +244,7 @@ export function MdxEditor({
     () =>
       createLivePreviewExtension(
         { accent: theme.accent, surface: theme.surface, border: theme.border, textMuted: theme.textMuted },
-        { onOpenWikilink, onOpenOccurrence, resolveEmbedUrl, isWikilinkResolved },
+        { onOpenWikilink, onOpenOccurrence, resolveEmbedUrl, isWikilinkResolved, onOpenAttachment: openAttachmentOutside },
       ),
     [theme, onOpenWikilink, onOpenOccurrence, resolveEmbedUrl, isWikilinkResolved],
   );
