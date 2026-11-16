@@ -2393,7 +2393,9 @@ export function NotesScreen({
                   node.relPath === activeNote?.relPath && { backgroundColor: `${theme.accent}22` },
                 ]}
               >
-                <Text style={styles.icon}><NoteIconByKind kind={node.kind} size={14} /></Text>
+                {/* View (et non Text) : un <Svg> dans un <Text> est mis en
+                    ligne et redimensionné par la hauteur de ligne. */}
+                <NoteIconByKind kind={node.kind} size={14} />
                 <Text style={{ color: theme.text, flexShrink: 1 }} numberOfLines={1} ellipsizeMode="tail">
                   {node.name}
                 </Text>
@@ -2589,7 +2591,7 @@ export function NotesScreen({
                             isActive ? `Onglet actif : ${node.name}` : `Activer l'onglet ${node.name}`
                           }
                         >
-                          <Text style={styles.tabIcon}><NoteIconByKind kind={node.kind} size={14} /></Text>
+                          <NoteIconByKind kind={node.kind} size={14} />
                           <Text
                             style={[styles.tabName, { color: isActive ? theme.accent : theme.textMuted }]}
                             numberOfLines={1}
@@ -3476,9 +3478,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 6,
     flexShrink: 1,
-  },
-  tabIcon: {
-    fontSize: 12,
   },
   tabName: {
     fontSize: 12,
