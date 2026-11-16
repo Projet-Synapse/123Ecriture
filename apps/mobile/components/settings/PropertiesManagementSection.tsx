@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
 
+import { isPropertySortMode, nextPropertySortMode, PROPERTY_SORT_LABELS, sortPropertyDefinitions } from '../../lib/properties/propertySort';
 import { usePropertyDefinitions } from '../../lib/properties/usePropertyDefinitions';
 import { TYPE_ICONS, TYPE_LABELS, TYPE_ORDER } from '../../lib/properties/propertyTypes';
 import { placePopover, solidColor, type Rect } from '../../lib/ui/popover';
@@ -164,13 +165,14 @@ function formatMigrationMessage(migration: PropertyRenameMigrationSummary): stri
 //////// 2. PropertiesManagementSection — le registre du schéma ///////////////////////////
 
 export function PropertiesManagementSection() {
-  const { theme } = usePreferences();
+  const { theme, preferences, setPropertiesSortMode } = usePreferences();
   const { bridge, definitions, error, refresh, create, update, remove } = usePropertyDefinitions();
+  const sortMode: PropertySortMode = isPropertySortMode(preferences.propertiesSortMode) ? preferences.propertiesSortMode : 'alpha-asc';
   const [newName, setNewName] = useState('');
   const [newType, setNewType] = useState<PropertyType>('text');
   // Un seul sélecteur de type ouvert à la fois — voir le commentaire de
-  // TypePicker plus haut. `'new'` désigne celui de la ligne de création tout
-  // en bas, les autres valeurs sont des `PropertyDefinition.id`.
+  // TypePicker plus haut. `'new'` désigne celui de la ligne de création (en
+  // haut), les autres valeurs sont des `PropertyDefinition.id`.
   const [openTypePickerId, setOpenTypePickerId] = useState<string | null>(null);
   // Résumé de la dernière migration de frontmatter suite à un renommage —
   // partagé entre toutes les lignes (comme `error` ci-dessus) plutôt qu'un
@@ -214,6 +216,9 @@ export function PropertiesManagementSection() {
     return () => clearTimeout(timer);
   }, [runScan]);
 
+  // Liste courte (quelques dizaines au plus) : tri recalculé à chaque rendu.
+  const sortedDefinitions = sortPropertyDefinitions(definitions, sortMode, usage);
+
   const renameProperty = (id: string, trimmedName: string) => {
     setMigrationMessage(null);
     void (async () => {
@@ -247,6 +252,28 @@ export function PropertiesManagementSection() {
           haut de note). Renommer une propriété migre automatiquement les notes qui l’utilisaient déjà ; changer
           son type ne modifie jamais les notes déjà écrites.
         </Text>
+        {/* Création EN HAUT (demande 2026-11-16) : sous l'explication, avant
+            la liste — plus besoin de défiler jusqu'en bas d'un long schéma. */}
+        <View style={styles.createRow}>
+          <TextInput
+            value={newName}
+            onChangeText={setNewName}
+            onSubmitEditing={submitCreate}
+            placeholder="Nouvelle propriété…"
+            placeholderTextColor={theme.textMuted}
+            style={[styles.createInput, { color: theme.text, borderColor: theme.border }]}
+          />
+          <TypePicker
+            value={newType}
+            onSelect={setNewType}
+            theme={theme}
+            open={openTypePickerId === 'new'}
+            onToggle={() => setOpenTypePickerId((current) => (current === 'new' ? null : 'new'))}
+          />
+          <Pressable onPress={submitCreate} style={[styles.createButton, { backgroundColor: theme.accent }]}>
+            <Text style={styles.createButtonText}>Créer</Text>
+          </Pressable>
+        </View>
         {error && <Text style={[styles.error, { color: theme.danger }]}>⚠️ {error}</Text>}
         {migrationMessage && (
           <Text style={[styles.migrationMessage, { color: theme.textMuted }]}>✅ {migrationMessage}</Text>
@@ -261,6 +288,16 @@ export function PropertiesManagementSection() {
               {scanning ? '⏳ Scan du coffre…' : '🔄 Revérifier le coffre'}
             </Text>
           </Pressable>
+          {/* Tri de la liste (cycle A → Z, Z → A, par type, par usage) —
+              mémorisé dans les préférences (propertiesSortMode). */}
+          <Pressable
+            onPress={() => void setPropertiesSortMode(nextPropertySortMode(sortMode))}
+            accessibilityRole="button"
+            accessibilityLabel={`Trier les propriétés : ${PROPERTY_SORT_LABELS[sortMode]} (changer)`}
+            style={[styles.scanButton, { borderColor: theme.border }]}
+          >
+            <Text style={{ color: theme.text, fontSize: 12 }}>↕️ Tri : {PROPERTY_SORT_LABELS[sortMode]}</Text>
+          </Pressable>
           <Text style={[styles.scanHint, { color: theme.textMuted }]}>
             Enregistre automatiquement les propriétés trouvées dans tes notes (type déduit) et compte leur usage.
           </Text>
@@ -270,7 +307,7 @@ export function PropertiesManagementSection() {
           <Text style={[styles.muted, { color: theme.textMuted }]}>Aucune propriété définie pour l’instant.</Text>
         )}
 
-        {definitions.map((def) => (
+        {sortedDefinitions.map((def) => (
           <View key={def.id} style={styles.defBlock}>
             <View style={styles.defRow}>
               <DraftTextField
@@ -323,26 +360,6 @@ export function PropertiesManagementSection() {
           </View>
         ))}
 
-        <View style={styles.createRow}>
-          <TextInput
-            value={newName}
-            onChangeText={setNewName}
-            onSubmitEditing={submitCreate}
-            placeholder="Nouvelle propriété…"
-            placeholderTextColor={theme.textMuted}
-            style={[styles.createInput, { color: theme.text, borderColor: theme.border }]}
-          />
-          <TypePicker
-            value={newType}
-            onSelect={setNewType}
-            theme={theme}
-            open={openTypePickerId === 'new'}
-            onToggle={() => setOpenTypePickerId((current) => (current === 'new' ? null : 'new'))}
-          />
-          <Pressable onPress={submitCreate} style={[styles.createButton, { backgroundColor: theme.accent }]}>
-            <Text style={styles.createButtonText}>Créer</Text>
-          </Pressable>
-        </View>
       </View>
     </View>
   );
