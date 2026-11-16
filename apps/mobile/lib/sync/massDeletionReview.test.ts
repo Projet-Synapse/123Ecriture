@@ -136,45 +136,41 @@ describe('garde-fou côté moteur', () => {
 });
 
 describe('confirmMassDeletions / keepMassDeletions', () => {
-  it('persiste la décision AVANT le cloud, sur la file relue', async () => {
+  it('enregistre la décision sur la file relue, sans aucun effet cloud direct', async () => {
     const vault = memoryVault({
       suspiciousDeletions: { at: NOW, count: 2, paths: ['a.md', 'b.md'] },
       remoteDeletions: [{ path: 'r.md', at: NOW } as never],
     });
-    const seenAtTombstone: PendingReview[] = [];
-    const outcome = await confirmMassDeletions({
-      vault,
-      tombstone: async () => {
-        seenAtTombstone.push(vault.review());
-      },
-      now: () => new Date(NOW),
-    });
-    expect(outcome).toEqual({ count: 2, appliedNow: true, cloudError: null });
-    expect(seenAtTombstone[0].approvedDeletions?.paths).toEqual(['a.md', 'b.md']);
-    expect(seenAtTombstone[0].suspiciousDeletions).toBeUndefined();
+    const outcome = await confirmMassDeletions({ vault, now: () => new Date(NOW) });
+    expect(outcome).toEqual({ count: 2 });
+    expect(vault.review().approvedDeletions?.paths).toEqual(['a.md', 'b.md']);
+    expect(vault.review().suspiciousDeletions).toBeUndefined();
     expect(vault.review().remoteDeletions).toHaveLength(1);
   });
 
-  it('échec du cloud : la décision reste enregistrée (appliquée au cycle suivant)', async () => {
-    const vault = memoryVault({ suspiciousDeletions: { at: NOW, count: 1, paths: ['a.md'] } });
-    const outcome = await confirmMassDeletions({
-      vault,
-      tombstone: async () => {
-        throw new Error('réseau indisponible');
-      },
-    });
-    expect(outcome.appliedNow).toBe(false);
-    expect(outcome.cloudError).toBe('réseau indisponible');
-    expect(vault.review().approvedDeletions?.paths).toEqual(['a.md']);
-    expect(vault.review().suspiciousDeletions).toBeUndefined();
+  it('rien en attente : rien d’écrit', async () => {
+    const vault = memoryVault({});
+    expect(await confirmMassDeletions({ vault })).toEqual({ count: 0 });
+    expect(vault.review().approvedDeletions).toBeUndefined();
   });
 
-  it('rien en attente : aucun appel au cloud', async () => {
-    const vault = memoryVault({});
-    let called = false;
-    const outcome = await confirmMassDeletions({ vault, tombstone: async () => void (called = true) });
-    expect(outcome.count).toBe(0);
-    expect(called).toBe(false);
+  it('INCIDENT 16/11 : un fichier confirmé mais PRÉSENT ici n’est jamais supprimé dans le cloud', async () => {
+    // L'alerte listait « Scènes The Eleven.md » comme manquant ; le fichier
+    // est revenu sur le disque avant le clic. La décision est enregistrée,
+    // mais le plan du cycle suivant (fichier présent, identique au cloud et
+    // à la base) ne contient AUCUNE suppression : la note reste partout.
+    const path = '🎥💫 Scènes The Eleven.md';
+    const vault = memoryVault({ suspiciousDeletions: { at: NOW, count: 1, paths: [path] } });
+    await confirmMassDeletions({ vault, now: () => new Date(NOW) });
+    const approved = new Set(vault.review().approvedDeletions?.paths);
+    const entry = { relPath: path, hash: 'h1' };
+    const plan = planSync({
+      local: [entry],
+      remote: [{ ...entry, version: 3, deleted: false }],
+      base: { [path]: { hash: 'h1' } },
+      guard: { approved },
+    } as never);
+    expect(plan.actions.map((a) => a.kind)).toEqual(['noop']);
   });
 
   it('conserver : enregistre les chemins à rapatrier', async () => {

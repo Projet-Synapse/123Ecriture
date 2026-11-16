@@ -127,20 +127,17 @@ export function SyncReviewSection() {
     const count = review?.suspiciousDeletions?.count ?? 0;
     setBusy(true);
     setError(null);
-    setMassNotice({ kind: 'running', text: `⏳ Suppression de ${count} fichier(s) dans le cloud…` });
+    setMassNotice({ kind: 'running', text: `⏳ Confirmation de ${count} suppression(s)…` });
     try {
-      const outcome = await syncStatus.runSyncExclusive(() =>
-        confirmMassDeletions({ vault, tombstone: (paths) => setRemoteRowsDeleted(remoteVaultId, paths, true) }),
-      );
+      // Décision seulement : le cycle relancé ci-dessous applique chaque
+      // suppression après relecture du disque et contrôle de version — un
+      // fichier présent ici ou modifié ailleurs n'est jamais effacé.
+      const outcome = await syncStatus.runSyncExclusive(() => confirmMassDeletions({ vault }));
       await reload();
-      if (outcome.cloudError) {
-        setMassNotice({
-          kind: 'warning',
-          text: `⚠️ Suppression de ${outcome.count} fichier(s) enregistrée, mais le cloud n’a pas répondu (${outcome.cloudError}). Elle sera appliquée au prochain cycle de synchro.`,
-        });
-      } else {
-        setMassNotice({ kind: 'done', text: `✅ ${outcome.count} suppression(s) confirmée(s) et appliquée(s) dans le cloud.` });
-      }
+      setMassNotice({
+        kind: 'done',
+        text: `✅ ${outcome.count} suppression(s) confirmée(s) — appliquée(s) au cycle de synchro en cours, sauf pour les fichiers encore présents ici.`,
+      });
       void syncStatus.runSync('confirmation des suppressions');
     } catch (e) {
       setMassNotice({ kind: 'error', text: `❌ Confirmation impossible : ${errorMessage(e)}` });
