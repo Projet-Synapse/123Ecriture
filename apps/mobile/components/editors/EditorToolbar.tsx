@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import type { FormattingResult, Selection } from '../../lib/editor/mdxFormatting';
+import { toolbarPressEffect, type ToolbarItem } from '../../lib/editor/toolbarItems';
 
 import type { Theme } from '../../theme';
 
@@ -27,6 +27,8 @@ import type { Theme } from '../../theme';
 //     dans le scope du prop JSX de l'appelant, où react-hooks/refs les
 //     accepte.
 //   • `divider` ne rend qu'un trait fin — label/id ignorés.
+//   • Un sous-bouton de groupe dépliant suit le MÊME chemin qu'un bouton à
+//     plat (`run` → onItemRun) — voir lib/editor/toolbarItems.ts.
 //
 // SOMMAIRE :
 //   1. Types d'items (groupe, séparateur, action déléguée)
@@ -35,26 +37,8 @@ import type { Theme } from '../../theme';
 //////////////////////////////////////////////////////////////////////////////
 
 //////// 1. Types d'items (groupe, séparateur, action déléguée) ////////////
-type SubItem = {
-  id: string;
-  label: string;
-  onPress?: () => void;
-};
-
-type Item = {
-  id: string;
-  label: string;
-  onPress?: () => void;
-  subItems?: SubItem[];
-  // Séparateur vertical entre groupes : rien n'est rendu à part
-  // un trait fin — le label/id sont ignorés.
-  divider?: boolean;
-  // Action DÉLÉGUÉE : au clic, l'appelant reçoit l'item et exécute
-  // lui-même l'action (annuler/rétablir touchent l'EditorView, la pièce
-  // jointe ouvre le sélecteur) — les closures refs restent dans le scope
-  // du prop JSX de l'appelant, où la règle react-hooks/refs les accepte.
-  run?: { id: string; formatRun?: (text: string, selection: Selection) => FormattingResult };
-};
+// Types et logique d'appui : lib/editor/toolbarItems.ts (testés).
+type Item = ToolbarItem;
 
 //////// 2. Rendu (boutons, groupe dépliant, rangée secondaire) ////////////
 
@@ -84,12 +68,13 @@ export function EditorToolbar({ items, theme, onItemRun }: Props) {
             <Pressable
               key={item.id}
               onPress={() => {
-                if (isGroup) {
+                const effect = toolbarPressEffect(item);
+                if (effect === 'toggle-group') {
                   setOpenGroupId(isOpen ? null : item.id);
                   return;
                 }
-                if (item.run) onItemRun?.(item);
-                else item.onPress?.();
+                if (effect === 'run') onItemRun?.(item);
+                else if (effect === 'press') item.onPress?.();
               }}
               // Groupe dépliant : le survol (PC) OU l'appui (tactile) suffit
               // à le déployer — pas besoin de cliquer.
@@ -115,7 +100,11 @@ export function EditorToolbar({ items, theme, onItemRun }: Props) {
             <Pressable
               key={subItem.id}
               onPress={() => {
-                subItem.onPress?.();
+                // Même chemin qu'un bouton à plat : `run` remonte à
+                // l'appelant (H1…H6 du groupe « Titres »).
+                const effect = toolbarPressEffect(subItem);
+                if (effect === 'run') onItemRun?.(subItem);
+                else if (effect === 'press') subItem.onPress?.();
                 setOpenGroupId(null);
               }}
               style={[styles.toolbarButton, { backgroundColor: theme.surface }]}
