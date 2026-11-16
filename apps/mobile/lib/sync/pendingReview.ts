@@ -49,6 +49,11 @@ export type PendingReview = {
   // garde-fou reste levé pour d'AUTRES chemins. Effacées dès qu'un cycle
   // les a traitées.
   approvedDeletions?: { at: string; paths: string[] };
+  // SUPPRESSIONS REFUSÉES (« Conserver (restaurer) ») : le moteur oublie
+  // la base de ces chemins pour les RAPATRIER depuis le cloud au lieu de
+  // replanifier leur suppression (et de relever le garde-fou). Consommées
+  // quand le fichier est revenu. Voir massDeletionReview.ts.
+  keptDeletions?: { at: string; paths: string[] };
   // DISJONCTEUR DE SYNCHRO : quand un cycle se termine avec trop d'erreurs,
   // les cycles SUIVANTS sont refusés d'office tant qu'un humain n'a pas
   // levé le bloc — on ne peut pas « resynchroniser » par-dessus un appareil

@@ -3,6 +3,7 @@ import { Image, Text } from 'react-native';
 import Markdown, { type ASTNode, type RenderRules } from 'react-native-markdown-display';
 
 import { createConfiguredMarkdownIt } from '../../lib/editor/markdownPlugins';
+import { hexToRgba } from '../../lib/theme/appearance';
 import type { Theme } from '../../theme';
 import { AudioEmbed } from './AudioEmbed';
 
@@ -116,11 +117,33 @@ type Props = {
   // jamais de pastille occurrence.
   knownOccurrenceWords?: Set<string>;
   onOpenOccurrence?: (word: string) => void;
+  // Cible existante ? false = lien ATTÉNUÉ (fiche pas encore créée, façon
+  // Obsidian) — même résolveur que le clic (lib/notes/wikilinkResolution.ts).
+  isWikilinkResolved?: (target: string) => boolean;
 };
+
+// Opacité de la couleur d'un lien non résolu (même valeur que l'aperçu
+// vivant, voir UNRESOLVED_LINK_OPACITY dans lib/editor/mdxLivePreview.ts).
+const UNRESOLVED_LINK_ALPHA = 0.5;
+
+// Couleur d'un lien non résolu : l'accent du thème, translucide. Un accent
+// non hexadécimal (#rrggbb) ne se prête pas à hexToRgba : repli sur le
+// texte secondaire du thème, plutôt qu'un lien identique aux autres.
+function unresolvedLinkColor(theme: Theme): string {
+  const translucent = hexToRgba(theme.accent, UNRESOLVED_LINK_ALPHA);
+  return translucent === theme.accent ? theme.textMuted : translucent;
+}
 
 //////// 2. NoteRenderer — la config markdown-it et les rules de rendu ////////////////////
 
-export function NoteRenderer({ content, theme, onOpenWikilink, knownOccurrenceWords, onOpenOccurrence }: Props) {
+export function NoteRenderer({
+  content,
+  theme,
+  onOpenWikilink,
+  knownOccurrenceWords,
+  onOpenOccurrence,
+  isWikilinkResolved,
+}: Props) {
   // Recréé seulement quand le dictionnaire change (pas à chaque frappe) —
   // la configuration (règles enregistrées) ne change sinon jamais après
   // coup.
@@ -156,10 +179,15 @@ export function NoteRenderer({ content, theme, onOpenWikilink, knownOccurrenceWo
       ),
       wikilink: (node) => {
         const target = String((node as NodeWithMeta).sourceMeta?.target ?? node.content);
+        const unresolved = isWikilinkResolved ? !isWikilinkResolved(target) : false;
         return (
           <Text
             key={node.key}
-            style={{ color: theme.accent, textDecorationLine: 'underline' }}
+            style={{
+              color: unresolved ? unresolvedLinkColor(theme) : theme.accent,
+              textDecorationLine: 'underline',
+              textDecorationStyle: unresolved ? 'dashed' : 'solid',
+            }}
             onPress={() => onOpenWikilink(target)}
           >
             {node.content}
@@ -203,7 +231,7 @@ export function NoteRenderer({ content, theme, onOpenWikilink, knownOccurrenceWo
         return <EmbedNode key={node.key} target={target} theme={theme} />;
       },
     }),
-    [theme, onOpenWikilink, onOpenOccurrence],
+    [theme, onOpenWikilink, onOpenOccurrence, isWikilinkResolved],
   );
 
   return (
