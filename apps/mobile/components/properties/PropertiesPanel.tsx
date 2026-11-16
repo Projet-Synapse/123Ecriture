@@ -95,7 +95,7 @@ export function PropertiesPanel({ theme, activeNote, content, onChangeContent, t
     line.definition ?? makePropertyDefinition(`raw-${line.name}`, line.name, 'text');
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <ScrollView style={styles.container} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
       <Text style={[styles.sectionTitle, { color: theme.text }]}>Propriétés</Text>
       {!isMarkdownNote ? (
         <Text style={[styles.muted, { color: theme.textMuted }]}>
