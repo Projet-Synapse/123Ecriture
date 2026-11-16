@@ -25,6 +25,7 @@ export const STRUCTURED_CONFIG_FILES = [
   '.123ecriture/tasks.json',
   '.123ecriture/tasklists.json',
   '.123ecriture/events.json',
+  '.123ecriture/properties.json',
   '.123ecriture/preferences.json',
 ];
 

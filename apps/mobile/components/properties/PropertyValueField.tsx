@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { collectPathOptions, flattenNotes } from '../../lib/notes/vaultTree';
 import { rememberPropertyValue, usePropertyValueIndex } from '../../lib/properties/propertyValueIndex';
@@ -11,6 +11,7 @@ import {
   type ValueSuggestion,
 } from '../../lib/properties/propertyValueSuggestions';
 import { formatValueForInput, parseInputForType } from '../../lib/properties/propertyTypes';
+import { solidColor } from '../../lib/ui/popover';
 import type { Theme } from '../../theme';
 import { DraftTextField } from '../editors/DraftTextField';
 import { SuggestTextInput } from './SuggestTextInput';
@@ -48,6 +49,11 @@ import { SuggestTextInput } from './SuggestTextInput';
 
 //////// 1. PropertyValueField — le dispatch par type /////////////////////////////////////
 
+// Popovers (chemin, options, multi-options) : fond PLEIN (jamais le
+// `surface` translucide d'un fond d'écran) ; flottants sur desktop/web, en
+// flux normal sur Android (touchers fiables au doigt).
+const isNative = Platform.OS !== 'web';
+
 type Props = {
   def: PropertyDefinition;
   value: unknown;
@@ -63,6 +69,8 @@ export function PropertyValueField({ def, value, onChange: onChangeRaw, theme, t
     rememberPropertyValue(def.name, next);
     onChangeRaw(next);
   };
+  const opaqueSurface = solidColor(theme.surface, solidColor(theme.background, '#ffffff'));
+  const popoverPlacement = isNative ? styles.popoverInline : styles.popoverFloating;
   const [pickerOpen, setPickerOpen] = useState(false);
   const [filter, setFilter] = useState('');
   // Brouillon du champ d'ajout des bulles (type 'bubbles') — commit à la
@@ -100,7 +108,7 @@ export function PropertyValueField({ def, value, onChange: onChangeRaw, theme, t
           </Text>
         </Pressable>
         {pickerOpen && (
-          <View style={[styles.popover, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+          <View style={[styles.popover, popoverPlacement, { backgroundColor: opaqueSurface, borderColor: theme.border }]}>
             <TextInput
               value={filter}
               onChangeText={setFilter}
@@ -163,7 +171,7 @@ export function PropertyValueField({ def, value, onChange: onChangeRaw, theme, t
           </Text>
         </Pressable>
         {pickerOpen && (
-          <View style={[styles.popover, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+          <View style={[styles.popover, popoverPlacement, { backgroundColor: opaqueSurface, borderColor: theme.border }]}>
             <View style={styles.popoverList}>
               {options.map((option) => (
                 <Pressable
@@ -265,7 +273,7 @@ export function PropertyValueField({ def, value, onChange: onChangeRaw, theme, t
           </Text>
         </Pressable>
         {pickerOpen && (
-          <View style={[styles.popover, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+          <View style={[styles.popover, popoverPlacement, { backgroundColor: opaqueSurface, borderColor: theme.border }]}>
             <View style={styles.popoverList}>
               {value ? (
                 <Pressable
@@ -426,17 +434,26 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     paddingHorizontal: 6,
   },
-  popover: {
+  // Desktop/web : flotte sous le champ. Android : EN FLUX NORMAL — un enfant
+  // absolu qui déborde de son parent n'y reçoit pas les touchers (et zIndex
+  // ne traverse pas les lignes voisines) : la liste pousse le contenu.
+  popoverFloating: {
     position: 'absolute',
     top: '100%',
     left: 0,
     right: 0,
+    zIndex: 20,
+    elevation: 8,
+  },
+  popoverInline: {
+    position: 'relative',
+  },
+  popover: {
     marginTop: 4,
     borderWidth: 1,
     borderRadius: 8,
     padding: 6,
     gap: 4,
-    zIndex: 20,
     // Ombre légère pour se détacher visuellement du contenu en dessous
     // (le popover flotte au-dessus, pas dans le flux normal).
     shadowColor: '#000',

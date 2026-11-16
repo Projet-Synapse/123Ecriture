@@ -82,6 +82,10 @@ export function validateConfigText(relPath: string, text: string): ConfigGuardRe
     if (!Array.isArray(value)) return { ok: false, reason: 'events.json doit être un tableau' };
     const bad = value.findIndex((e) => !isPlainObject(e) || typeof e.id !== 'string' || !e.id);
     if (bad >= 0) return { ok: false, reason: `évènement n°${bad + 1} sans id` };
+  } else if (relPath === '.123ecriture/properties.json') {
+    if (!Array.isArray(value)) return { ok: false, reason: 'properties.json doit être un tableau' };
+    const bad = value.findIndex((p) => !isPlainObject(p) || typeof p.id !== 'string' || !p.id || typeof p.name !== 'string');
+    if (bad >= 0) return { ok: false, reason: `propriété n°${bad + 1} sans id ou nom` };
   } else if (!isPlainObject(value)) {
     return { ok: false, reason: 'objet JSON attendu' };
   }
