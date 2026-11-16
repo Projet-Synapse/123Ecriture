@@ -40,6 +40,8 @@ import {
 import { countCharacters, countWords } from '../../lib/editor/wordCount';
 import { useSyncStatus } from '../../lib/sync/SyncStatusContext';
 import { useVaults } from '../../lib/sync/VaultsContext';
+import type { Theme } from '../../theme';
+import type { AppearanceTokens } from '../../lib/theme/appearance';
 import { usePreferences } from '../../preferences/PreferencesContext';
 import type { NotesActions } from '../AppShell';
 import { CanvasEditor } from '../editors/CanvasEditor';
@@ -178,6 +180,22 @@ type Props = {
 // (l'accès à viewRef.current pendant le rendu est interdit par
 // react-hooks/refs, et la règle ne voit ici que des closures d'évènements
 // passées en props).
+
+// Thème du panneau explorateur, MÉMOÏSÉ par thème (VaultTreeView compare
+// `theme` par référence — un nouvel objet à chaque rendu re-rendrait tout
+// l'arbre à chaque frappe).
+const explorerThemeCache = new WeakMap<object, Theme & AppearanceTokens>();
+function explorerThemeOf(theme: Theme & AppearanceTokens): Theme & AppearanceTokens {
+  const ex = theme.explorer;
+  if (!ex) return theme;
+  let cached = explorerThemeCache.get(theme);
+  if (!cached) {
+    cached = { ...theme, surface: ex.background, text: ex.text, textMuted: ex.textMuted };
+    explorerThemeCache.set(theme, cached);
+  }
+  return cached;
+}
+
 export function NotesScreen({
   pendingOpenRelPath,
   onOpenedPendingNote,
@@ -2266,9 +2284,22 @@ export function NotesScreen({
 
   const activeNoteIsRenaming = activeNote !== null && renamingRelPath === activeNote.relPath;
 
+  // Thème du panneau explorateur : fond réglable + texte lisible dessus
+  // (lib/theme/explorerColors.ts). Mémoïsé : VaultTreeView compare `theme`
+  // par référence.
+  const explorerTheme = explorerThemeOf(theme);
+  // Séparateur explorateur / éditeur : bordure du thème GÉNÉRAL.
+  const outerBorder = theme.border;
+
   // Explorateur et éditeur extraits en constantes : rendus soit dans la
   // rangée desktop/web (inchangée), soit dans le pager horizontal mobile.
-  const renderExplorer = (pagerWidth?: number) => (
+  const renderExplorer = (pagerWidth?: number) => {
+    // Le panneau entier lit le thème « explorateur » : fond réglable
+    // (Paramètres → Personnalisation), texte et guides lisibles dessus.
+    // Masquage VOLONTAIRE de `theme` (diff minimal, aucun oubli possible).
+    // eslint-disable-next-line @typescript-eslint/no-shadow
+    const theme = explorerTheme;
+    return (
       <View
         ref={listAreaRef}
         style={[
@@ -2278,7 +2309,7 @@ export function NotesScreen({
             // l'empilement de l'en-tête.
             width: pagerWidth ?? explorerWidth,
             borderRightWidth: pagerWidth ? 0 : 1,
-            borderColor: theme.border,
+            borderColor: outerBorder,
             backgroundColor: theme.surface,
           },
         ]}
@@ -2390,7 +2421,7 @@ export function NotesScreen({
                 }}
                 style={[
                   styles.favoriteRow,
-                  node.relPath === activeNote?.relPath && { backgroundColor: `${theme.accent}22` },
+                  node.relPath === activeNote?.relPath && { backgroundColor: theme.explorer?.activeRow ?? `${theme.accent}22` },
                 ]}
               >
                 <Text style={styles.icon}><NoteIconByKind kind={node.kind} size={14} /></Text>
@@ -2478,7 +2509,8 @@ export function NotesScreen({
           </ScrollView>
         )}
       </View>
-  );
+    );
+  };
 
   const editorArea = (
     <View style={styles.row}>
