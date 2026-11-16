@@ -34,6 +34,7 @@ import { matchesEmbedTarget } from '../../../mobile/lib/notes/embedResolution';
 import { CODE_FILE_EXTENSIONS } from '../../../mobile/lib/editor/codeLanguages';
 import { mimeTypeForFile } from '../../../mobile/lib/files/imageFormats';
 import { normalizeRelPath } from '../../../mobile/lib/sync/relPath';
+import { resolveUnicodeSegments } from '../../../mobile/lib/sync/unicodePaths';
 import { newNoteFrontmatter } from '../../../mobile/lib/properties/frontmatter';
 
 
@@ -167,7 +168,30 @@ export function resolveInVault(vaultPath: string, relPath: string): string {
   if (resolved !== root && !resolved.startsWith(root + path.sep)) {
     throw new Error(`Chemin hors du vault refusé : ${relPath}`);
   }
-  return resolved;
+  if (resolved === root || fsSync.existsSync(resolved)) return resolved;
+  return resolveUnicodeVariant(root, resolved) ?? resolved;
+}
+
+// Le chemin demandé n'existe pas tel quel : existe-t-il sous une AUTRE
+// graphie Unicode (« scène » composé NFC ↔ décomposé NFD) ? La synchro
+// compare les chemins par leur forme NFC (lib/sync/unicodePaths.ts) et
+// peut donc demander « scène » NFC pour un fichier nommé « scène » NFD sur
+// le disque : sans cette résolution, la lecture échouait (fichier vu comme
+// supprimé) et l'écriture créait un DOUBLON visuellement identique.
+function resolveUnicodeVariant(root: string, resolved: string): string | null {
+  const segments = path.relative(root, resolved).split(path.sep);
+  const real = resolveUnicodeSegments(
+    segments,
+    (segs) => fsSync.existsSync(path.join(root, ...segs)),
+    (segs) => {
+      try {
+        return fsSync.readdirSync(path.join(root, ...segs));
+      } catch {
+        return null;
+      }
+    },
+  );
+  return real ? path.join(root, ...real) : null;
 }
 
 // Dernière étape de résolution d'un embed (voir lib/embedResolution.ts) :
