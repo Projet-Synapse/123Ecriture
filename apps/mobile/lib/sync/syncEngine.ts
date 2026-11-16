@@ -505,6 +505,7 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
     await appendJournalEntries([
       makeJournalEntry('info', { detail: 'cycle ignoré : le coffre actif n’est pas lié au cloud' }),
     ]);
+    summary.paused = { reason: 'not-linked', detail: 'le coffre actif n’est pas lié au cloud' };
     return summary;
   }
   const remoteVaultId = activeEntry.remoteVaultId;
@@ -513,11 +514,17 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   // coffre désactivée → cycle ignoré SANS erreur (l'app reste 100 % locale).
   const syncSettings = loadSyncSettings();
   if (!isVaultSyncEnabled(syncSettings, remoteVaultId) || syncSettings.pausedAfterUpdate) {
+    summary.paused = !syncSettings.enabled
+      ? { reason: 'disabled', detail: 'synchronisation désactivée dans les paramètres' }
+      : syncSettings.pausedAfterUpdate
+        ? { reason: 'after-update', detail: 'mise à jour de l’app détectée — reprise à confirmer' }
+        : { reason: 'vault-disabled', detail: 'synchronisation désactivée pour ce coffre' };
     return summary;
   }
   // Wi-Fi uniquement : sur réseau mobile, cycle ignoré (aucune erreur).
   const connection = (globalThis as { navigator?: { connection?: { type?: string } } }).navigator?.connection;
   if (syncSettings.wifiOnly && connection?.type === 'cellular') {
+    summary.paused = { reason: 'wifi-only', detail: 'Wi-Fi uniquement : réseau mobile détecté' };
     return summary;
   }
 
@@ -536,6 +543,7 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
         // Pas de coffre pour écrire le journal : le message reste dans le résumé.
       }
       console.error('[sync]', message);
+      summary.paused = { reason: 'no-local-vault', detail: 'aucun coffre local actif sur cet appareil' };
       return summary;
     }
   } catch {
@@ -573,6 +581,7 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
     } catch {
       // Le journal ne doit pas masquer le refus.
     }
+    summary.paused = { reason: 'circuit-breaker', detail: `disjoncteur ouvert (${blocked.errorCount} erreur(s) au dernier cycle)` };
     return summary;
   }
 
@@ -589,6 +598,7 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
     } catch {
       // Le journal ne doit pas masquer le message du verrou.
     }
+    summary.paused = { reason: 'device-locked', detail: `appareil verrouillé à distance${myLock.reason ? ` (${myLock.reason})` : ''}` };
     return summary;
   }
 

@@ -260,16 +260,29 @@ function SyncStatusChip({ compact }: { compact?: boolean }) {
   const { theme } = usePreferences();
   const syncStatus = useSyncStatus();
 
-  if (!syncStatus.cloudSyncConfigured) return null;
+  // Session expirée sur un coffre lié : la synchro est EN PAUSE — l'indicateur
+  // le dit au lieu de disparaître (syncPause.ts).
+  if (!syncStatus.cloudSyncConfigured && syncStatus.pause?.kind !== 'signed-out') return null;
 
   let icon = '○';
   let label = 'Non synchronisé';
   let color = theme.textMuted;
+  const pause = syncStatus.pause;
 
   if (syncStatus.status === 'syncing') {
     icon = '⟳';
     label = syncStatus.progressLabel ?? 'Synchronisation…';
     color = theme.accent;
+  } else if (pause) {
+    // EN PAUSE (et pourquoi) — avant toute erreur ou « À jour » : un cycle
+    // ignoré n'est pas une synchro réussie.
+    icon = '⏸';
+    label = pause.label;
+    color = pause.blocking || pause.kind === 'deletion-review' ? theme.danger : theme.accent;
+  } else if (syncStatus.status === 'success' && syncStatus.pauseWarning) {
+    icon = '⚠';
+    label = 'Pause proche (erreurs)';
+    color = theme.danger;
   } else if (syncStatus.status === 'error') {
     icon = '⚠';
     label = 'Erreur de sync';
@@ -309,7 +322,7 @@ function SyncStatusChip({ compact }: { compact?: boolean }) {
     <Pressable
       onPress={() => void syncStatus.runSync('manuel')}
       style={[styles.syncChip, compact && styles.syncChipCompact]}
-      accessibilityLabel={label}
+      accessibilityLabel={pause ? `Synchro en pause : ${pause.detail}` : (syncStatus.pauseWarning ?? label)}
     >
       <Text style={[styles.syncChipIcon, { color }]}>{icon}</Text>
       {!compact && (
