@@ -142,6 +142,7 @@ export const SYNCED_META_FILES_CLOUD = [
   '.123ecriture/tasks.json',
   '.123ecriture/tasklists.json',
   '.123ecriture/events.json',
+  '.123ecriture/properties.json',
   '.123ecriture/preferences.json',
 ];
 

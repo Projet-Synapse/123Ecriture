@@ -49,3 +49,14 @@ describe('events.json (Calendrier)', () => {
     expect(validateConfigText('.123ecriture/events.json', '[{"title":"A"}]').ok).toBe(false);
   });
 });
+
+describe('properties.json (schéma des propriétés)', () => {
+  it('accepte un tableau de définitions avec id et nom', () => {
+    expect(validateConfigText('.123ecriture/properties.json', '[{"id":"p1","name":"statut","type":"text"}]').ok).toBe(true);
+  });
+  it('refuse un objet ou une définition sans id ou sans nom', () => {
+    expect(validateConfigText('.123ecriture/properties.json', '{}').ok).toBe(false);
+    expect(validateConfigText('.123ecriture/properties.json', '[{"name":"x"}]').ok).toBe(false);
+    expect(validateConfigText('.123ecriture/properties.json', '[{"id":"p1"}]').ok).toBe(false);
+  });
+});
