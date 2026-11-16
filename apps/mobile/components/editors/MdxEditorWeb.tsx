@@ -41,6 +41,13 @@ type Props = {
   onCreateOccurrence?: (word: string) => Promise<void>;
   occurrenceWords: string[];
   noteNames: string[];
+  // Liens non résolus atténués : la WebView refait la résolution chez elle
+  // (lib/notes/wikilinkResolution.ts, la même que le clic côté RN) à partir
+  // des chemins des notes et de la note courante — une fonction ne passe
+  // pas le pont postMessage. Renvoyés via applyConfig à chaque changement
+  // de l'arbre ou de note.
+  notePaths?: string[];
+  currentRelPath?: string | null;
   theme: Theme;
   fontSize: number;
   fontFamily: string;
@@ -62,6 +69,8 @@ export function MdxEditorWeb({
   onCreateOccurrence,
   occurrenceWords,
   noteNames,
+  notePaths,
+  currentRelPath,
   theme,
   fontSize,
   fontFamily,
@@ -106,6 +115,8 @@ export function MdxEditorWeb({
       autoHeight,
       occurrenceWords,
       noteNames,
+      notePaths: notePaths ?? null,
+      currentRelPath: currentRelPath ?? null,
       colors: {
         accent: theme.accent,
         border: theme.border,
@@ -121,7 +132,7 @@ export function MdxEditorWeb({
     });
     inject(`window.__editorApi && window.__editorApi.applyConfig(${JSON.stringify(payload)});`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [inject, fontSize, fontFamily, closeBrackets, livePreview, occurrenceWords, noteNames, theme]);
+  }, [inject, fontSize, fontFamily, closeBrackets, livePreview, occurrenceWords, noteNames, notePaths, currentRelPath, theme]);
 
 //////// 2. Pont web → RN (messages) et synchronisation externe ////////////
 

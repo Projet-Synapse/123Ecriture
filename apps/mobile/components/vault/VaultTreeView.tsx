@@ -4,6 +4,7 @@ import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import type { Theme } from '../../theme';
 import { buildExplorerColors } from '../../lib/theme/explorerColors';
 import { ChevronIcon, FolderOpenIcon, FolderClosedIcon, NoteIconByKind } from './FileIcons';
+import { TREE_ICON_SIZE } from '../../lib/ui/iconBox';
 
 // ✒️ 123ECRITURE — components/vault/VaultTreeView.tsx — l'arborescence du coffre
 //////////////////////////////////////////////////////////////////////////////
@@ -206,12 +207,13 @@ function VaultTreeViewImpl({
                 sinon le type du fichier (couleur par kind). */}
             {isFolder ? (
               isCollapsed ? (
-                <FolderClosedIcon size={16} />
+                <FolderClosedIcon size={TREE_ICON_SIZE} />
               ) : (
-                <FolderOpenIcon size={16} />
+                <FolderOpenIcon size={TREE_ICON_SIZE} />
               )
             ) : (
-              <NoteIconByKind kind={node.kind} size={15} />
+              // Même taille que les dossiers (était 15 contre 16).
+              <NoteIconByKind kind={node.kind} size={TREE_ICON_SIZE} />
             )}
 
             {isRenaming ? (

@@ -4,7 +4,8 @@ import { Pressable, Text, View } from 'react-native';
 import { errorMessage } from '../../lib/errorMessage';
 import { setRemoteRowsDeleted } from '../../lib/sync/deviceGateway';
 import { restoreRemoteFile } from '../../lib/sync/cloud';
-import { clearPendingReviewSyncBlock, loadPendingReview, savePendingReview, type PendingReview } from '../../lib/sync/pendingReview';
+import { confirmMassDeletions, keepMassDeletions } from '../../lib/sync/massDeletionReview';
+import { clearPendingReviewSyncBlock, loadPendingReview, type PendingReview } from '../../lib/sync/pendingReview';
 import {
   approveRemoteDeletions,
   describeFailures,
@@ -48,6 +49,9 @@ export function SyncReviewSection() {
   const [review, setReview] = useState<PendingReview | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Retour visuel des décisions sur les suppressions massives (en cours /
+  // fait / erreur) — affiché même quand l'alerte a disparu (succès).
+  const [massNotice, setMassNotice] = useState<{ kind: 'running' | 'done' | 'warning' | 'error'; text: string } | null>(null);
   const syncStatus = useSyncStatus();
 
   const remoteVaultId = activeVault?.remoteVaultId ?? null;
@@ -105,34 +109,68 @@ export function SyncReviewSection() {
       await clearPendingReviewSyncBlock(window.vault);
     });
 
-  const confirmerSuppressionsMassives = () =>
-    run(async () => {
-      if (!remoteVaultId) throw new Error('Aucun coffre distant lié — validation impossible depuis cet appareil.');
-      const paths = review?.suspiciousDeletions?.paths ?? [];
-      if (!window.vault) throw new Error('Pont vault absent.');
-      // Les fichiers sont déjà absents localement : on pose les tombstones
-      // (le cloud avait été protégé par la revue — la confirmation les
-      // applique maintenant, en connaissance de cause).
-      const supabaseMod = await import('../../lib/sync/deviceGateway');
-      await supabaseMod.setRemoteRowsDeleted(remoteVaultId, paths, true);
-      // APPROBATION PERSISTÉE : sans elle, le moteur recalcule la même liste
-      // au cycle suivant (fichiers encore présents ici quand ils ont été
-      // supprimés dans le cloud) et relève le garde-fou aussitôt.
-      const approved = new Set([...(review?.approvedDeletions?.paths ?? []), ...paths]);
-      await savePendingReview(window.vault, {
-        ...(review ?? {}),
-        suspiciousDeletions: undefined,
-        approvedDeletions: { at: new Date().toISOString(), paths: [...approved] },
-      });
-    });
+  // Décisions sur les suppressions massives (voir massDeletionReview.ts) :
+  //   • HORS cycle (runSyncExclusive) et sur la file RELUE ;
+  //   • décision PERSISTÉE d'abord, cloud ensuite — un échec réseau ne
+  //     l'annule pas, le moteur l'applique au cycle suivant ;
+  //   • un cycle est relancé aussitôt pour solder la base de synchro.
+  const confirmerSuppressionsMassives = async () => {
+    if (typeof window === 'undefined' || !window.vault) {
+      setMassNotice({ kind: 'error', text: 'Pont vault absent.' });
+      return;
+    }
+    if (!remoteVaultId) {
+      setMassNotice({ kind: 'error', text: 'Aucun coffre distant lié — validation impossible depuis cet appareil.' });
+      return;
+    }
+    const vault = window.vault;
+    const count = review?.suspiciousDeletions?.count ?? 0;
+    setBusy(true);
+    setError(null);
+    setMassNotice({ kind: 'running', text: `⏳ Suppression de ${count} fichier(s) dans le cloud…` });
+    try {
+      const outcome = await syncStatus.runSyncExclusive(() =>
+        confirmMassDeletions({ vault, tombstone: (paths) => setRemoteRowsDeleted(remoteVaultId, paths, true) }),
+      );
+      await reload();
+      if (outcome.cloudError) {
+        setMassNotice({
+          kind: 'warning',
+          text: `⚠️ Suppression de ${outcome.count} fichier(s) enregistrée, mais le cloud n’a pas répondu (${outcome.cloudError}). Elle sera appliquée au prochain cycle de synchro.`,
+        });
+      } else {
+        setMassNotice({ kind: 'done', text: `✅ ${outcome.count} suppression(s) confirmée(s) et appliquée(s) dans le cloud.` });
+      }
+      void syncStatus.runSync('confirmation des suppressions');
+    } catch (e) {
+      setMassNotice({ kind: 'error', text: `❌ Confirmation impossible : ${errorMessage(e)}` });
+      await reload();
+    } finally {
+      setBusy(false);
+    }
+  };
 
-  const annulerSuppressionsMassives = () =>
-    run(async () => {
-      if (typeof window === 'undefined' || !window.vault) throw new Error('Pont vault absent.');
-      // Les fichiers manquants seront re-tirés du cloud au prochain cycle
-      // (l'état local ne les référence plus comme supprimés).
-      await savePendingReview(window.vault, { ...(review ?? {}), suspiciousDeletions: undefined });
-    });
+  const annulerSuppressionsMassives = async () => {
+    if (typeof window === 'undefined' || !window.vault) {
+      setMassNotice({ kind: 'error', text: 'Pont vault absent.' });
+      return;
+    }
+    const vault = window.vault;
+    setBusy(true);
+    setError(null);
+    setMassNotice({ kind: 'running', text: '⏳ Restauration demandée…' });
+    try {
+      const { count } = await syncStatus.runSyncExclusive(() => keepMassDeletions({ vault }));
+      await reload();
+      setMassNotice({ kind: 'done', text: `♻️ ${count} fichier(s) conservé(s) — rapatriement depuis le cloud en cours.` });
+      void syncStatus.runSync('restauration des fichiers manquants');
+    } catch (e) {
+      setMassNotice({ kind: 'error', text: `❌ Restauration impossible : ${errorMessage(e)}` });
+      await reload();
+    } finally {
+      setBusy(false);
+    }
+  };
 
   // Décisions sur les suppressions distantes — HORS de tout cycle
   // (runSyncExclusive) : le moteur réécrit la même file.
@@ -161,11 +199,27 @@ export function SyncReviewSection() {
 
   //////// 2. Le rendu (disjoncteur / suppressions massives / suppressions distantes) ///////
 
+  const noticeColor =
+    massNotice?.kind === 'error' ? theme.danger : massNotice?.kind === 'done' ? theme.text : theme.textMuted;
+  const noticeView = massNotice && (
+    <Text accessibilityLiveRegion="polite" style={{ color: noticeColor, fontSize: 12, fontWeight: '600' }}>
+      {massNotice.text}
+    </Text>
+  );
   if (!review) return null;
   const hasBlocked = Boolean(review.syncBlocked);
   const hasMass = Boolean(review.suspiciousDeletions);
   const hasRemote = (review.remoteDeletions ?? []).length > 0;
-  if (!hasBlocked && !hasMass && !hasRemote) return null;
+  if (!hasBlocked && !hasMass && !hasRemote) {
+    // Décision tranchée : l'alerte a disparu, le résultat reste visible.
+    if (!massNotice) return null;
+    return (
+      <View style={[s.card, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+        <Text style={[s.cardTitle, { color: theme.text }]}>🛡️ Revue de sécurité</Text>
+        {noticeView}
+      </View>
+    );
+  }
 
   return (
     <View style={[s.card, { backgroundColor: theme.surface, borderColor: theme.danger }]}>
@@ -189,6 +243,8 @@ export function SyncReviewSection() {
           </Pressable>
         </View>
       )}
+
+      {!hasMass && noticeView}
 
       {hasMass && (
         <View style={{ marginVertical: 8, gap: 6 }}>
@@ -215,6 +271,7 @@ export function SyncReviewSection() {
               <Text style={{ color: theme.text }}>♻️ Conserver (restaurer)</Text>
             </Pressable>
           </View>
+          {noticeView}
         </View>
       )}
 

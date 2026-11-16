@@ -26,9 +26,11 @@ import {
 import { applyPathChange, isPathAffected, mergeRestoredOpenTabs } from '../../lib/notes/openTabs';
 import type { FormattingResult, Selection } from '../../lib/editor/mdxFormatting';
 import { NOTES_TOOLBAR_ACTIONS, type ToolbarAction } from '../../lib/editor/notesToolbarActions';
+import { resolveNewNoteParent, wikilinkCreationTarget } from '../../lib/notes/newNotePath';
 import { openSearchResult } from '../../lib/notes/searchResults';
 import { useResizablePanel } from '../../lib/ui/useResizablePanel';
 import { collectFolderRelPaths } from '../../lib/notes/treeExpansion';
+import { createWikilinkResolver, resolveWikilink } from '../../lib/notes/wikilinkResolution';
 import {
   findNodeByPath,
   flattenNotes,
@@ -687,6 +689,18 @@ export function NotesScreen({
   // lib/wikilinkAutocomplete.ts) — recalculé quand l'arbre change
   // (création/renommage/déplacement), pas à la frappe.
   const noteNameList = useMemo(() => flattenNotes(tree).map((note) => note.name), [tree]);
+  // Liens internes non résolus (affichés atténués, façon Obsidian) : MÊME
+  // résolveur que le clic (handleOpenWikilink) — voir
+  // lib/notes/wikilinkResolution.ts. Recréé quand l'arbre change
+  // (création/renommage/suppression/synchro) ou quand la note courante
+  // change (liens relatifs, homonymes) : les éditeurs reconstruisent alors
+  // leurs pastilles, pas à chaque frappe.
+  const notePathList = useMemo(() => flattenNotes(tree).map((note) => note.relPath), [tree]);
+  const activeNoteRelPath = activeNote?.relPath ?? null;
+  const isWikilinkResolved = useMemo(
+    () => createWikilinkResolver(flattenNotes(tree), activeNoteRelPath).isResolved,
+    [tree, activeNoteRelPath],
+  );
 
   // Résolution des embeds `![[...]]` en data URL (widget image du Live
   // Preview, voir MdxEditor.tsx/mdxLivePreview.ts) — MÊME bridge que
@@ -923,15 +937,11 @@ export function NotesScreen({
     // autres kinds gardent « Sans titre » + leur extension fixe.
     async (parentRelPath?: string, kind?: VaultEntryKind, name?: string) => {
       if (!vault) return;
+      // Réglage appliqué par la MÊME fonction que la création depuis un
+      // [[lien]] (createNoteFromLink) — lib/notes/newNotePath.ts.
       const resolvedParent =
         parentRelPath ??
-        (preferences.newNoteLocation === 'sameFolder'
-          ? activeNote
-            ? getParentRelPath(activeNote.relPath)
-            : undefined
-          : preferences.newNoteLocation === 'custom'
-            ? preferences.newNoteCustomFolder || undefined
-            : undefined);
+        resolveNewNoteParent(preferences.newNoteLocation, preferences.newNoteCustomFolder, activeNote?.relPath);
       try {
         const entry = await vault.createNote(name ?? 'Sans titre', resolvedParent, kind);
         await refreshTree();
@@ -941,6 +951,44 @@ export function NotesScreen({
       }
     },
     [vault, refreshTree, openNote, activeNote, preferences.newNoteLocation, preferences.newNoteCustomFolder],
+  );
+
+  // Création d'une fiche depuis un [[lien]] vers une cible inexistante
+  // (clic dans l'Aperçu, l'Intermédiaire ou la WebView Android — tous
+  // passent par handleOpenWikilink ci-dessous). Avant : `createNote(cible)`
+  // à la RACINE, réglage « Emplacement par défaut des nouvelles notes »
+  // ignoré, et alias/ancre gardés dans le nom. Désormais : nom sans alias,
+  // ancre ni extension ; chemin explicite du lien gardé, sinon le dossier
+  // du réglage (MÊME fonction que le bouton « + Nouvelle note ») ; le
+  // dossier manquant est créé par l'adaptateur. Si une fiche existe déjà à
+  // ce chemin exact (casse ignorée), elle est ouverte au lieu d'en créer une
+  // « Nom 2 ».
+  const createNoteFromLink = useCallback(
+    async (target: string) => {
+      if (!vault) return;
+      const currentRelPath = activeNoteRef.current?.relPath ?? null;
+      const defaultParent = resolveNewNoteParent(
+        preferences.newNoteLocation,
+        preferences.newNoteCustomFolder,
+        currentRelPath,
+      );
+      const destination = wikilinkCreationTarget(target, defaultParent, currentRelPath);
+      if (!destination) return;
+      const wanted = (
+        destination.parentRelPath ? `${destination.parentRelPath}/${destination.name}` : destination.name
+      ).toLowerCase();
+      const already = flattenNotes(tree).find(
+        (note) => note.relPath.toLowerCase().replace(/\.(mdx|md)$/, '') === wanted,
+      );
+      if (already) {
+        await openNote(already);
+        return;
+      }
+      const entry = await vault.createNote(destination.name, destination.parentRelPath, 'markdown');
+      await refreshTree();
+      await openNote({ type: 'note', ...entry });
+    },
+    [vault, tree, openNote, refreshTree, preferences.newNoteLocation, preferences.newNoteCustomFolder],
   );
 
 
@@ -1954,8 +2002,8 @@ export function NotesScreen({
   };
 
   // Clic sur un [[lien interne]] (voir NoteRenderer.tsx) — résout par NOM
-  // de note (comme Obsidian, insensible à la casse) plutôt que par relPath
-  // exact, puisque c'est ce que la syntaxe du lien porte. Si la cible
+  // de note (comme Obsidian, insensible à la casse) ou par chemin quand le
+  // lien en porte un, alias et ancre ignorés (resolveWikilink). Si la cible
   // n'existe pas encore, la crée avant de l'ouvrir par défaut (façon
   // Obsidian : un lien vers une note absente n'est pas une impasse) — sauf
   // si Paramètres → Gestion des fichiers et des liens →
@@ -1966,8 +2014,10 @@ export function NotesScreen({
       if (!vault) return;
       setWikilinkNotice(null);
       try {
-        const notes = flattenNotes(tree);
-        const existing = notes.find((note) => note.name.toLowerCase() === target.toLowerCase());
+        // Même résolution que le style « non résolu » des pastilles (alias,
+        // ancre, extension, chemin, casse) — lib/notes/wikilinkResolution.ts.
+        const existing = resolveWikilink(target, flattenNotes(tree), activeNoteRef.current?.relPath);
+        if (existing === 'self') return;
         if (existing) {
           await openNote(existing);
           return;
@@ -1978,14 +2028,12 @@ export function NotesScreen({
           );
           return;
         }
-        const entry = await vault.createNote(target);
-        await refreshTree();
-        await openNote({ type: 'note', ...entry });
+        await createNoteFromLink(target);
       } catch (error) {
         console.error('[vault] échec de l’ouverture du lien interne :', error);
       }
     },
-    [vault, tree, openNote, refreshTree, preferences.autoCreateWikilinkTarget],
+    [vault, tree, openNote, preferences.autoCreateWikilinkTarget, createNoteFromLink],
   );
 
   // Ouvre une note par relPath — utilisé par CanvasEditor quand on clique
@@ -2424,7 +2472,9 @@ export function NotesScreen({
                   node.relPath === activeNote?.relPath && { backgroundColor: theme.explorer?.activeRow ?? `${theme.accent}22` },
                 ]}
               >
-                <Text style={styles.icon}><NoteIconByKind kind={node.kind} size={14} /></Text>
+                {/* View (et non Text) : un <Svg> dans un <Text> est mis en
+                    ligne et redimensionné par la hauteur de ligne. */}
+                <NoteIconByKind kind={node.kind} size={14} />
                 <Text style={{ color: theme.text, flexShrink: 1 }} numberOfLines={1} ellipsizeMode="tail">
                   {node.name}
                 </Text>
@@ -2621,7 +2671,7 @@ export function NotesScreen({
                             isActive ? `Onglet actif : ${node.name}` : `Activer l'onglet ${node.name}`
                           }
                         >
-                          <Text style={styles.tabIcon}><NoteIconByKind kind={node.kind} size={14} /></Text>
+                          <NoteIconByKind kind={node.kind} size={14} />
                           <Text
                             style={[styles.tabName, { color: isActive ? theme.accent : theme.textMuted }]}
                             numberOfLines={1}
@@ -2842,6 +2892,7 @@ export function NotesScreen({
                           />
                           <NoteRenderer
                             content={bodyOnly}
+                            isWikilinkResolved={isWikilinkResolved}
                             theme={theme}
                             onOpenWikilink={(t) => void handleOpenWikilink(t)}
                             knownOccurrenceWords={knownOccurrenceWords}
@@ -2875,6 +2926,8 @@ export function NotesScreen({
                             onCreateOccurrence={handleCreateOccurrence}
                             occurrenceWords={occurrenceWordList}
                             noteNames={noteNameList}
+                            notePaths={notePathList}
+                            currentRelPath={activeNoteRelPath}
                             theme={theme}
                             fontSize={preferences.editorFontSize}
                             fontFamily={preferences.editorFontFamily}
@@ -2925,6 +2978,7 @@ export function NotesScreen({
                             livePreview
                             autoHeight
                             theme={theme}
+                            isWikilinkResolved={isWikilinkResolved}
                             onOpenWikilink={(t) => void handleOpenWikilink(t)}
                             onOpenOccurrence={handleOpenOccurrence}
                             occurrenceWords={occurrenceWordList}
@@ -3508,9 +3562,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 6,
     flexShrink: 1,
-  },
-  tabIcon: {
-    fontSize: 12,
   },
   tabName: {
     fontSize: 12,

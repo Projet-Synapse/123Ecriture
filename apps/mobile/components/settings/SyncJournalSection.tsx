@@ -5,6 +5,7 @@ import { journalEntryLabel, type SyncJournalEntry, type SyncJournalEntryType } f
 import { SYNC_JOURNAL_READ_PATH } from '../../lib/sync/syncEngine';
 import { buildLocalDiagnostics } from '../../lib/sync/deviceGateway';
 import { formatDiagnosticsReport } from '../../lib/sync/diagnostics';
+import { useSyncStatus } from '../../lib/sync/SyncStatusContext';
 import { useVaults } from '../../lib/sync/VaultsContext';
 import { exporterDiagnosticDansCoffre } from '../../lib/sync/diagnosticExport';
 import { usePreferences } from '../../preferences/PreferencesContext';
@@ -42,7 +43,7 @@ import { settingsStyles as s } from './settingsStyles';
 
 //////// 1. Les filtres, icônes et formatage du journal ///////////////////////////////////
 
-type FilterId = 'tout' | 'envois' | 'receptions' | 'suppressions' | 'conflits' | 'erreurs';
+type FilterId = 'tout' | 'envois' | 'receptions' | 'suppressions' | 'conflits' | 'erreurs' | 'pauses';
 
 const FILTERS: { id: FilterId; label: string; types?: SyncJournalEntryType[] }[] = [
   { id: 'tout', label: 'Tout' },
@@ -54,6 +55,7 @@ const FILTERS: { id: FilterId; label: string; types?: SyncJournalEntryType[] }[]
   { id: 'suppressions', label: 'Suppressions', types: ['delete', 'restore', 'corbeille'] },
   { id: 'conflits', label: 'Conflits', types: ['conflict'] },
   { id: 'erreurs', label: 'Erreurs', types: ['error'] },
+  { id: 'pauses', label: 'Pauses', types: ['sync-pause', 'sync-resume'] },
 ];
 
 const ICON_BY_TYPE: Record<SyncJournalEntryType, string> = {
@@ -69,6 +71,8 @@ const ICON_BY_TYPE: Record<SyncJournalEntryType, string> = {
   error: '❌',
   pause: '⏸️',
   resume: '▶️',
+  'sync-pause': '⏸️',
+  'sync-resume': '▶️',
   restore: '↩️',
   info: 'ℹ️',
   connexion: '🔌',
@@ -95,6 +99,7 @@ function formatTime(iso: string): string {
 
 export function SyncJournalSection() {
   const { theme } = usePreferences();
+  const syncStatus = useSyncStatus();
   const { activeVault } = useVaults();
   const [entries, setEntries] = useState<SyncJournalEntry[] | null>(null);
   const [filter, setFilter] = useState<FilterId>('tout');
@@ -183,6 +188,23 @@ export function SyncJournalSection() {
     <View style={[s.card, { backgroundColor: theme.surface, borderColor: theme.border }]}>
       <SyncReviewSection />
       <Text style={[s.cardTitle, { color: theme.text }]}>🔄 Journal de synchronisation</Text>
+      {/* État EN PAUSE (syncPause.ts) : dit en tête du journal, avec sa raison,
+          avant même qu'un cycle ne soit tenté. */}
+      {syncStatus.pause ? (
+        <View
+          accessibilityLiveRegion="polite"
+          style={{ borderWidth: 1, borderColor: syncStatus.pause.blocking ? theme.danger : theme.accent, borderRadius: 8, padding: 8, gap: 2 }}
+        >
+          <Text style={{ color: syncStatus.pause.blocking ? theme.danger : theme.accent, fontWeight: '600' }}>
+            ⏸️ {syncStatus.pause.blocking ? 'Synchronisation en pause' : syncStatus.pause.label}
+          </Text>
+          <Text style={{ color: theme.textMuted, fontSize: 12 }}>Raison : {syncStatus.pause.detail}</Text>
+        </View>
+      ) : syncStatus.pauseWarning ? (
+        <View style={{ borderWidth: 1, borderColor: theme.danger, borderRadius: 8, padding: 8 }}>
+          <Text style={{ color: theme.danger, fontSize: 12 }}>⚠️ {syncStatus.pauseWarning}</Text>
+        </View>
+      ) : null}
       <Text style={[s.hint, { color: theme.textMuted }]}>
         Activité de ce coffre sur cet appareil — cycles (et leur déclencheur), envois, réceptions, suppressions,
         conflits et erreurs. Se rafraîchit en direct. Le journal est propre à chaque appareil.
@@ -252,7 +274,13 @@ export function SyncJournalSection() {
               <Text style={{ color: theme.textMuted, fontFamily: 'monospace', fontSize: 12, minWidth: 86 }}>
                 {formatTime(entry.t)}
               </Text>
-              <Text style={{ color: entry.type === 'error' ? theme.danger : theme.text, fontSize: 13, flex: 1 }}>
+              <Text
+                style={{
+                  color: entry.type === 'error' || entry.type === 'sync-pause' ? theme.danger : theme.text,
+                  fontSize: 13,
+                  flex: 1,
+                }}
+              >
                 {ICON_BY_TYPE[entry.type]} {journalEntryLabel(entry)}
               </Text>
             </View>

@@ -31,6 +31,7 @@ import {
   sameRemoteDeletions,
   type PendingReview,
 } from './pendingReview';
+import { baseWithoutKept, mergeGuardSuspension, settleReviewAfterCycle } from './massDeletionReview';
 import { collectRemoteDeletionCandidates, shouldTripBreaker } from './safetyNet';
 import { pickActiveRemoteVault } from './activeVault';
 import {
@@ -505,6 +506,7 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
     await appendJournalEntries([
       makeJournalEntry('info', { detail: 'cycle ignoré : le coffre actif n’est pas lié au cloud' }),
     ]);
+    summary.paused = { reason: 'not-linked', detail: 'le coffre actif n’est pas lié au cloud' };
     return summary;
   }
   const remoteVaultId = activeEntry.remoteVaultId;
@@ -513,11 +515,17 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
   // coffre désactivée → cycle ignoré SANS erreur (l'app reste 100 % locale).
   const syncSettings = loadSyncSettings();
   if (!isVaultSyncEnabled(syncSettings, remoteVaultId) || syncSettings.pausedAfterUpdate) {
+    summary.paused = !syncSettings.enabled
+      ? { reason: 'disabled', detail: 'synchronisation désactivée dans les paramètres' }
+      : syncSettings.pausedAfterUpdate
+        ? { reason: 'after-update', detail: 'mise à jour de l’app détectée — reprise à confirmer' }
+        : { reason: 'vault-disabled', detail: 'synchronisation désactivée pour ce coffre' };
     return summary;
   }
   // Wi-Fi uniquement : sur réseau mobile, cycle ignoré (aucune erreur).
   const connection = (globalThis as { navigator?: { connection?: { type?: string } } }).navigator?.connection;
   if (syncSettings.wifiOnly && connection?.type === 'cellular') {
+    summary.paused = { reason: 'wifi-only', detail: 'Wi-Fi uniquement : réseau mobile détecté' };
     return summary;
   }
 
@@ -536,6 +544,7 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
         // Pas de coffre pour écrire le journal : le message reste dans le résumé.
       }
       console.error('[sync]', message);
+      summary.paused = { reason: 'no-local-vault', detail: 'aucun coffre local actif sur cet appareil' };
       return summary;
     }
   } catch {
@@ -573,6 +582,7 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
     } catch {
       // Le journal ne doit pas masquer le refus.
     }
+    summary.paused = { reason: 'circuit-breaker', detail: `disjoncteur ouvert (${blocked.errorCount} erreur(s) au dernier cycle)` };
     return summary;
   }
 
@@ -589,6 +599,7 @@ export async function runSync(ownerId: string, trigger = 'automatique'): Promise
     } catch {
       // Le journal ne doit pas masquer le message du verrou.
     }
+    summary.paused = { reason: 'device-locked', detail: `appareil verrouillé à distance${myLock.reason ? ` (${myLock.reason})` : ''}` };
     return summary;
   }
 
@@ -875,8 +886,13 @@ async function runLockedCycle(
       deleted: r.deleted,
       kind: isFolderMarker(r.relPath) ? ('folder' as const) : ('file' as const),
     })),
+    // « Conserver (restaurer) » : base oubliée pour ces chemins → rapatriés
+    // depuis le cloud au lieu d'être resupprimés (massDeletionReview.ts).
     base: Object.fromEntries(
-      Object.entries(syncState.files).map(([p, h]) => [p, { hash: h, kind: isFolderMarker(p) ? ('folder' as const) : ('file' as const) }]),
+      Object.entries(baseWithoutKept(syncState.files, reviewBefore)).map(([p, h]) => [
+        p,
+        { hash: h, kind: isFolderMarker(p) ? ('folder' as const) : ('file' as const) },
+      ]),
     ),
     allow,
     guard: { approved: approvedDeletions },
@@ -906,27 +922,27 @@ async function runLockedCycle(
     }
   }
   const locallyDeleted = plan.actions.filter((x) => x.kind === 'tombstone-remote').map((x) => x.relPath);
+  let guardAlreadyDecided = false;
   if (plan.guard.suspended) {
     // FUSION (jamais d'écrasement) : les suppressions distantes en revue et
     // les approbations déjà données sont conservées ; liste COMPLÈTE.
     // File illisible : JAMAIS écrasée (PendingReviewUnreadableError) — les
     // suppressions restent suspendues dans tous les cas.
     try {
+      // Relue ICI : une décision prise PENDANT ce cycle (Confirmer /
+      // Conserver) n'est jamais réécrasée par une alerte périmée.
       const current = await loadPendingReview(bridges.vault);
-      await savePendingReview(bridges.vault, {
-        ...current,
-        suspiciousDeletions: {
-          at: new Date().toISOString(),
-          count: plan.guard.deletions.length,
-          paths: plan.guard.deletions,
-        },
-      });
+      const { next, raised } = mergeGuardSuspension(current, plan.guard.deletions, new Date().toISOString());
+      await savePendingReview(bridges.vault, next);
+      if (!raised) guardAlreadyDecided = true;
     } catch (error) {
       console.error('[sync] revue de suppression massive non persistée :', error);
       summary.errors.push(`revue de suppression massive non enregistrée : ${errorMessage(error)}`);
       journal.push(makeJournalEntry('error', { detail: `revue non enregistrée : ${errorMessage(error)}` }));
     }
-    const message = `Garde-fou : ${plan.guard.reason} Les suppressions sont SUSPENDUES (rien n'est effacé, ni ici ni dans le cloud) ; les fichiers manquants sont rapatriés. Valide depuis Paramètres → Journal de synchronisation si c'est volontaire.`;
+    const message = guardAlreadyDecided
+      ? `Garde-fou : ${plan.guard.deletions.length} suppression(s) décidée(s) pendant ce cycle — appliquée(s) au cycle suivant.`
+      : `Garde-fou : ${plan.guard.reason} Les suppressions sont SUSPENDUES (rien n'est effacé, ni ici ni dans le cloud) ; les fichiers manquants sont rapatriés. Valide depuis Paramètres → Journal de synchronisation si c'est volontaire.`;
     // Pas une ERREUR de l'interface : un avertissement du journal.
     journal.push(makeJournalEntry('info', { detail: message }));
   }
@@ -1029,14 +1045,23 @@ async function runLockedCycle(
         console.error(`[sync] ${added.length} suppression(s) distante(s) EN ATTENTE DE VALIDATION (fichiers conservés)`);
       }
     }
-    if (approvedDeletions.size > 0) {
-      // Approbations (garde-fou des suppressions LOCALES) consommées : on
-      // ne garde que celles pas encore propagées (échec ponctuel).
-      const stillPending = [...approvedDeletions].filter((p) => !tombstonedPaths.has(p) && !localByPath.has(p));
-      next = {
-        ...next,
-        approvedDeletions: stillPending.length > 0 ? { at: new Date().toISOString(), paths: stillPending } : undefined,
-      };
+    // Approbations appliquées et chemins conservés revenus consommés SUR LA
+    // FILE RELUE (une approbation donnée pendant le cycle n'est pas
+    // effacée) ; alerte du garde-fou retirée si ce cycle n'a rien suspendu
+    // — avant, seul l'écran la retirait : une alerte réécrite par un cycle
+    // concurrent restait affichée pour toujours (« l'alerte revient »).
+    {
+      const settled = settleReviewAfterCycle(next, {
+        guardSuspended: plan.guard.suspended,
+        tombstoned: tombstonedPaths,
+        local: new Set(localByPath.keys()),
+        remoteActive: new Set(remoteByPath.keys()),
+        nowIso: new Date().toISOString(),
+      });
+      next = settled.next;
+      if (settled.clearedAlert) {
+        journal.push(makeJournalEntry('info', { detail: 'Garde-fou : plus aucune suppression massive en attente — alerte levée.' }));
+      }
     }
     if (next !== review) await savePendingReview(bridges.vault, next);
   } catch (error) {
