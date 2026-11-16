@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 
+import { editorCommandScript, type EditorCommand } from '../../lib/editor/editorCommands';
 import { withImageMime } from '../../lib/files/imageFormats';
 import { EDITOR_WEB_BUNDLE } from '../generated/editorWebBundle';
 import type { Theme } from '../../theme';
@@ -19,7 +20,8 @@ import type { Theme } from '../../theme';
 //   • Pont bidirectionnel : web → RN postMessage {type: 'change'|
 //     'wikilink'|'createOccurrence'|'ready'|'height'|'configApplied'}
 //     (frappe throttlée côté web, 300 ms + flush au blur) ; RN → web via
-//     injectJavaScript vers window.__editorApi (applyDoc, applyConfig).
+//     injectJavaScript vers window.__editorApi (applyDoc, applyConfig,
+//     runCommand — barre d'outils native, voir commandRef).
 //   • applyDoc n'est envoyé que pour un changement EXTERNE (changement de
 //     note, pull de synchro) — les échos de frappe sont filtrés par
 //     lastWebContent.
@@ -65,6 +67,10 @@ type Props = {
   // demande la data URL par le pont (`resolveEmbed`), même résolveur (et
   // même cache) que le desktop. Absent = pastille 📎 comme avant.
   resolveEmbedUrl?: (target: string) => Promise<string | null>;
+  // Barre d'outils native : reçoit la fonction qui envoie une commande
+  // (mise en forme, annuler/rétablir, insertion) à l'éditeur de la page —
+  // null au démontage. Voir lib/editor/editorCommands.ts.
+  commandRef?: { current: ((cmd: EditorCommand) => void) | null };
 };
 
 export function MdxEditorWeb({
@@ -83,6 +89,7 @@ export function MdxEditorWeb({
   livePreview = true,
   autoHeight = false,
   resolveEmbedUrl,
+  commandRef,
 }: Props) {
   const [webHeight, setWebHeight] = useState(200);
   const webRef = useRef<WebView>(null);
@@ -106,6 +113,16 @@ export function MdxEditorWeb({
   const inject = useCallback((script: string) => {
     webRef.current?.injectJavaScript(`${script}; true;`);
   }, []);
+
+  // Commandes de la barre d'outils native → page web (editorCommands.ts).
+  useEffect(() => {
+    if (!commandRef) return;
+    const run = (cmd: EditorCommand) => inject(editorCommandScript(cmd));
+    commandRef.current = run;
+    return () => {
+      if (commandRef.current === run) commandRef.current = null;
+    };
+  }, [commandRef, inject]);
 
   const sendDoc = useCallback(
     (text: string) => {
