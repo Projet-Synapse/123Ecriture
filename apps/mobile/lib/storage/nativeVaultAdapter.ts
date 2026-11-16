@@ -679,8 +679,12 @@ function siblingNamesOf(parentRelPath: string): Set<string> {
 
 async function resolveParentUri(parentRelPath: string | undefined): Promise<string> {
   if (!parentRelPath) return requireActiveRootUri();
-  const { uri } = resolveIndexed(parentRelPath);
-  return isSafUri(uri) ? uri : ensureSafDir(parentRelPath);
+  // Dossier absent de l'index (pas encore créé — dossier fixe du réglage
+  // « emplacement des nouvelles notes », chemin d'un [[lien]] vers une
+  // fiche inexistante) : ensureSafDir le retrouve ou le crée, au lieu de
+  // l'erreur « introuvable » de resolveIndexed.
+  const entry = pathIndex.get(parentRelPath);
+  return entry && isSafUri(entry.uri) ? entry.uri : ensureSafDir(parentRelPath);
 }
 
 // Une URI utilisable par les appels StorageAccessFramework.* (content://).

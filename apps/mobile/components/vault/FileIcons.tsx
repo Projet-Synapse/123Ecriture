@@ -2,6 +2,7 @@ import type { PropsWithChildren } from 'react';
 import { View } from 'react-native';
 import { Svg, Path, Circle } from 'react-native-svg';
 
+import { TREE_ICON_SIZE, fixedIconBoxStyle } from '../../lib/ui/iconBox';
 import type { Theme } from '../../theme';
 
 // ✒️ 123ECRITURE — components/vault/FileIcons.tsx — les icônes vectorielles de l'explorateur
@@ -19,6 +20,12 @@ import type { Theme } from '../../theme';
 //     l'explorateur crashe sinon dès qu'un dossier existe.
 //   • Même motif de base pour toutes les notes (FileIcon), seule la
 //     couleur varie par `kind`.
+//   • TOUTE icône est rendue dans une boîte de taille FIXE (IconBox :
+//     width/height/min/max figés + flexShrink 0, lib/ui/iconBox.ts). Avant,
+//     le <Svg> était un enfant flex direct de la ligne : sur web/desktop un
+//     <svg> a `flex-shrink: 1` par défaut et rétrécissait sur les lignes au
+//     nom long — icônes de tailles différentes l'une sous l'autre (signalé
+//     2026-11-16).
 //
 // SOMMAIRE :
 //   1. Les icônes de dossier (fermé / ouvert)
@@ -30,22 +37,34 @@ import type { Theme } from '../../theme';
 
 type IconProps = { size?: number; color?: string };
 
-function FolderIconBase({ size = 16, color = '#e0a458', open = false }: IconProps & { open?: boolean }) {
+function FolderIconBase({ size = TREE_ICON_SIZE, color = '#e0a458', open = false }: IconProps & { open?: boolean }) {
   // Dossier fermé : languette + corps. Ouvert : corps abaissé dont le
   // couvercle se soulève (l'écart entre les deux dessine l'ouverture).
   return (
-    <Svg width={size} height={size} viewBox="0 0 16 16" fill="none">
-      {open ? (
-        <>
-          <Path d="M1.5 4.5 H6 L7.5 6 H14.5 V7" stroke={color} strokeWidth="1.2" fill="none" />
-          <Path d="M1.5 6 H6.5 L7.5 7 H4 Q2 7 1.8 8.2 L1.2 12 Q1 13 2 13 H14 Q15 13 14.8 12 L13.6 8.6 Q13.4 7.8 12.6 7.8 H7.5" stroke={color} strokeWidth="1.2" fill={`${color}22`} />
-        </>
-      ) : (
-        <>
-          <Path d="M1.5 3.5 H6 L7.5 5 H14.5 Q15 5 15 5.5 V12 Q15 13 14 13 H2 Q1 13 1 12 V4.5 Q1 3.5 1.5 3.5 Z" stroke={color} strokeWidth="1.2" fill={`${color}22`} />
-        </>
-      )}
-    </Svg>
+    <IconBox size={size}>
+      <Svg width={size} height={size} viewBox="0 0 16 16" fill="none">
+        {open ? (
+          <>
+            <Path d="M1.5 4.5 H6 L7.5 6 H14.5 V7" stroke={color} strokeWidth="1.2" fill="none" />
+            <Path
+              d="M1.5 6 H6.5 L7.5 7 H4 Q2 7 1.8 8.2 L1.2 12 Q1 13 2 13 H14 Q15 13 14.8 12 L13.6 8.6 Q13.4 7.8 12.6 7.8 H7.5"
+              stroke={color}
+              strokeWidth="1.2"
+              fill={`${color}22`}
+            />
+          </>
+        ) : (
+          <>
+            <Path
+              d="M1.5 3.5 H6 L7.5 5 H14.5 Q15 5 15 5.5 V12 Q15 13 14 13 H2 Q1 13 1 12 V4.5 Q1 3.5 1.5 3.5 Z"
+              stroke={color}
+              strokeWidth="1.2"
+              fill={`${color}22`}
+            />
+          </>
+        )}
+      </Svg>
+    </IconBox>
   );
 }
 
@@ -67,7 +86,14 @@ export function FolderOpenIcon(props: IconProps) {
 // l'arbre.
 export function ChevronIcon({ size = 12, color = '#888', expanded = false }: IconProps & { expanded?: boolean }) {
   return (
-    <View style={{ width: size, height: size, transform: expanded ? [{ rotate: '90deg' }] : [] }}>
+    <View
+      style={{
+        width: size,
+        height: size,
+        flexShrink: 0,
+        transform: expanded ? [{ rotate: '90deg' }] : [],
+      }}
+    >
       <Svg width={size} height={size} viewBox="0 0 12 12" fill="none">
         <Path d="M3 1.5 L8 6 L3 10.5" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
       </Svg>
@@ -76,21 +102,28 @@ export function ChevronIcon({ size = 12, color = '#888', expanded = false }: Ico
 }
 
 // Feuille/document générique — la couleur varie par type de fichier.
-export function FileIcon({ size = 16, color = '#7aa2f7', badge }: IconProps & { badge?: string }) {
+export function FileIcon({ size = TREE_ICON_SIZE, color = '#7aa2f7', badge }: IconProps & { badge?: string }) {
   return (
-    <Svg width={size} height={size} viewBox="0 0 16 16" fill="none">
-      {/* Corps : coin plié en haut à droite */}
-      <Path d="M3.5 1.5 H10 L13.5 5 V13.5 Q13.5 14.5 12.5 14.5 H3.5 Q2.5 14.5 2.5 13.5 V2.5 Q2.5 1.5 3.5 1.5 Z" stroke={color} strokeWidth="1.2" fill={`${color}18`} />
-      <Path d="M10 1.5 V5 H13.5" stroke={color} strokeWidth="1.2" fill="none" />
-      {/* Lignes de texte stylisées */}
-      <Path d="M5 7.5 H11 M5 9.5 H11 M5 11.5 H9" stroke={`${color}88`} strokeWidth="1" strokeLinecap="round" />
-      {badge ? <Circle cx="12.5" cy="12.5" r="3" fill={color} /> : null}
-    </Svg>
+    <IconBox size={size}>
+      <Svg width={size} height={size} viewBox="0 0 16 16" fill="none">
+        {/* Corps : coin plié en haut à droite */}
+        <Path
+          d="M3.5 1.5 H10 L13.5 5 V13.5 Q13.5 14.5 12.5 14.5 H3.5 Q2.5 14.5 2.5 13.5 V2.5 Q2.5 1.5 3.5 1.5 Z"
+          stroke={color}
+          strokeWidth="1.2"
+          fill={`${color}18`}
+        />
+        <Path d="M10 1.5 V5 H13.5" stroke={color} strokeWidth="1.2" fill="none" />
+        {/* Lignes de texte stylisées */}
+        <Path d="M5 7.5 H11 M5 9.5 H11 M5 11.5 H9" stroke={`${color}88`} strokeWidth="1" strokeLinecap="round" />
+        {badge ? <Circle cx="12.5" cy="12.5" r="3" fill={color} /> : null}
+      </Svg>
+    </IconBox>
   );
 }
 
 // Icône par `kind` — couleurs différenciées, même motif de base.
-export function NoteIconByKind({ kind, size = 16, theme }: { kind: VaultEntryKind; size?: number; theme?: Theme }) {
+export function NoteIconByKind({ kind, size = TREE_ICON_SIZE, theme }: { kind: VaultEntryKind; size?: number; theme?: Theme }) {
   void theme;
   switch (kind) {
     case 'markdown':
@@ -109,8 +142,8 @@ export function NoteIconByKind({ kind, size = 16, theme }: { kind: VaultEntryKin
   }
 }
 
-// Petits utilitaires React pour wrapper les icônes dans un conteneur carré.
-export function IconBox({ size = 16, children }: PropsWithChildren<{ size?: number }>) {
-  void size;
-  return <>{children}</>;
+// Conteneur carré de taille FIXE (voir invariants) — n'était qu'un
+// fragment vide jusqu'ici, d'où des icônes compressibles.
+export function IconBox({ size = TREE_ICON_SIZE, children }: PropsWithChildren<{ size?: number }>) {
+  return <View style={fixedIconBoxStyle(size)}>{children}</View>;
 }

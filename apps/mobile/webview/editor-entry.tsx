@@ -23,6 +23,7 @@ import { keymap } from '@codemirror/view';
 import { createLivePreviewExtension } from '../lib/editor/mdxLivePreview';
 import { occurrenceCompletionSource } from '../lib/editor/occurrenceAutocomplete';
 import { wikilinkCompletionSource } from '../lib/editor/wikilinkAutocomplete';
+import { createWikilinkResolver } from '../lib/notes/wikilinkResolution';
 import { editorHighlightExtensions } from '../lib/editor/codemirrorHighlight';
 import type { Theme } from '../theme';
 
@@ -52,6 +53,11 @@ type EntryConfig = {
   closeBrackets: boolean;
   occurrenceWords: string[];
   noteNames: string[];
+  // Chemins des notes du coffre + note courante : résolution des [[liens]]
+  // pour atténuer ceux qui visent une fiche inexistante (même logique que
+  // le clic côté RN). null = pas d'information → aucun lien atténué.
+  notePaths: string[] | null;
+  currentRelPath: string | null;
   colors: EditorColors;
   // Mode Source (sans aperçu vivant) : le même CodeMirror, l'extension de
   // Live Preview en moins — utilisé par NotesScreen quand
@@ -73,6 +79,8 @@ let config: EntryConfig = {
   closeBrackets: true,
   occurrenceWords: [],
   noteNames: [],
+  notePaths: null,
+  currentRelPath: null,
   colors: {
     accent: '#7c6cf2',
     border: '#00000033',
@@ -199,6 +207,15 @@ function EditorApp() {
             },
             {
               onOpenWikilink: (target) => send('wikilink', { target }),
+              isWikilinkResolved: config.notePaths
+                ? createWikilinkResolver(
+                    config.notePaths.map((relPath) => ({
+                      relPath,
+                      name: relPath.slice(relPath.lastIndexOf('/') + 1).replace(/\.[^.]+$/, ''),
+                    })),
+                    config.currentRelPath,
+                  ).isResolved
+                : undefined,
             },
             // Mobile uniquement : l'aperçu vivant suit les couleurs du thème
             // de l'interface (desktop reste monochrome, inchangé).
