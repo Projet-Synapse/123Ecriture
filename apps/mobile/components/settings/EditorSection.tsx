@@ -37,7 +37,7 @@ const FONT_FAMILY_OPTIONS: { value: EditorFontFamily; label: string }[] = [
 // Invariants du fichier :
 //   • Tous ces réglages sont lus par MdxEditor.tsx et NotesScreen.tsx à
 //     chaque ouverture/rendu de note (preferences.editorFontSize,
-//     .editorDefaultMode, .editorCloseBrackets, .editorInlineTitle).
+//     .editorDefaultMode, .editorCloseBrackets) — le titre est toujours dans l’éditeur (NotesScreen, renderContentTitle).
 //   • Les trois barres d'outils vivent au MÊME endroit (lues par
 //     NotesScreen.tsx/CanvasEditor.tsx/ChartEditor.tsx via
 //     preferences.notesToolbarGroups/canvasToolbarOrder/
@@ -54,7 +54,6 @@ export function EditorSection() {
     setEditorFontFamily,
     setEditorDefaultMode,
     setEditorCloseBrackets,
-    setEditorInlineTitle,
     setNotesToolbarGroups,
     setCanvasToolbarOrder,
     setChartToolbarOrder,
@@ -149,12 +148,6 @@ export function EditorSection() {
           label="Association automatique de crochets/guillemets"
           value={preferences.editorCloseBrackets}
           onChange={(value) => void setEditorCloseBrackets(value)}
-          theme={theme}
-        />
-        <SettingsToggle
-          label="Titre en ligne avec le contenu"
-          value={preferences.editorInlineTitle}
-          onChange={(value) => void setEditorInlineTitle(value)}
           theme={theme}
         />
       </View>
