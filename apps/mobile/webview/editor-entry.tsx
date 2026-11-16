@@ -19,7 +19,9 @@ import { markdown } from '@codemirror/lang-markdown';
 import { autocompletion } from '@codemirror/autocomplete';
 import { search as searchExtension, searchKeymap } from '@codemirror/search';
 import { keymap } from '@codemirror/view';
+import { redo, undo } from '@codemirror/commands';
 
+import { applyTextCommand, parseEditorCommand } from '../lib/editor/editorCommands';
 import { createLivePreviewExtension } from '../lib/editor/mdxLivePreview';
 import { occurrenceCompletionSource } from '../lib/editor/occurrenceAutocomplete';
 import { wikilinkCompletionSource } from '../lib/editor/wikilinkAutocomplete';
@@ -157,6 +159,10 @@ function resolveEmbedViaNative(target: string): Promise<string | null> {
 // comme une vraie frappe — sans ce drapeau, le doc renvoyé repartait vers
 // RN et bouclait. Fenêtre large : le onChange programmatique est synchrone.
 let applyingRemote = false;
+
+// EditorView courante — cible des commandes de la barre d'outils native
+// (api.runCommand ci-dessous, lib/editor/editorCommands.ts).
+let currentView: EditorView | null = null;
 
 function EditorApp() {
   const [version, setVersion] = useState(0);
@@ -328,6 +334,9 @@ function EditorApp() {
         sendChangeThrottled(value);
       }}
       onBlur={() => send('change', { content: latestContent.current })}
+      onCreateEditor={(view) => {
+        currentView = view;
+      }}
     />
   );
 }
@@ -350,6 +359,28 @@ const api = {
     if (!resolve) return;
     embedWaiters.delete(id);
     resolve(url);
+  },
+  // Barre d'outils NATIVE (NotesScreen → MdxEditorWeb) : mise en forme,
+  // annuler/rétablir, insertion — même logique que le desktop, appliquée
+  // sur l'EditorView de la page. La modification repart vers RN par le
+  // onChange habituel (frappe).
+  runCommand(json: string): void {
+    const cmd = parseEditorCommand(json);
+    const view = currentView;
+    if (!cmd || !view) return;
+    if (cmd.kind === 'undo' || cmd.kind === 'redo') {
+      (cmd.kind === 'undo' ? undo : redo)(view);
+      view.focus();
+      return;
+    }
+    const sel = view.state.selection.main;
+    const result = applyTextCommand(view.state.doc.toString(), { start: sel.from, end: sel.to }, cmd);
+    if (!result) return;
+    view.dispatch({
+      changes: { from: 0, to: view.state.doc.length, insert: result.text },
+      selection: { anchor: result.selection.start, head: result.selection.end },
+    });
+    view.focus();
   },
   applyConfig(json: string): void {
     const patch = JSON.parse(json) as Partial<EntryConfig>;

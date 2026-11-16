@@ -27,6 +27,7 @@ import { applyPathChange, isPathAffected, mergeRestoredOpenTabs } from '../../li
 import { convertNoteFormat, formatConversionBetween, willConvertFormat } from '../../lib/notes/renameTarget';
 import type { FormattingResult, Selection } from '../../lib/editor/mdxFormatting';
 import { NOTES_TOOLBAR_ACTIONS, type ToolbarAction } from '../../lib/editor/notesToolbarActions';
+import { toolbarRoute, type EditorCommand } from '../../lib/editor/editorCommands';
 import { resolveNewNoteParent, wikilinkCreationTarget } from '../../lib/notes/newNotePath';
 import { openSearchResult } from '../../lib/notes/searchResults';
 import { useResizablePanel } from '../../lib/ui/useResizablePanel';
@@ -262,6 +263,9 @@ export function NotesScreen({
   // dans une WebView (MdxEditorWeb — sans aperçu vivant en Source),
   // l'Aperçu reste le NoteRenderer natif.
   const isNativeNotes = Platform.OS !== 'web';
+  // Barre d'outils native : envoie les commandes à l'éditeur WebView
+  // (MdxEditorWeb, commandRef) — sur natif, viewRef reste null.
+  const nativeEditorCommandRef = useRef<((cmd: EditorCommand) => void) | null>(null);
   const effectiveViewMode: ViewMode = viewMode;
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [wikilinkNotice, setWikilinkNotice] = useState<string | null>(null);
@@ -1542,6 +1546,11 @@ export function NotesScreen({
         const { body } = splitFrontmatter(raw);
         const view = viewRef.current;
         if (!view) {
+          // Natif : inséré au curseur dans l'éditeur WebView.
+          if (nativeEditorCommandRef.current) {
+            nativeEditorCommandRef.current({ kind: 'insert', text: body });
+            return;
+          }
           setWikilinkNotice("L'insertion se fait depuis un éditeur Source ou Intermédiaire.");
           return;
         }
@@ -2120,6 +2129,9 @@ export function NotesScreen({
           selection: { anchor: cursor, head: cursor },
         });
         view.focus();
+      } else if (nativeEditorCommandRef.current) {
+        // Natif : inséré au curseur dans l'éditeur WebView.
+        nativeEditorCommandRef.current({ kind: 'insert', text: embed });
       } else {
         const newText = `${content}${embed}`;
         setContent(newText);
@@ -2869,7 +2881,12 @@ export function NotesScreen({
                         reste donc fixe au-dessus en Intermédiaire, mais
                         repliable (voir PropertiesBlock.tsx) pour rester moins
                         gênante pendant la frappe. */}
-                    {!isNativeNotes && effectiveViewMode !== 'reading' && (
+                    {/* Barre d'outils : TOUTES les plateformes hors Aperçu. Sur
+                        Android/iOS, elle était masquée depuis le passage à
+                        l'éditeur WebView (v0.4.42) faute d'EditorView côté RN —
+                        ses boutons passent désormais par le pont de la
+                        WebView (nativeEditorCommandRef, editorCommands.ts). */}
+                    {effectiveViewMode !== 'reading' && (
                       <EditorToolbar
                         items={(() => {
                           const items: { id: string; label: string; divider?: boolean; subItems?: { id: string; label: string }[]; run?: { id: string; formatRun?: (text: string, selection: Selection) => FormattingResult } }[] = [];
@@ -2908,6 +2925,14 @@ export function NotesScreen({
                           }
                           if (item.run.id === 'attach') {
                             void handleInsertAttachment();
+                            return;
+                          }
+                          if (isNativeNotes) {
+                            // Mise en forme / annuler / rétablir : appliqués
+                            // par la page web sur SON EditorView.
+                            const route = toolbarRoute(item.run.id);
+                            if (route === 'format') nativeEditorCommandRef.current?.({ kind: 'format', id: item.run.id });
+                            else if (route === 'undo' || route === 'redo') nativeEditorCommandRef.current?.({ kind: route });
                             return;
                           }
                           if (item.run.id === 'undo' || item.run.id === 'redo') {
@@ -2981,6 +3006,7 @@ export function NotesScreen({
                             fontFamily={preferences.editorFontFamily}
                             closeBrackets={preferences.editorCloseBrackets}
                             autoHeight
+                            commandRef={nativeEditorCommandRef}
                           />
                         </NativeReadingScroll>
                       ) : isNativeNotes ? (
@@ -3005,6 +3031,7 @@ export function NotesScreen({
                             closeBrackets={preferences.editorCloseBrackets}
                             livePreview={false}
                             autoHeight
+                            commandRef={nativeEditorCommandRef}
                           />
                         </NativeReadingScroll>
                       ) : effectiveViewMode === 'split' ? (
