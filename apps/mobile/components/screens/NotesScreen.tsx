@@ -25,9 +25,11 @@ import {
 } from '../../lib/properties/frontmatter';
 import { applyPathChange, isPathAffected, mergeRestoredOpenTabs } from '../../lib/notes/openTabs';
 import { convertNoteFormat, formatConversionBetween, willConvertFormat } from '../../lib/notes/renameTarget';
+import { noteTitlePlacement } from '../../lib/notes/noteTitle';
 import type { FormattingResult, Selection } from '../../lib/editor/mdxFormatting';
 import { NOTES_TOOLBAR_ACTIONS, type ToolbarAction } from '../../lib/editor/notesToolbarActions';
 import { toolbarRoute, type EditorCommand } from '../../lib/editor/editorCommands';
+import { buildNotesToolbarItems } from '../../lib/editor/toolbarItems';
 import { resolveNewNoteParent, wikilinkCreationTarget } from '../../lib/notes/newNotePath';
 import { openSearchResult } from '../../lib/notes/searchResults';
 import { useResizablePanel } from '../../lib/ui/useResizablePanel';
@@ -2623,6 +2625,56 @@ export function NotesScreen({
     );
   };
 
+  // Titre de la note DANS l'éditeur (comme Obsidian) : premier élément du
+  // contenu défilant, au-dessus des propriétés et du texte, dans tous les
+  // modes (Source, Intermédiaire, Aperçu) et sur toutes les plateformes. Le
+  // titre EST le nom du fichier (pas de propriété `title`) : le modifier
+  // renomme la note par le renommage habituel (submitRename : onglets,
+  // favoris, conversion .md ⇄ .mdx, synchro vue comme un renommage).
+  const renderContentTitle = (note: VaultEntry) =>
+    activeNoteIsRenaming ? (
+      // Validation EXPLICITE uniquement (Entrée ou ✓) : le onBlur
+      // auto-submit ferait fermer le champ à la première secousse de mise
+      // en page (clavier Android, focus volé par l'éditeur web sur PC) —
+      // « n'ouvre pas de champ » sur PC, « 2 » ajoutés sur Android (vécu
+      // 2026-10-02).
+      <View style={styles.renameRow}>
+        <TextInput
+          autoFocus
+          value={renamingValue}
+          onChangeText={setRenamingValue}
+          onSubmitEditing={() => void submitRename()}
+          onKeyPress={(event) => {
+            if (event.nativeEvent.key === 'Escape') cancelRename();
+          }}
+          accessibilityLabel="Titre de la note (nom du fichier)"
+          style={[styles.editorTitleInline, { color: theme.text, borderColor: theme.accent, flex: 1 }]}
+        />
+        <Pressable
+          onPress={() => void submitRename()}
+          style={[styles.renameAction, { backgroundColor: theme.accent }]}
+          accessibilityLabel="Valider le titre"
+        >
+          <Text style={styles.buttonText}>✓</Text>
+        </Pressable>
+        <Pressable
+          onPress={cancelRename}
+          style={[styles.renameAction, { borderColor: theme.border }]}
+          accessibilityLabel="Annuler le renommage"
+        >
+          <Text style={{ color: theme.textMuted }}>✕</Text>
+        </Pressable>
+      </View>
+    ) : (
+      <Pressable
+        onPress={() => startRename({ type: 'note', ...note })}
+        accessibilityRole="button"
+        accessibilityLabel={`Titre : ${note.name} — toucher pour renommer`}
+      >
+        <Text style={[styles.editorTitleInline, { color: theme.text }]}>{note.name}</Text>
+      </Pressable>
+    );
+
   const editorArea = (
     <View style={styles.row}>
       {explorerHidden && (
@@ -2635,14 +2687,12 @@ export function NotesScreen({
       <View style={styles.editor}>
         {activeNote ? (
           <>
-            <View style={styles.editorHeader}>
-              {/* Paramètres → Éditeur → "Titre en ligne" : pour une note
-                  markdown, le titre est alors rendu plus bas, à l'intérieur
-                  du contenu (voir juste avant le sélecteur de mode), et
-                  l'en-tête fixe ne garde que le statut + le panneau
-                  latéral. Canvas/graphiques n'ont pas cette zone de contenu
-                  scrollable équivalente, donc gardent toujours le titre ici. */}
-              {!(preferences.editorInlineTitle && activeNote.kind === 'markdown') &&
+            <View style={[styles.editorHeader, noteTitlePlacement(activeNote.kind) === 'content' && styles.editorHeaderCompact]}>
+              {/* Note markdown : le titre fait partie de l'ÉDITEUR (comme
+                  Obsidian, renderContentTitle) — l'en-tête ne garde que les
+                  actions (⋯, panneau latéral). Canvas/graphiques/code n'ont
+                  pas de contenu défilant équivalent : titre ici. */}
+              {noteTitlePlacement(activeNote.kind) === 'header' &&
                 (activeNoteIsRenaming ? (
                   // Validation explicite (Entrée ou ✓) — voir le titre inline
                   // plus bas pour le pourquoi de l'absence de onBlur.
@@ -2802,47 +2852,6 @@ export function NotesScreen({
                   </View>
                 ) : (
                   <>
-                    {preferences.editorInlineTitle &&
-                      (activeNoteIsRenaming ? (
-                        // Validation EXPLICITE uniquement (Entrée ou ✓) : le
-                        // onBlur auto-submit ferait fermer le champ à la
-                        // première secousse de mise en page (clavier
-                        // Android, focus volé par l'éditeur web sur PC) —
-                        // « n'ouvre pas de champ » sur PC, « 2 » ajoutés
-                        // sur Android (vécu 2026-10-02).
-                        <View style={styles.renameRow}>
-                          <TextInput
-                            autoFocus
-                            value={renamingValue}
-                            onChangeText={setRenamingValue}
-                            onSubmitEditing={() => void submitRename()}
-                            onKeyPress={(event) => {
-                              if (event.nativeEvent.key === 'Escape') cancelRename();
-                            }}
-                            style={[styles.editorTitleInline, { color: theme.text, borderColor: theme.accent, flex: 1 }]}
-                          />
-                          <Pressable
-                            onPress={() => void submitRename()}
-                            style={[styles.renameAction, { backgroundColor: theme.accent }]}
-                            accessibilityLabel="Valider le titre"
-                          >
-                            <Text style={styles.buttonText}>✓</Text>
-                          </Pressable>
-                          <Pressable
-                            onPress={cancelRename}
-                            style={[styles.renameAction, { borderColor: theme.border }]}
-                            accessibilityLabel="Annuler le renommage"
-                          >
-                            <Text style={{ color: theme.textMuted }}>✕</Text>
-                          </Pressable>
-                        </View>
-                      ) : (
-                        <Pressable onPress={() => startRename({ type: 'note', ...activeNote })}>
-                          <Text style={[styles.editorTitleInline, { color: theme.text }]}>
-                            {activeNote.name}
-                          </Text>
-                        </Pressable>
-                      ))}
                     <View style={[styles.modeRow, { borderColor: theme.border }]}>
                       {((
                         isNativeNotes
@@ -2888,30 +2897,7 @@ export function NotesScreen({
                         WebView (nativeEditorCommandRef, editorCommands.ts). */}
                     {effectiveViewMode !== 'reading' && (
                       <EditorToolbar
-                        items={(() => {
-                          const items: { id: string; label: string; divider?: boolean; subItems?: { id: string; label: string }[]; run?: { id: string; formatRun?: (text: string, selection: Selection) => FormattingResult } }[] = [];
-                          preferences.notesToolbarGroups.forEach((group, groupIndex) => {
-                            if (groupIndex > 0) {
-                              items.push({ id: `divider-${group.id}`, label: '', divider: true });
-                            }
-                            const resolved = group.buttons
-                              .map((id) => NOTES_TOOLBAR_ACTIONS.find((action) => action.id === id))
-                              .filter((action): action is ToolbarAction => Boolean(action));
-                            if (group.collapsible) {
-                              items.push({
-                                id: `group-${group.id}`,
-                                label: group.label,
-                                subItems: resolved.map((action) => ({ id: action.id, label: action.label })),
-                              });
-                            } else {
-                              resolved.forEach((action, index) => {
-                                if (index > 0) items.push({ id: `divider-${group.id}-${index}`, label: '', divider: true });
-                                items.push({ id: action.id, label: action.label, run: { id: action.id, formatRun: action.run } });
-                              });
-                            }
-                          });
-                          return items;
-                        })()}
+                        items={buildNotesToolbarItems(preferences.notesToolbarGroups)}
                         theme={theme}
                         onItemRun={(item) => {
                           if (!item.run) return;
@@ -2950,6 +2936,7 @@ export function NotesScreen({
                     <View style={styles.editorBody}>
                       {effectiveViewMode === 'reading' ? (
                         <NativeReadingScroll scrollbarColor={`${theme.accent}88`}>
+                          {renderContentTitle(activeNote)}
                           {/* À l'intérieur du ScrollView (pas au-dessus, contrairement
                               au mode Intermédiaire) : défile avec le reste de la note
                               plutôt que de rester figée en haut — possible ici sans
@@ -2982,6 +2969,7 @@ export function NotesScreen({
                         // barre de défilement maintenable au doigt
                         // (demande 2026-10-03).
                         <NativeReadingScroll scrollbarColor={`${theme.accent}88`}>
+                          {renderContentTitle(activeNote)}
                           <PropertiesBlock
                             theme={theme}
                             activeNote={activeNote}
@@ -3018,6 +3006,7 @@ export function NotesScreen({
                         // pas faire défiler un TextInput par programme —
                         // vécu 2026-10-04 : « le glisser ne répond pas »).
                         <NativeReadingScroll scrollbarColor={`${theme.accent}88`}>
+                          {renderContentTitle(activeNote)}
                           <MdxEditorWeb
                             value={content}
                             onChange={handleChangeContent}
@@ -3040,6 +3029,7 @@ export function NotesScreen({
                            du scroll ») — ScrollView commune, CodeMirror en
                            hauteur auto (pas de scroll interne propre). */
                         <ScrollView style={styles.previewFull} contentContainerStyle={{ paddingBottom: 40 }}>
+                          {renderContentTitle(activeNote)}
                           <PropertiesBlock
                             theme={theme}
                             activeNote={activeNote}
@@ -3070,24 +3060,32 @@ export function NotesScreen({
                           />
                         </ScrollView>
                       ) : (
-                        <MdxEditor
-                          value={content}
-                          onChange={handleChangeContent}
-                          livePreview={false}
-                          theme={theme}
-                          onOpenWikilink={(t) => void handleOpenWikilink(t)}
-                          onOpenOccurrence={handleOpenOccurrence}
-                          occurrenceWords={occurrenceWordList}
-                          onCreateOccurrence={handleCreateOccurrence}
-                          noteNames={noteNameList}
-                          fontSize={preferences.editorFontSize}
-                          fontFamily={preferences.editorFontFamily}
-                          closeBrackets={preferences.editorCloseBrackets}
-                          shortcuts={noteShortcuts}
-                          onReady={(ref: ReactCodeMirrorRef) => {
-                            viewRef.current = ref.view ?? null;
-                          }}
-                        />
+                        // Source (desktop/web) : même coquille que
+                        // l'Intermédiaire — titre puis CodeMirror en hauteur
+                        // auto dans UN scroll commun (le titre défile avec
+                        // le texte, comme dans Obsidian).
+                        <ScrollView style={styles.previewFull} contentContainerStyle={{ paddingBottom: 40 }}>
+                          {renderContentTitle(activeNote)}
+                          <MdxEditor
+                            value={content}
+                            onChange={handleChangeContent}
+                            livePreview={false}
+                            autoHeight
+                            theme={theme}
+                            onOpenWikilink={(t) => void handleOpenWikilink(t)}
+                            onOpenOccurrence={handleOpenOccurrence}
+                            occurrenceWords={occurrenceWordList}
+                            onCreateOccurrence={handleCreateOccurrence}
+                            noteNames={noteNameList}
+                            fontSize={preferences.editorFontSize}
+                            fontFamily={preferences.editorFontFamily}
+                            closeBrackets={preferences.editorCloseBrackets}
+                            shortcuts={noteShortcuts}
+                            onReady={(ref: ReactCodeMirrorRef) => {
+                              viewRef.current = ref.view ?? null;
+                            }}
+                          />
+                        </ScrollView>
                       )}
                     </View>
                     {/* Barre bas d'éditeur : compteur + statut de sauvegarde
@@ -3560,6 +3558,12 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     padding: 12,
+  },
+  // Note markdown : titre dans l'éditeur — l'en-tête n'est plus qu'une
+  // barre compacte d'actions, alignée à droite.
+  editorHeaderCompact: {
+    justifyContent: 'flex-end',
+    paddingVertical: 4,
   },
   editorTitle: {
     fontSize: 16,
