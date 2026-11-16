@@ -14,6 +14,8 @@ import type { Section } from '../navigation';
 import { usePreferences } from '../preferences/PreferencesContext';
 import type { Theme } from '../theme';
 import type { NotesActions } from './AppShell';
+import { FileTypeIcon } from './vault/FileIcons';
+import { isFileResultKind } from '../lib/ui/fileIcons';
 
 // ✒️ 123ECRITURE — components/CommandPalette.tsx — la palette de commandes (Ctrl/Cmd+K)
 //////////////////////////////////////////////////////////////////////////////
@@ -341,7 +343,14 @@ export function CommandPalette({
                       isSelected && { backgroundColor: `${theme.accent}22` },
                     ]}
                   >
-                    <Text style={styles.resultIcon}>{SEARCH_RESULT_ICON[result.kind]}</Text>
+                    {isFileResultKind(result.kind) ? (
+                      // Même icône que l'arbre (forme, couleur, insigne) — lib/ui/fileIcons.ts.
+                      <View style={styles.resultIconBox}>
+                        <FileTypeIcon kind={result.kind} relPath={result.relPath} size={16} />
+                      </View>
+                    ) : (
+                      <Text style={styles.resultIcon}>{SEARCH_RESULT_ICON[result.kind]}</Text>
+                    )}
                     <View style={styles.resultBody}>
                       <Text style={{ color: theme.text }} numberOfLines={1}>
                         {splitMatchSegments(result.name, query).map((segment, segmentIndex) =>
@@ -431,6 +440,11 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 8,
     borderRadius: 6,
+  },
+  resultIconBox: {
+    width: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   resultIcon: {
     fontSize: 16,

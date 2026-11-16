@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useState } from 'react';
-import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
 
 import { isPropertySortMode, nextPropertySortMode, PROPERTY_SORT_LABELS, sortPropertyDefinitions } from '../../lib/properties/propertySort';
 import { usePropertyDefinitions } from '../../lib/properties/usePropertyDefinitions';
 import { TYPE_ICONS, TYPE_LABELS, TYPE_ORDER } from '../../lib/properties/propertyTypes';
+import { placePopover, solidColor, type Rect } from '../../lib/ui/popover';
 import { usePreferences } from '../../preferences/PreferencesContext';
 import type { Theme } from '../../theme';
 import { DraftTextField } from '../editors/DraftTextField';
@@ -42,6 +43,10 @@ import { settingsStyles as s } from './settingsStyles';
 
 //////// 1. TypePicker et résumé de migration (helpers) ///////////////////////////////////
 
+// Taille du menu (6 px de marge interne + 10 options de ~30 px).
+const TYPE_MENU_WIDTH = 190;
+const TYPE_MENU_HEIGHT = 12 + TYPE_ORDER.length * 30;
+
 function TypePicker({
   value,
   onSelect,
@@ -54,37 +59,88 @@ function TypePicker({
   theme: Theme;
   open: boolean;
   // Levé au composant parent (voir PropertiesManagementSection ci-dessous)
-  // plutôt qu'un state local à chaque instance : plusieurs propriétés dans
-  // la liste, donc plusieurs TypePicker en même temps — sans exclusivité,
-  // ouvrir le sélecteur d'une ligne puis celui d'une autre laisse les DEUX
-  // popovers ouverts en même temps, chacun en `position: 'absolute'`, et
-  // ils se chevauchent visuellement avec les lignes voisines.
+  // plutôt qu'un state local à chaque instance : un seul menu ouvert.
   onToggle: () => void;
 }) {
+  // MENU EN SURCOUCHE (Modal transparent) — avant, un popover en
+  // `position: 'absolute'` DANS la ligne : les lignes suivantes passaient
+  // par-dessus (zIndex borné à son contexte d'empilement) et son fond
+  // (panneaux, translucides selon l'apparence) laissait voir ET cliquer
+  // les boutons derrière. Désormais : fond PLEIN, ombre, au-dessus de tout,
+  // un fond invisible capte les clics et ferme au clic extérieur.
+  const chipRef = useRef<View>(null);
+  const [anchor, setAnchor] = useState<Rect | null>(null);
+  const screen = useWindowDimensions();
+
+  const toggle = () => {
+    if (open) {
+      onToggle();
+      return;
+    }
+    const node = chipRef.current;
+    if (node?.measureInWindow) {
+      node.measureInWindow((x, y, width, height) => {
+        setAnchor({ x, y, width, height });
+        onToggle();
+      });
+    } else {
+      setAnchor(null);
+      onToggle();
+    }
+  };
+
+  const solid = solidColor(theme.surface, solidColor(theme.background, '#ffffff'));
+  const place = anchor
+    ? placePopover(anchor, { width: TYPE_MENU_WIDTH, height: TYPE_MENU_HEIGHT }, screen)
+    : { left: Math.max(8, (screen.width - TYPE_MENU_WIDTH) / 2), top: 80, maxHeight: screen.height - 160 };
+
   return (
     <View style={styles.typePickerWrap}>
-      <Pressable onPress={onToggle} style={[styles.typeChip, { borderColor: theme.border }]}>
+      <Pressable
+        ref={chipRef}
+        onPress={toggle}
+        accessibilityRole="button"
+        accessibilityState={{ expanded: open }}
+        style={[styles.typeChip, { borderColor: open ? theme.accent : theme.border }]}
+      >
         <Text style={{ color: theme.textMuted, fontSize: 11 }}>
-          {TYPE_ICONS[value]} {TYPE_LABELS[value]}
+          {TYPE_ICONS[value]} {TYPE_LABELS[value]} ▾
         </Text>
       </Pressable>
-      {open && (
-        <View style={[styles.typePopover, { backgroundColor: theme.surface, borderColor: theme.border }]}>
-          {TYPE_ORDER.map((type) => (
-            <Pressable
-              key={type}
-              onPress={() => {
-                onSelect(type);
-                onToggle();
-              }}
-              style={styles.typeOption}
-            >
-              <Text style={{ fontSize: 12 }}>{TYPE_ICONS[type]}</Text>
-              <Text style={{ color: theme.text, fontSize: 12 }}>{TYPE_LABELS[type]}</Text>
-            </Pressable>
-          ))}
+      <Modal visible={open} transparent animationType="none" onRequestClose={onToggle}>
+        {/* Fond invisible plein écran : capte TOUS les clics hors du menu. */}
+        <Pressable style={styles.typeBackdrop} onPress={onToggle} accessibilityLabel="Fermer le menu des types" />
+        <View
+          style={[
+            styles.typePopover,
+            { left: place.left, top: place.top, maxHeight: place.maxHeight, backgroundColor: solid, borderColor: theme.border },
+          ]}
+        >
+          <ScrollView bounces={false}>
+            {TYPE_ORDER.map((type) => {
+              const selected = type === value;
+              return (
+                <Pressable
+                  key={type}
+                  onPress={() => {
+                    onSelect(type);
+                    onToggle();
+                  }}
+                  style={({ hovered, pressed }: { hovered?: boolean; pressed: boolean }) => [
+                    styles.typeOption,
+                    (hovered || pressed) && { backgroundColor: `${theme.accent}22` },
+                    selected && { backgroundColor: `${theme.accent}33` },
+                  ]}
+                >
+                  <Text style={{ fontSize: 12, width: 18, textAlign: 'center' }}>{TYPE_ICONS[type]}</Text>
+                  <Text style={{ color: theme.text, fontSize: 12, flex: 1 }}>{TYPE_LABELS[type]}</Text>
+                  {selected && <Text style={{ color: theme.accent, fontSize: 12 }}>✓</Text>}
+                </Pressable>
+              );
+            })}
+          </ScrollView>
         </View>
-      )}
+      </Modal>
     </View>
   );
 }
@@ -409,21 +465,26 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     paddingHorizontal: 8,
   },
+  // Fond plein écran invisible du menu (capte les clics extérieurs).
+  typeBackdrop: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+  },
   typePopover: {
     position: 'absolute',
-    top: '100%',
-    right: 0,
-    marginTop: 4,
-    width: 170,
+    width: TYPE_MENU_WIDTH,
     borderWidth: 1,
     borderRadius: 8,
     padding: 4,
-    zIndex: 100,
+    zIndex: 1000,
     shadowColor: '#000',
-    shadowOpacity: 0.15,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 4,
+    shadowOpacity: 0.28,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 16,
   },
   typeOption: {
     flexDirection: 'row',

@@ -424,7 +424,8 @@ declare global {
   // fichier du vault comme un autre (plus de registre séparé, voir
   // CanvasEditor.tsx), lu/écrit via VaultBridge.readNote/writeNote comme
   // n'importe quelle note — son CONTENU (texte JSON) a cette forme.
-  type CanvasNodeType = 'text' | 'file';
+  // Obsidian écrit aussi 'link' (url) et 'group' (cadre avec label).
+  type CanvasNodeType = 'text' | 'file' | 'link' | 'group';
 
   interface CanvasNode {
     id: string;
@@ -436,6 +437,11 @@ declare global {
     text?: string; // type 'text'
     file?: string; // type 'file' — relPath de la note référencée
     title?: string; // type 'file' — titre affiché, mis en cache au choix de la note
+    subpath?: string; // type 'file' — ancre (#Titre) dans la note
+    url?: string; // type 'link'
+    label?: string; // type 'group'
+    // Couleur JSON Canvas : préréglage '1'…'6' ou hex '#rrggbb'.
+    color?: string;
   }
 
   type CanvasEdgeSide = 'top' | 'right' | 'bottom' | 'left';
@@ -446,6 +452,10 @@ declare global {
     fromSide?: CanvasEdgeSide;
     toNode: string;
     toSide?: CanvasEdgeSide;
+    fromEnd?: 'none' | 'arrow';
+    toEnd?: 'none' | 'arrow';
+    color?: string;
+    label?: string;
   }
 
   interface CanvasData {
