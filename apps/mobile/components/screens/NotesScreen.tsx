@@ -2928,6 +2928,7 @@ export function NotesScreen({
                             noteNames={noteNameList}
                             notePaths={notePathList}
                             currentRelPath={activeNoteRelPath}
+                            resolveEmbedUrl={embedUrlResolver}
                             theme={theme}
                             fontSize={preferences.editorFontSize}
                             fontFamily={preferences.editorFontFamily}

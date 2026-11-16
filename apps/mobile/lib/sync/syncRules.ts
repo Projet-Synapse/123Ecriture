@@ -33,6 +33,7 @@
 //////// 1. Les listes partagées (métadonnées voyageantes, extensions) ///////////
 
 import { CODE_FILE_EXTENSIONS } from '../editor/codeLanguages';
+import { IMAGE_EXTENSIONS } from '../files/imageFormats';
 
 export const SYNCED_META_FILES = [
   '.123ecriture/appearance.json',
@@ -43,7 +44,8 @@ export const SYNCED_META_FILES = [
 ];
 
 export const SYNC_ATTACHMENT_EXTENSIONS = [
-  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.heic',
+  // Toutes les images reconnues (lib/files/imageFormats.ts) : jfif, avif, tiff…
+  ...IMAGE_EXTENSIONS,
   '.pdf', '.txt', '.csv',
   '.mp3', '.wav', '.ogg', '.m4a', '.mp4', '.webm',
 ];

@@ -38,6 +38,7 @@
 
 import { newNoteFrontmatter, parseFrontmatter } from '../properties/frontmatter';
 import { matchesEmbedTarget } from '../notes/embedResolution';
+import { mimeTypeForFile } from '../files/imageFormats';
 import { CODE_FILE_EXTENSIONS, isCodeFile } from '../editor/codeLanguages';
 import {
   type FsaDirectoryHandleLike,
@@ -95,24 +96,10 @@ const KIND_TO_EXTENSION: Record<VaultEntryKind, string> = {
   code: '.js',
 };
 
-const MIME_BY_EXTENSION: Record<string, string> = {
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.gif': 'image/gif',
-  '.webp': 'image/webp',
-  '.svg': 'image/svg+xml',
-  '.mp3': 'audio/mpeg',
-  '.wav': 'audio/wav',
-  '.ogg': 'audio/ogg',
-  '.m4a': 'audio/mp4',
-  '.flac': 'audio/flac',
-};
 
 function guessMimeType(fileName: string): string {
-  const dot = fileName.lastIndexOf('.');
-  const extension = dot === -1 ? '' : fileName.slice(dot).toLowerCase();
-  return MIME_BY_EXTENSION[extension] ?? 'application/octet-stream';
+  // Table partagée (images jfif/avif/heic/tiff…, audio) : lib/files/imageFormats.ts.
+  return mimeTypeForFile(fileName);
 }
 
 async function readAttachmentFileAsDataUrl(
@@ -521,6 +508,19 @@ export const webVaultAdapter = {
     if (!found) throw new Error(`Pièce jointe introuvable : ${wanted}`);
     return readAttachmentFileAsDataUrl(root, found);
   },
+  // Bouton « Ouvrir » des images non affichables dans ce navigateur
+  // (TIFF/HEIC hors Safari…) : téléchargement du fichier, que le système
+  // ouvre ensuite avec l'application adaptée.
+  openAttachment: async (relPath: string): Promise<void> => {
+    const dataUrl = await webVaultAdapter.readAttachmentDataUrl(relPath);
+    const link = document.createElement('a');
+    link.href = dataUrl;
+    link.download = relPath.slice(relPath.lastIndexOf('/') + 1);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  },
+
 
   //////// 4. Organisation (rename / move / setPath / delete) ///////////////////////////
 

@@ -47,6 +47,7 @@ contextBridge.exposeInMainWorld('vault', {
     ipcRenderer.invoke('vault:reorder', parentRelPath, orderedNames),
   importAttachment: () => ipcRenderer.invoke('vault:import-attachment'),
   readAttachmentDataUrl: (relPath: string) => ipcRenderer.invoke('vault:read-attachment-data-url', relPath),
+  openAttachment: (relPath: string) => ipcRenderer.invoke('vault:open-attachment', relPath),
   duplicate: (relPath: string) => ipcRenderer.invoke('vault:duplicate', relPath),
   listTags: () => ipcRenderer.invoke('vault:list-tags'),
   getTimestamps: (relPath: string) => ipcRenderer.invoke('vault:get-timestamps', relPath),

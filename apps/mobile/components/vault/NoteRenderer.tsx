@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Image, Text } from 'react-native';
+import { Image, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { SvgXml } from 'react-native-svg';
 import Markdown, { type ASTNode, type RenderRules } from 'react-native-markdown-display';
 
 import { createConfiguredMarkdownIt } from '../../lib/editor/markdownPlugins';
+import { imageSupport, isImageFile, svgTextFromDataUrl, unsupportedImageMessage, type ImageEngine } from '../../lib/files/imageFormats';
 import { hexToRgba } from '../../lib/theme/appearance';
 import type { Theme } from '../../theme';
 import { AudioEmbed } from './AudioEmbed';
@@ -59,7 +61,6 @@ function headingStyle(theme: Theme, fontSize: number): { fontSize: number; fontW
   };
 }
 
-const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg']);
 const AUDIO_EXTENSIONS = new Set(['.mp3', '.wav', '.ogg', '.m4a', '.flac']);
 
 function extensionOf(name: string): string {
@@ -97,14 +98,89 @@ function EmbedNode({ target, theme }: { target: string; theme: Theme }) {
   }
 
   const ext = extensionOf(target);
-  if (IMAGE_EXTENSIONS.has(ext)) {
-    return <Image source={{ uri: dataUrl }} style={{ width: '100%', height: 240, resizeMode: 'contain' }} />;
+  if (isImageFile(target)) {
+    return <ImageEmbed target={target} dataUrl={dataUrl} theme={theme} />;
   }
   if (AUDIO_EXTENSIONS.has(ext)) {
     return <AudioEmbed dataUrl={dataUrl} />;
   }
   return <Text style={{ color: theme.accent }}>📎 {target}</Text>;
 }
+
+// Image d'un embed — tous les formats de lib/files/imageFormats.ts. Le
+// navigateur (web/desktop) ou le décodeur Android ESSAIENT d'afficher ; un
+// format refusé (TIFF/HEIC dans Chromium, AVIF sur un vieil Android…)
+// donne la carte de repli plutôt qu'un cadre vide. SVG en natif : <Image>
+// ne sait pas, react-native-svg s'en charge.
+const IMAGE_ENGINE: ImageEngine = Platform.OS === 'web' ? 'browser' : 'native';
+
+function ImageEmbed({ target, dataUrl, theme }: { target: string; dataUrl: string; theme: Theme }) {
+  const [failed, setFailed] = useState(false);
+  const support = imageSupport(target, IMAGE_ENGINE);
+  if (failed || support === 'no') return <ImageFallback target={target} theme={theme} />;
+  if (IMAGE_ENGINE === 'native' && extensionOf(target) === '.svg') {
+    const xml = svgTextFromDataUrl(dataUrl);
+    if (!xml) return <ImageFallback target={target} theme={theme} />;
+    return <SvgXml xml={xml} width="100%" height={240} onError={() => setFailed(true)} />;
+  }
+  return (
+    <Image
+      source={{ uri: dataUrl }}
+      accessibilityLabel={target}
+      onError={() => setFailed(true)}
+      style={{ width: '100%', height: 240, resizeMode: 'contain' }}
+    />
+  );
+}
+
+// Carte de repli lisible : nom du fichier, raison, bouton « Ouvrir » quand
+// la plateforme sait ouvrir le fichier ailleurs (desktop : application par
+// défaut ; web : téléchargement).
+function ImageFallback({ target, theme }: { target: string; theme: Theme }) {
+  const vault = typeof window !== 'undefined' ? window.vault : undefined;
+  const open = vault?.openAttachment;
+  const [openError, setOpenError] = useState<string | null>(null);
+  return (
+    <View style={[fallbackStyles.card, { borderColor: theme.border, backgroundColor: theme.surface }]}>
+      <Text style={{ fontSize: 22 }}>🖼️</Text>
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text numberOfLines={1} style={{ color: theme.text, fontWeight: '600' }}>
+          {target.slice(target.lastIndexOf('/') + 1)}
+        </Text>
+        <Text style={{ color: theme.textMuted, fontSize: 12 }}>{openError ?? unsupportedImageMessage(target, IMAGE_ENGINE)}</Text>
+      </View>
+      {open && (
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => {
+            open(target).catch((err: unknown) => setOpenError(err instanceof Error ? err.message : String(err)));
+          }}
+          style={[fallbackStyles.button, { borderColor: theme.accent }]}
+        >
+          <Text style={{ color: theme.accent, fontSize: 12 }}>Ouvrir</Text>
+        </Pressable>
+      )}
+    </View>
+  );
+}
+
+const fallbackStyles = StyleSheet.create({
+  card: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 10,
+    marginVertical: 4,
+  },
+  button: {
+    borderWidth: 1,
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+});
 
 type Props = {
   content: string;

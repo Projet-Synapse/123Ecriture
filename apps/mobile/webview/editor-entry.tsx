@@ -70,6 +70,9 @@ type EntryConfig = {
   // (demande 2026-10-02 : « il doit se défiler comme le reste »). Desktop
   // n'en a pas besoin (hauteur 100 %, scroll interne CodeMirror).
   autoHeight: boolean;
+  // RN sait résoudre les embeds `![[image]]` (MdxEditorWeb reçoit
+  // resolveEmbedUrl) : le widget image demande la data URL par le pont.
+  embeds?: boolean;
 };
 
 let config: EntryConfig = {
@@ -120,6 +123,35 @@ setInterval(() => {
   pendingContent = null;
   send('change', { content });
 }, 300);
+
+// Images des embeds (aperçu vivant) : la data URL vient de RN par le pont
+// (`resolveEmbed` → api.embedResolved). Cache PAR NOTE : le widget est
+// recréé à chaque frappe, une image de plusieurs Mo ne doit pas retraverser
+// le pont à chaque caractère. Vidé quand la note courante change.
+const embedCache = new Map<string, Promise<string | null>>();
+const embedWaiters = new Map<number, (url: string | null) => void>();
+let nextEmbedRequest = 1;
+let embedCacheNote: string | null = null;
+function resolveEmbedViaNative(target: string): Promise<string | null> {
+  if (embedCacheNote !== config.currentRelPath) {
+    embedCacheNote = config.currentRelPath;
+    embedCache.clear();
+  }
+  let pending = embedCache.get(target);
+  if (!pending) {
+    const id = nextEmbedRequest++;
+    pending = new Promise<string | null>((resolve) => {
+      embedWaiters.set(id, resolve);
+      // Filet : pas de réponse en 20 s → pastille pièce jointe.
+      setTimeout(() => {
+        if (embedWaiters.delete(id)) resolve(null);
+      }, 20000);
+    });
+    embedCache.set(target, pending);
+    send('resolveEmbed', { id, target });
+  }
+  return pending;
+}
 
 // Garde anti-écho : applyDoc (RN → web) déclenche un onChange CodeMirror
 // comme une vraie frappe — sans ce drapeau, le doc renvoyé repartait vers
@@ -207,6 +239,7 @@ function EditorApp() {
             },
             {
               onOpenWikilink: (target) => send('wikilink', { target }),
+              resolveEmbedUrl: config.embeds ? resolveEmbedViaNative : undefined,
               isWikilinkResolved: config.notePaths
                 ? createWikilinkResolver(
                     config.notePaths.map((relPath) => ({
@@ -310,6 +343,13 @@ const api = {
       applyingRemote = false;
     }, 80);
     bumpVersion();
+  },
+  // Réponse de RN à `resolveEmbed` (null = introuvable/illisible).
+  embedResolved(id: number, url: string | null): void {
+    const resolve = embedWaiters.get(id);
+    if (!resolve) return;
+    embedWaiters.delete(id);
+    resolve(url);
   },
   applyConfig(json: string): void {
     const patch = JSON.parse(json) as Partial<EntryConfig>;

@@ -29,18 +29,12 @@
 //
 //////////////////////////////////////////////////////////////////////////////
 
+import { IMAGE_EXTENSIONS } from '../files/imageFormats';
+
 //////// 1. Extensions et cibles d'image /////////////////////////////////////
 
-export const IMAGE_EMBED_EXTENSIONS = new Set([
-  '.png',
-  '.jpg',
-  '.jpeg',
-  '.gif',
-  '.webp',
-  '.svg',
-  '.bmp',
-  '.avif',
-]);
+// Source unique : lib/files/imageFormats.ts (jfif, avif, heic, tiff…).
+export const IMAGE_EMBED_EXTENSIONS: ReadonlySet<string> = new Set(IMAGE_EXTENSIONS);
 
 export function extensionOf(target: string): string {
   const dot = target.lastIndexOf('.');
