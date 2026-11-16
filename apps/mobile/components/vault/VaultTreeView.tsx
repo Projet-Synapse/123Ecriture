@@ -213,7 +213,7 @@ function VaultTreeViewImpl({
               )
             ) : (
               // Même taille que les dossiers (était 15 contre 16).
-              <NoteIconByKind kind={node.kind} size={TREE_ICON_SIZE} />
+              <NoteIconByKind kind={node.kind} relPath={node.relPath} size={TREE_ICON_SIZE} />
             )}
 
             {isRenaming ? (
