@@ -2,6 +2,7 @@ import { Fragment, memo, type ComponentProps, type ComponentType } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import type { Theme } from '../../theme';
+import { buildExplorerColors } from '../../lib/theme/explorerColors';
 import { ChevronIcon, FolderOpenIcon, FolderClosedIcon, NoteIconByKind } from './FileIcons';
 import { TREE_ICON_SIZE } from '../../lib/ui/iconBox';
 
@@ -125,6 +126,9 @@ function VaultTreeViewImpl({
   dragEnabled = true,
   onNodeLongPress,
 }: Props) {
+  // Couleurs de l'explorateur (fond réglable — explorerColors.ts) : guides,
+  // texte et sélection restent lisibles quel que soit le fond.
+  const ex = theme.explorer ?? buildExplorerColors(theme);
   return (
     <>
       {nodes.map((node) => {
@@ -165,12 +169,12 @@ function VaultTreeViewImpl({
             dataSet={{ relpath: node.relPath }}
             style={[
               styles.row,
-              isActiveNote && { backgroundColor: `${theme.accent}22` },
-              isFolderActive && { backgroundColor: `${theme.accent}22` },
+              isActiveNote && { backgroundColor: ex.activeRow },
+              isFolderActive && { backgroundColor: ex.activeRow },
               !isRenaming && dragEnabled && styles.rowDraggable,
               isDragging && styles.rowDragging,
-              isDropInsideTarget && { backgroundColor: `${theme.accent}33`, borderRadius: 6 },
-              isSelected && { backgroundColor: `${theme.accent}33` },
+              isDropInsideTarget && { backgroundColor: ex.selectedRow, borderRadius: 6 },
+              isSelected && { backgroundColor: ex.selectedRow },
             ]}
           >
             {/* RAILS VERTICAUX (v0.4.51, restaurés de la v0.4.36) — un par
@@ -181,7 +185,7 @@ function VaultTreeViewImpl({
                 seraient hachurés. */}
             {Array.from({ length: depth }).map((_, i) => (
               <View key={i} style={styles.indentGuideCell}>
-                <View style={[styles.indentGuideLine, { backgroundColor: theme.border, opacity: 0.55 }]} />
+                <View style={[styles.indentGuideLine, { backgroundColor: ex.guide }]} />
               </View>
             ))}
 
@@ -193,7 +197,7 @@ function VaultTreeViewImpl({
                 hitSlop={6}
                 style={styles.chevronBox}
               >
-                <ChevronIcon size={11} color={theme.textMuted} expanded={!isCollapsed} />
+                <ChevronIcon size={11} color={ex.textMuted} expanded={!isCollapsed} />
               </Pressable>
             ) : (
               <View style={styles.chevronBox} />
@@ -225,15 +229,15 @@ function VaultTreeViewImpl({
                 onKeyPress={(event) => {
                   if (event.nativeEvent.key === 'Escape') rename.onCancel();
                 }}
-                style={[styles.renameInput, { color: theme.text, borderColor: theme.accent }]}
+                style={[styles.renameInput, { color: ex.text, borderColor: theme.accent }]}
               />
             ) : (
-              <Text style={{ color: theme.text, flexShrink: 1 }} numberOfLines={1} ellipsizeMode="tail">
+              <Text style={{ color: ex.text, flexShrink: 1 }} numberOfLines={1} ellipsizeMode="tail">
                 {node.name}
                 {/* EXTENSION du fichier (v0.4.36) : .mdx, .canvas… —
                     affichée à la fin du nom, plus discrete. */}
                 {!isFolder && (
-                  <Text style={{ color: theme.textMuted, fontSize: 11 }}>{extensionOf(node)}</Text>
+                  <Text style={{ color: ex.textMuted, fontSize: 11 }}>{extensionOf(node)}</Text>
                 )}
               </Text>
             )}
@@ -256,7 +260,7 @@ function VaultTreeViewImpl({
                   <View style={[styles.insertionLineBar, { backgroundColor: theme.accent }]} />
                 </View>
               )}
-              <View style={[styles.topContainer, { borderColor: theme.border, backgroundColor: `${theme.accent}1A` }]}>
+              <View style={[styles.topContainer, { borderColor: ex.guide, backgroundColor: `${theme.accent}1A` }]}>
                 {row}
                 {isFolder && !isCollapsed && (
                   <VaultTreeViewImpl

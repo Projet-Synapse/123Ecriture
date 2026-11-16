@@ -4,12 +4,18 @@
 // (couleurs choisies par l'utilisateur·rice, stockées dans le vault) arrive
 // en Phase 4.
 
+import type { ExplorerColors } from './lib/theme/explorerColors';
+
 export type Theme = {
   background: string;
   surface: string;
   // Fond de l'éditeur de notes réglable (v0.4.34) — absent = background.
   // Porté par buildTheme (lib/appearance.ts), pas par les palettes de base.
   editorBackground?: string;
+  // Couleurs de l'EXPLORATEUR de fichiers (fond réglable, lignes de
+  // guidage, texte et sélection lisibles) — portées par buildTheme
+  // (lib/theme/explorerColors.ts) ; absent = dérivées des panneaux.
+  explorer?: ExplorerColors;
   text: string;
   textMuted: string;
   accent: string;

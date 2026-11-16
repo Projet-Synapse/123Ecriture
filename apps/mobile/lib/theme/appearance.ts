@@ -32,6 +32,7 @@
 //////// 1. Types du profil et options ////////////////////////////////////////
 
 import { darkTheme, lightTheme, type Theme } from '../../theme';
+import { buildExplorerColors, isValidColor } from './explorerColors';
 
 export type AppFontFamily =
   | 'system'
@@ -66,6 +67,9 @@ export type AppearanceProfile = {
   borderColor: string;
   textColor: string;
   editorBackgroundColor: string;
+  // Fond de l'EXPLORATEUR de fichiers — null/absent = fond des panneaux.
+  // Les lignes de guidage et le texte s'y adaptent (explorerColors.ts).
+  explorerBackgroundColor?: string | null;
   buttonStyle: ButtonStyle;
   buttonRadius: number;
 };
@@ -256,6 +260,7 @@ export function resolveAppearanceProfile(
     textColor: typeof partial.textColor === 'string' ? partial.textColor : base.textColor,
     editorBackgroundColor:
       typeof partial.editorBackgroundColor === 'string' ? partial.editorBackgroundColor : base.editorBackgroundColor,
+    explorerBackgroundColor: isValidColor(partial.explorerBackgroundColor) ? partial.explorerBackgroundColor : null,
     buttonStyle: partial.buttonStyle && BUTTON_OPTIONS.some((o) => o.value === partial.buttonStyle) ? partial.buttonStyle : base.buttonStyle,
     buttonRadius: clampRadius(partial.buttonRadius ?? base.buttonRadius),
   };
@@ -337,6 +342,7 @@ export function buildAppearanceTokens(profile: AppearanceProfile, wallpaper?: st
 }
 
 export function buildTheme(base: Theme, profile: AppearanceProfile, wallpaper?: string): Theme & AppearanceTokens {
+  const textMuted = mixHex(profile.textColor, profile.backgroundColor, 0.6);
   return {
     ...base,
     accent: profile.buttonColor,
@@ -349,7 +355,13 @@ export function buildTheme(base: Theme, profile: AppearanceProfile, wallpaper?: 
     // plus.
     border: profile.borderColor,
     text: profile.textColor,
-    textMuted: mixHex(profile.textColor, profile.backgroundColor, 0.6),
+    textMuted,
+    // Explorateur : fond réglable (sinon celui des panneaux ; la ligne de
+    // guidage se calcule sur sa couleur pleine), texte / guides lisibles.
+    explorer: buildExplorerColors(
+      { surface: hexToRgba(profile.surfaceColor, profile.surfaceOpacity), text: profile.textColor, textMuted, accent: profile.buttonColor },
+      profile.explorerBackgroundColor,
+    ),
     ...buildAppearanceTokens(profile, wallpaper),
   };
 }

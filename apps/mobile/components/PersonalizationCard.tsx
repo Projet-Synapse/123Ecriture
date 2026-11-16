@@ -15,6 +15,7 @@ import {
   type AppFontFamily,
   type ButtonStyle,
 } from '../lib/theme/appearance';
+import { buildExplorerColors, EXPLORER_BG_PRESETS_DARK, EXPLORER_BG_PRESETS_LIGHT } from '../lib/theme/explorerColors';
 import { errorMessage } from '../lib/errorMessage';
 import { usePreferences } from '../preferences/PreferencesContext';
 import { useVaults } from '../lib/sync/VaultsContext';
@@ -182,6 +183,8 @@ export function PersonalizationCard() {
         {([colorScheme] as const).map((mode) => {
           const open = true;
           const p = resolveProfileWithVault(preferences, vaultAppearance, mode);
+          // `mode` = mode ACTIF : le thème courant porte déjà ces couleurs.
+          const explorerPreview = theme.explorer ?? buildExplorerColors(theme);
           return (
             <View key={mode} style={[styles.modeSection, { borderColor: open ? theme.accent : theme.border }]}>
               <View style={[styles.modeHeader, { backgroundColor: theme.surface }]}>
@@ -301,6 +304,39 @@ export function PersonalizationCard() {
                     theme={theme}
                   />
 
+                  {/* ---- Fond de l'explorateur de fichiers : préréglages + roue
+                      (ColorField), réinitialisable ; les lignes de guidage, le
+                      texte et la sélection s'y adaptent (explorerColors.ts). */}
+                  <ColorField
+                    label="Fond de l&apos;explorateur de fichiers"
+                    value={p.explorerBackgroundColor ?? p.surfaceColor}
+                    presets={mode === 'dark' ? EXPLORER_BG_PRESETS_DARK : EXPLORER_BG_PRESETS_LIGHT}
+                    onValueChange={(hex) => patchMode(mode, { explorerBackgroundColor: hex })}
+                    theme={theme}
+                  />
+                  <View style={[styles.explorerPreview, { backgroundColor: explorerPreview.background, borderColor: theme.border }]}>
+                    {['📁 Dossier', '📝 Note', '📝 Note imbriquée'].map((label, i) => (
+                      <View key={label} style={[styles.explorerPreviewRow, i === 1 && { backgroundColor: explorerPreview.activeRow }]}>
+                        {Array.from({ length: i }).map((_, d) => (
+                          <View key={d} style={styles.explorerPreviewGuideCell}>
+                            <View style={[styles.explorerPreviewGuide, { backgroundColor: explorerPreview.guide }]} />
+                          </View>
+                        ))}
+                        <Text style={{ color: i === 2 ? explorerPreview.textMuted : explorerPreview.text, fontSize: 12 }}>{label}</Text>
+                      </View>
+                    ))}
+                  </View>
+                  <Pressable
+                    disabled={!p.explorerBackgroundColor}
+                    onPress={() => patchMode(mode, { explorerBackgroundColor: null })}
+                    style={[styles.resetButton, { borderColor: theme.border, opacity: p.explorerBackgroundColor ? 1 : 0.5 }]}
+                    accessibilityLabel="Réinitialiser le fond de l'explorateur"
+                  >
+                    <Text style={{ color: theme.text, fontSize: 12 }}>
+                      ↺ {p.explorerBackgroundColor ? 'Réinitialiser le fond de l’explorateur' : 'Fond de l’explorateur : par défaut (panneaux)'}
+                    </Text>
+                  </Pressable>
+
                   <ColorField
                     label="Couleur des boutons"
                     value={p.buttonColor}
@@ -378,6 +414,36 @@ export function PersonalizationCard() {
 //////// 3. Les styles ////////////////////////////////////////////////////////////////////
 
 const styles = StyleSheet.create({
+  // Aperçu de l'explorateur (fond + lignes de guidage + texte + sélection).
+  explorerPreview: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingVertical: 4,
+    overflow: 'hidden',
+  },
+  explorerPreviewRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    height: 24,
+    paddingLeft: 6,
+    gap: 4,
+  },
+  explorerPreviewGuideCell: {
+    width: 14,
+    alignSelf: 'stretch',
+    alignItems: 'center',
+  },
+  explorerPreviewGuide: {
+    width: 1,
+    flex: 1,
+  },
+  resetButton: {
+    alignSelf: 'flex-start',
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
   card: {
     borderWidth: 1,
     borderRadius: 12,
