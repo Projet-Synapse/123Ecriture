@@ -96,3 +96,12 @@ describe('décisions', () => {
     expect(v.writeNote).not.toHaveBeenCalled();
   });
 });
+
+describe('reconcileRemoteDeletions — renommages', () => {
+  it('conserve renamedTo aux cycles suivants', () => {
+    const first = { path: 'Note.md', modified: false, at: 't0', renamedTo: 'Note.mdx' };
+    const later = { path: 'Note.md', modified: false, at: 't1' };
+    const { entries } = reconcileRemoteDeletions([first], [later], new Set(['Note.md']));
+    expect(entries).toEqual([{ path: 'Note.md', modified: false, at: 't0', renamedTo: 'Note.mdx' }]);
+  });
+});

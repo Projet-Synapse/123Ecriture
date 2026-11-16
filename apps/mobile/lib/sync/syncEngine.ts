@@ -951,6 +951,12 @@ async function runLockedCycle(
     }
   }
   const locallyDeleted = plan.actions.filter((x) => x.kind === 'tombstone-remote').map((x) => x.relPath);
+  // Renommages appariés (renamePairs.ts) : ancien chemin → nouveau, ici
+  // (tombstone-remote) comme ailleurs (delete-local) — annoncés comme tels
+  // dans le journal et la revue, jamais comptés par le garde-fou.
+  const renamedPaths = new Map(
+    plan.actions.filter((x) => x.renamedTo).map((x) => [x.relPath, x.renamedTo as string]),
+  );
   let guardAlreadyDecided = false;
   if (plan.guard.suspended) {
     // FUSION (jamais d'écrasement) : les suppressions distantes en revue et
@@ -1019,7 +1025,13 @@ async function runLockedCycle(
         }
         tombstonedPaths.add(relPath);
         summary.deleted += 1;
-        journal.push(makeJournalEntry('delete', { path: relPath, detail: 'suppression locale propagée' }));
+        const renamedTo = renamedPaths.get(relPath);
+        journal.push(
+          makeJournalEntry('delete', {
+            path: relPath,
+            detail: renamedTo ? `renommé en ${renamedTo} — ancien nom retiré du cloud` : 'suppression locale propagée',
+          }),
+        );
       } catch (error) {
         console.error(`[sync] échec de la tombestone ${relPath} :`, error);
         summary.errors.push(`${relPath} (suppression) : ${errorMessage(error)}`);
@@ -1045,6 +1057,7 @@ async function runLockedCycle(
     local: localByPath,
     base: syncState.files,
     queuedAt: new Date().toISOString(),
+    renamedTo: renamedPaths,
   });
   for (const relPath of pendingRemoteDeletionPaths) keepPreviousRef.add(relPath);
   summary.pendingRemoteDeletions = pendingRemoteDeletionPaths.size;
@@ -1066,7 +1079,9 @@ async function runLockedCycle(
         journal.push(
           makeJournalEntry('delete', {
             path: entry.path,
-            detail: `supprimé sur ${entry.deletedByDevice ?? 'un autre appareil'} — EN ATTENTE DE VALIDATION (fichier conservé${entry.modified ? ', modifié ici' : ''})`,
+            detail: entry.renamedTo
+              ? `renommé en ${entry.renamedTo} sur ${entry.deletedByDevice ?? 'un autre appareil'} — ancien nom EN ATTENTE DE VALIDATION (fichier conservé${entry.modified ? ', modifié ici' : ''})`
+              : `supprimé sur ${entry.deletedByDevice ?? 'un autre appareil'} — EN ATTENTE DE VALIDATION (fichier conservé${entry.modified ? ', modifié ici' : ''})`,
           }),
         );
       }

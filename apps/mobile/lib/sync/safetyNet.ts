@@ -38,6 +38,8 @@ export function collectRemoteDeletionCandidates(args: {
   local: Map<string, { contentHash: string }>;
   base: Record<string, string>;
   queuedAt: string;
+  // Renommages appariés (renamePairs.ts) : ancien chemin → nouveau.
+  renamedTo?: ReadonlyMap<string, string>;
 }): { paths: Set<string>; candidates: RemoteDeletionReview[] } {
   const paths = new Set<string>();
   const candidates: RemoteDeletionReview[] = [];
@@ -53,6 +55,7 @@ export function collectRemoteDeletionCandidates(args: {
       deletedByDevice: row.deletedByDevice ?? null,
       deletedAt: row.deletedAt ?? null,
       remoteVersion: row.version ?? null,
+      ...(args.renamedTo?.has(relPath) ? { renamedTo: args.renamedTo.get(relPath) } : {}),
     });
   }
   return { paths, candidates };

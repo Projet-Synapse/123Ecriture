@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { useColorScheme } from 'react-native';
 
 import { DEFAULT_CANVAS_TOOLBAR_ORDER } from '../lib/editor/canvasToolbarActions';
+import { remapPathsAfterRename } from '../lib/notes/renameTarget';
 import { DEFAULT_CHART_TOOLBAR_ORDER } from '../lib/editor/chartToolbarActions';
 import {
   DEFAULT_NOTES_TOOLBAR_ORDER,
@@ -145,6 +146,10 @@ type PreferencesContextValue = {
   // tableau à la main (même esprit que les autres setters ci-dessus, qui
   // persistent directement).
   toggleFavorite: (relPath: string) => Promise<void>;
+  // Renommage/déplacement d'une note ou d'un dossier : les favoris suivent
+  // (même règle que les onglets, lib/notes/renameTarget.ts) au lieu de
+  // disparaître silencieusement.
+  remapFavoritesAfterRename: (oldRelPath: string, newRelPath: string) => Promise<void>;
   // Paramètres → Compte et synchronisation, bascule "Synchroniser
   // automatiquement" — voir lib/sync/SyncStatusContext.tsx pour l'effet qui
   // la consomme réellement (démarrage + intervalle).
@@ -472,6 +477,14 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     },
     [persist, preferences.favoriteRelPaths],
   );
+  const remapFavoritesAfterRename = useCallback(
+    (oldRelPath: string, newRelPath: string) => {
+      const current = preferences.favoriteRelPaths;
+      const next = remapPathsAfterRename(current, oldRelPath, newRelPath);
+      return next === current ? Promise.resolve() : persist({ favoriteRelPaths: next });
+    },
+    [persist, preferences.favoriteRelPaths],
+  );
 
   const setAutoSyncEnabled = useCallback((value: boolean) => persist({ autoSyncEnabled: value }), [persist]);
 
@@ -615,6 +628,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       setEditorInlineTitle,
       setSidebarPanelLayout,
       toggleFavorite,
+      remapFavoritesAfterRename,
       setAutoSyncEnabled,
       resetPreferences,
       reloadVaultPreferences,
@@ -661,6 +675,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       setEditorInlineTitle,
       setSidebarPanelLayout,
       toggleFavorite,
+      remapFavoritesAfterRename,
       setAutoSyncEnabled,
       resetPreferences,
       reloadVaultPreferences,

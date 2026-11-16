@@ -38,6 +38,7 @@
 
 import { newNoteFrontmatter, parseFrontmatter } from '../properties/frontmatter';
 import { matchesEmbedTarget } from '../notes/embedResolution';
+import { resolveRenameName } from '../notes/renameTarget';
 import { mimeTypeForFile } from '../files/imageFormats';
 import { CODE_FILE_EXTENSIONS, isCodeFile } from '../editor/codeLanguages';
 import {
@@ -535,14 +536,11 @@ export const webVaultAdapter = {
     const parentRelPath = segments.join('/');
     const parent = await getDirByRelPath(root, parentRelPath);
 
-    const extension = extensionOf(oldName);
-    const isNote = extension !== '' && (await fileExistsAt(parent, oldName));
-    const trimmed = (newName ?? '').trim().replace(/[/\\]/g, '');
-    if (!trimmed) throw new Error('Le nom ne peut pas être vide.');
-
-    const baseName =
-      isNote && extension ? trimmed.replace(new RegExp(`${escapeRegExp(extension)}$`, 'i'), '') : trimmed;
-    const finalName = isNote ? `${baseName}${extension}` : trimmed;
+    const isNote = await fileExistsAt(parent, oldName);
+    // Nom final partagé (lib/notes/renameTarget.ts) : `.md` ⇄ `.mdx` saisi
+    // l'emporte (jamais « Note.mdx.md »), sinon extension réelle conservée.
+    // Conversion du contenu : faite par l'appelant (NotesScreen.tsx).
+    const { finalName, displayName: baseName } = resolveRenameName(oldName, newName, { isDirectory: !isNote });
 
     if (finalName !== oldName && (await entryExists(parent, finalName))) {
       throw new Error(`"${finalName}" existe déjà à cet endroit.`);
@@ -619,8 +617,7 @@ export const webVaultAdapter = {
     const parentRelPath = sourceSegments.join('/');
     const parent = await getDirByRelPath(root, parentRelPath);
 
-    const extension = extensionOf(oldName);
-    const isNote = extension !== '' && (await fileExistsAt(parent, oldName));
+    const isNote = await fileExistsAt(parent, oldName);
 
     const trimmed = (newRelPath ?? '').trim().replace(/^\/+/, '').replace(/\/+$/, '');
     if (!trimmed) throw new Error('Le chemin ne peut pas être vide.');
@@ -628,9 +625,10 @@ export const webVaultAdapter = {
       throw new Error('Chemin invalide.');
     }
 
-    const strippedTrimmed =
-      isNote && extension ? trimmed.replace(new RegExp(`${escapeRegExp(extension)}$`, 'i'), '') : trimmed;
-    const finalRelPath = isNote ? `${strippedTrimmed}${extension}` : trimmed;
+    // Dernier segment : même règle que rename() (renameTarget.ts).
+    const cut = trimmed.lastIndexOf('/');
+    const { finalName } = resolveRenameName(oldName, trimmed.slice(cut + 1), { isDirectory: !isNote });
+    const finalRelPath = `${cut >= 0 ? trimmed.slice(0, cut + 1) : ''}${finalName}`;
 
     if (finalRelPath === relPath) {
       return {

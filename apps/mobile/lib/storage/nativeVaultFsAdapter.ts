@@ -5,6 +5,7 @@ import * as FileSystem from "expo-file-system/legacy";
 
 import { parseFrontmatter } from "../properties/frontmatter";
 import { mimeTypeForFile } from "../files/imageFormats";
+import { resolveRenameName } from "../notes/renameTarget";
 import {
   getActiveVaultRootUri,
   requestAndRegisterVault,
@@ -379,13 +380,11 @@ export function createVaultFsAdapter(deps: VaultFsAdapterDeps) {
       const entry = index.get(relPath);
       const name = nameOf(relPath);
       const parent = parentOf(relPath);
-      const hadExt = entry?.isDirectory
-        ? undefined
-        : KNOWN_CONTENT_EXTS.find((k) => name.toLowerCase().endsWith(k));
-      const carries = KNOWN_CONTENT_EXTS.some((k) =>
-        newName.toLowerCase().endsWith(k),
-      );
-      const candidate = hadExt && !carries ? `${newName}${hadExt}` : newName;
+      // Règle partagée (lib/notes/renameTarget.ts) : `.md` ⇄ `.mdx` saisi
+      // l'emporte ; conversion du contenu faite par l'appelant.
+      const { finalName: candidate } = resolveRenameName(name, newName, {
+        isDirectory: entry?.isDirectory ?? false,
+      });
       if (candidate === name) return { relPath, name: baseNameOf(name) };
       const sib = siblings(parent);
       sib.delete(name);
