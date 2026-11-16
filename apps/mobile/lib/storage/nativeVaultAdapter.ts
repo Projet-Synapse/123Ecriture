@@ -6,6 +6,7 @@ import { StorageAccessFramework } from 'expo-file-system/legacy';
 
 import { newNoteFrontmatter, parseFrontmatter } from '../properties/frontmatter';
 import { CODE_FILE_EXTENSIONS } from '../editor/codeLanguages';
+import { resolveRenameName } from '../notes/renameTarget';
 import { IMAGE_EXTENSIONS, mimeTypeForFile } from '../files/imageFormats';
 import { getActiveVaultRootUri, requestAndRegisterVault } from './nativeVaultsAdapter';
 import { vaultStorageObjectKey } from '../sync/storageKeys';
@@ -1114,9 +1115,10 @@ export const nativeVaultAdapter: VaultBridge = {
     // fichier quand le nouveau nom n'en porte pas — sinon « Note » devient
     // un fichier sans extension, invisible de l'arbre (extensionKind ne le
     // reconnaît plus).
-    const hadKnownExt = KNOWN_CONTENT_EXTS.find((known) => name.toLowerCase().endsWith(known));
-    const carriesKnownExt = KNOWN_CONTENT_EXTS.some((known) => newName.toLowerCase().endsWith(known));
-    const candidate = hadKnownExt && !carriesKnownExt ? `${newName}${hadKnownExt}` : newName;
+    // Règle partagée (lib/notes/renameTarget.ts) : `.md` ⇄ `.mdx` saisi
+    // l'emporte, jamais « Note.mdx.md » ; conversion du contenu faite par
+    // l'appelant (NotesScreen.tsx).
+    const { finalName: candidate } = resolveRenameName(name, newName, { isDirectory: false });
     const finalName = findAvailableName(candidate, siblings);
     if (finalName === name) {
       // Nom inchangé : aucun fichier à créer/supprimer, l'état reste bon.

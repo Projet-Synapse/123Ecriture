@@ -24,6 +24,7 @@ import {
   splitFrontmatter,
 } from '../../lib/properties/frontmatter';
 import { applyPathChange, isPathAffected, mergeRestoredOpenTabs } from '../../lib/notes/openTabs';
+import { convertNoteFormat, formatConversionBetween, willConvertFormat } from '../../lib/notes/renameTarget';
 import type { FormattingResult, Selection } from '../../lib/editor/mdxFormatting';
 import { NOTES_TOOLBAR_ACTIONS, type ToolbarAction } from '../../lib/editor/notesToolbarActions';
 import { resolveNewNoteParent, wikilinkCreationTarget } from '../../lib/notes/newNotePath';
@@ -205,7 +206,8 @@ export function NotesScreen({
   onRequestOpenCalendarDate,
   onRegisterActions,
 }: Props = {}) {
-  const { preferences, preferencesLoaded, theme, setFileSortMode, toggleFavorite } = usePreferences();
+  const { preferences, preferencesLoaded, theme, setFileSortMode, toggleFavorite, remapFavoritesAfterRename } =
+    usePreferences();
   const vault = typeof window !== 'undefined' ? window.vault : undefined;
   // Gel des cycles de synchronisation pendant les actions structurantes
   // (suppression, renommage, déplacement) : un cycle partant au milieu
@@ -1165,6 +1167,66 @@ export function NotesScreen({
     setRenamingValue('');
   }, []);
 
+  // Changement de format par renommage (« Note.md » → « Note.mdx » ou
+  // l'inverse) : le fichier a déjà été DÉPLACÉ par l'adaptateur (règle de
+  // nom partagée, lib/notes/renameTarget.ts) ; ici, une seule fois pour
+  // toutes les plateformes, le contenu est converti (frontmatter intact).
+  // Note ouverte : on convertit le texte de l'ÉDITEUR (frappes pas encore
+  // sauvegardées comprises) et on le réinjecte, sinon l'autosauvegarde
+  // réécrirait l'ancien format par-dessus.
+  const convertRenamedNote = useCallback(
+    async (oldRelPath: string, newRelPath: string) => {
+      if (!vault) return;
+      const conversion = formatConversionBetween(oldRelPath, newRelPath);
+      if (!conversion) return;
+      const isActive = activeNoteRef.current?.relPath === oldRelPath || activeNoteRef.current?.relPath === newRelPath;
+      const source = isActive ? contentRef.current : await vault.readNote(newRelPath);
+      const converted = convertNoteFormat(source, conversion);
+      if (isActive) {
+        if (saveTimer.current) clearTimeout(saveTimer.current);
+        contentRef.current = converted;
+        setContent(converted);
+      }
+      if (isActive || converted !== source) await vault.writeNote(newRelPath, converted);
+    },
+    [vault],
+  );
+
+  // Suites communes d'un renommage réussi : onglets, note active, favoris,
+  // conversion de format, arbre (et donc index de recherche).
+  const applyRenameResult = useCallback(
+    async (oldRelPath: string, result: { relPath: string; name: string }) => {
+      updateOpenTabsAfterPathChange(oldRelPath, result.relPath);
+      setActiveNote((current) => {
+        if (!current) return current;
+        if (current.relPath === oldRelPath) {
+          // La note ouverte est exactement l'élément renommé : on continue
+          // à l'éditer sous son nouveau nom plutôt que de fermer l'éditeur.
+          return { ...current, relPath: result.relPath, name: result.name };
+        }
+        if (isPathAffected(current.relPath, oldRelPath)) {
+          // Un dossier PARENT de la note ouverte a été renommé : le
+          // relPath de la note change en cascade, mais on ne le connaît
+          // pas précisément ici — on ferme plutôt que de risquer d'écrire
+          // sur un chemin périmé. Il suffit de recliquer la note.
+          setContent('');
+          return null;
+        }
+        return current;
+      });
+      void remapFavoritesAfterRename(oldRelPath, result.relPath);
+      try {
+        await convertRenamedNote(oldRelPath, result.relPath);
+      } catch (error) {
+        // Le déplacement a réussi : le contenu reste lisible dans l'ancien
+        // format, seule la conversion a échoué.
+        console.error('[vault] échec de la conversion de format :', error);
+      }
+      await refreshTree();
+    },
+    [updateOpenTabsAfterPathChange, remapFavoritesAfterRename, convertRenamedNote, refreshTree],
+  );
+
   const submitRename = useCallback(async () => {
     if (!vault || !renamingRelPath) return;
     const relPath = renamingRelPath;
@@ -1176,33 +1238,28 @@ export function NotesScreen({
     setRenamingValue('');
 
     try {
-      const result = await vault.rename(relPath, value);
-      // Onglets : même accordé que activeNote ci-dessous (l'onglet exact
-      // est réécrit, ceux d'un dossier renommé sont retirés).
-      updateOpenTabsAfterPathChange(relPath, result.relPath);
-      setActiveNote((current) => {
-        if (!current) return current;
-        if (current.relPath === relPath) {
-          // La note ouverte est exactement l'élément renommé : on continue
-          // à l'éditer sous son nouveau nom plutôt que de fermer l'éditeur.
-          return { ...current, relPath: result.relPath, name: result.name };
-        }
-        if (isPathAffected(current.relPath, relPath)) {
-          // Un dossier PARENT de la note ouverte a été renommé : le
-          // relPath de la note change en cascade, mais on ne le connaît
-          // pas précisément ici — on ferme plutôt que de risquer d'écrire
-          // sur un chemin périmé. Il suffit de recliquer la note.
-          setContent('');
-          return null;
-        }
-        return current;
-      });
-      updateOpenTabsAfterPathChange(relPath, result.relPath);
-      await refreshTree();
+      const run = async () => {
+        const result = await vault.rename(relPath, value);
+        await applyRenameResult(relPath, result);
+      };
+      // Changement de format : exclusif avec la synchro — le déplacement ET
+      // la conversion forment un seul changement vu par le cycle suivant
+      // (jamais un état « déplacé, pas encore converti » poussé entre deux).
+      // Renommage simple : inchangé (pas d'attente d'un cycle en cours).
+      if (willConvertFormat(relPath, value)) await syncStatus.runSyncExclusive(run);
+      else await run();
     } catch (error) {
       console.error('[vault] échec du renommage :', error);
+      // Collision de nom, format non convertible… : le dialogue habituel
+      // « Modifier le chemin » s'ouvre avec le message, pour corriger sans
+      // tout retaper (au lieu d'un échec silencieux).
+      const node = findNodeByPath(tree, relPath);
+      if (node) {
+        setEditPathError(errorMessage(error));
+        setEditingPathNode(node);
+      }
     }
-  }, [vault, renamingRelPath, renamingValue, refreshTree, updateOpenTabsAfterPathChange]);
+  }, [vault, syncStatus, tree, renamingRelPath, renamingValue, applyRenameResult]);
 
   const startMove = useCallback((node: VaultTreeNode) => {
     setMovingNode(node);
@@ -1310,31 +1367,23 @@ export function NotesScreen({
       if (!vault || !editingPathNode) return;
       const node = editingPathNode;
       try {
-        const result = await syncStatus.runSyncExclusive(() => vault.setPath(node.relPath, newRelPath));
-        // Fermé seulement en cas de SUCCÈS — en cas d'erreur (collision,
-        // chemin invalide...), la boîte reste ouverte avec le message pour
-        // que l'utilisatrice puisse corriger sans tout retaper.
-        setEditingPathNode(null);
-        setEditPathError(null);
-        updateOpenTabsAfterPathChange(node.relPath, result.relPath);
-        setActiveNote((current) => {
-          if (!current) return current;
-          if (current.relPath === node.relPath) {
-            return { ...current, relPath: result.relPath, name: result.name };
-          }
-          if (isPathAffected(current.relPath, node.relPath)) {
-            setContent('');
-            return null;
-          }
-          return current;
+        await syncStatus.runSyncExclusive(async () => {
+          const result = await vault.setPath(node.relPath, newRelPath);
+          // Fermé seulement en cas de SUCCÈS — en cas d'erreur (collision,
+          // chemin invalide...), la boîte reste ouverte avec le message pour
+          // que l'utilisatrice puisse corriger sans tout retaper.
+          setEditingPathNode(null);
+          setEditPathError(null);
+          // Onglets, note active, favoris, conversion .md ⇄ .mdx, arbre :
+          // mêmes suites qu'un renommage depuis l'explorateur.
+          await applyRenameResult(node.relPath, result);
         });
-        await refreshTree();
       } catch (error) {
         console.error('[vault] échec de la modification du chemin :', error);
         setEditPathError(errorMessage(error));
       }
     },
-    [vault, syncStatus, editingPathNode, refreshTree, updateOpenTabsAfterPathChange],
+    [vault, syncStatus, editingPathNode, applyRenameResult],
   );
 
   const toggleCollapse = useCallback(

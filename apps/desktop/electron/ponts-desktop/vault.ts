@@ -78,6 +78,7 @@ import type { VaultEntryKind } from '../types';
 import { isCodeFile } from '../../../mobile/lib/editor/codeLanguages';
 import { isImageFile } from '../../../mobile/lib/files/imageFormats';
 import { normalizeRelPath } from '../../../mobile/lib/sync/relPath';
+import { resolveRenameName } from '../../../mobile/lib/notes/renameTarget';
 import { newNoteFrontmatter } from '../../../mobile/lib/properties/frontmatter';
 export { EXTENSION_TO_KIND, resolveInVault, getVaultPath, walkTree } from './coffre-outils';
 // Critères de résolution des cibles d'embed façon Obsidian (chemin exact →
@@ -397,19 +398,13 @@ export function registerVaultHandlers(getWindow: GetWindow): void {
     const oldFull = resolveInVault(vaultPath, relPath);
     if (!fsSync.existsSync(oldFull)) throw new Error('Élément introuvable.');
     const isNote = fsSync.statSync(oldFull).isFile();
-    // Préserve l'extension RÉELLE du fichier (`.mdx`, `.md`, `.canvas`,
-    // `.chart`...) plutôt que de forcer `.mdx` sur tout — forcer `.mdx`
-    // donnerait `truc.canvas.mdx`, extension reconnue par aucun kind : le
-    // fichier disparaîtrait de l'arborescence.
-    const extension = isNote ? path.extname(oldFull) : '';
-
-    // Un nom ne doit pas pouvoir contenir de séparateur de chemin : un
-    // renommage reste un renommage, pas un déplacement déguisé.
-    const trimmed = (newName ?? '').trim().replace(/[/\\]/g, '');
-    if (!trimmed) throw new Error('Le nom ne peut pas être vide.');
-
-    const baseName = isNote && extension ? trimmed.replace(new RegExp(`${escapeRegExp(extension)}$`, 'i'), '') : trimmed;
-    const finalName = isNote ? `${baseName}${extension}` : baseName;
+    // Nom final partagé avec web/Android (lib/notes/renameTarget.ts) :
+    // extension RÉELLE préservée quand le nom saisi n'en porte pas (sinon
+    // `truc.canvas.mdx`, invisible de l'arbre) ; une extension de note
+    // saisie (`.md` ⇄ `.mdx`) l'emporte — jamais « Note.mdx.md ». La
+    // conversion du contenu est faite ensuite par l'appelant
+    // (NotesScreen.tsx), une seule fois pour toutes les plateformes.
+    const { finalName, displayName } = resolveRenameName(path.basename(oldFull), newName, { isDirectory: !isNote });
     const parentDir = path.dirname(oldFull);
     const newFull = path.join(parentDir, finalName);
 
@@ -417,8 +412,9 @@ export function registerVaultHandlers(getWindow: GetWindow): void {
       throw new Error(`"${finalName}" existe déjà à cet endroit.`);
     }
 
+    // Vrai déplacement (fs.rename), jamais copie + suppression.
     await fs.rename(oldFull, newFull);
-    return { relPath: normalizeRelPath(path.relative(vaultPath, newFull)), name: baseName };
+    return { relPath: normalizeRelPath(path.relative(vaultPath, newFull)), name: displayName };
   });
 
   // Déplace une note ou un dossier vers un autre dossier du vault (ou la
@@ -480,8 +476,6 @@ export function registerVaultHandlers(getWindow: GetWindow): void {
     const oldFull = resolveInVault(vaultPath, relPath);
     if (!fsSync.existsSync(oldFull)) throw new Error('Élément introuvable.');
     const isNote = fsSync.statSync(oldFull).isFile();
-    // Préserve l'extension réelle (voir vault:rename plus haut).
-    const extension = isNote ? path.extname(oldFull) : '';
 
     const trimmed = (newRelPath ?? '')
       .trim()
@@ -492,16 +486,19 @@ export function registerVaultHandlers(getWindow: GetWindow): void {
       throw new Error('Chemin invalide.');
     }
 
-    const strippedTrimmed =
-      isNote && extension ? trimmed.replace(new RegExp(`${escapeRegExp(extension)}$`, 'i'), '') : trimmed;
-    const finalRelPath = isNote ? `${strippedTrimmed}${extension}` : trimmed;
+    // Dernier segment : même règle que vault:rename (renameTarget.ts) —
+    // `.md` ⇄ `.mdx` saisi l'emporte, sinon extension réelle conservée.
+    const cut = trimmed.lastIndexOf('/');
+    const { finalName } = resolveRenameName(path.basename(oldFull), trimmed.slice(cut + 1), { isDirectory: !isNote });
+    const finalRelPath = `${cut >= 0 ? trimmed.slice(0, cut + 1) : ''}${finalName}`;
+    const finalExtension = isNote ? path.extname(finalName) : '';
     const newFull = resolveInVault(vaultPath, finalRelPath);
 
     if (newFull === oldFull) {
       // Déjà à cet endroit — no-op plutôt qu'une erreur fs.rename inutile.
       return {
         relPath: normalizeRelPath(path.relative(vaultPath, newFull)),
-        name: isNote ? path.basename(newFull, extension) : path.basename(newFull),
+        name: isNote ? path.basename(newFull, finalExtension) : path.basename(newFull),
       };
     }
 
@@ -516,7 +513,7 @@ export function registerVaultHandlers(getWindow: GetWindow): void {
     await fs.rename(oldFull, newFull);
     return {
       relPath: normalizeRelPath(path.relative(vaultPath, newFull)),
-      name: isNote ? path.basename(newFull, extension) : path.basename(newFull),
+      name: isNote ? path.basename(newFull, finalExtension) : path.basename(newFull),
     };
   });
 

@@ -28,9 +28,15 @@
 // une confirmation humaine. Les ajouts (push/pull) continuent : ils ne
 // détruisent rien.
 //
+// RENOMMAGES : une disparition appariée à une apparition du même cycle
+// (même contenu, ou même nom .md ⇄ .mdx — renamePairs.ts) porte
+// `renamedTo` et n'est JAMAIS comptée ni suspendue par le garde-fou.
+//
 // Module PUR, sans réseau ni disque (tests : threeWay.test.ts).
 //
 //////////////////////////////////////////////////////////////////////////////
+
+import { pairRenames } from './renamePairs';
 
 export type EntryKind = 'file' | 'folder';
 
@@ -65,6 +71,10 @@ export type PlanAction = {
   restore?: boolean;
   // Version distante attendue (verrou optimiste push_file / tombstone_file).
   expectedVersion?: number | null;
+  // Suppression appariée à une apparition du même cycle (renommage,
+  // conversion .md ⇄ .mdx — renamePairs.ts) : nouveau chemin. Jamais
+  // comptée par le garde-fou anti-suppression massive.
+  renamedTo?: string;
   reason: string;
 };
 
@@ -141,10 +151,37 @@ export function planSync(args: {
   }
   actions.sort((a, b) => a.relPath.localeCompare(b.relPath));
 
+  // ---- RENOMMAGES (renamePairs.ts) ----
+  // Ici : ancien chemin disparu du disque + nouveau chemin jamais vu.
+  // Ailleurs : ancien chemin supprimé dans le cloud + nouveau chemin reçu.
+  const isFile = (a: PlanAction) => a.entryKind === 'file';
+  const pairsHere = pairRenames(
+    actions.filter((a) => isFile(a) && a.kind === 'tombstone-remote').map((a) => ({ relPath: a.relPath, hash: B.get(a.relPath)?.hash ?? '' })),
+    actions
+      .filter((a) => isFile(a) && a.kind === 'push' && !B.has(a.relPath) && !Rall.has(a.relPath))
+      .map((a) => ({ relPath: a.relPath, hash: L.get(a.relPath)?.hash ?? '' })),
+  );
+  const pairsElsewhere = pairRenames(
+    actions.filter((a) => isFile(a) && a.kind === 'delete-local').map((a) => ({ relPath: a.relPath, hash: B.get(a.relPath)?.hash ?? '' })),
+    actions
+      .filter((a) => isFile(a) && a.kind === 'pull' && !B.has(a.relPath) && !L.has(a.relPath))
+      .map((a) => ({ relPath: a.relPath, hash: Rall.get(a.relPath)?.hash ?? '' })),
+  );
+  const renamedTo = new Map([...pairsHere, ...pairsElsewhere].map((p) => [p.from, p.to]));
+  for (const action of actions) {
+    const to = renamedTo.get(action.relPath);
+    if (to && (action.kind === 'tombstone-remote' || action.kind === 'delete-local')) {
+      action.renamedTo = to;
+      action.reason = `${action.reason} — renommé en ${to}`;
+    }
+  }
+
   // ---- GARDE-FOU ----
+  // Un renommage apparié ne compte pas : son contenu existe sous le
+  // nouveau nom (renamePairs.ts).
   const approved = args.guard?.approved ?? new Set<string>();
   const deletions = actions
-    .filter((a) => (a.kind === 'delete-local' || a.kind === 'tombstone-remote') && a.entryKind === 'file')
+    .filter((a) => (a.kind === 'delete-local' || a.kind === 'tombstone-remote') && a.entryKind === 'file' && !a.renamedTo)
     .map((a) => a.relPath)
     .filter((p) => !approved.has(p));
   const baseFiles = [...B.values()].filter((e) => (e.kind ?? 'file') === 'file').length;
@@ -164,7 +201,9 @@ export function planSync(args: {
     // Les suppressions (fichiers ET dossiers) sont retirées du plan.
     for (let i = actions.length - 1; i >= 0; i -= 1) {
       const k = actions[i].kind;
-      if ((k === 'delete-local' || k === 'tombstone-remote') && !approved.has(actions[i].relPath)) actions.splice(i, 1);
+      if ((k === 'delete-local' || k === 'tombstone-remote') && !approved.has(actions[i].relPath) && !actions[i].renamedTo) {
+        actions.splice(i, 1);
+      }
     }
   }
   return { actions, guard: { suspended, reason: suspended ? reason : null, deletions: suspended ? deletions : [] } };

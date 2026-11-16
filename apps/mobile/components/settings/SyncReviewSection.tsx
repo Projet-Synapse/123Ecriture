@@ -306,7 +306,8 @@ export function SyncReviewSection() {
                 {r.modified ? ' (modifié ici ⚠)' : ''}
               </Text>
               <Text style={{ color: theme.textMuted, fontSize: 11 }}>
-                supprimé sur {r.deletedByDevice ?? 'un autre appareil'}
+                {r.renamedTo ? `renommé en ${r.renamedTo} sur ` : 'supprimé sur '}
+                {r.deletedByDevice ?? 'un autre appareil'}
                 {` · ${new Date(r.deletedAt ?? r.at).toLocaleString()}`}
               </Text>
               <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
