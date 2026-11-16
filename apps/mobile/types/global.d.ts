@@ -428,7 +428,8 @@ declare global {
   // fichier du vault comme un autre (plus de registre séparé, voir
   // CanvasEditor.tsx), lu/écrit via VaultBridge.readNote/writeNote comme
   // n'importe quelle note — son CONTENU (texte JSON) a cette forme.
-  type CanvasNodeType = 'text' | 'file';
+  // Obsidian écrit aussi 'link' (url) et 'group' (cadre avec label).
+  type CanvasNodeType = 'text' | 'file' | 'link' | 'group';
 
   interface CanvasNode {
     id: string;
@@ -440,6 +441,11 @@ declare global {
     text?: string; // type 'text'
     file?: string; // type 'file' — relPath de la note référencée
     title?: string; // type 'file' — titre affiché, mis en cache au choix de la note
+    subpath?: string; // type 'file' — ancre (#Titre) dans la note
+    url?: string; // type 'link'
+    label?: string; // type 'group'
+    // Couleur JSON Canvas : préréglage '1'…'6' ou hex '#rrggbb'.
+    color?: string;
   }
 
   type CanvasEdgeSide = 'top' | 'right' | 'bottom' | 'left';
@@ -450,6 +456,10 @@ declare global {
     fromSide?: CanvasEdgeSide;
     toNode: string;
     toSide?: CanvasEdgeSide;
+    fromEnd?: 'none' | 'arrow';
+    toEnd?: 'none' | 'arrow';
+    color?: string;
+    label?: string;
   }
 
   interface CanvasData {
@@ -544,6 +554,10 @@ declare global {
   // 'all' déplie toute l'arborescence, 'none' la démarre entièrement repliée.
   type ExplorerExpandMode = 'last' | 'all' | 'none';
 
+  // Tri de la liste de Paramètres › Gestion des propriétés — voir
+  // lib/properties/propertySort.ts.
+  type PropertySortMode = 'alpha-asc' | 'alpha-desc' | 'type' | 'usage';
+
   interface Preferences {
     themeMode: ThemeMode;
     accentColor: string;
@@ -561,6 +575,10 @@ declare global {
     // voir ExplorerExpandMode ci-dessus et NotesScreen.tsx pour l'application
     // (au chargement ET à chaud quand le réglage change).
     explorerExpandMode: ExplorerExpandMode;
+    // Tri de la liste des propriétés (Paramètres › Gestion des propriétés),
+    // mémorisé — optionnel : absent des configurations plus anciennes et du
+    // côté Electron (qui conserve les champs qu'il ne connaît pas).
+    propertiesSortMode?: PropertySortMode;
     // Écran Tâches : tri par échéance et masquage des terminées — mémorisés
     // d'une session à l'autre (ce sont des préférences de lecture stables,
     // comme fileSortMode pour les fichiers, pas des besoins d'une session).

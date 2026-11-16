@@ -164,7 +164,7 @@ export function FolderPreview({ folderRelPath, tree, theme, onOpenNote, onOpenFo
                   style={[styles.card, { borderColor: theme.border, backgroundColor: theme.surface }]}
                 >
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                    <NoteIconByKind kind={n.kind} size={16} />
+                    <NoteIconByKind kind={n.kind} relPath={n.relPath} size={16} />
                     <Text style={{ color: theme.text, fontWeight: '600', flex: 1 }} numberOfLines={1}>
                       {n.name}
                     </Text>

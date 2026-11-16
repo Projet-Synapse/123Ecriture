@@ -1,10 +1,19 @@
 import { useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { collectPathOptions } from '../../lib/notes/vaultTree';
+import { collectPathOptions, flattenNotes } from '../../lib/notes/vaultTree';
+import { rememberPropertyValue, usePropertyValueIndex } from '../../lib/properties/propertyValueIndex';
+import {
+  lastListSegment,
+  matchRank,
+  openWikilinkQuery,
+  suggestPropertyValues,
+  type ValueSuggestion,
+} from '../../lib/properties/propertyValueSuggestions';
 import { formatValueForInput, parseInputForType } from '../../lib/properties/propertyTypes';
 import type { Theme } from '../../theme';
 import { DraftTextField } from '../editors/DraftTextField';
+import { SuggestTextInput } from './SuggestTextInput';
 
 // ✒️ 123ECRITURE — components/properties/PropertyValueField.tsx — le widget d'édition d'une valeur
 //////////////////////////////////////////////////////////////////////////////
@@ -24,7 +33,12 @@ import { DraftTextField } from '../editors/DraftTextField';
 //   • Le brouillon des bulles (type 'bubbles') est commité à la touche
 //     Entrée, comme l'ajout de tags façon Obsidian.
 //   • `tree` n'est nécessaire que pour le type 'path' : absent ailleurs,
-//     le champ retombe sur une saisie texte libre.
+//     le champ retombe sur une saisie texte libre. Il fournit aussi les
+//     noms de notes proposés en `[[…]]`.
+//   • AUTOCOMPLÉTION (Texte, Liste, Bulles) : valeurs déjà utilisées pour
+//     la même propriété dans le coffre, options du schéma, notes dès `[[`
+//     — voir lib/properties/propertyValueSuggestions.ts et
+//     SuggestTextInput.tsx. Toute valeur validée rejoint l'index.
 //
 // SOMMAIRE :
 //   1. PropertyValueField — le dispatch par type
@@ -44,7 +58,11 @@ type Props = {
   tree?: VaultTreeNode[];
 };
 
-export function PropertyValueField({ def, value, onChange, theme, tree }: Props) {
+export function PropertyValueField({ def, value, onChange: onChangeRaw, theme, tree }: Props) {
+  const onChange = (next: unknown) => {
+    rememberPropertyValue(def.name, next);
+    onChangeRaw(next);
+  };
   const [pickerOpen, setPickerOpen] = useState(false);
   const [filter, setFilter] = useState('');
   // Brouillon du champ d'ajout des bulles (type 'bubbles') — commit à la
@@ -55,6 +73,9 @@ export function PropertyValueField({ def, value, onChange, theme, tree }: Props)
   // un `return` conditionnel enfreindrait les Rules of Hooks dès qu'une
   // même instance change de `def.type`.
   const pathOptions = useMemo(() => (tree ? collectPathOptions(tree) : []), [tree]);
+  const noteNames = useMemo(() => (tree ? flattenNotes(tree).map((note) => note.name) : []), [tree]);
+  const valueIndex = usePropertyValueIndex();
+  const used = valueIndex?.get(def.name.toLowerCase());
 
   if (def.type === 'checkbox') {
     return (
@@ -65,9 +86,9 @@ export function PropertyValueField({ def, value, onChange, theme, tree }: Props)
   }
 
   if (def.type === 'path') {
-    const filtered = pathOptions.filter(
-      (o) => filter.trim() === '' || o.relPath.toLowerCase().includes(filter.trim().toLowerCase()),
-    );
+    // Filtre insensible aux accents et aux majuscules (même règle que
+    // l'autocomplétion des valeurs).
+    const filtered = pathOptions.filter((o) => filter.trim() === '' || matchRank(o.relPath, filter) !== null);
     return (
       <View style={styles.pickerWrap}>
         <Pressable
@@ -207,14 +228,25 @@ export function PropertyValueField({ def, value, onChange, theme, tree }: Props)
             ))}
           </View>
         )}
-        <TextInput
+        <SuggestTextInput
           value={bubbleDraft}
           onChangeText={setBubbleDraft}
-          onSubmitEditing={commitDraft}
+          suggestions={suggestPropertyValues({
+            query: bubbleDraft,
+            used,
+            schemaOptions: def.options,
+            exclude: items,
+          })}
+          onPick={(suggestion) => {
+            if (!items.includes(suggestion.value)) onChange([...items, suggestion.value]);
+            setBubbleDraft('');
+          }}
+          onSubmit={commitDraft}
           onBlur={bubbleDraft.trim() ? commitDraft : undefined}
           placeholder="+ Ajouter…"
-          placeholderTextColor={theme.textMuted}
-          style={{ color: theme.text, fontSize: 12, paddingVertical: 2, flex: 1, minWidth: 90 }}
+          theme={theme}
+          wrapStyle={{ flex: 1, minWidth: 90 }}
+          style={{ color: theme.text, fontSize: 12, paddingVertical: 2 }}
         />
       </View>
     );
@@ -270,12 +302,97 @@ export function PropertyValueField({ def, value, onChange, theme, tree }: Props)
     );
   }
 
+  if (def.type === 'text' || def.type === 'list') {
+    return (
+      <SuggestDraftField
+        def={def}
+        initialValue={formatValueForInput(def.type, value)}
+        onCommit={(text) => onChange(parseInputForType(def.type, text))}
+        used={used}
+        noteNames={noteNames}
+        theme={theme}
+      />
+    );
+  }
+
   return (
     <DraftTextField
       initialValue={formatValueForInput(def.type, value)}
       onCommit={(text) => onChange(parseInputForType(def.type, text))}
       placeholder={def.type === 'date' ? 'AAAA-MM-JJ' : def.type === 'datetime' ? 'AAAA-MM-JJ HH:MM' : ''}
       theme={theme}
+      style={[styles.valueInput, { color: theme.text, borderColor: theme.border }]}
+    />
+  );
+}
+
+// Texte et Liste : brouillon à commit différé (comme DraftTextField) +
+// suggestions. Liste : on complète le DERNIER élément (après la dernière
+// virgule). `[[` ouvert : noms de notes. Choisir une suggestion valide
+// tout de suite.
+function suggestionsFor(
+  def: PropertyDefinition,
+  draft: string,
+  used: ReadonlyMap<string, number> | undefined,
+  noteNames: readonly string[],
+): { suggestions: ValueSuggestion[]; apply: (suggestion: ValueSuggestion) => string } {
+  const isList = def.type === 'list';
+  const { prefix, query } = isList ? lastListSegment(draft) : { prefix: '', query: draft };
+  const link = openWikilinkQuery(query);
+  if (link) {
+    const before = prefix + query.slice(0, link.start);
+    return {
+      suggestions: suggestPropertyValues({ query: link.query, noteNames, includeNotes: true }),
+      apply: (suggestion) => before + suggestion.value,
+    };
+  }
+  const exclude = isList ? draft.split(',').map((item) => item.trim()).slice(0, -1) : [];
+  return {
+    suggestions: suggestPropertyValues({ query, used, schemaOptions: def.options, exclude }),
+    apply: (suggestion) => prefix + suggestion.value,
+  };
+}
+
+function SuggestDraftField({
+  def,
+  initialValue,
+  onCommit,
+  used,
+  noteNames,
+  theme,
+}: {
+  def: PropertyDefinition;
+  initialValue: string;
+  onCommit: (text: string) => void;
+  used: ReadonlyMap<string, number> | undefined;
+  noteNames: readonly string[];
+  theme: Theme;
+}) {
+  // Même resynchronisation pendant le rendu que DraftTextField.
+  const [prevInitialValue, setPrevInitialValue] = useState(initialValue);
+  const [draft, setDraft] = useState(initialValue);
+  if (initialValue !== prevInitialValue) {
+    setPrevInitialValue(initialValue);
+    setDraft(initialValue);
+  }
+  const commit = (text: string) => {
+    if (text !== initialValue) onCommit(text);
+  };
+  const { suggestions, apply } = suggestionsFor(def, draft, used, noteNames);
+  return (
+    <SuggestTextInput
+      value={draft}
+      onChangeText={setDraft}
+      suggestions={suggestions}
+      onPick={(suggestion) => {
+        const next = apply(suggestion);
+        setDraft(next);
+        commit(next);
+      }}
+      onSubmit={() => commit(draft)}
+      onBlur={() => commit(draft)}
+      theme={theme}
+      wrapStyle={{ flex: 1 }}
       style={[styles.valueInput, { color: theme.text, borderColor: theme.border }]}
     />
   );

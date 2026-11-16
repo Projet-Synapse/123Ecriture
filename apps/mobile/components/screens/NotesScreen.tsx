@@ -2474,7 +2474,7 @@ export function NotesScreen({
               >
                 {/* View (et non Text) : un <Svg> dans un <Text> est mis en
                     ligne et redimensionné par la hauteur de ligne. */}
-                <NoteIconByKind kind={node.kind} size={14} />
+                <NoteIconByKind kind={node.kind} relPath={node.relPath} size={16} />
                 <Text style={{ color: theme.text, flexShrink: 1 }} numberOfLines={1} ellipsizeMode="tail">
                   {node.name}
                 </Text>
@@ -2671,7 +2671,7 @@ export function NotesScreen({
                             isActive ? `Onglet actif : ${node.name}` : `Activer l'onglet ${node.name}`
                           }
                         >
-                          <NoteIconByKind kind={node.kind} size={14} />
+                          <NoteIconByKind kind={node.kind} relPath={node.relPath} size={16} />
                           <Text
                             style={[styles.tabName, { color: isActive ? theme.accent : theme.textMuted }]}
                             numberOfLines={1}
@@ -2696,12 +2696,10 @@ export function NotesScreen({
             <View style={styles.editorMainRow}>
               <View style={styles.noteContent}>
                 {activeNote.kind === 'canvas' ? (
+                  // Mobile aussi (v. CanvasEditor : affichage complet,
+                  // panoramique au doigt, zoom/recadrage aux boutons).
                   <View style={styles.editorBody}>
-                    {isNativeNotes ? (
-                      <NativeFileTypeUnavailable color={theme.textMuted} />
-                    ) : (
-                      <CanvasEditor relPath={activeNote.relPath} onOpenNote={openNoteByRelPath} />
-                    )}
+                    <CanvasEditor relPath={activeNote.relPath} onOpenNote={openNoteByRelPath} />
                   </View>
                 ) : activeNote.kind === 'chart' ? (
                   <View style={styles.editorBody}>
@@ -3317,6 +3315,9 @@ function NativeReadingScroll({ scrollbarColor, children }: { scrollbarColor: str
         onLayout={(event) => setViewHeight(event.nativeEvent.layout.height)}
         onContentSizeChange={(_, height) => setContentHeight(height)}
         scrollEventThrottle={16}
+        // Un tap sur une suggestion de valeur de propriété doit la choisir,
+        // pas seulement fermer le clavier (PropertyValueField).
+        keyboardShouldPersistTaps="handled"
       >
         {children}
       </ScrollView>
