@@ -441,7 +441,17 @@ export function createCloudVault(deps: CloudVaultDeps) {
   async function refreshManifest(s: VaultCacheState): Promise<void> {
     const rows = await deps.api.listFiles(s.vaultId);
     const manifest: Record<string, RemoteRow> = {};
-    for (const r of rows) manifest[normalizeCloudRelPath(r.relPath)] = { ...r, relPath: normalizeCloudRelPath(r.relPath) };
+    for (const r of rows) {
+      const key = normalizeCloudRelPath(r.relPath);
+      // Deux lignes pour le MÊME fichier sous deux graphies Unicode (NFC /
+      // NFD, voir lib/sync/unicodePaths.ts) : avant, la dernière lue gagnait
+      // au hasard de l'ordre — parfois la vieille, ou la supprimée. On garde
+      // la vivante, puis la plus récente (même règle que le desktop).
+      const prev = manifest[key];
+      const keepPrev = prev && (prev.deleted === r.deleted ? prev.updatedAt >= r.updatedAt : !prev.deleted);
+      if (keepPrev) continue;
+      manifest[key] = { ...r, relPath: key };
+    }
     s.manifest = manifest;
     s.manifestAt = new Date(now()).toISOString();
   }

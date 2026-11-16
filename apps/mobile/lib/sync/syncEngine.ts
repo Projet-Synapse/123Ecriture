@@ -6,6 +6,7 @@ import { isHashableRelPath } from './syncRules';
 import { holdDeletionsUntilIndexed, migrateSyncStateFiles, SYNC_STATE_VERSION } from './stateMigration';
 import { EMPTY_SHA256, folderToMarker, isFolderMarker, markerToFolder } from './folderMarker';
 import { splitEditHot, quietRetryAt, preserveHotBases } from './editQuiet';
+import { alignUnicodePaths, renameBaseKeys } from './unicodePaths';
 import { isGuardedConfigFile, validateConfigText } from './configGuard';
 import { errorMessage } from '../errorMessage';
 import { APP_SCHEMA, VAULT_FILES_TABLE } from './supabaseClient';
@@ -717,7 +718,7 @@ async function runLockedCycle(
   await appendJournalEntries(journal);
 
   setSyncProgress({ phase: 'Lecture de la liste distante…', done: 0, total: 0 });
-  const [remoteFiles, syncState] = await withTimeout(
+  const [remoteFilesFetched, syncState] = await withTimeout(
     Promise.all([fetchRemoteFiles(remoteVaultId), loadSyncState()]),
     STEP_TIMEOUT_MS,
     'liste distante',
@@ -744,10 +745,38 @@ async function runLockedCycle(
   // cloud jamais matchés, des tombestones jamais envoyées et des
   // résurrections en boucle (le fix à la source vit dans sync.ts).
   setSyncProgress({ phase: 'Analyse du coffre local…', done: 0, total: 0 });
-  const localFiles = (await withTimeout(bridges.sync.hashVaultTree(), STEP_TIMEOUT_MS, 'analyse du coffre local')).map((note) => ({
+  const localFilesOnDisk = (await withTimeout(bridges.sync.hashVaultTree(), STEP_TIMEOUT_MS, 'analyse du coffre local')).map((note) => ({
     ...note,
     relPath: note.relPath.split('\\').join('/'),
   }));
+  // GRAPHIES UNICODE (unicodePaths.ts) : « scène » composé (NFC) ou
+  // décomposé (NFD) = le même fichier. Sans cet alignement, un fichier
+  // local en NFD face à une ligne cloud + base en NFC était vu comme
+  // SUPPRIMÉ ici (garde-fou « suppressions en attente » sur un fichier
+  // seulement modifié) et poussé en doublon. Local et base sont relus sous
+  // la graphie du cloud ; lignes cloud en double (deux graphies) : une
+  // seule entre dans le plan, les autres sont ignorées (jamais supprimées).
+  const unicode = alignUnicodePaths({
+    localPaths: localFilesOnDisk.map((note) => note.relPath),
+    remote: selectRemoteRows(remoteFilesFetched).rows,
+    basePaths: Object.keys(syncState.files),
+  });
+  const shadowedUnicode = new Set(unicode.shadowed.map((row) => row.rawRelPath ?? row.relPath));
+  const remoteFiles =
+    shadowedUnicode.size > 0 ? remoteFilesFetched.filter((row) => !shadowedUnicode.has(row.rawRelPath ?? row.relPath)) : remoteFilesFetched;
+  syncState.files = renameBaseKeys(syncState.files, unicode.baseRename);
+  const localFiles = localFilesOnDisk.map((note) => {
+    const canonical = unicode.localRename.get(note.relPath);
+    return canonical ? { ...note, relPath: canonical } : note;
+  });
+  if (unicode.localRename.size + unicode.baseRename.size + unicode.shadowed.length + unicode.localDuplicates.length > 0) {
+    const sample = [...unicode.localRename.values(), ...unicode.shadowed.map((row) => row.relPath)].slice(0, 2).join(' | ');
+    journal.push(
+      makeJournalEntry('info', {
+        detail: `Accents (graphies Unicode NFC/NFD) : ${unicode.localRename.size} fichier(s) local(aux) relu(s) sous le nom du cloud, ${unicode.shadowed.length} ligne(s) cloud en double ignorée(s), ${unicode.localDuplicates.length} doublon(s) réel(s) sur le disque${sample ? ` — ${sample.slice(0, 140)}` : ''}`,
+      }),
+    );
+  }
   // PÉRIODE DE SILENCE « FICHIER OUVERT » : un fichier modifié il y a moins
   // de 60 s est peut-être OUVERT dans un éditeur (l'app, Obsidian…) — il
   // sort du cycle : pas de push, pas d'écrasement par le pull, pas

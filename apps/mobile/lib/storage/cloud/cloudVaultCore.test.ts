@@ -173,6 +173,31 @@ describe('coffre cloud Android — lecture', () => {
   });
 });
 
+describe('coffre cloud Android — même fichier sous deux graphies Unicode (NFC / NFD)', () => {
+  const NFC = 'scène the eleven.md';
+  const NFD = NFC.normalize('NFD');
+  const row = (relPath: string, content: string, updatedAt: string, deleted = false): RemoteRow => {
+    server.objects.set(`R1/c/${sha(content)}`, content);
+    return { relPath, version: 1, contentHash: sha(content), sizeBytes: content.length, updatedAt, deleted, storagePath: `R1/c/${sha(content)}` };
+  };
+
+  it('deux lignes vivantes : la plus récente est lue, quel que soit l’ordre du serveur', async () => {
+    server.rows.set(NFC, row(NFC, 'récente', '2026-11-12T10:00:00Z'));
+    server.rows.set(NFD, row(NFD, 'ancienne', '2026-11-01T10:00:00Z'));
+    const { adapter } = make();
+    expect(paths(await adapter.listTree())).toEqual([NFC]);
+    expect(await adapter.readNote(NFC)).toBe('récente');
+  });
+
+  it('une ligne supprimée et une vivante : la vivante gagne (le fichier ne disparaît pas)', async () => {
+    server.rows.set(NFC, row(NFC, 'vivante', '2026-11-01T10:00:00Z'));
+    server.rows.set(NFD, row(NFD, 'morte', '2026-11-12T10:00:00Z', true));
+    const { adapter } = make();
+    expect(paths(await adapter.listTree())).toEqual([NFC]);
+    expect(await adapter.readNote(NFC)).toBe('vivante');
+  });
+});
+
 describe('coffre cloud Android — écriture', () => {
   it('save = cache + file ; flush = upload adressé par contenu puis push_file avec la version de base', async () => {
     server.seed('a.md', 'v1');
