@@ -27,6 +27,13 @@ export function isTrashRelPath(relPath: string): boolean {
   return p === '.trash' || p.startsWith('.trash/');
 }
 
+// Fichier « de l'utilisatrice » (annoncé dans les bulles de réception) :
+// ni corbeille, ni métadonnées `.123ecriture/`, ni autre dossier caché.
+export function isUserFileRelPath(relPath: string): boolean {
+  const p = normalizeRelPath(relPath);
+  return p.length > 0 && !p.split('/').some((segment) => segment.startsWith('.'));
+}
+
 // Lignes distantes vues par le moteur : `.trash/` jamais synchronisé ;
 // une ligne héritée à backslash est LUE sous son chemin normalisé quand
 // aucune ligne POSIX ne porte ce chemin (sinon elle est masquée par sa

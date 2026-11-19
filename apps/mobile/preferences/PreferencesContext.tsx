@@ -72,6 +72,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   editorDefaultMode: 'source',
   editorCloseBrackets: true,
   editorInlineTitle: false,
+  notifySaveSuccess: true,
   sidebarLayout: {
     nav: { width: 220, collapsed: false },
     explorer: { width: 260, collapsed: false },
@@ -137,6 +138,7 @@ type PreferencesContextValue = {
   setEditorFontFamily: (family: EditorFontFamily) => Promise<void>;
   setEditorDefaultMode: (mode: EditorViewMode) => Promise<void>;
   setEditorCloseBrackets: (value: boolean) => Promise<void>;
+  setNotifySaveSuccess: (value: boolean) => Promise<void>;
   setEditorInlineTitle: (value: boolean) => Promise<void>;
   setSidebarPanelLayout: (id: SidebarPanelId, layout: SidebarPanelLayout) => Promise<void>;
   // Notes épinglées (voir NotesScreen.tsx, menu contextuel "Ajouter aux
@@ -454,6 +456,10 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     (value: boolean) => persist({ editorCloseBrackets: value }),
     [persist],
   );
+  const setNotifySaveSuccess = useCallback(
+    (value: boolean) => persist({ notifySaveSuccess: value }),
+    [persist],
+  );
   const setEditorInlineTitle = useCallback(
     (value: boolean) => persist({ editorInlineTitle: value }),
     [persist],
@@ -625,6 +631,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       setEditorFontFamily,
       setEditorDefaultMode,
       setEditorCloseBrackets,
+      setNotifySaveSuccess,
       setEditorInlineTitle,
       setSidebarPanelLayout,
       toggleFavorite,
@@ -672,6 +679,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       setEditorFontFamily,
       setEditorDefaultMode,
       setEditorCloseBrackets,
+      setNotifySaveSuccess,
       setEditorInlineTitle,
       setSidebarPanelLayout,
       toggleFavorite,

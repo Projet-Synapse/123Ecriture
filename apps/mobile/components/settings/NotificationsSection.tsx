@@ -28,6 +28,28 @@ import { settingsStyles as s } from './settingsStyles';
 //
 //////////////////////////////////////////////////////////////////////////////
 
+// Bulles dans l'app (lib/notify, components/ToastHost.tsx) — toutes
+// plateformes. Les erreurs, les liens mis à jour et les fichiers reçus
+// restent toujours annoncés ; seule la bulle de sauvegarde se coupe.
+function InAppBubblesCard() {
+  const { preferences, theme, setNotifySaveSuccess } = usePreferences();
+  return (
+    <View style={[s.card, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+      <Text style={[s.cardTitle, { color: theme.text }]}>💬 Bulles dans l’app</Text>
+      <SettingsToggle
+        label="Bulle « Note enregistrée »"
+        value={preferences.notifySaveSuccess}
+        onChange={(value) => void setNotifySaveSuccess(value)}
+        theme={theme}
+      />
+      <Text style={[s.label, { color: theme.textMuted }]}>
+        Discrète, au plus une par minute. Les erreurs, les liens mis à jour après un renommage et les nouveaux fichiers
+        synchronisés sont toujours annoncés. Touchez une bulle pour la fermer.
+      </Text>
+    </View>
+  );
+}
+
 export function NotificationsSection() {
   const { preferences, theme, setTasksNotifyEnabled, setTasksNotifyTime } = usePreferences();
   const [permissionState, setPermissionState] = useState<'unknown' | 'granted' | 'denied'>('unknown');
@@ -37,11 +59,14 @@ export function NotificationsSection() {
 
   if (Platform.OS === 'web') {
     return (
-      <View style={[s.card, { backgroundColor: theme.surface, borderColor: theme.border }]}>
-        <Text style={[s.cardTitle, { color: theme.text }]}>🔔 Notifications</Text>
-        <Text style={{ color: theme.textMuted }}>
-          Les rappels d’échéance des tâches sont disponibles sur l’application mobile.
-        </Text>
+      <View style={styles.stack}>
+        <InAppBubblesCard />
+        <View style={[s.card, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+          <Text style={[s.cardTitle, { color: theme.text }]}>🔔 Notifications</Text>
+          <Text style={{ color: theme.textMuted }}>
+            Les rappels d’échéance des tâches sont disponibles sur l’application mobile.
+          </Text>
+        </View>
       </View>
     );
   }
@@ -78,6 +103,7 @@ export function NotificationsSection() {
 
   return (
     <View style={styles.stack}>
+      <InAppBubblesCard />
       <View style={[s.card, { backgroundColor: theme.surface, borderColor: theme.border }]}>
         <Text style={[s.cardTitle, { color: theme.text }]}>🔔 Notifications</Text>
 

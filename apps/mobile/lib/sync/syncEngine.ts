@@ -24,7 +24,7 @@ import { isVersionConflictError } from './versionLock';
 import { requireBridges } from './bridges';
 
 import { type SyncSummary } from './syncTypes';
-import { isTrashRelPath, selectRemoteRows } from './relPath';
+import { isTrashRelPath, isUserFileRelPath, selectRemoteRows } from './relPath';
 import {
   loadPendingReview,
   savePendingReview,
@@ -667,6 +667,7 @@ async function runCloudCycle(
   summary.pushed = result.pushed;
   summary.deleted = result.deleted;
   summary.conflicts = result.conflicts;
+  summary.received = result.received ?? 0;
   summary.errors.push(...result.errors);
   if (result.offline) summary.errors.push(`Hors ligne : ${result.pending} modification(s) en attente, envoyées au retour du réseau.`);
   try {
@@ -1380,7 +1381,8 @@ async function runLockedCycle(
           // parcours a ratée (fichier écrit pendant l'indexation) — la
           // relecture directe AVANT tout pull : si le fichier répond, on
           // diffère et le cycle suivant le verra dans le parcours.
-          if (!localByPath.has(decision.relPath)) {
+          const isNewHere = !localByPath.has(decision.relPath);
+          if (isNewHere) {
             try {
               await bridges.vault.readNote(decision.relPath);
               journal.push(
@@ -1396,6 +1398,7 @@ async function runLockedCycle(
           pulledPaths.add(decision.relPath);
           summary.pulled += 1;
           summary.modifications += 1;
+          if (isNewHere && isUserFileRelPath(decision.relPath)) summary.received = (summary.received ?? 0) + 1;
           journal.push(makeJournalEntry('modification-reçue', { path: decision.relPath, detail: 'reçue depuis un autre appareil' }));
           break;
         case 'conflict-push-wins': {

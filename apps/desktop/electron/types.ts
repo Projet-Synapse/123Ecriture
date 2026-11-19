@@ -260,6 +260,7 @@ export interface Preferences {
   editorDefaultMode: EditorViewMode;
   editorCloseBrackets: boolean;
   editorInlineTitle: boolean;
+  notifySaveSuccess: boolean;
   sidebarLayout: SidebarLayoutState;
   // Notes épinglées (voir NotesScreen.tsx, section "⭐ Favoris" en tête de
   // l'explorateur) — relPaths bruts plutôt qu'un registre séparé sous

@@ -67,6 +67,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   editorDefaultMode: 'source',
   editorCloseBrackets: true,
   editorInlineTitle: false,
+  notifySaveSuccess: true,
   // Voir apps/mobile/lib/useResizablePanel.ts pour la logique de
   // redimensionnement/repli au curseur elle-même — ceci n'est que l'état
   // persisté par défaut.

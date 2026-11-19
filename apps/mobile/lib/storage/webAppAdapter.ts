@@ -84,6 +84,7 @@ const DEFAULT_PREFERENCES: Preferences = {
   editorDefaultMode: 'source',
   editorCloseBrackets: true,
   editorInlineTitle: false,
+  notifySaveSuccess: true,
   sidebarLayout: {
     nav: { width: 220, collapsed: false },
     explorer: { width: 260, collapsed: false },

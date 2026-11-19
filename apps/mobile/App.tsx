@@ -1,23 +1,22 @@
-import React from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { Text, View } from 'react-native';
-import { useCallback, useRef, useState } from 'react';
 
 import { AppShell, type NotesActions } from './components/AppShell';
 import { CalendarScreen } from './components/screens/CalendarScreen';
 import { GraphView } from './components/editors/GraphView';
-import { usePreferences } from './preferences/PreferencesContext';
+import { usePreferences , PreferencesProvider } from './preferences/PreferencesContext';
 import { NotesScreen } from './components/screens/NotesScreen';
 import { TablesScreen } from './components/screens/TablesScreen';
 import { SettingsScreen } from './components/SettingsScreen';
 import { TasksScreen } from './components/screens/TasksScreen';
 import { toIsoDate } from './lib/calendar/calendarDates';
+import { ToastHost } from './components/ToastHost';
 import { UpdateGate } from './components/UpdateGate';
 import { AuthProvider } from './lib/sync/AuthContext';
 import { SyncStatusProvider } from './lib/sync/SyncStatusContext';
 import { VaultsProvider } from './lib/sync/VaultsContext';
 import { SECTIONS } from './navigation';
-import { PreferencesProvider } from './preferences/PreferencesContext';
 
 // ✒️ 123ECRITURE — App.tsx — la racine de l'application
 //////////////////////////////////////////////////////////////////////////////
@@ -226,6 +225,8 @@ function Root() {
       >
         {content}
       </AppShell>
+      {/* Bulles de notification, par-dessus toute l'app (lib/notify). */}
+      <ToastHost />
       <StatusBar style="auto" />
     </>
   );
