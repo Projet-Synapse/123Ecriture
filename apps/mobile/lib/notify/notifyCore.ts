@@ -159,8 +159,10 @@ export function plural(n: number, singular: string, pluralForm: string): string 
   return `${n} ${n > 1 ? pluralForm : singular}`;
 }
 
-export function linksUpdatedMessage(links: number, files: number): string {
-  return `${plural(links, 'lien mis à jour', 'liens mis à jour')} dans ${plural(files, 'fichier', 'fichiers')}`;
+// `properties` : propriétés (frontmatter) dont un lien ou un chemin a changé.
+export function linksUpdatedMessage(links: number, files: number, properties = 0): string {
+  const base = `${plural(links, 'lien mis à jour', 'liens mis à jour')} dans ${plural(files, 'fichier', 'fichiers')}`;
+  return properties > 0 ? `${base}, dont ${plural(properties, 'propriété', 'propriétés')}` : base;
 }
 
 export function receivedFilesMessage(count: number): string {

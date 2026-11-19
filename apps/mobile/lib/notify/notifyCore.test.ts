@@ -116,6 +116,8 @@ describe('messages', () => {
   it('pluriels', () => {
     expect(linksUpdatedMessage(1, 1)).toBe('1 lien mis à jour dans 1 fichier');
     expect(linksUpdatedMessage(5, 3)).toBe('5 liens mis à jour dans 3 fichiers');
+    expect(linksUpdatedMessage(5, 3, 2)).toBe('5 liens mis à jour dans 3 fichiers, dont 2 propriétés');
+    expect(linksUpdatedMessage(1, 1, 1)).toBe('1 lien mis à jour dans 1 fichier, dont 1 propriété');
     expect(receivedFilesMessage(1)).toBe('1 nouveau fichier synchronisé');
     expect(receivedFilesMessage(3)).toBe('3 nouveaux fichiers synchronisés');
   });
