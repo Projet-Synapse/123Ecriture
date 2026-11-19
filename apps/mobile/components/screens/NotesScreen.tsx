@@ -25,6 +25,7 @@ import {
 } from '../../lib/properties/frontmatter';
 import { applyPathChange, isPathAffected, mergeRestoredOpenTabs } from '../../lib/notes/openTabs';
 import { convertNoteFormat, formatConversionBetween, willConvertFormat } from '../../lib/notes/renameTarget';
+import { linkRewriteKind, renamedPath, rewriteCanvasLinks, rewriteNoteLinks } from '../../lib/notes/linkRewrite';
 import { noteTitlePlacement } from '../../lib/notes/noteTitle';
 import type { FormattingResult, Selection } from '../../lib/editor/mdxFormatting';
 import { NOTES_TOOLBAR_ACTIONS, type ToolbarAction } from '../../lib/editor/notesToolbarActions';
@@ -1198,8 +1199,65 @@ export function NotesScreen({
     [vault],
   );
 
+  // Liens internes mis à jour dans tout le coffre (comme Obsidian, voir
+  // lib/notes/linkRewrite.ts) : à appeler APRÈS le déplacement, AVANT
+  // refreshTree (treeRef décrit encore le coffre d'avant). Seuls les
+  // fichiers dont le contenu change sont réécrits — écritures normales,
+  // synchronisées comme une frappe ; aucune suppression, aucune création.
+  // La note ouverte est mise à jour dans l'ÉDITEUR (frappes non encore
+  // sauvegardées comprises), sinon l'autosauvegarde écraserait les liens.
+  const updateLinksAfterRename = useCallback(
+    async (
+      oldRelPath: string,
+      newRelPath: string,
+      // Lot (déplacement groupé) : liste tenue à jour par l'appelant entre
+      // deux déplacements, l'arbre n'étant rafraîchi qu'à la fin.
+      knownFiles?: string[],
+    ): Promise<{ links: number; files: number }> => {
+      const total = { links: 0, files: 0 };
+      if (!vault || oldRelPath === newRelPath) return total;
+      const filesBefore = knownFiles ?? flattenNotes(treeRef.current).map((n) => n.relPath);
+      const isFolder = findNodeByPath(treeRef.current, oldRelPath)?.type === 'folder';
+      const ctx = { filesBefore, from: oldRelPath, to: newRelPath, isFolder };
+      const oldName = oldRelPath.split('/').pop() ?? '';
+      const oldStem = (isFolder ? oldName : oldName.replace(/\.[^.]+$/, ''))
+        .normalize('NFC')
+        .toLowerCase();
+      for (const before of filesBefore) {
+        const kind = linkRewriteKind(before);
+        if (!kind || before.startsWith('.trash/')) continue;
+        const after = renamedPath(before, ctx) ?? before;
+        const movedItself = after !== before;
+        const active = activeNoteRef.current;
+        const isActive = active?.relPath === after || active?.relPath === before;
+        try {
+          const source = isActive ? contentRef.current : await vault.readNote(after);
+          // Filtre rapide : sans le nom renommé dans le texte (et sans
+          // déplacement de la note elle-même), aucun lien ne peut changer.
+          const haystack = source.normalize('NFC').toLowerCase();
+          if (!movedItself && !haystack.includes(oldStem) && !haystack.includes(encodeURI(oldStem).toLowerCase())) continue;
+          const result = kind === 'canvas' ? rewriteCanvasLinks(source, ctx) : rewriteNoteLinks(source, before, ctx);
+          if (result.count === 0 || result.content === source) continue;
+          if (isActive) {
+            contentRef.current = result.content;
+            setContent(result.content);
+          }
+          await vault.writeNote(after, result.content);
+          total.links += result.count;
+          total.files += 1;
+        } catch (error) {
+          // Un fichier illisible n'empêche pas les suivants.
+          console.error(`[vault] liens non mis à jour dans « ${after} » :`, error);
+        }
+      }
+      if (total.links > 0) console.info(`[vault] ${total.links} lien(s) mis à jour dans ${total.files} fichier(s)`);
+      return total;
+    },
+    [vault],
+  );
+
   // Suites communes d'un renommage réussi : onglets, note active, favoris,
-  // conversion de format, arbre (et donc index de recherche).
+  // conversion de format, liens internes, arbre (et donc index de recherche).
   const applyRenameResult = useCallback(
     async (oldRelPath: string, result: { relPath: string; name: string }) => {
       updateOpenTabsAfterPathChange(oldRelPath, result.relPath);
@@ -1228,9 +1286,10 @@ export function NotesScreen({
         // format, seule la conversion a échoué.
         console.error('[vault] échec de la conversion de format :', error);
       }
+      await updateLinksAfterRename(oldRelPath, result.relPath);
       await refreshTree();
     },
-    [updateOpenTabsAfterPathChange, remapFavoritesAfterRename, convertRenamedNote, refreshTree],
+    [updateOpenTabsAfterPathChange, remapFavoritesAfterRename, convertRenamedNote, updateLinksAfterRename, refreshTree],
   );
 
   const submitRename = useCallback(async () => {
@@ -1292,12 +1351,13 @@ export function NotesScreen({
           }
           return current;
         });
+        await updateLinksAfterRename(node.relPath, result.relPath);
         await refreshTree();
       } catch (error) {
         console.error('[vault] échec du déplacement :', error);
       }
     },
-    [vault, refreshTree, updateOpenTabsAfterPathChange],
+    [vault, refreshTree, updateOpenTabsAfterPathChange, updateLinksAfterRename],
   );
 
   const submitMove = useCallback(
@@ -2250,9 +2310,13 @@ export function NotesScreen({
       if (!vault) return;
       const relPaths = [...selectedRelPaths];
       setBulkMoveOpen(false);
+      let knownFiles = flattenNotes(treeRef.current).map((n) => n.relPath);
       for (const relPath of relPaths) {
         try {
           const result = await vault.move(relPath, destinationRelPath);
+          const isFolder = findNodeByPath(treeRef.current, relPath)?.type === 'folder';
+          await updateLinksAfterRename(relPath, result.relPath, knownFiles);
+          knownFiles = knownFiles.map((p) => renamedPath(p, { from: relPath, to: result.relPath, isFolder }) ?? p);
           updateOpenTabsAfterPathChange(relPath, result.relPath);
           setActiveNote((current) => {
             if (!current) return current;
@@ -2272,7 +2336,7 @@ export function NotesScreen({
       setSelectedRelPaths(new Set());
       await refreshTree();
     },
-    [vault, selectedRelPaths, refreshTree, updateOpenTabsAfterPathChange],
+    [vault, selectedRelPaths, refreshTree, updateOpenTabsAfterPathChange, updateLinksAfterRename],
   );
 
   // "Supprimer" de la barre d'actions groupées — boucle sur `vault.delete`
