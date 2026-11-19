@@ -4,10 +4,11 @@ import CodeMirror, { EditorView, type ReactCodeMirrorRef } from '@uiw/react-code
 import { markdown } from '@codemirror/lang-markdown';
 import { autocompletion } from '@codemirror/autocomplete';
 import { search as searchExtension, searchKeymap } from '@codemirror/search';
-import { ViewPlugin, keymap } from '@codemirror/view';
+import { keymap } from '@codemirror/view';
 import { Prec } from '@codemirror/state';
 
 import { createLivePreviewExtension } from '../../lib/editor/mdxLivePreview';
+import { enableOsEmojiInsertion } from '../../lib/editor/osEmojiInsertion';
 import { occurrenceCompletionSource } from '../../lib/editor/occurrenceAutocomplete';
 import { wikilinkCompletionSource } from '../../lib/editor/wikilinkAutocomplete';
 import { editorHighlightExtensions } from '../../lib/editor/codemirrorHighlight';
@@ -46,26 +47,11 @@ import type { Theme } from '../../theme';
 
 //////// 1. Plugins exportés (emoji, piles de polices) /////////////////////
 
-// Panneau emoji Windows (Win+.) : avec `autocorrect="off"`/`autocapitalize=
-// "off"` sur le champ éditable, Chromium REFUSE d'insérer la sélection du
-// panneau (bug documenté côté Chromium : le panneau s'ouvre, l'emoji
-// n'apparaît jamais). CodeMirror pose exactement ces attributs sur son
-// champ à la création de la view — on les retire ici. CodeMirror s'en
-// sert aussi pour deux contournements d'autocorrection iOS/Enter : sans
-// effet sur Windows (l'autocorrect système n'y existe pas), d'où un
-// retrait inconditionnel. Le plugin repasse à chaque création de view
-// (remontage du composant), donc le strip reste en place.
-// EXPORTÉ : réutilisé tel quel par CodeEditor.tsx (le bug Chromium ne
-// connaît pas le type de fichier).
-export const enableOsEmojiInsertion = ViewPlugin.fromClass(
-  class {
-    constructor(view: EditorView) {
-      view.contentDOM.removeAttribute('autocorrect');
-      view.contentDOM.removeAttribute('autocapitalize');
-      view.contentDOM.removeAttribute('writingsuggestions');
-    }
-  },
-);
+// Panneau emoji Windows (Win+.) : `autocorrect="on"` sur la zone éditable
+// (voir lib/editor/osEmojiInsertion.ts — l'ancien ViewPlugin qui retirait
+// l'attribut ne s'appliquait jamais). RÉEXPORTÉ ici : CodeEditor.tsx
+// l'importe depuis ce module.
+export { enableOsEmojiInsertion };
 
 // Piles de police web-safe pour Paramètres → Éditeur → Police d'écriture.
 // 'system' garde le comportement d'origine ('inherit', hérite de la police
