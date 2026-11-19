@@ -26,6 +26,8 @@ import {
 import { applyPathChange, isPathAffected, mergeRestoredOpenTabs } from '../../lib/notes/openTabs';
 import { convertNoteFormat, formatConversionBetween, willConvertFormat } from '../../lib/notes/renameTarget';
 import { linkRewriteKind, renamedPath, rewriteCanvasLinks, rewriteNoteLinks } from '../../lib/notes/linkRewrite';
+import { notify } from '../../lib/notify/notify';
+import { linksUpdatedMessage } from '../../lib/notify/notifyCore';
 import { noteTitlePlacement } from '../../lib/notes/noteTitle';
 import type { FormattingResult, Selection } from '../../lib/editor/mdxFormatting';
 import { NOTES_TOOLBAR_ACTIONS, type ToolbarAction } from '../../lib/editor/notesToolbarActions';
@@ -416,6 +418,19 @@ export function NotesScreen({
   useEffect(() => {
     contentRef.current = content;
   }, [content]);
+
+  // Bulles de sauvegarde (lib/notify) : succès DISCRET — au plus une toutes
+  // les 60 s, désactivable (Paramètres → Notifications) — ; échec toujours
+  // signalé, et plus longtemps.
+  const notifySaveSuccess = preferences.notifySaveSuccess;
+  useEffect(() => {
+    if (status === 'saved' && notifySaveSuccess) {
+      notify({ type: 'success', message: 'Note enregistrée', key: 'save', duration: 1800, throttleMs: 60_000 });
+    } else if (status === 'error') {
+      const name = activeNoteRef.current?.name;
+      notify({ type: 'error', key: 'save-error', message: name ? `Échec de la sauvegarde de « ${name} »` : 'Échec de la sauvegarde' });
+    }
+  }, [status, notifySaveSuccess]);
 
   // Matérialise les dates système `created`/`modified` DANS le frontmatter à
   // chaque sauvegarde — les lignes « Créé/Modifié » des vues sont de vraies
@@ -1250,7 +1265,12 @@ export function NotesScreen({
           console.error(`[vault] liens non mis à jour dans « ${after} » :`, error);
         }
       }
-      if (total.links > 0) console.info(`[vault] ${total.links} lien(s) mis à jour dans ${total.files} fichier(s)`);
+      if (total.links > 0) {
+        console.info(`[vault] ${total.links} lien(s) mis à jour dans ${total.files} fichier(s)`);
+        // Même clé pour un lot (déplacement groupé) : une seule bulle,
+        // remplacée au fil des éléments.
+        if (!knownFiles) notify({ type: 'success', key: 'links-updated', message: linksUpdatedMessage(total.links, total.files) });
+      }
       return total;
     },
     [vault],
@@ -2311,11 +2331,14 @@ export function NotesScreen({
       const relPaths = [...selectedRelPaths];
       setBulkMoveOpen(false);
       let knownFiles = flattenNotes(treeRef.current).map((n) => n.relPath);
+      const bulkTotal = { links: 0, files: 0 };
       for (const relPath of relPaths) {
         try {
           const result = await vault.move(relPath, destinationRelPath);
           const isFolder = findNodeByPath(treeRef.current, relPath)?.type === 'folder';
-          await updateLinksAfterRename(relPath, result.relPath, knownFiles);
+          const linkTotal = await updateLinksAfterRename(relPath, result.relPath, knownFiles);
+          bulkTotal.links += linkTotal.links;
+          bulkTotal.files += linkTotal.files;
           knownFiles = knownFiles.map((p) => renamedPath(p, { from: relPath, to: result.relPath, isFolder }) ?? p);
           updateOpenTabsAfterPathChange(relPath, result.relPath);
           setActiveNote((current) => {
@@ -2334,6 +2357,9 @@ export function NotesScreen({
         }
       }
       setSelectedRelPaths(new Set());
+      if (bulkTotal.links > 0) {
+        notify({ type: 'success', key: 'links-updated', message: linksUpdatedMessage(bulkTotal.links, bulkTotal.files) });
+      }
       await refreshTree();
     },
     [vault, selectedRelPaths, refreshTree, updateOpenTabsAfterPathChange, updateLinksAfterRename],

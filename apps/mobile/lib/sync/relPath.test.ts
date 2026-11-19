@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { isTrashRelPath, normalizeRelPath, selectRemoteRows } from './relPath';
+import { isTrashRelPath, isUserFileRelPath, normalizeRelPath, selectRemoteRows } from './relPath';
 
 describe('normalizeRelPath', () => {
   it.each([
@@ -44,5 +44,16 @@ describe('selectRemoteRows', () => {
     const { rows, trash } = selectRemoteRows([row('.trash/x.md'), row('.trash\\y.md'), row('z.md')]);
     expect(rows.map((r) => r.relPath)).toEqual(['z.md']);
     expect(trash).toBe(2);
+  });
+});
+
+describe('isUserFileRelPath', () => {
+  it('fichiers visibles oui ; corbeille, métadonnées et dossiers cachés non', () => {
+    expect(isUserFileRelPath('Notes/a.md')).toBe(true);
+    expect(isUserFileRelPath('Été\\Noël.md')).toBe(true);
+    expect(isUserFileRelPath('.trash/a.md')).toBe(false);
+    expect(isUserFileRelPath('.123ecriture/tasks.json')).toBe(false);
+    expect(isUserFileRelPath('Notes/.obsidian/x.json')).toBe(false);
+    expect(isUserFileRelPath('')).toBe(false);
   });
 });

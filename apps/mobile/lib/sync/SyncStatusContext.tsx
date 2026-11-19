@@ -10,6 +10,8 @@ import { derivePause, deriveWarning, lastLoggedPause, pauseTransitionEntries, ty
 import type { SyncJournalEntry } from './journal';
 import { formatSyncProgress, getSyncProgress, subscribeSyncProgress } from './syncProgress';
 import type { SyncSummary } from './syncTypes';
+import { notify } from '../notify/notify';
+import { receivedFilesMessage } from '../notify/notifyCore';
 import { supabase } from './supabaseClient';
 import { useVaults } from './VaultsContext';
 import { usePreferences } from '../../preferences/PreferencesContext';
@@ -315,6 +317,12 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
       // rapatrie des fichiers a pu la mettre a jour — le theme suit sans
       // attendre un changement de coffre. Les PRÉFÉRENCES PAR COFFRE aussi
       // (v0.4.65 : .123ecriture/preferences.json).
+      // Bulle « N nouveaux fichiers synchronisés » (même clé : une seule
+      // bulle, mise à jour si un autre cycle en apporte pendant qu'elle est
+      // affichée).
+      if ((summary.received ?? 0) > 0) {
+        notify({ type: 'info', key: 'sync-received', message: receivedFilesMessage(summary.received ?? 0) });
+      }
       if (summary.pulled > 0) {
         reloadVaultAppearance();
         reloadVaultPreferences();
@@ -339,6 +347,9 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
       if (cycleGenerationRef.current !== generation) return;
       console.error('[sync] échec de la synchronisation :', error);
       const message = errorMessage(error);
+      // Au plus une bulle toutes les 5 min : un réseau coupé ferait sinon
+      // échouer chaque cycle (le détail reste dans Paramètres → Synchro).
+      notify({ type: 'error', key: 'sync-error', message: `Synchro : ${message}`, throttleMs: 5 * 60_000 });
       setStatus('error');
       setLastSummary(null);
       setLastError(message);

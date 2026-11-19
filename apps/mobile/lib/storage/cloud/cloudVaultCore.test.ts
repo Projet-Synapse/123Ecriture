@@ -198,6 +198,28 @@ describe('coffre cloud Android — même fichier sous deux graphies Unicode (NFC
   });
 });
 
+describe('coffre cloud Android — nouveaux fichiers reçus (bulle)', () => {
+  it('compte les fichiers apparus depuis le catalogue précédent, hors dossiers cachés et hors premier catalogue', async () => {
+    server.seed('a.md', 'A');
+    const { adapter, cloudSync } = make();
+    await adapter.listTree();
+    expect((await cloudSync.flush()).received).toBe(0);
+    server.seed('Notes/b.md', 'B');
+    server.seed('c.canvas', '{}');
+    server.seed('.123ecriture/tasks.json', '[]');
+    server.seed('.trash/x.md', 'X');
+    expect((await cloudSync.flush()).received).toBe(2);
+    expect((await cloudSync.flush()).received).toBe(0);
+  });
+
+  it('mes propres envois ne comptent pas comme reçus', async () => {
+    const { adapter, cloudSync } = make();
+    await adapter.listTree();
+    await adapter.writeNote('moi.md', 'M');
+    expect((await cloudSync.flush()).received).toBe(0);
+  });
+});
+
 describe('coffre cloud Android — écriture', () => {
   it('save = cache + file ; flush = upload adressé par contenu puis push_file avec la version de base', async () => {
     server.seed('a.md', 'v1');

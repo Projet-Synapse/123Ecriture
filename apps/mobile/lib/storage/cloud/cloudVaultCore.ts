@@ -146,6 +146,12 @@ export const SYNCED_META_FILES_CLOUD = [
   '.123ecriture/preferences.json',
 ];
 
+// Chemin visible dans l'explorateur (aucun segment caché : ni
+// `.123ecriture/`, ni `.trash/`).
+function isVisibleUserPath(relPath: string): boolean {
+  return relPath.length > 0 && !relPath.split('/').some((segment) => segment.startsWith('.'));
+}
+
 export function normalizeCloudRelPath(relPath: string): string {
   return relPath
     .replace(/\\/g, '/')
@@ -204,6 +210,9 @@ export type CloudCycleResult = {
   pending: number;
   errors: string[];
   offline: boolean;
+  // Fichiers apparus dans le catalogue cloud depuis le cycle précédent
+  // (nouveaux venus d'un autre appareil, hors dossiers cachés).
+  received?: number;
 };
 
 export function createCloudVault(deps: CloudVaultDeps) {
@@ -441,7 +450,9 @@ export function createCloudVault(deps: CloudVaultDeps) {
 
   //////// Rejeu de la file vers le cloud ////////
 
-  async function refreshManifest(s: VaultCacheState): Promise<void> {
+  async function refreshManifest(s: VaultCacheState): Promise<number> {
+    const previous = s.manifest;
+    const hadManifest = Boolean(s.manifestAt);
     const rows = await deps.api.listFiles(s.vaultId);
     const manifest: Record<string, RemoteRow> = {};
     for (const r of rows) {
@@ -457,6 +468,11 @@ export function createCloudVault(deps: CloudVaultDeps) {
     }
     s.manifest = manifest;
     s.manifestAt = new Date(now()).toISOString();
+    // Premier catalogue : rien n'est « nouveau » (sinon tout le coffre).
+    if (!hadManifest) return 0;
+    return Object.values(manifest).filter(
+      (row) => !row.deleted && (!previous[row.relPath] || previous[row.relPath].deleted) && isVisibleUserPath(row.relPath),
+    ).length;
   }
 
   function applyResult(s: VaultCacheState, relPath: string, r: LockResult, patch?: Partial<RemoteRow>): void {
@@ -596,7 +612,7 @@ export function createCloudVault(deps: CloudVaultDeps) {
     }
     if (!result.offline) {
       try {
-        await refreshManifest(s);
+        result.received = await refreshManifest(s);
         await save(s);
       } catch (error) {
         if (isNetworkError(error)) result.offline = true;

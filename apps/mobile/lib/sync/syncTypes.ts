@@ -26,6 +26,10 @@ export type SyncSummary = {
   // v0.4.89 (la demande de Catelina) : les fichiers modifiés à l'extérieur
   // et reçus — annoncés « modification », jamais « reçu ».
   modifications: number;
+  // Fichiers NOUVEAUX reçus d'un autre appareil (absents ici avant le
+  // cycle, hors métadonnées .123ecriture/ et corbeille) — bulle « N
+  // nouveaux fichiers synchronisés ». Optionnel : 0 si absent.
+  received?: number;
   conflicts: number;
   errors: string[];
   // Fichiers différés (« en cours d'édition ») : instant (ms) où le

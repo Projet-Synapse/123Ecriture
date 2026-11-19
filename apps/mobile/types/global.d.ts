@@ -601,6 +601,8 @@ declare global {
     editorDefaultMode: EditorViewMode;
     editorCloseBrackets: boolean;
     editorInlineTitle: boolean;
+    // Bulle « Note enregistrée » (discrète, lib/notify) — Paramètres → Notifications.
+    notifySaveSuccess: boolean;
     // Largeur/repli des 3 barres latérales redimensionnables au curseur
     // (voir lib/useResizablePanel.ts, components/ResizeHandle.tsx) : la
     // nav générale (AppShell.tsx), l'explorateur de fichiers et le panneau
