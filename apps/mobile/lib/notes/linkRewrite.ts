@@ -24,15 +24,22 @@
 //   • Blocs de code (``` / ~~~) et code en ligne : jamais modifiés.
 //   • Dossier renommé : les liens par chemin vers des fichiers absents de
 //     l'arbre (images, PDF…) suivent aussi, par préfixe de chemin.
+//   • Propriétés (frontmatter) : liens réécrits ligne par ligne, format YAML
+//     conservé (guillemets, listes, commentaires) ; valeurs des propriétés
+//     de type « Chemin » suivies aussi (voir 3 bis).
 //
 // SOMMAIRE :
 //   1. Renommages et chemins
 //   2. Zones de code à ignorer
-//   3. Réécriture d'une note — rewriteNoteLinks
+//   3. Réécriture d'un lien (wikilink, markdown)
+//   3 bis. Propriétés (frontmatter YAML)
+//   3 ter. rewriteNoteLinks — corps + propriétés
 //   4. Réécriture d'un canvas — rewriteCanvasLinks
 //
 //////////////////////////////////////////////////////////////////////////////
 
+import { load } from 'js-yaml';
+import { splitFrontmatter } from '../properties/frontmatter';
 import { createWikilinkResolver, type LinkableNote } from './wikilinkResolution';
 
 //////// 1. Renommages et chemins ///////////////////////////////////////////
@@ -170,15 +177,20 @@ export function codeRanges(text: string): [number, number][] {
 
 const inRanges = (ranges: [number, number][], index: number) => ranges.some(([s, e]) => index >= s && index < e);
 
-//////// 3. Réécriture d'une note — rewriteNoteLinks ///////////////////////
+//////// 3. Réécriture d'un lien (wikilink, markdown) ////////////////////////
 
 type Target = { oldPath: string; newPath: string; inTree: boolean };
 
-export function rewriteNoteLinks(
-  content: string,
-  sourceBefore: string,
-  ctx: LinkRenameContext,
-): LinkRewriteResult {
+// Réécriture d'UN lien : texte de remplacement, ou null s'il ne change pas.
+type LinkRewriter = {
+  wiki: (bang: string, inner: string) => string | null;
+  markdown: (head: string, url: string, tail: string) => string | null;
+};
+
+const WIKILINK_PATTERN = /(!?)\[\[([^\[\]\n]+?)\]\]/g;
+const MARKDOWN_LINK_PATTERN = /(!?\[[^\]\n]*\]\()(<[^>\n]+>|[^)\s]+)((?:\s+"[^"\n]*")?\))/g;
+
+function createLinkRewriter(sourceBefore: string, ctx: LinkRenameContext): LinkRewriter {
   const sourceAfter = renamedPath(sourceBefore, ctx) ?? sourceBefore;
   const sourceMoved = nfcLower(parentOf(sourceAfter)) !== nfcLower(parentOf(sourceBefore));
   const filesAfter = ctx.filesBefore.map((p) => renamedPath(p, ctx) ?? p);
@@ -209,12 +221,8 @@ export function rewriteNoteLinks(
     return null;
   };
 
-  const ranges = codeRanges(content);
-  let count = 0;
-
   // --- Wikilinks [[…]] / ![[…]]
-  let out = content.replace(/(!?)\[\[([^\[\]\n]+?)\]\]/g, (whole: string, bang: string, inner: string, index: number) => {
-    if (inRanges(ranges, index)) return whole;
+  const wiki = (bang: string, inner: string): string | null => {
     // Séparateur d'alias : `|`, ou `\|` dans un tableau.
     const pipe = inner.indexOf('|');
     let targetPart = pipe === -1 ? inner : inner.slice(0, pipe);
@@ -227,7 +235,7 @@ export function rewriteNoteLinks(
     const rawPath = hash === -1 ? targetPart : targetPart.slice(0, hash);
     const anchor = hash === -1 ? '' : targetPart.slice(hash);
     const path = rawPath.trim().replace(/\\/g, '/');
-    if (!path) return whole;
+    if (!path) return null;
     const style = path.startsWith('./') || path.startsWith('../') ? 'relative' : path.includes('/') ? 'path' : 'name';
 
     let target: Target | null = null;
@@ -239,9 +247,9 @@ export function rewriteNoteLinks(
     } else if (style !== 'name') {
       target = targetOfPath(path, style === 'path');
     }
-    if (!target) return whole;
+    if (!target) return null;
     const targetMoved = nfcLower(target.newPath) !== nfcLower(target.oldPath);
-    if (!targetMoved && !(sourceMoved && style === 'relative')) return whole;
+    if (!targetMoved && !(sourceMoved && style === 'relative')) return null;
 
     const writtenExt = extOf(path);
     const keepExt = writtenExt !== '' && (nfcLower(writtenExt) === nfcLower(extOf(target.oldPath)) || isNoteExt(writtenExt));
@@ -262,56 +270,251 @@ export function rewriteNoteLinks(
     }
     // Dernier recours : chemin complet AVEC extension (jamais ambigu).
     if (target.inTree && !resolvesTo(next, target.newPath)) next = target.newPath;
-    if (next === path) return whole;
-    count += 1;
+    if (next === path) return null;
     const leading = rawPath.slice(0, rawPath.length - rawPath.trimStart().length);
     return `${bang}[[${leading}${next}${anchor}${rest}]]`;
-  });
+  };
 
   // --- Liens markdown [texte](cible) / ![alt](cible)
-  const mdRanges = codeRanges(out);
-  out = out.replace(
-    /(!?\[[^\]\n]*\]\()(<[^>\n]+>|[^)\s]+)((?:\s+"[^"\n]*")?\))/g,
-    (whole: string, head: string, url: string, tail: string, index: number) => {
-      if (inRanges(mdRanges, index)) return whole;
-      const angled = url.startsWith('<');
-      const rawUrl = angled ? url.slice(1, -1) : url;
-      if (/^[a-z][a-z0-9+.-]*:/i.test(rawUrl) || rawUrl.startsWith('#') || rawUrl.startsWith('/')) return whole;
-      const hash = rawUrl.indexOf('#');
-      const pathPart = hash === -1 ? rawUrl : rawUrl.slice(0, hash);
-      const anchor = hash === -1 ? '' : rawUrl.slice(hash);
-      let decoded = pathPart;
-      try {
-        decoded = decodeURIComponent(pathPart);
-      } catch {
-        // `%` littéral : gardé tel quel
-      }
-      if (!decoded) return whole;
-      const explicitRelative = decoded.startsWith('./') || decoded.startsWith('../');
-      const target = targetOfPath(decoded, !explicitRelative);
-      if (!target) return whole;
-      const targetMoved = nfcLower(target.newPath) !== nfcLower(target.oldPath);
-      // Était-il écrit relativement au dossier de la note ?
-      const relCandidate = normalizeSegments(parentOf(sourceBefore) ? `${parentOf(sourceBefore)}/${decoded}` : decoded);
-      const wasRelative = relCandidate !== null && nfcLower(relCandidate) === nfcLower(target.oldPath);
-      if (!targetMoved && !(sourceMoved && wasRelative)) return whole;
-      let nextPath = wasRelative ? relativePath(parentOf(sourceAfter), target.newPath) : target.newPath;
-      if (decoded.startsWith('./') && !nextPath.startsWith('..')) nextPath = `./${nextPath}`;
-      if (!extOf(decoded) && isNoteExt(extOf(nextPath))) nextPath = stripExt(nextPath);
-      let encoded: string;
-      if (angled) encoded = nextPath;
-      else if (pathPart !== decoded) {
-         
-        encoded = /[^\x00-\x7f]/.test(pathPart) ? nextPath.replace(/ /g, '%20') : encodeURI(nextPath);
-      } else encoded = nextPath.replace(/ /g, '%20');
-      const nextUrl = angled ? `<${encoded}${anchor}>` : `${encoded}${anchor}`;
-      if (nextUrl === url) return whole;
-      count += 1;
-      return `${head}${nextUrl}${tail}`;
-    },
-  );
+  const markdown = (head: string, url: string, tail: string): string | null => {
+    const angled = url.startsWith('<');
+    const rawUrl = angled ? url.slice(1, -1) : url;
+    if (/^[a-z][a-z0-9+.-]*:/i.test(rawUrl) || rawUrl.startsWith('#') || rawUrl.startsWith('/')) return null;
+    const hash = rawUrl.indexOf('#');
+    const pathPart = hash === -1 ? rawUrl : rawUrl.slice(0, hash);
+    const anchor = hash === -1 ? '' : rawUrl.slice(hash);
+    let decoded = pathPart;
+    try {
+      decoded = decodeURIComponent(pathPart);
+    } catch {
+      // `%` littéral : gardé tel quel
+    }
+    if (!decoded) return null;
+    const explicitRelative = decoded.startsWith('./') || decoded.startsWith('../');
+    const target = targetOfPath(decoded, !explicitRelative);
+    if (!target) return null;
+    const targetMoved = nfcLower(target.newPath) !== nfcLower(target.oldPath);
+    // Était-il écrit relativement au dossier de la note ?
+    const relCandidate = normalizeSegments(parentOf(sourceBefore) ? `${parentOf(sourceBefore)}/${decoded}` : decoded);
+    const wasRelative = relCandidate !== null && nfcLower(relCandidate) === nfcLower(target.oldPath);
+    if (!targetMoved && !(sourceMoved && wasRelative)) return null;
+    let nextPath = wasRelative ? relativePath(parentOf(sourceAfter), target.newPath) : target.newPath;
+    if (decoded.startsWith('./') && !nextPath.startsWith('..')) nextPath = `./${nextPath}`;
+    if (!extOf(decoded) && isNoteExt(extOf(nextPath))) nextPath = stripExt(nextPath);
+    let encoded: string;
+    if (angled) encoded = nextPath;
+    else if (pathPart !== decoded) {
+       
+      encoded = /[^\x00-\x7f]/.test(pathPart) ? nextPath.replace(/ /g, '%20') : encodeURI(nextPath);
+    } else encoded = nextPath.replace(/ /g, '%20');
+    const nextUrl = angled ? `<${encoded}${anchor}>` : `${encoded}${anchor}`;
+    if (nextUrl === url) return null;
+    return `${head}${nextUrl}${tail}`;
+  };
 
+  return { wiki, markdown };
+}
+
+// Applique les réécritures à un texte. `skipCode` : blocs et code en ligne
+// ignorés (corps de note) ; pas dans une valeur de propriété.
+function rewriteText(text: string, rw: LinkRewriter, skipCode: boolean): LinkRewriteResult {
+  let count = 0;
+  const ranges = skipCode ? codeRanges(text) : [];
+  let out = text.replace(WIKILINK_PATTERN, (whole: string, bang: string, inner: string, index: number) => {
+    if (inRanges(ranges, index)) return whole;
+    const next = rw.wiki(bang, inner);
+    if (next === null) return whole;
+    count += 1;
+    return next;
+  });
+  const mdRanges = skipCode ? codeRanges(out) : [];
+  out = out.replace(MARKDOWN_LINK_PATTERN, (whole: string, head: string, url: string, tail: string, index: number) => {
+    if (inRanges(mdRanges, index)) return whole;
+    const next = rw.markdown(head, url, tail);
+    if (next === null) return whole;
+    count += 1;
+    return next;
+  });
   return { content: out, count };
+}
+
+//////// 3 bis. Propriétés (frontmatter YAML) ///////////////////////////////
+//
+// Le bloc YAML est réécrit LIGNE PAR LIGNE, jamais re-sérialisé : ordre,
+// commentaires, guillemets, indentation et listes restent tels quels.
+//   • `lien: "[[Ancien]]"`, `'[[Ancien|alias]]'`, listes `- "[[A]]"` ou
+//     `["[[A]]", "[[B]]"]` : la chaîne entre guillemets est DÉCODÉE (`''`,
+//     `\"`), réécrite, puis ré-encodée dans le MÊME style de guillemets
+//     (un nom avec apostrophe reste du YAML valide).
+//   • Propriété de type « Chemin » (schéma global) : la valeur est un
+//     chemin du coffre (`Projets/Ancien.md`, ou un dossier), remplacée par
+//     le nouveau chemin — guillemets ajoutés seulement si le YAML l'exige.
+
+export type NoteLinkRewriteOptions = {
+  // Noms des propriétés de type « Chemin » (casse ignorée).
+  pathProperties?: string[];
+};
+
+export type NoteLinkRewriteResult = LinkRewriteResult & {
+  // Nombre de propriétés (clés du frontmatter) dont la valeur a changé.
+  properties: number;
+};
+
+// Chaînes entre guillemets d'une ligne YAML : [début, fin[ guillemets compris.
+function quotedSpans(line: string, from: number): [number, number][] {
+  const spans: [number, number][] = [];
+  let i = from;
+  while (i < line.length) {
+    const ch = line[i];
+    const atTokenStart = i === 0 || /[\s:[,{-]/.test(line[i - 1]);
+    if ((ch === "'" || ch === '"') && atTokenStart) {
+      let j = i + 1;
+      while (j < line.length) {
+        if (ch === "'" && line[j] === "'") {
+          if (line[j + 1] === "'") j += 2;
+          else break;
+        } else if (ch === '"' && line[j] === '\\') j += 2;
+        else if (ch === '"' && line[j] === '"') break;
+        else j += 1;
+      }
+      if (j >= line.length) break; // chaîne sur plusieurs lignes : laissée telle quelle
+      spans.push([i, j + 1]);
+      i = j + 1;
+    } else i += 1;
+  }
+  return spans;
+}
+
+function decodeQuoted(raw: string): string | null {
+  if (raw.startsWith("'")) return raw.slice(1, -1).replace(/''/g, "'");
+  try {
+    const value: unknown = load(raw);
+    return typeof value === 'string' ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function encodeQuoted(value: string, quote: string): string {
+  if (quote === "'") return `'${value.replace(/'/g, "''")}'`;
+  return JSON.stringify(value); // JSON ⊂ YAML entre guillemets doubles
+}
+
+// Une valeur peut-elle rester écrite sans guillemets ?
+function plainScalarOk(value: string): boolean {
+  if (!value || value !== value.trim() || /[\r\n]/.test(value)) return false;
+  try {
+    const parsed = load(`k: ${value}`) as { k?: unknown } | null;
+    return parsed?.k === value;
+  } catch {
+    return false;
+  }
+}
+
+function rewriteFrontmatterBlock(
+  block: string,
+  rw: LinkRewriter,
+  ctx: LinkRenameContext,
+  pathProperties: Set<string>,
+): NoteLinkRewriteResult {
+  let key: string | null = null;
+  let count = 0;
+  const changedKeys = new Set<string>();
+
+  const rewritePathValue = (value: string): string | null => {
+    const trimmed = value.trim();
+    if (!trimmed || trimmed.includes('[[')) return null;
+    const moved = renamedPath(trimmed.replace(/^\.\//, ''), ctx);
+    if (!moved || moved === trimmed) return null;
+    return value.replace(trimmed, () => moved);
+  };
+
+  const lines = block.split('\n').map((line) => {
+    const cr = line.endsWith('\r') ? '\r' : '';
+    const text = cr ? line.slice(0, -1) : line;
+    const keyMatch = /^([^\s#'"\-][^:]*?|"[^"\n]*"|'[^'\n]*')[ \t]*:(?=\s|$)/.exec(text);
+    let valueStart: number;
+    if (keyMatch) {
+      key = keyMatch[1].replace(/^(['"])(.*)\1$/, '$2').trim().toLowerCase();
+      valueStart = keyMatch[0].length;
+    } else if (/^[ \t]/.test(text) || /^-(\s|$)/.test(text)) {
+      valueStart = 0; // suite de la propriété précédente (liste, objet)
+    } else {
+      key = null;
+      return line;
+    }
+    if (key === null) return line;
+    const isPath = pathProperties.has(key);
+    const head = text.slice(0, valueStart);
+    const value = text.slice(valueStart);
+    const spans = quotedSpans(value, 0);
+    let lineCount = 0;
+    let out = '';
+
+    // Valeur « Chemin » écrite sans guillemets : `cle: dossier/Note.md`
+    // ou `  - dossier/Note.md`.
+    const plain = isPath && spans.length === 0 ? /^(\s*(?:-\s+)?)([^'"[{|>#\s].*?)(\s+#.*)?\s*$/.exec(value) : null;
+    if (plain) {
+      const next = rewritePathValue(plain[2]);
+      if (next !== null) {
+        out = `${plain[1]}${plainScalarOk(next) ? next : JSON.stringify(next)}${plain[3] ?? ''}`;
+        lineCount = 1;
+      } else out = value;
+    } else {
+      let cursor = 0;
+      const rawPart = (part: string) => {
+        const result = rewriteText(part, rw, false);
+        lineCount += result.count;
+        return result.content;
+      };
+      for (const [start, end] of spans) {
+        out += rawPart(value.slice(cursor, start));
+        const raw = value.slice(start, end);
+        const decoded = decodeQuoted(raw);
+        if (decoded === null) out += raw;
+        else {
+          const result = rewriteText(decoded, rw, false);
+          let next = result.content;
+          let n = result.count;
+          if (n === 0 && isPath) {
+            const moved = rewritePathValue(decoded);
+            if (moved !== null) {
+              next = moved;
+              n = 1;
+            }
+          }
+          out += n > 0 ? encodeQuoted(next, raw[0]) : raw;
+          lineCount += n;
+        }
+        cursor = end;
+      }
+      out += rawPart(value.slice(cursor));
+    }
+    if (lineCount === 0) return line;
+    count += lineCount;
+    changedKeys.add(key);
+    return `${head}${out}${cr}`;
+  });
+  return { content: lines.join('\n'), count, properties: changedKeys.size };
+}
+
+//////// 3 ter. rewriteNoteLinks — corps + propriétés ///////////////////////
+
+export function rewriteNoteLinks(
+  content: string,
+  sourceBefore: string,
+  ctx: LinkRenameContext,
+  options: NoteLinkRewriteOptions = {},
+): NoteLinkRewriteResult {
+  const rw = createLinkRewriter(sourceBefore, ctx);
+  // Frontmatter invalide (YAML cassé) : tout est traité comme du corps.
+  const { block } = splitFrontmatter(content);
+  const pathProperties = new Set((options.pathProperties ?? []).map((name) => name.toLowerCase()));
+  const front = block
+    ? rewriteFrontmatterBlock(block, rw, ctx, pathProperties)
+    : { content: '', count: 0, properties: 0 };
+  const body = rewriteText(content.slice(block.length), rw, true);
+  return { content: front.content + body.content, count: front.count + body.count, properties: front.properties };
 }
 
 //////// 4. Réécriture d'un canvas — rewriteCanvasLinks ///////////////////

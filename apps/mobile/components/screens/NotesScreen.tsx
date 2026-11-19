@@ -205,6 +205,18 @@ function explorerThemeOf(theme: Theme & AppearanceTokens): Theme & AppearanceTok
   return cached;
 }
 
+// Noms des propriétés de type « Chemin » (schéma global) : leurs valeurs
+// suivent un renommage comme les liens. Sans schéma lisible : aucune.
+async function loadPathPropertyNames(): Promise<string[]> {
+  try {
+    const definitions = (await window.properties?.list()) ?? [];
+    return definitions.filter((def) => def.type === 'path').map((def) => def.name);
+  } catch (error) {
+    console.warn('[vault] schéma des propriétés illisible :', error);
+    return [];
+  }
+}
+
 export function NotesScreen({
   pendingOpenRelPath,
   onOpenedPendingNote,
@@ -1228,9 +1240,12 @@ export function NotesScreen({
       // Lot (déplacement groupé) : liste tenue à jour par l'appelant entre
       // deux déplacements, l'arbre n'étant rafraîchi qu'à la fin.
       knownFiles?: string[],
-    ): Promise<{ links: number; files: number }> => {
-      const total = { links: 0, files: 0 };
+      // Lot : propriétés « Chemin » lues une fois par l'appelant.
+      knownPathProperties?: string[],
+    ): Promise<{ links: number; files: number; properties: number }> => {
+      const total = { links: 0, files: 0, properties: 0 };
       if (!vault || oldRelPath === newRelPath) return total;
+      const pathProperties = knownPathProperties ?? (await loadPathPropertyNames());
       const filesBefore = knownFiles ?? flattenNotes(treeRef.current).map((n) => n.relPath);
       const isFolder = findNodeByPath(treeRef.current, oldRelPath)?.type === 'folder';
       const ctx = { filesBefore, from: oldRelPath, to: newRelPath, isFolder };
@@ -1251,7 +1266,10 @@ export function NotesScreen({
           // déplacement de la note elle-même), aucun lien ne peut changer.
           const haystack = source.normalize('NFC').toLowerCase();
           if (!movedItself && !haystack.includes(oldStem) && !haystack.includes(encodeURI(oldStem).toLowerCase())) continue;
-          const result = kind === 'canvas' ? rewriteCanvasLinks(source, ctx) : rewriteNoteLinks(source, before, ctx);
+          const result =
+            kind === 'canvas'
+              ? { ...rewriteCanvasLinks(source, ctx), properties: 0 }
+              : rewriteNoteLinks(source, before, ctx, { pathProperties });
           if (result.count === 0 || result.content === source) continue;
           if (isActive) {
             contentRef.current = result.content;
@@ -1260,6 +1278,7 @@ export function NotesScreen({
           await vault.writeNote(after, result.content);
           total.links += result.count;
           total.files += 1;
+          total.properties += result.properties;
         } catch (error) {
           // Un fichier illisible n'empêche pas les suivants.
           console.error(`[vault] liens non mis à jour dans « ${after} » :`, error);
@@ -1269,7 +1288,10 @@ export function NotesScreen({
         console.info(`[vault] ${total.links} lien(s) mis à jour dans ${total.files} fichier(s)`);
         // Même clé pour un lot (déplacement groupé) : une seule bulle,
         // remplacée au fil des éléments.
-        if (!knownFiles) notify({ type: 'success', key: 'links-updated', message: linksUpdatedMessage(total.links, total.files) });
+        if (!knownFiles) {
+          const message = linksUpdatedMessage(total.links, total.files, total.properties);
+          notify({ type: 'success', key: 'links-updated', message });
+        }
       }
       return total;
     },
@@ -2331,14 +2353,16 @@ export function NotesScreen({
       const relPaths = [...selectedRelPaths];
       setBulkMoveOpen(false);
       let knownFiles = flattenNotes(treeRef.current).map((n) => n.relPath);
-      const bulkTotal = { links: 0, files: 0 };
+      const bulkTotal = { links: 0, files: 0, properties: 0 };
+      const pathProperties = await loadPathPropertyNames();
       for (const relPath of relPaths) {
         try {
           const result = await vault.move(relPath, destinationRelPath);
           const isFolder = findNodeByPath(treeRef.current, relPath)?.type === 'folder';
-          const linkTotal = await updateLinksAfterRename(relPath, result.relPath, knownFiles);
+          const linkTotal = await updateLinksAfterRename(relPath, result.relPath, knownFiles, pathProperties);
           bulkTotal.links += linkTotal.links;
           bulkTotal.files += linkTotal.files;
+          bulkTotal.properties += linkTotal.properties;
           knownFiles = knownFiles.map((p) => renamedPath(p, { from: relPath, to: result.relPath, isFolder }) ?? p);
           updateOpenTabsAfterPathChange(relPath, result.relPath);
           setActiveNote((current) => {
@@ -2358,7 +2382,7 @@ export function NotesScreen({
       }
       setSelectedRelPaths(new Set());
       if (bulkTotal.links > 0) {
-        notify({ type: 'success', key: 'links-updated', message: linksUpdatedMessage(bulkTotal.links, bulkTotal.files) });
+        notify({ type: 'success', key: 'links-updated', message: linksUpdatedMessage(bulkTotal.links, bulkTotal.files, bulkTotal.properties) });
       }
       await refreshTree();
     },

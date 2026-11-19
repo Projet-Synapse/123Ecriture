@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { parseFrontmatter } from '../properties/frontmatter';
 import { codeRanges, linkRewriteKind, relativePath, renamedPath, rewriteCanvasLinks, rewriteNoteLinks } from './linkRewrite';
 
 const files = [
@@ -101,7 +102,114 @@ describe('rewriteNoteLinks — liens markdown', () => {
   it('aucun lien concerné : contenu identique, compteur 0', () => {
     const src = '# Titre\n[[Autre]] [a](Autre.md)';
     const r = rewriteNoteLinks(src, 'Ancien.md', fileRename('Projets/Roman.mdx', 'Projets/Saga.mdx'));
-    expect(r).toEqual({ content: src, count: 0 });
+    expect(r).toEqual({ content: src, count: 0, properties: 0 });
+  });
+});
+
+describe('rewriteNoteLinks — propriétés (frontmatter)', () => {
+  const ctx = fileRename('Ancien.md', 'Nouveau.md');
+
+  it('valeurs avec ou sans guillemets, alias, listes : format YAML conservé', () => {
+    const src = [
+      '---',
+      'lien: "[[Ancien]]"',
+      "source: '[[Ancien|la source]]'  # commentaire",
+      'brut: [[Ancien]]',
+      'voir:',
+      '  - "[[Ancien#Titre]]"',
+      '  - "[[Autre]]"',
+      'liste: ["[[Ancien]]", "[[Autre]]"]',
+      'titre: Ancien',
+      '---',
+      '',
+      'Corps : [[Ancien]]',
+    ].join('\n');
+    const r = rewriteNoteLinks(src, 'Autre.md', ctx);
+    expect(r.content).toBe(
+      [
+        '---',
+        'lien: "[[Nouveau]]"',
+        "source: '[[Nouveau|la source]]'  # commentaire",
+        'brut: [[Nouveau]]',
+        'voir:',
+        '  - "[[Nouveau#Titre]]"',
+        '  - "[[Autre]]"',
+        'liste: ["[[Nouveau]]", "[[Autre]]"]',
+        'titre: Ancien',
+        '---',
+        '',
+        'Corps : [[Nouveau]]',
+      ].join('\n'),
+    );
+    expect(r.count).toBe(6);
+    expect(r.properties).toBe(5);
+  });
+
+  it('apostrophe et guillemet dans le nouveau nom : YAML toujours valide', () => {
+    const c = fileRename('Ancien.md', 'L\'été "chaud".md');
+    const src = '---\na: \'[[Ancien]]\'\nb: "[[Ancien]]"\n---\n';
+    const r = rewriteNoteLinks(src, 'Autre.md', c);
+    expect(r.content).toBe('---\na: \'[[L\'\'été "chaud"]]\'\nb: "[[L\'été \\"chaud\\"]]"\n---\n');
+    expect(r.properties).toBe(2);
+    const linkTo = '[[L\'été "chaud"]]';
+    expect(parseFrontmatter(r.content).data).toEqual({ a: linkTo, b: linkTo });
+  });
+
+  it("ancien nom avec apostrophe dans une chaîne entre apostrophes ('')", () => {
+    const c = fileRename("L'ancien.md", 'Nouveau.md', ["L'ancien.md", 'Autre.md']);
+    const r = rewriteNoteLinks("---\nlien: '[[L''ancien]]'\n---\n", 'Autre.md', c);
+    expect(r.content).toBe("---\nlien: '[[Nouveau]]'\n---\n");
+  });
+
+  it('propriété de type Chemin : valeur nue, entre guillemets, en liste, dossier renommé', () => {
+    const src = [
+      '---',
+      'fichier: Projets/Roman.mdx',
+      "autre: 'Projets/Roman.mdx'",
+      'pieces:',
+      '  - Projets/Chapitre 1.md',
+      '  - Autre.md',
+      'texte: Projets/Roman.mdx',
+      '---',
+      'Projets/Roman.mdx',
+    ].join('\n');
+    const folder = { filesBefore: files, from: 'Projets', to: 'Écrits/Projets', isFolder: true };
+    const r = rewriteNoteLinks(src, 'Autre.md', folder, { pathProperties: ['Fichier', 'autre', 'pieces'] });
+    expect(r.content).toBe(
+      [
+        '---',
+        'fichier: Écrits/Projets/Roman.mdx',
+        "autre: 'Écrits/Projets/Roman.mdx'",
+        'pieces:',
+        '  - Écrits/Projets/Chapitre 1.md',
+        '  - Autre.md',
+        'texte: Projets/Roman.mdx',
+        '---',
+        'Projets/Roman.mdx',
+      ].join('\n'),
+    );
+    expect(r.count).toBe(3);
+    expect(r.properties).toBe(3);
+  });
+
+  it('chemin qui exigerait des guillemets : guillemets ajoutés', () => {
+    const c = fileRename('Ancien.md', 'Notes: # brouillon.md');
+    const r = rewriteNoteLinks('---\nfichier: Ancien.md\n---\n', 'Autre.md', c, { pathProperties: ['fichier'] });
+    expect(r.content).toBe('---\nfichier: "Notes: # brouillon.md"\n---\n');
+  });
+
+  it('fins de ligne CRLF et accents NFD conservés', () => {
+    const c = fileRename('Été.md', 'Hiver.md', ['Été.md', 'Autre.md']);
+    const src = '---\r\nlien: "[[E\u0301te\u0301]]"\r\n---\r\nTexte';
+    const r = rewriteNoteLinks(src, 'Autre.md', c);
+    expect(r.content).toBe('---\r\nlien: "[[Hiver]]"\r\n---\r\nTexte');
+    expect(r.properties).toBe(1);
+  });
+
+  it('frontmatter invalide : liens réécrits comme du texte, aucune propriété comptée', () => {
+    const r = rewriteNoteLinks('---\na: [b\nlien: "[[Ancien]]"\n---\n', 'Autre.md', ctx);
+    expect(r.content).toBe('---\na: [b\nlien: "[[Nouveau]]"\n---\n');
+    expect(r.properties).toBe(0);
   });
 });
 
