@@ -32,6 +32,7 @@
 
 //////// 1. Préférences web (localStorage, défauts, fusion des barres d'outils) ////////
 
+import { DEFAULT_NOTES_TOOLBAR_GROUPS } from '../editor/notesToolbarActions';
 import { WEB_PREFERENCES_KEY } from './webVaultAdapter';
 
 // Copie conforme de DEFAULT_PREFERENCES (apps/desktop/electron/preferences.ts)
@@ -40,12 +41,9 @@ import { WEB_PREFERENCES_KEY } from './webVaultAdapter';
 const DEFAULT_PREFERENCES: Preferences = {
   themeMode: 'system',
   accentColor: '#4f46e5',
-  notesToolbarGroups: [
-    { id: 'titres', label: 'Titres', collapsible: true, buttons: ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'] },
-    { id: 'mise-en-forme', label: 'Mise en forme', collapsible: false, buttons: ['undo', 'redo', 'bold', 'italic', 'code', 'quote'] },
-    { id: 'listes-liens', label: 'Listes & liens', collapsible: false, buttons: ['bullet', 'numbered', 'link'] },
-    { id: 'divers', label: 'Divers', collapsible: false, buttons: ['table', 'attach'] },
-  ],
+  // Groupes : la source unique (lib/editor/notesToolbarActions.ts), pas une
+  // copie qui dériverait à chaque nouveau bouton.
+  notesToolbarGroups: DEFAULT_NOTES_TOOLBAR_GROUPS.map((group) => ({ ...group, buttons: [...group.buttons] })),
   notesToolbarOrder: [
     { id: 'heading-group', visible: true },
     { id: 'bold', visible: true },

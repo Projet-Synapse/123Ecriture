@@ -563,6 +563,10 @@ declare global {
     accentColor: string;
     notesToolbarOrder: ToolbarItemConfig[];
     notesToolbarGroups: NotesToolbarGroup[];
+    // Boutons existants lors du dernier enregistrement des groupes : un
+    // bouton hors groupe ET connu reste masqué ; un bouton inconnu (version
+    // plus récente) est ajouté visible (normalizeNotesToolbarGroups).
+    notesToolbarKnownButtons?: string[];
     canvasToolbarOrder: ToolbarItemConfig[];
     chartToolbarOrder: ToolbarItemConfig[];
     // Paramètres → Gestion des fichiers et des liens.

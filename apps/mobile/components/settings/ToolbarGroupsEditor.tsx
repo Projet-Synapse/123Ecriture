@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import type { ToolbarActionId } from '../../lib/editor/notesToolbarActions';
+import { notesToolbarReserve } from '../../lib/editor/toolbarItems';
 import type { Theme } from '../../theme';
 import { settingsStyles as s } from './settingsStyles';
 
@@ -194,9 +195,8 @@ export function ToolbarGroupsEditor({ groups, descriptions, onChange, theme }: P
       <Text style={{ color: theme.textMuted, fontSize: 12, marginTop: 4 }}>Boutons disponibles (hors barre)</Text>
       <View style={styles.chipRow}>
         {(() => {
-          const placed = new Set(groups.flatMap((g) => g.buttons));
-          const all = Object.keys(descriptions);
-          const pool = all.filter((id) => !placed.has(id as ToolbarActionId));
+          // Même calcul que la barre de l'éditeur (lib/editor/toolbarItems.ts).
+          const pool = notesToolbarReserve(groups);
           if (pool.length === 0) return <Text style={{ color: theme.textMuted, fontSize: 12 }}>Tous les boutons sont placés.</Text>;
           return pool.map((buttonId) => chip(buttonId as ToolbarActionId, null));
         })()}

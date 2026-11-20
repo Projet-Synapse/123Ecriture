@@ -1,7 +1,20 @@
 import { describe, expect, it } from 'vitest';
 
-import { DEFAULT_NOTES_TOOLBAR_GROUPS } from './notesToolbarActions';
-import { buildNotesToolbarItems, toolbarPressEffect } from './toolbarItems';
+import {
+  DEFAULT_NOTES_TOOLBAR_GROUPS,
+  NOTES_TOOLBAR_ACTION_IDS,
+  NOTES_TOOLBAR_ACTIONS,
+  NOTES_TOOLBAR_DESCRIPTIONS,
+  normalizeNotesToolbarGroups,
+  type ToolbarActionId,
+} from './notesToolbarActions';
+import {
+  buildNotesToolbarItems,
+  NOTES_TOOLBAR_CATALOG,
+  notesToolbarChipLabels,
+  notesToolbarReserve,
+  toolbarPressEffect,
+} from './toolbarItems';
 
 describe('buildNotesToolbarItems', () => {
   it('les sous-boutons d’un groupe dépliant (Titres → H1…H6) portent une action', () => {
@@ -48,5 +61,78 @@ describe('toolbarPressEffect', () => {
     expect(toolbarPressEffect({ id: 'b', label: 'B', run: { id: 'bold' } })).toBe('run');
     expect(toolbarPressEffect({ id: 'p', label: 'P', onPress: () => undefined })).toBe('press');
     expect(toolbarPressEffect({ id: 'n', label: 'N' })).toBe('none');
+  });
+});
+
+describe('cohérence Paramètres ↔ barre de l’éditeur', () => {
+  const leavesOf = (groups: Parameters<typeof buildNotesToolbarItems>[0]) =>
+    buildNotesToolbarItems(groups)
+      .flatMap((item) => (item.subItems ? item.subItems : item.divider ? [] : [item]))
+      .map((leaf) => leaf.id);
+
+  it('chaque bouton existant a un nom, un glyphe, et figure une seule fois dans les groupes par défaut', () => {
+    const ids = NOTES_TOOLBAR_ACTIONS.map((action) => action.id);
+    expect(NOTES_TOOLBAR_CATALOG.map((entry) => entry.id)).toEqual(ids);
+    for (const entry of NOTES_TOOLBAR_CATALOG) {
+      expect(entry.description, entry.id).toBeTruthy();
+      expect(entry.glyph, entry.id).toBeTruthy();
+    }
+    expect(Object.keys(NOTES_TOOLBAR_DESCRIPTIONS).sort()).toEqual([...ids].sort());
+    const placed = DEFAULT_NOTES_TOOLBAR_GROUPS.flatMap((group) => group.buttons);
+    expect([...placed].sort()).toEqual([...ids].sort());
+    expect(new Set(placed).size).toBe(placed.length);
+  });
+
+  it('barre = boutons des groupes, réserve = tous les autres (partition exacte)', () => {
+    const groups = normalizeNotesToolbarGroups(
+      [
+        { id: 'a', label: 'A', collapsible: true, buttons: ['h1', 'h2'] },
+        { id: 'vide', label: 'Vide', collapsible: false, buttons: [] },
+        { id: 'b', label: 'B', collapsible: false, buttons: ['bold', 'link'] },
+      ],
+      NOTES_TOOLBAR_ACTION_IDS,
+    );
+    const shown = leavesOf(groups);
+    const reserve = notesToolbarReserve(groups);
+    expect(shown).toEqual(['h1', 'h2', 'bold', 'link']);
+    expect([...shown, ...reserve].sort()).toEqual([...NOTES_TOOLBAR_ACTION_IDS].sort());
+    expect(shown.filter((id) => (reserve as string[]).includes(id))).toEqual([]);
+    // Groupe vide : aucun séparateur orphelin.
+    expect(buildNotesToolbarItems(groups).filter((item) => item.divider).map((item) => item.id)).toEqual([
+      'divider-b',
+      'divider-b-1',
+    ]);
+  });
+
+  it('entrées fantômes (id inconnu) et doublons retirés', () => {
+    const groups = normalizeNotesToolbarGroups(
+      [
+        { id: 'a', label: 'A', collapsible: false, buttons: ['heading-group' as never, 'bold', 'bold'] },
+        { id: 'b', label: 'B', collapsible: false, buttons: ['bold', 'nope' as never, 'italic'] },
+      ],
+      NOTES_TOOLBAR_ACTION_IDS,
+    );
+    expect(groups.map((group) => group.buttons)).toEqual([['bold'], ['italic']]);
+  });
+
+  it('migration : bouton nouveau ajouté visible, bouton masqué par l’utilisatrice reste masqué', () => {
+    const stored = [{ id: 'a', label: 'A', collapsible: false, buttons: ['bold'] as ToolbarActionId[] }];
+    // Préférences d'avant le champ `notesToolbarKnownButtons` : tout ce qui
+    // manque est nouveau → visible (comportement d'avant).
+    expect(normalizeNotesToolbarGroups(stored)[0].buttons).toEqual([
+      'bold',
+      ...NOTES_TOOLBAR_ACTION_IDS.filter((id) => id !== 'bold'),
+    ]);
+    // Tous connus sauf 'lint' (bouton « nouveau ») : seul lint revient.
+    const known = NOTES_TOOLBAR_ACTION_IDS.filter((id) => id !== 'lint');
+    expect(normalizeNotesToolbarGroups(stored, known)[0].buttons).toEqual(['bold', 'lint']);
+    // Tous connus : rien n'est rajouté, le masquage tient.
+    expect(normalizeNotesToolbarGroups(stored, NOTES_TOOLBAR_ACTION_IDS)[0].buttons).toEqual(['bold']);
+  });
+
+  it('libellés de Paramètres = glyphe du bouton + nom', () => {
+    const labels = notesToolbarChipLabels();
+    expect(labels.bold).toBe('G  Gras');
+    expect(Object.keys(labels)).toEqual(NOTES_TOOLBAR_ACTION_IDS);
   });
 });
