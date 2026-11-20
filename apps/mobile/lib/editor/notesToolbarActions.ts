@@ -164,7 +164,7 @@ export const NOTES_TOOLBAR_DESCRIPTIONS: Record<ToolbarActionId, string> = {
   undo: 'Annuler',
   redo: 'Rétablir',
   template: 'Insérer un modèle',
-  lint: 'Formater (linter)',
+  lint: 'Formater le fichier',
   'align-left': 'Aligner à gauche',
   'align-center': 'Centrer',
   'align-right': 'Aligner à droite',

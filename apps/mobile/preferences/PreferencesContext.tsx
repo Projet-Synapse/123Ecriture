@@ -130,6 +130,7 @@ type PreferencesContextValue = {
   setNewNoteCustomFolder: (folder: string) => Promise<void>;
   setTemplatesFolder: (folder: string) => Promise<void>;
   setDefaultNewNoteTemplate: (relPath: string) => Promise<void>;
+  setFormatting: (formatting: NonNullable<Preferences['formatting']>) => Promise<void>;
   setFileSortMode: (mode: FileSortMode) => Promise<void>;
   setExplorerExpandMode: (mode: ExplorerExpandMode) => Promise<void>;
   setPropertiesSortMode: (mode: PropertySortMode) => Promise<void>;
@@ -423,6 +424,10 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     (relPath: string) => persist({ defaultNewNoteTemplate: relPath }),
     [persist],
   );
+  const setFormatting = useCallback(
+    (formatting: NonNullable<Preferences['formatting']>) => persist({ formatting }),
+    [persist],
+  );
   const setFileSortMode = useCallback((mode: FileSortMode) => persist({ fileSortMode: mode }), [persist]);
   const setExplorerExpandMode = useCallback(
     (mode: ExplorerExpandMode) => persist({ explorerExpandMode: mode }),
@@ -634,6 +639,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       setNewNoteCustomFolder,
       setTemplatesFolder,
       setDefaultNewNoteTemplate,
+      setFormatting,
       setFileSortMode,
       setExplorerExpandMode,
       setPropertiesSortMode,
@@ -684,6 +690,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       setNewNoteCustomFolder,
       setTemplatesFolder,
       setDefaultNewNoteTemplate,
+      setFormatting,
       setFileSortMode,
       setExplorerExpandMode,
       setPropertiesSortMode,

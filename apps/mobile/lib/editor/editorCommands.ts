@@ -34,7 +34,10 @@ export type EditorCommand =
   | { kind: 'format'; id: string }
   | { kind: 'undo' }
   | { kind: 'redo' }
-  | { kind: 'insert'; text: string };
+  | { kind: 'insert'; text: string }
+  // « ✨ Formater le fichier » (lib/editor/formatter.ts) appliqué DANS
+  // l'éditeur, en un changement minimal : annulable par Ctrl+Z / ↶.
+  | { kind: 'formatDoc'; settings: unknown };
 
 export function parseEditorCommand(raw: unknown): EditorCommand | null {
   let value: unknown = raw;
@@ -50,6 +53,7 @@ export function parseEditorCommand(raw: unknown): EditorCommand | null {
   if (cmd.kind === 'undo' || cmd.kind === 'redo') return { kind: cmd.kind };
   if (cmd.kind === 'format' && typeof cmd.id === 'string') return { kind: 'format', id: cmd.id };
   if (cmd.kind === 'insert' && typeof cmd.text === 'string') return { kind: 'insert', text: cmd.text };
+  if (cmd.kind === 'formatDoc') return { kind: 'formatDoc', settings: cmd.settings };
   return null;
 }
 

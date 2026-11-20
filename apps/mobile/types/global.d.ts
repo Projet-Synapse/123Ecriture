@@ -583,6 +583,15 @@ declare global {
     // fichiers (relPath, '' = aucun). Optionnels : configurations anciennes.
     templatesFolder?: string;
     defaultNewNoteTemplate?: string;
+    // Paramètres → Formatage (v0.4.100, lib/editor/formatter.ts) — lu via
+    // normalizeFormattingSettings (absent = réglages par défaut).
+    formatting?: {
+      rules: Record<string, boolean>;
+      customRules: { id: string; name: string; pattern: string; replacement: string; flags: string; enabled: boolean }[];
+      formatOnSave: boolean;
+      includeFrontmatter: boolean;
+      includeCode: boolean;
+    };
     fileSortMode: FileSortMode;
     // Ouverture des dossiers de l'explorateur au chargement du coffre —
     // voir ExplorerExpandMode ci-dessus et NotesScreen.tsx pour l'application

@@ -249,6 +249,14 @@ export interface Preferences {
   // Paramètres → Templates (miroir de apps/mobile/types/global.d.ts).
   templatesFolder?: string;
   defaultNewNoteTemplate?: string;
+  // Paramètres → Formatage (miroir de apps/mobile/types/global.d.ts).
+  formatting?: {
+    rules: Record<string, boolean>;
+    customRules: { id: string; name: string; pattern: string; replacement: string; flags: string; enabled: boolean }[];
+    formatOnSave: boolean;
+    includeFrontmatter: boolean;
+    includeCode: boolean;
+  };
   fileSortMode: FileSortMode;
   // Écran Tâches : tri par échéance et masquage des terminées — miroir de
   // apps/mobile/types/global.d.ts (types non partagés, à maintenir des deux
