@@ -55,6 +55,8 @@ export const DEFAULT_PREFERENCES: Preferences = {
   autoCreateWikilinkTarget: true,
   newNoteLocation: 'vaultRoot',
   newNoteCustomFolder: '',
+  templatesFolder: '',
+  defaultNewNoteTemplate: '',
   fileSortMode: 'alphabetical',
   // Écran Tâches (tri par échéance / masquage des terminées) — voir
   // TasksScreen.tsx pour la consommation réelle.

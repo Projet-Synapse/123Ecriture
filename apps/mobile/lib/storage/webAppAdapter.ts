@@ -68,6 +68,8 @@ const DEFAULT_PREFERENCES: Preferences = {
   autoCreateWikilinkTarget: true,
   newNoteLocation: 'vaultRoot',
   newNoteCustomFolder: '',
+  templatesFolder: '',
+  defaultNewNoteTemplate: '',
   fileSortMode: 'alphabetical',
   explorerExpandMode: 'last',
   propertiesSortMode: 'alpha-asc',

@@ -79,7 +79,7 @@ import { RightSidebar, type SidebarTab } from '../vault/RightSidebar';
 import { OutlinePanel } from '../vault/OutlinePanel';
 import { SearchDialog } from '../dialogs/SearchDialog';
 import { lintMarkdown } from '../../lib/editor/markdownLinter';
-import { listTemplateNotes } from '../../lib/notes/templates';
+import { defaultTemplateFor, listTemplateNotes, renderTemplate } from '../../lib/notes/templates';
 import { VaultTreeView } from '../vault/VaultTreeView';
 import { NoteIconByKind } from '../vault/FileIcons';
 import { FolderPreview } from '../vault/FolderPreview';
@@ -992,6 +992,33 @@ export function NotesScreen({
   // général — pas les variantes "...ici", qui passent toujours leur propre
   // dossier), l'emplacement est résolu depuis Paramètres → Gestion des
   // fichiers et des liens → "Emplacement par défaut des nouvelles notes".
+  // Paramètres → Templates → « Modèle des nouveaux fichiers » : écrit le
+  // modèle (variables {{title}}/{{date}}/{{time}} remplacées, frontmatter
+  // du modèle CONSERVÉ — ses propriétés font partie du modèle) dans le
+  // fichier tout juste créé, AVANT de l'ouvrir. Sans réglage, modèle
+  // disparu, fichier non-Markdown ou créé dans le dossier des modèles :
+  // rien (contenu initial habituel). Un échec n'empêche pas la création.
+  const applyDefaultTemplate = useCallback(
+    async (entry: VaultEntry) => {
+      if (!vault) return;
+      const templateRelPath = defaultTemplateFor({
+        templateRelPath: preferences.defaultNewNoteTemplate,
+        newRelPath: entry.relPath,
+        kind: entry.kind,
+        templates: listTemplateNotes(tree, preferences.templatesFolder),
+      });
+      if (!templateRelPath) return;
+      try {
+        const raw = await vault.readNote(templateRelPath);
+        const title = entry.name.replace(/\.(mdx|md)$/i, '');
+        await vault.writeNote(entry.relPath, renderTemplate(raw, { title }));
+      } catch (error) {
+        console.error('[modèles] échec du modèle par défaut :', error);
+      }
+    },
+    [vault, tree, preferences.defaultNewNoteTemplate, preferences.templatesFolder],
+  );
+
   const handleCreateNote = useCallback(
     // `name` : nom EXPLICITE avec extension, utilisé par les fichiers code
     // (`Sans titre.py` — l'extension choisie dans le menu langage) ; les
@@ -1005,13 +1032,22 @@ export function NotesScreen({
         resolveNewNoteParent(preferences.newNoteLocation, preferences.newNoteCustomFolder, activeNote?.relPath);
       try {
         const entry = await vault.createNote(name ?? 'Sans titre', resolvedParent, kind);
+        await applyDefaultTemplate(entry);
         await refreshTree();
         await openNote({ type: 'note', ...entry });
       } catch (error) {
         console.error('[vault] échec de création de la note :', error);
       }
     },
-    [vault, refreshTree, openNote, activeNote, preferences.newNoteLocation, preferences.newNoteCustomFolder],
+    [
+      vault,
+      refreshTree,
+      openNote,
+      activeNote,
+      preferences.newNoteLocation,
+      preferences.newNoteCustomFolder,
+      applyDefaultTemplate,
+    ],
   );
 
   // Création d'une fiche depuis un [[lien]] vers une cible inexistante
@@ -1046,10 +1082,19 @@ export function NotesScreen({
         return;
       }
       const entry = await vault.createNote(destination.name, destination.parentRelPath, 'markdown');
+      await applyDefaultTemplate(entry);
       await refreshTree();
       await openNote({ type: 'note', ...entry });
     },
-    [vault, tree, openNote, refreshTree, preferences.newNoteLocation, preferences.newNoteCustomFolder],
+    [
+      vault,
+      tree,
+      openNote,
+      refreshTree,
+      preferences.newNoteLocation,
+      preferences.newNoteCustomFolder,
+      applyDefaultTemplate,
+    ],
   );
 
 
@@ -1709,7 +1754,11 @@ export function NotesScreen({
       try {
         const raw = await vault.readNote(relPath);
         // Même découpe que partout ailleurs (CRLF, BOM, espaces après ---).
-        const { body } = splitFrontmatter(raw);
+        // Variables {{title}}/{{date}}/{{time}} remplacées (titre = note
+        // CIBLE), comme pour le modèle par défaut des nouveaux fichiers.
+        const body = renderTemplate(splitFrontmatter(raw).body, {
+          title: activeNote.name.replace(/\.(mdx|md)$/i, ''),
+        });
         const view = viewRef.current;
         if (!view) {
           // Natif : inséré au curseur dans l'éditeur WebView.
@@ -1740,10 +1789,14 @@ export function NotesScreen({
   // curseur (via ActionMenu, natif ET desktop), en appelant
   // insertTemplateById ci-dessus.
   const showTemplateMenu = useCallback(() => {
-    const notes = listTemplateNotes(tree);
+    const notes = listTemplateNotes(tree, preferences.templatesFolder);
     if (!activeNote) return;
     if (notes.length === 0) {
-      setWikilinkNotice('Aucun modèle dans le coffre — place-les dans un dossier MODÈLES ou TEMPLATES.');
+      setWikilinkNotice(
+        preferences.templatesFolder
+          ? `Aucun modèle dans « ${preferences.templatesFolder} » (Paramètres → Templates).`
+          : 'Aucun modèle dans le coffre — place-les dans un dossier MODÈLES ou TEMPLATES, ou choisis le dossier dans Paramètres → Templates.',
+      );
       return;
     }
     void presentMenu(
@@ -1752,7 +1805,7 @@ export function NotesScreen({
     ).then((choice) => {
       if (choice) void insertTemplateById(choice);
     });
-  }, [tree, activeNote, presentMenu, insertTemplateById]);
+  }, [tree, activeNote, presentMenu, insertTemplateById, preferences.templatesFolder]);
 
   // Un seul écouteur "contextmenu" délégué sur tout le conteneur de la
   // liste, plutôt qu'un handler par ligne : chaque ligne de VaultTreeView
