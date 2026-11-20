@@ -246,6 +246,9 @@ export interface Preferences {
   autoCreateWikilinkTarget: boolean;
   newNoteLocation: NewNoteLocation;
   newNoteCustomFolder: string;
+  // Paramètres → Templates (miroir de apps/mobile/types/global.d.ts).
+  templatesFolder?: string;
+  defaultNewNoteTemplate?: string;
   fileSortMode: FileSortMode;
   // Écran Tâches : tri par échéance et masquage des terminées — miroir de
   // apps/mobile/types/global.d.ts (types non partagés, à maintenir des deux

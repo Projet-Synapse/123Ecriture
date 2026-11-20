@@ -574,6 +574,11 @@ declare global {
     autoCreateWikilinkTarget: boolean;
     newNoteLocation: NewNoteLocation;
     newNoteCustomFolder: string;
+    // Paramètres → Templates : dossier des modèles ('' = détection
+    // automatique MODÈLES/TEMPLATES) et modèle appliqué aux nouveaux
+    // fichiers (relPath, '' = aucun). Optionnels : configurations anciennes.
+    templatesFolder?: string;
+    defaultNewNoteTemplate?: string;
     fileSortMode: FileSortMode;
     // Ouverture des dossiers de l'explorateur au chargement du coffre —
     // voir ExplorerExpandMode ci-dessus et NotesScreen.tsx pour l'application

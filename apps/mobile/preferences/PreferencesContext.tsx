@@ -47,6 +47,8 @@ export const DEFAULT_PREFERENCES: Preferences = {
   autoCreateWikilinkTarget: true,
   newNoteLocation: 'vaultRoot',
   newNoteCustomFolder: '',
+  templatesFolder: '',
+  defaultNewNoteTemplate: '',
   fileSortMode: 'alphabetical',
   // Explorateur : 'last' (défaut historique) restaure les dossiers repliés
   // persistés par coffre ; 'all' / 'none' déplient/replient tout au
@@ -126,6 +128,8 @@ type PreferencesContextValue = {
   setAutoCreateWikilinkTarget: (value: boolean) => Promise<void>;
   setNewNoteLocation: (location: NewNoteLocation) => Promise<void>;
   setNewNoteCustomFolder: (folder: string) => Promise<void>;
+  setTemplatesFolder: (folder: string) => Promise<void>;
+  setDefaultNewNoteTemplate: (relPath: string) => Promise<void>;
   setFileSortMode: (mode: FileSortMode) => Promise<void>;
   setExplorerExpandMode: (mode: ExplorerExpandMode) => Promise<void>;
   setPropertiesSortMode: (mode: PropertySortMode) => Promise<void>;
@@ -414,6 +418,11 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     (folder: string) => persist({ newNoteCustomFolder: folder }),
     [persist],
   );
+  const setTemplatesFolder = useCallback((folder: string) => persist({ templatesFolder: folder }), [persist]);
+  const setDefaultNewNoteTemplate = useCallback(
+    (relPath: string) => persist({ defaultNewNoteTemplate: relPath }),
+    [persist],
+  );
   const setFileSortMode = useCallback((mode: FileSortMode) => persist({ fileSortMode: mode }), [persist]);
   const setExplorerExpandMode = useCallback(
     (mode: ExplorerExpandMode) => persist({ explorerExpandMode: mode }),
@@ -623,6 +632,8 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       setAutoCreateWikilinkTarget,
       setNewNoteLocation,
       setNewNoteCustomFolder,
+      setTemplatesFolder,
+      setDefaultNewNoteTemplate,
       setFileSortMode,
       setExplorerExpandMode,
       setPropertiesSortMode,
@@ -671,6 +682,8 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       setAutoCreateWikilinkTarget,
       setNewNoteLocation,
       setNewNoteCustomFolder,
+      setTemplatesFolder,
+      setDefaultNewNoteTemplate,
       setFileSortMode,
       setExplorerExpandMode,
       setPropertiesSortMode,

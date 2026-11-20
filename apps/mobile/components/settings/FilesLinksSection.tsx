@@ -5,12 +5,6 @@ import { usePreferences } from '../../preferences/PreferencesContext';
 import { SettingsToggle } from './SettingsToggle';
 import { settingsStyles as s } from './settingsStyles';
 
-const NEW_NOTE_LOCATION_OPTIONS: { value: NewNoteLocation; label: string }[] = [
-  { value: 'vaultRoot', label: 'Racine du coffre' },
-  { value: 'sameFolder', label: 'Même dossier que la note active' },
-  { value: 'custom', label: 'Dossier personnalisé' },
-];
-
 const FILE_SORT_MODE_OPTIONS: { value: FileSortMode; label: string }[] = [
   { value: 'alphabetical', label: 'Alphabétique' },
   { value: 'recent', label: 'Plus récent d’abord' },
@@ -34,7 +28,8 @@ const EXPLORER_EXPAND_MODE_OPTIONS: { value: ExplorerExpandMode; label: string }
 //////////////////////////////////////////////////////////////////////////////
 //
 // Section "Gestion des fichiers et des liens" : dossier des pièces
-// jointes, emplacement par défaut des nouvelles notes, création
+// jointes (l'emplacement des nouvelles notes est dans « Templates »,
+// TemplatesSection.tsx), création
 // automatique de note cible pour un wikilink, ordre et ouverture des
 // dossiers dans l'explorateur, fichier ouvert par défaut.
 //
@@ -141,8 +136,6 @@ export function FilesLinksSection() {
     preferences,
     theme,
     setAttachmentsFolder,
-    setNewNoteLocation,
-    setNewNoteCustomFolder,
     setAutoCreateWikilinkTarget,
     setFileSortMode,
     setExplorerExpandMode,
@@ -162,20 +155,9 @@ export function FilesLinksSection() {
     setAttachmentsDraft(preferences.attachmentsFolder);
   }
 
-  const [customFolderDraft, setCustomFolderDraft] = useState(preferences.newNoteCustomFolder);
-  const [syncedCustomFolder, setSyncedCustomFolder] = useState(preferences.newNoteCustomFolder);
-  if (preferences.newNoteCustomFolder !== syncedCustomFolder) {
-    setSyncedCustomFolder(preferences.newNoteCustomFolder);
-    setCustomFolderDraft(preferences.newNoteCustomFolder);
-  }
-
   const submitAttachmentsFolder = () => {
     const trimmed = attachmentsDraft.trim();
     void setAttachmentsFolder(trimmed || 'attachments');
-  };
-
-  const submitCustomFolder = () => {
-    void setNewNoteCustomFolder(customFolderDraft.trim());
   };
 
   return (
@@ -197,37 +179,8 @@ export function FilesLinksSection() {
         Relatif à la racine du coffre actif. Les fichiers déjà importés dans l’ancien dossier n’y sont pas déplacés.
       </Text>
 
-      {/* //2. Nouvelles notes */}
-      <Text style={[s.label, { color: theme.textMuted }]}>Emplacement par défaut des nouvelles notes</Text>
-      <View style={s.row}>
-        {NEW_NOTE_LOCATION_OPTIONS.map((option) => {
-          const isActive = preferences.newNoteLocation === option.value;
-          return (
-            <Pressable
-              key={option.value}
-              onPress={() => void setNewNoteLocation(option.value)}
-              style={[
-                s.modeButton,
-                { borderColor: theme.border },
-                isActive && { backgroundColor: theme.accent, borderColor: theme.accent },
-              ]}
-            >
-              <Text style={{ color: isActive ? '#fff' : theme.text }}>{option.label}</Text>
-            </Pressable>
-          );
-        })}
-      </View>
-      {preferences.newNoteLocation === 'custom' && (
-        <TextInput
-          value={customFolderDraft}
-          onChangeText={setCustomFolderDraft}
-          onSubmitEditing={submitCustomFolder}
-          onBlur={submitCustomFolder}
-          placeholder="ex. Notes/Brouillons"
-          placeholderTextColor={theme.textMuted}
-          style={[s.input, { color: theme.text, borderColor: theme.border, flex: 0, minWidth: 220 }]}
-        />
-      )}
+      {/* //2. Emplacement des nouvelles notes : déplacé dans la section
+          « Templates » (TemplatesSection.tsx, v0.4.99). */}
 
       {/* //3. Wikilinks */}
       <SettingsToggle
