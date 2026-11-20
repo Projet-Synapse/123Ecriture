@@ -23,6 +23,7 @@
 //   2. Construction des items de la barre des notes
 //   3. Effet d'un appui
 //   4. Catalogue et réserve (Paramètres)
+//   5. Mode compact (mobile) : cible tactile et taille du menu
 //
 //////////////////////////////////////////////////////////////////////////////
 
@@ -132,4 +133,27 @@ export function notesToolbarChipLabels(): Record<string, string> {
 export function notesToolbarReserve(groups: NotesToolbarGroup[]): ToolbarActionId[] {
   const placed = new Set<string>(groups.flatMap((group) => group.buttons));
   return NOTES_TOOLBAR_CATALOG.map((entry) => entry.id).filter((id) => !placed.has(id));
+}
+
+//////// 5. Mode compact (mobile) : cible tactile et taille du menu ///////////
+
+// Côté minimal d'un bouton en mode compact (recommandation Android : 48 dp,
+// ici 40 pour garder la ligne fine ; espacement compris, le doigt tombe
+// toujours sur un bouton).
+export const TOOLBAR_TOUCH_TARGET = 40;
+const MENU_GAP = 4;
+const MENU_PADDING = 6;
+
+// Taille du menu flottant d'un groupe : une rangée si elle tient dans
+// l'écran (marges 8), sinon plusieurs rangées de la largeur disponible.
+export function compactSubMenuSize(count: number, viewportWidth: number): { width: number; height: number } {
+  const n = Math.max(1, count);
+  const cell = TOOLBAR_TOUCH_TARGET + MENU_GAP;
+  const maxWidth = Math.max(cell + 2 * MENU_PADDING, viewportWidth - 16);
+  const perRow = Math.max(1, Math.min(n, Math.floor((maxWidth - 2 * MENU_PADDING - 2 + MENU_GAP) / cell)));
+  const rows = Math.ceil(n / perRow);
+  return {
+    width: perRow * cell - MENU_GAP + 2 * MENU_PADDING + 2,
+    height: rows * cell - MENU_GAP + 2 * MENU_PADDING + 2,
+  };
 }
