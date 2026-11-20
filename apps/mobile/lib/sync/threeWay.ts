@@ -152,13 +152,19 @@ export function planSync(args: {
   actions.sort((a, b) => a.relPath.localeCompare(b.relPath));
 
   // ---- RENOMMAGES (renamePairs.ts) ----
-  // Ici : ancien chemin disparu du disque + nouveau chemin jamais vu.
+  // Ici : ancien chemin disparu du disque + nouveau chemin jamais vu (ou
+  // seulement tombstoné : aller-retour .md → .mdx → .md).
   // Ailleurs : ancien chemin supprimé dans le cloud + nouveau chemin reçu.
   const isFile = (a: PlanAction) => a.entryKind === 'file';
   const pairsHere = pairRenames(
     actions.filter((a) => isFile(a) && a.kind === 'tombstone-remote').map((a) => ({ relPath: a.relPath, hash: B.get(a.relPath)?.hash ?? '' })),
     actions
-      .filter((a) => isFile(a) && a.kind === 'push' && !B.has(a.relPath) && !Rall.has(a.relPath))
+      .filter(
+        (a) =>
+          isFile(a) &&
+          !B.has(a.relPath) &&
+          ((a.kind === 'push' && !Rall.has(a.relPath)) || (a.kind === 'review' && Rall.get(a.relPath)?.deleted === true)),
+      )
       .map((a) => ({ relPath: a.relPath, hash: L.get(a.relPath)?.hash ?? '' })),
   );
   const pairsElsewhere = pairRenames(
@@ -168,6 +174,19 @@ export function planSync(args: {
       .map((a) => ({ relPath: a.relPath, hash: Rall.get(a.relPath)?.hash ?? '' })),
   );
   const renamedTo = new Map([...pairsHere, ...pairsElsewhere].map((p) => [p.from, p.to]));
+  // Le nouveau nom portait une pierre tombale (aller-retour .md → .mdx →
+  // .md) : c'est la cible d'un renommage fait ICI, pas un fichier supprimé
+  // ailleurs → renvoyé (restauré) au lieu de partir en revue.
+  const renameTargetsHere = new Set(pairsHere.map((p) => p.to));
+  for (let i = 0; i < actions.length; i += 1) {
+    const action = actions[i];
+    if (action.kind !== 'review' || !renameTargetsHere.has(action.relPath)) continue;
+    actions[i] = {
+      kind: 'push', relPath: action.relPath, entryKind: action.entryKind, restore: true,
+      expectedVersion: Rall.get(action.relPath)?.version ?? null,
+      reason: 'nouveau nom d’un renommage fait ici (ancienne pierre tombale levée)',
+    };
+  }
   for (const action of actions) {
     const to = renamedTo.get(action.relPath);
     if (to && (action.kind === 'tombstone-remote' || action.kind === 'delete-local')) {

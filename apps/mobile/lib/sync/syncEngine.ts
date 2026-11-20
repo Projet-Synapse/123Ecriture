@@ -33,7 +33,7 @@ import {
   type PendingReview,
 } from './pendingReview';
 import { baseWithoutKept, mergeGuardSuspension, settleReviewAfterCycle } from './massDeletionReview';
-import { collectRemoteDeletionCandidates, shouldTripBreaker } from './safetyNet';
+import { collectRemoteDeletionCandidates, shouldTripBreaker, splitRenameFollowUps } from './safetyNet';
 import { pickActiveRemoteVault } from './activeVault';
 import {
   capJournalEntries,
@@ -1050,17 +1050,33 @@ async function runLockedCycle(
   //    et la base du dernier cycle est CONSERVÉE (keepPreviousRef).
   //    Index partiel : rien n'est mis en file (le fichier peut exister sans
   //    avoir été vu) — la file est reconstruite au premier parcours complet.
+  // Nouveau nom d'un renommage fait ICI qui portait une pierre tombale
+  // (aller-retour .md → .mdx → .md, threeWay.ts) : renvoyé avec levée de la
+  // tombstone, jamais mis en revue.
+  const restoredHere = new Set(plan.actions.filter((x) => x.kind === 'push' && x.restore).map((x) => x.relPath));
   const tombstoneRows = new Map(
-    visibleRemoteFiles.filter((f) => f.deleted && tombstonedPaths.has(f.relPath)).map((f) => [f.relPath, f]),
+    visibleRemoteFiles
+      .filter((f) => f.deleted && tombstonedPaths.has(f.relPath) && !restoredHere.has(f.relPath))
+      .map((f) => [f.relPath, f]),
   );
-  const { paths: pendingRemoteDeletionPaths, candidates: remoteDeletionCandidates } = collectRemoteDeletionCandidates({
+  const { paths: pendingRemoteDeletionPaths, candidates: allRemoteDeletionCandidates } = collectRemoteDeletionCandidates({
     tombstones: tombstoneRows,
     local: localByPath,
     base: syncState.files,
     queuedAt: new Date().toISOString(),
     renamedTo: renamedPaths,
   });
+  // Ancien nom d'un renommage / d'une conversion .md ⇄ .mdx faits ailleurs,
+  // non modifié ici : PAS de revue — il suit le renommage après les pulls
+  // (voir « Renommages venus d'ailleurs » plus bas). Sinon les deux
+  // fichiers restaient côte à côte sur cet appareil.
+  const { followUps: renameFollowUps, review: remoteDeletionCandidates } = splitRenameFollowUps(
+    allRemoteDeletionCandidates,
+    reviewBefore.remoteDeletions ?? [],
+  );
+  for (const followUp of renameFollowUps) pendingRemoteDeletionPaths.delete(followUp.path);
   for (const relPath of pendingRemoteDeletionPaths) keepPreviousRef.add(relPath);
+  for (const followUp of renameFollowUps) keepPreviousRef.add(followUp.path);
   summary.pendingRemoteDeletions = pendingRemoteDeletionPaths.size;
 
   // Une SEULE lecture/écriture de la file pour ce cycle. Illisible
@@ -1125,7 +1141,7 @@ async function runLockedCycle(
   // Décisions de contenu issues du plan à trois états. Les conflits gardent
   // TOUJOURS les deux versions (fusion, sinon copie « (conflit …) »).
   const decisions = plan.actions
-    .filter((x) => x.entryKind === 'file' && !tombstonedPaths.has(x.relPath))
+    .filter((x) => x.entryKind === 'file' && (!tombstonedPaths.has(x.relPath) || restoredHere.has(x.relPath)))
     .flatMap((x): SyncDecision[] => {
       if (x.kind === 'push' || x.kind === 'pull') return [{ kind: x.kind, relPath: x.relPath }];
       if (x.kind === 'conflict') {
@@ -1506,6 +1522,25 @@ async function runLockedCycle(
   await runPool(orderedDecisions.filter((d) => !isConflict(d)), FILE_PARALLEL, runDecision);
   for (const decision of orderedDecisions.filter(isConflict)) await runDecision(decision);
 
+  // Renommages venus d'ailleurs : le nouveau fichier est là (reçu à ce
+  // cycle ou déjà présent) → l'ancien nom, intact ici, va à la corbeille du
+  // coffre (récupérable, comme « Approuver » dans la revue). Sinon base
+  // conservée : le cycle suivant le rejuge (revue si le lien est perdu).
+  const renameTrashed = new Set<string>();
+  for (const { path: oldPath, renamedTo } of renameFollowUps) {
+    if (!pulledPaths.has(renamedTo) && !localByPath.has(renamedTo)) continue;
+    try {
+      await bridges.vault.delete(oldPath, { silent: true });
+      renameTrashed.add(oldPath);
+      keepPreviousRef.delete(oldPath);
+      journal.push(
+        makeJournalEntry('delete', { path: oldPath, detail: `renommé en ${renamedTo} sur un autre appareil — ancien nom mis à la corbeille ici` }),
+      );
+    } catch (error) {
+      journal.push(makeJournalEntry('error', { path: oldPath, detail: `ancien nom conservé : ${errorMessage(error)}` }));
+    }
+  }
+
   if (actionable > 0) setSyncProgress({ phase, done: actionable, total: actionable });
   if (pushCount > 0) journal.push(makeJournalEntry('upload-end', { detail: `${pushCount} fichier(s)` }));
   if (pullCount > 0) journal.push(makeJournalEntry('download-end', { detail: `${pullCount} fichier(s)` }));
@@ -1564,6 +1599,8 @@ async function runLockedCycle(
     if (relPath in syncState.files) nextFiles[relPath] = syncState.files[relPath];
     else delete nextFiles[relPath];
   }
+  // Ancien nom mis à la corbeille (renommage venu d'ailleurs) : plus de base.
+  for (const relPath of renameTrashed) delete nextFiles[relPath];
   try {
     await saveSyncState({ files: nextFiles, rootPath: vaultRootPath, version: stateVersion });
     if (syncSettings.linkPreference[remoteVaultId]) {
