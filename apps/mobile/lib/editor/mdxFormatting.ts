@@ -155,3 +155,121 @@ export function insertTable(text: string, selection: Selection): FormattingResul
   const cursor = start + prefix.length + table.length;
   return { text: newText, selection: { start: cursor, end: cursor } };
 }
+
+//////// 5. Alignement des paragraphes (applyAlignment) ////////////////////////
+//
+// Markdown n'a pas d'alignement : on enveloppe le PARAGRAPHE entier dans
+// du HTML compris par Obsidian et par l'appli (aperçu, live preview) :
+//   <p align="center">Texte du paragraphe</p>
+// Une seule forme pour les quatre alignements (`align` accepte left,
+// center, right et justify dans les navigateurs/Obsidian). Règles :
+//   • la sélection (même une partie de ligne) vise le(s) paragraphe(s)
+//     entier(s) qui la contiennent (blocs séparés par une ligne vide) ;
+//   • « gauche » RETIRE l'enveloppe (alignement par défaut) ;
+//   • changer d'alignement REMPLACE l'enveloppe existante (aussi la forme
+//     `<div style="text-align: …">…</div>`), jamais d'imbrication ;
+//   • titres, listes, citations, tableaux, blocs de code et autre HTML ne
+//     sont pas enveloppés (le HTML casserait leur syntaxe Markdown).
+
+export type TextAlignment = 'left' | 'center' | 'right' | 'justify';
+
+const ALIGN_VALUES = 'left|center|right|justify';
+const ALIGNED_P = new RegExp(`^<p align="(${ALIGN_VALUES})">([\\s\\S]*)</p>$`);
+const ALIGNED_DIV = new RegExp(`^<div style="text-align:\\s*(${ALIGN_VALUES});?\\s*">([\\s\\S]*)</div>$`);
+
+// Enveloppe d'alignement d'un paragraphe : alignement + bornes du contenu.
+export function parseAlignedBlock(
+  block: string,
+): { align: TextAlignment; innerFrom: number; innerTo: number } | null {
+  for (const re of [ALIGNED_P, ALIGNED_DIV]) {
+    const match = re.exec(block);
+    if (match) {
+      const innerFrom = block.indexOf('>') + 1;
+      return { align: match[1] as TextAlignment, innerFrom, innerTo: innerFrom + match[2].length };
+    }
+  }
+  return null;
+}
+
+function isAlignableParagraph(block: string): boolean {
+  const first = block.split('\n')[0];
+  return !/^\s{0,3}(#{1,6}\s|[-*+]\s|\d+[.)]\s|>|\||`{3,}|~{3,}|<|\$\$|---\s*$)/.test(first);
+}
+
+export function applyAlignment(text: string, selection: Selection, align: TextAlignment): FormattingResult {
+  const lines = text.split('\n');
+  const starts: number[] = [];
+  let offset = 0;
+  for (const line of lines) {
+    starts.push(offset);
+    offset += line.length + 1;
+  }
+  const lineOf = (pos: number) => {
+    let index = 0;
+    while (index + 1 < starts.length && starts[index + 1] <= pos) index += 1;
+    return index;
+  };
+  const blank = (index: number) => lines[index].trim() === '';
+  const selStart = Math.min(selection.start, selection.end);
+  const selEnd = Math.max(selection.start, selection.end);
+  let first = lineOf(selStart);
+  // Fin de sélection en tout début de ligne : cette ligne n'est pas visée.
+  let last = lineOf(selEnd > selStart && starts[lineOf(selEnd)] === selEnd ? selEnd - 1 : selEnd);
+  while (first > 0 && !blank(first - 1) && !blank(first)) first -= 1;
+  while (last + 1 < lines.length && !blank(last + 1) && !blank(last)) last += 1;
+
+  // Paragraphes [début, fin] (indices de lignes) dans la zone.
+  const paragraphs: [number, number][] = [];
+  for (let index = first; index <= last; index += 1) {
+    if (blank(index)) continue;
+    let end = index;
+    while (end + 1 <= last && !blank(end + 1)) end += 1;
+    paragraphs.push([index, end]);
+    index = end;
+  }
+
+  // Remplacements (en décalages absolus), puis report de la sélection.
+  const edits: { from: number; to: number; insert: string; oldInnerFrom: number; openLength: number; innerLength: number }[] = [];
+  for (const [startLine, endLine] of paragraphs) {
+    const from = starts[startLine];
+    const to = starts[endLine] + lines[endLine].length;
+    const block = text.slice(from, to);
+    const wrapped = parseAlignedBlock(block);
+    if (!wrapped && !isAlignableParagraph(block)) continue;
+    const inner = wrapped ? block.slice(wrapped.innerFrom, wrapped.innerTo) : block;
+    const open = align === 'left' ? '' : `<p align="${align}">`;
+    const insert = align === 'left' ? inner : `${open}${inner}</p>`;
+    if (insert === block) continue;
+    edits.push({
+      from,
+      to,
+      insert,
+      oldInnerFrom: from + (wrapped ? wrapped.innerFrom : 0),
+      openLength: open.length,
+      innerLength: inner.length,
+    });
+  }
+  if (edits.length === 0) return { text, selection };
+
+  const mapPos = (pos: number) => {
+    let delta = 0;
+    for (const edit of edits) {
+      if (pos > edit.to) delta += edit.insert.length - (edit.to - edit.from);
+      else if (pos >= edit.from) {
+        // Dans le paragraphe : même position dans le CONTENU (bornée).
+        const relative = Math.min(edit.innerLength, Math.max(0, pos - edit.oldInnerFrom));
+        return edit.from + delta + edit.openLength + relative;
+      }
+    }
+    return pos + delta;
+  };
+
+  let out = '';
+  let cursor = 0;
+  for (const edit of edits) {
+    out += text.slice(cursor, edit.from) + edit.insert;
+    cursor = edit.to;
+  }
+  out += text.slice(cursor);
+  return { text: out, selection: { start: mapPos(selection.start), end: mapPos(selection.end) } };
+}

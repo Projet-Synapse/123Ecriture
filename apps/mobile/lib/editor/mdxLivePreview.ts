@@ -3,7 +3,15 @@ import { EditorState, StateField } from '@codemirror/state';
 
 import { isImageEmbedTarget } from '../notes/embedResolution';
 import { unsupportedImageMessage, withImageMime } from '../files/imageFormats';
-import { findBold, findItalic, findLiveMatches, findTableBlocks, type LiveMatch, type TokenType } from './liveDecorations';
+import {
+  findAlignedBlocks,
+  findBold,
+  findItalic,
+  findLiveMatches,
+  findTableBlocks,
+  type LiveMatch,
+  type TokenType,
+} from './liveDecorations';
 
 // ✒️ 123ECRITURE — lib/editor/mdxLivePreview.ts — Live Preview inline CodeMirror (mode "Intermédiaire")
 //////////////////////////////////////////////////////////////////////////////
@@ -480,6 +488,21 @@ function buildDecorations(view: EditorView, colors: LivePreviewColors, callbacks
               : false,
           );
       ranges.push({ from: match.from, to: match.to, decoration: Decoration.replace({ widget, side: 0 }) });
+    }
+  }
+
+  // Paragraphes alignés (<p align="center">…</p>) : chaque ligne du bloc
+  // reçoit text-align ; les balises sont masquées sauf quand la sélection
+  // touche le bloc (édition de la syntaxe, comme le reste).
+  for (const block of findAlignedBlocks(text)) {
+    if (insideRenderedTable(block.from, block.to)) continue;
+    const style = `text-align:${block.align}`;
+    for (const lineStart of block.lineStarts) {
+      ranges.push({ from: lineStart, to: lineStart, decoration: Decoration.line({ attributes: { style } }) });
+    }
+    if (!selectionTouches(view, block.from, block.to)) {
+      ranges.push({ from: block.from, to: block.openTo, decoration: Decoration.replace({}) });
+      ranges.push({ from: block.closeFrom, to: block.to, decoration: Decoration.replace({}) });
     }
   }
 

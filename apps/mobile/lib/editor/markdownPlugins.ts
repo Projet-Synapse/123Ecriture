@@ -31,6 +31,7 @@
 // SOMMAIRE :
 //   1. Contrat InlineRuleState minimal
 //   2. Les règles inline (wikilink, embed, occurrence, tag)
+//   2 bis. Bloc aligné (<p align="center">…</p>)
 //   3. createConfiguredMarkdownIt — assemblage et ordre des règles
 //
 //////////////////////////////////////////////////////////////////////////////
@@ -143,6 +144,55 @@ function tagRule(state: StateInline, silent: boolean): boolean {
   return true;
 }
 
+//////// 2 bis. Bloc aligné (<p align="center">…</p>) ///////////////////////
+
+// Seul HTML reconnu (le reste reste désactivé, `html: false`) : l'enveloppe
+// d'alignement écrite par la barre d'outils (lib/editor/mdxFormatting.ts,
+// applyAlignment) — `<p align="…">…</p>` ou `<div style="text-align: …">…</div>`
+// sur un paragraphe. Le contenu est rendu en Markdown INLINE (gras,
+// liens…) dans un bloc `aligned` (sourceMeta.align), voir NoteRenderer.
+interface BlockRuleState {
+  src: string;
+  bMarks: number[];
+  eMarks: number[];
+  tShift: number[];
+  line: number;
+  push(type: string, tag: string, nesting: number): { content: string; meta: unknown; map: [number, number] | null; children: unknown[] | null };
+}
+
+const ALIGNED_OPEN = /^<(p) align="(left|center|right|justify)">|^<(div) style="text-align:\s*(left|center|right|justify);?\s*">/;
+
+function alignedBlockRule(state: BlockRuleState, startLine: number, endLine: number, silent: boolean): boolean {
+  const lineText = (line: number) => state.src.slice(state.bMarks[line] + state.tShift[line], state.eMarks[line]);
+  const first = lineText(startLine);
+  const open = ALIGNED_OPEN.exec(first);
+  if (!open) return false;
+  const tag = open[1] ?? open[3];
+  const align = open[2] ?? open[4];
+  const close = `</${tag}>`;
+  let last = startLine;
+  while (last < endLine) {
+    const text = lineText(last);
+    if (last > startLine && text.trim() === '') return false; // paragraphe terminé sans fermeture
+    if (text.trimEnd().endsWith(close)) break;
+    last += 1;
+  }
+  if (last >= endLine) return false;
+  if (silent) return true;
+  const raw = state.src.slice(state.bMarks[startLine] + state.tShift[startLine], state.eMarks[last]).trimEnd();
+  const content = raw.slice(open[0].length, raw.length - close.length);
+  const openToken = state.push('aligned_open', 'div', 1);
+  openToken.meta = { align };
+  openToken.map = [startLine, last + 1];
+  const inline = state.push('inline', '', 0);
+  inline.content = content.trim();
+  inline.map = [startLine, last + 1];
+  inline.children = [];
+  state.push('aligned_close', 'div', -1);
+  state.line = last + 1;
+  return true;
+}
+
 //////// 3. createConfiguredMarkdownIt — assemblage et ordre des règles /////////
 
 // Nouvelle instance à chaque appel (pas de singleton module-level) : évite
@@ -164,5 +214,9 @@ export function createConfiguredMarkdownIt(knownWords: Set<string> = new Set()):
   md.inline.ruler.before('link', 'wikilink', wikilinkRule);
   md.inline.ruler.before('emphasis', 'tag', tagRule);
   md.inline.ruler.before('emphasis', 'occurrence', makeOccurrenceRule(knownWords));
+  // Avant `paragraph` (et `html_block`, inactif) : un paragraphe aligné.
+  md.block.ruler.before('html_block', 'aligned', alignedBlockRule as never, {
+    alt: ['paragraph', 'reference', 'blockquote'],
+  });
   return md;
 }
