@@ -23,7 +23,7 @@ import {
   replaceFrontmatterData,
   splitFrontmatter,
 } from '../../lib/properties/frontmatter';
-import { applyPathChange, isPathAffected, mergeRestoredOpenTabs } from '../../lib/notes/openTabs';
+import { applyPathChange, isPathAffected, mergeRestoredOpenTabs, tabScrollOffset, visibleOpenTabs } from '../../lib/notes/openTabs';
 import { convertNoteFormat, formatConversionBetween, willConvertFormat } from '../../lib/notes/renameTarget';
 import { linkRewriteKind, renamedPath, rewriteCanvasLinks, rewriteNoteLinks } from '../../lib/notes/linkRewrite';
 import { notify } from '../../lib/notify/notify';
@@ -527,6 +527,8 @@ export function NotesScreen({
     (oldRelPath: string, newRelPath?: string | null) => {
       const next = applyPathChange(openTabRelPathsRef.current, oldRelPath, newRelPath ?? null);
       if (next !== openTabRelPathsRef.current) applyOpenTabs(next);
+      // Historique du bouton retour (#246) : mêmes règles que les onglets.
+      setNoteHistory((history) => applyPathChange(history, oldRelPath, newRelPath ?? null));
     },
     [applyOpenTabs],
   );
@@ -896,6 +898,8 @@ export function NotesScreen({
       if (index === -1) return;
       const next = tabs.filter((p) => p !== relPath);
       applyOpenTabs(next);
+      // Onglet fermé = plus proposé par le bouton retour (#246).
+      setNoteHistory((history) => history.filter((p) => p !== relPath));
       if (activeNoteRef.current?.relPath !== relPath) return;
 
       const nextRelPath = next[Math.min(index, next.length - 1)] ?? null;
@@ -2414,12 +2418,33 @@ export function NotesScreen({
   // changement de coffre le purge aussi) — jamais de ligne fantôme.
   const openTabs = useMemo(() => {
     const nodes: VaultNoteNode[] = [];
-    for (const relPath of openTabRelPaths) {
+    const exists = (relPath: string) => findNodeByPath(tree, relPath)?.type === 'note';
+    for (const relPath of visibleOpenTabs(openTabRelPaths, exists)) {
       const found = findNodeByPath(tree, relPath);
       if (found && found.type === 'note') nodes.push(found);
     }
     return nodes;
   }, [openTabRelPaths, tree]);
+
+  // Barre d'onglets défilable : l'onglet actif est amené dans la vue ; sur
+  // mobile, le pager explorateur/éditeur (lui aussi horizontal) est coupé
+  // tant que le doigt est sur la barre — sinon il volait le geste et les
+  // onglets restaient coupés à droite, impossibles à faire défiler.
+  const tabScrollRef = useRef<ScrollView>(null);
+  const tabLayouts = useRef(new Map<string, { x: number; width: number }>());
+  const tabScroll = useRef({ offset: 0, viewport: 0 });
+  const [tabsTouched, setTabsTouched] = useState(false);
+  const activeTabRelPath = activeNote?.relPath ?? null;
+  const revealActiveTab = useCallback(() => {
+    if (!activeTabRelPath) return;
+    const layout = tabLayouts.current.get(activeTabRelPath);
+    if (!layout) return;
+    const next = tabScrollOffset(layout, tabScroll.current.offset, tabScroll.current.viewport);
+    if (next !== null) tabScrollRef.current?.scrollTo({ x: next, animated: true });
+  }, [activeTabRelPath]);
+  useEffect(() => {
+    revealActiveTab();
+  }, [revealActiveTab, openTabs]);
 
 
   // Reçoit tous les clics sur une ligne NOTE de l'explorateur (voir
@@ -3022,13 +3047,37 @@ export function NotesScreen({
                 barre ne serait qu'un doublon visuel. Défilement horizontal
                 si les onglets débordent (longues arborescences). */}
             {openTabs.length >= 2 && (
-              <View style={[styles.tabBar, { borderBottomColor: theme.border }]}>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+              <View
+                style={[styles.tabBar, { borderBottomColor: theme.border }]}
+                onTouchStart={() => setTabsTouched(true)}
+                onTouchEnd={() => setTabsTouched(false)}
+                onTouchCancel={() => setTabsTouched(false)}
+              >
+                <ScrollView
+                  ref={tabScrollRef}
+                  horizontal
+                  nestedScrollEnabled
+                  showsHorizontalScrollIndicator={Platform.OS === 'web'}
+                  keyboardShouldPersistTaps="handled"
+                  scrollEventThrottle={32}
+                  onLayout={(event) => {
+                    tabScroll.current.viewport = event.nativeEvent.layout.width;
+                    revealActiveTab();
+                  }}
+                  onScroll={(event) => {
+                    tabScroll.current.offset = event.nativeEvent.contentOffset.x;
+                  }}
+                >
                   {openTabs.map((node) => {
                     const isActive = node.relPath === activeNote.relPath;
                     return (
                       <View
                         key={node.relPath}
+                        onLayout={(event) => {
+                          const { x, width } = event.nativeEvent.layout;
+                          tabLayouts.current.set(node.relPath, { x, width });
+                          if (isActive) revealActiveTab();
+                        }}
                         style={[
                           styles.tab,
                           { borderColor: theme.border },
@@ -3456,7 +3505,7 @@ export function NotesScreen({
         <ExplorerPager
           ref={pagerRef}
           theme={theme}
-          scrollEnabled={draggingRelPath === null}
+          scrollEnabled={draggingRelPath === null && !tabsTouched}
           onPageChange={setPagerPage}
           explorer={renderExplorer}
           editor={editorArea}

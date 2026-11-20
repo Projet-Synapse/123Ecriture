@@ -37,15 +37,50 @@ export function isPathAffected(relPath: string, changedOldRelPath: string): bool
 // Applique un renommage/déplacement (`newRelPath` fourni) ou une suppression
 // (`newRelPath` null) à la liste d'onglets :
 // - l'onglet exactement concerné est réécrit sous son nouveau chemin ;
-// - les onglets SITOUS DANS le dossier concerné disparaissent (leur nouveau
-//   chemin exact n'est pas connu ici — même compromis que la note active
-//   dans NotesScreen, qui se ferme dans ce cas ; il suffit de re-cliquer).
+// - les onglets SITUÉS DANS un dossier renommé/déplacé suivent (préfixe
+//   remplacé — `newRelPath` est le nouveau chemin RÉEL du dossier) ;
+// - suppression : l'onglet et ceux du dossier supprimé disparaissent ;
+// - jamais de doublon (conversion .md → .mdx alors que le .mdx était déjà
+//   ouvert, déplacement sur un onglet existant) : la 1re occurrence reste.
 export function applyPathChange(openTabs: string[], oldRelPath: string, newRelPath?: string | null): string[] {
-  const next = openTabs.flatMap((relPath) => {
-    if (relPath === oldRelPath) return newRelPath ? [newRelPath] : [];
-    return isPathAffected(relPath, oldRelPath) ? [] : [relPath];
-  });
+  const seen = new Set<string>();
+  const next: string[] = [];
+  for (const relPath of openTabs) {
+    const mapped = remapPath(relPath, oldRelPath, newRelPath ?? null);
+    if (mapped === null || seen.has(mapped)) continue;
+    seen.add(mapped);
+    next.push(mapped);
+  }
   return listsEqual(next, openTabs) ? openTabs : next;
+}
+
+// Nouveau chemin d'une entrée après le renommage/déplacement (ou la
+// suppression, `newRelPath` null → null) de `oldRelPath` ; inchangée si
+// non concernée.
+export function remapPath(relPath: string, oldRelPath: string, newRelPath: string | null): string | null {
+  if (!isPathAffected(relPath, oldRelPath)) return relPath;
+  if (newRelPath === null) return null;
+  return relPath === oldRelPath ? newRelPath : `${newRelPath}${relPath.slice(oldRelPath.length)}`;
+}
+
+// Onglets réellement affichables : chemins existants (fichiers), sans
+// doublon — un chemin disparu (supprimé ailleurs, synchro) n'apparaît pas.
+export function visibleOpenTabs(openTabs: readonly string[], exists: (relPath: string) => boolean): string[] {
+  const seen = new Set<string>();
+  return openTabs.filter((relPath) => {
+    if (seen.has(relPath) || !exists(relPath)) return false;
+    seen.add(relPath);
+    return true;
+  });
+}
+
+// Décalage horizontal pour amener l'onglet [x, x+width] dans la vue
+// [offset, offset+viewport] (marge `pad`), ou null s'il est déjà visible.
+export function tabScrollOffset(tab: { x: number; width: number }, offset: number, viewport: number, pad = 24): number | null {
+  if (viewport <= 0) return null;
+  if (tab.x - pad < offset) return Math.max(0, tab.x - pad);
+  if (tab.x + tab.width + pad > offset + viewport) return Math.max(0, tab.x + tab.width + pad - viewport);
+  return null;
 }
 
 //////// 2. Fusion restauration/session — mergeRestoredOpenTabs //////////////
