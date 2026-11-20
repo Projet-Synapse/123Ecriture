@@ -24,7 +24,9 @@ import type { Theme } from '../../theme';
 //     runCommand — barre d'outils native, voir commandRef).
 //   • applyDoc n'est envoyé que pour un changement EXTERNE (changement de
 //     note, pull de synchro) — les échos de frappe sont filtrés par
-//     lastWebContent.
+//     lastWebContent. Côté web, applyDoc ignore en plus tout texte que la
+//     page a déjà émis (écho en retard, renvois du `ready`) et applique le
+//     reste en diff, curseur préservé (lib/editor/docSync.ts).
 //   • Les callbacks stables (onMessage) lisent les derniers handlers via
 //     des refs mises à jour en EFFET, jamais pendant le rendu.
 //   • editorBackground n'est PAS transmis : la WebView suit le fond de

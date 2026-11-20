@@ -14,13 +14,14 @@
 // scripts/build-editor-web.mjs et l'exclusion `webview` du tsconfig).
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import CodeMirror, { EditorView } from '@uiw/react-codemirror';
+import CodeMirror, { EditorView, ExternalChange } from '@uiw/react-codemirror';
 import { markdown } from '@codemirror/lang-markdown';
 import { autocompletion } from '@codemirror/autocomplete';
 import { search as searchExtension, searchKeymap } from '@codemirror/search';
 import { keymap } from '@codemirror/view';
 import { redo, undo } from '@codemirror/commands';
 
+import { DocSync } from '../lib/editor/docSync';
 import { applyTextCommand, parseEditorCommand } from '../lib/editor/editorCommands';
 import { createLivePreviewExtension } from '../lib/editor/mdxLivePreview';
 import { occurrenceCompletionSource } from '../lib/editor/occurrenceAutocomplete';
@@ -115,7 +116,7 @@ function sendChangeThrottled(content: string): void {
   if (now - lastSentAt >= 300) {
     lastSentAt = now;
     pendingContent = null;
-    send('change', { content });
+    emitChange(content);
   }
 }
 setInterval(() => {
@@ -123,8 +124,25 @@ setInterval(() => {
   lastSentAt = Date.now();
   const content = pendingContent;
   pendingContent = null;
-  send('change', { content });
+  emitChange(content);
 }, 300);
+
+// Synchro RN → web gardée (lib/editor/docSync.ts) : chaque texte envoyé à
+// RN est mémorisé ; un applyDoc qui renvoie l'un d'eux (écho en retard du
+// pont throttlé, renvois du `ready`, corps normalisé) est IGNORÉ au lieu
+// d'écraser la frappe plus récente. Un vrai changement externe est
+// appliqué en diff minimal — CodeMirror garde le curseur en place.
+const docSync = new DocSync();
+function emitChange(content: string): void {
+  docSync.noteEmitted(content);
+  send('change', { content });
+}
+function syncDocFromNative(view: EditorView, text: string): void {
+  const change = docSync.incoming(text, view.state.doc.toString());
+  // ExternalChange : pas de onChange → pas de renvoi vers RN (anti-écho).
+  if (change) view.dispatch({ changes: change, annotations: [ExternalChange.of(true)] });
+  config.content = view.state.doc.toString();
+}
 
 // Images des embeds (aperçu vivant) : la data URL vient de RN par le pont
 // (`resolveEmbed` → api.embedResolved). Cache PAR NOTE : le widget est
@@ -155,11 +173,6 @@ function resolveEmbedViaNative(target: string): Promise<string | null> {
   return pending;
 }
 
-// Garde anti-écho : applyDoc (RN → web) déclenche un onChange CodeMirror
-// comme une vraie frappe — sans ce drapeau, le doc renvoyé repartait vers
-// RN et bouclait. Fenêtre large : le onChange programmatique est synchrone.
-let applyingRemote = false;
-
 // EditorView courante — cible des commandes de la barre d'outils native
 // (api.runCommand ci-dessous, lib/editor/editorCommands.ts).
 let currentView: EditorView | null = null;
@@ -173,6 +186,12 @@ function EditorApp() {
   // PAS les mémos (bug « page blanche / hauteur figée », vécu fix24-28).
   bumpVersion = () => setVersion((v) => v + 1);
   const latestContent = useRef(config.content);
+  // `value` de CodeMirror = contenu INITIAL seulement : le `value` contrôlé
+  // de @uiw/react-codemirror remplaçait tout le doc par la valeur du
+  // dernier rendu — périmée si une frappe arrivait entre le rendu et son
+  // effet (mise à jour différée pendant la frappe puis appliquée : lettres
+  // perdues). Les changements RN passent par syncDocFromNative.
+  const [seedContent] = useState(config.content);
 
   const rerender = useCallback(() => setVersion((v) => v + 1), []);
 
@@ -308,7 +327,7 @@ function EditorApp() {
 
   return (
     <CodeMirror
-      value={config.content}
+      value={seedContent}
       height="100%"
       // Viewport énorme : CodeMirror virtualise son rendu (~1000 px autour
       // du scroll) — dans une WebView en hauteur auto (le scroll est le
@@ -330,27 +349,28 @@ function EditorApp() {
       onChange={(value) => {
         latestContent.current = value;
         config.content = value;
-        if (applyingRemote) return;
         sendChangeThrottled(value);
       }}
-      onBlur={() => send('change', { content: latestContent.current })}
+      onBlur={() => emitChange(latestContent.current)}
       onCreateEditor={(view) => {
         currentView = view;
+        syncDocFromNative(view, config.content);
       }}
     />
   );
 }
 
 // Pont React Native → WebView : appelé par MdxEditorWeb.tsx via
-// injectJavaScript. applyDoc écrit le doc SANT re-pousser vers RN (anti-
+// injectJavaScript. applyDoc écrit le doc SANS re-pousser vers RN (anti-
 // écho) ; applyConfig recrée les extensions (thème/polices/autocomplétion).
 const api = {
   applyDoc(text: string): void {
-    applyingRemote = true;
+    if (currentView) {
+      syncDocFromNative(currentView, text);
+      return;
+    }
+    // Éditeur pas encore créé : appliqué à sa création (onCreateEditor).
     config.content = text;
-    setTimeout(() => {
-      applyingRemote = false;
-    }, 80);
     bumpVersion();
   },
   // Réponse de RN à `resolveEmbed` (null = introuvable/illisible).
