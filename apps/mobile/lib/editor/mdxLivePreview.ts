@@ -5,11 +5,14 @@ import { isImageEmbedTarget } from '../notes/embedResolution';
 import { unsupportedImageMessage, withImageMime } from '../files/imageFormats';
 import {
   findAlignedBlocks,
+  closeLengthOf,
   findBold,
   findItalic,
   findLiveMatches,
+  findStrikeAndUnderline,
   findTableBlocks,
   type LiveMatch,
+  type MarkMatch,
   type TokenType,
 } from './liveDecorations';
 
@@ -388,10 +391,19 @@ const MAX_LIVE_PREVIEW_CHARS = 500_000;
 // niveau de récursion consomme au moins les deux marqueurs, donc
 // l'imbrication terminée est garantie ; les plages sortent de gauche à
 // droite (le tri final de Decoration.set couvre le reste).
+// Style CSS d'un mark (barré + souligné se cumulent : text-decoration-line
+// porte les deux quand ils sont imbriqués).
+function markStyle(type: MarkMatch['type'], inherited: string): string {
+  if (type === 'bold') return 'font-weight:700';
+  if (type === 'italic') return 'font-style:italic';
+  const lines = /text-decoration-line:([^;]*)/.exec(inherited)?.[1]?.trim().split(/\s+/) ?? [];
+  const next = type === 'strike' ? 'line-through' : 'underline';
+  return `text-decoration-line:${[...new Set([...lines, next])].join(' ')}`;
+}
+
 function pushMarkedRanges(ranges: DecorationRange[], text: string, from: number, to: number, style: string): void {
-  const inner = [...findBold(text.slice(from, to)), ...findItalic(text.slice(from, to))].sort(
-    (a, b) => a.from - b.from,
-  );
+  const slice = text.slice(from, to);
+  const inner = [...findBold(slice), ...findItalic(slice), ...findStrikeAndUnderline(slice)].sort((a, b) => a.from - b.from);
   let cursor = from;
   const emitPlain = (f: number, t: number) => {
     if (f < t) ranges.push({ from: f, to: t, decoration: Decoration.mark({ attributes: { style } }) });
@@ -401,15 +413,16 @@ function pushMarkedRanges(ranges: DecorationRange[], text: string, from: number,
     const absTo = from + segment.to;
     if (absFrom < cursor) continue; // chevauche le segment retenu (dédoublonnage local)
     emitPlain(cursor, absFrom);
+    const closeLength = closeLengthOf(segment);
     ranges.push({ from: absFrom, to: absFrom + segment.markerLength, decoration: Decoration.replace({}) });
     pushMarkedRanges(
       ranges,
       text,
       absFrom + segment.markerLength,
-      absTo - segment.markerLength,
-      `${style};${segment.type === 'bold' ? 'font-weight:700' : 'font-style:italic'}`,
+      absTo - closeLength,
+      `${style};${markStyle(segment.type, style)}`,
     );
-    ranges.push({ from: absTo - segment.markerLength, to: absTo, decoration: Decoration.replace({}) });
+    ranges.push({ from: absTo - closeLength, to: absTo, decoration: Decoration.replace({}) });
     cursor = absTo;
   }
   emitPlain(cursor, to);
@@ -445,7 +458,7 @@ function buildDecorations(view: EditorView, colors: LivePreviewColors, callbacks
 
     if (match.kind === 'mark') {
       if (active) continue; // texte brut révélé pendant l'édition
-      const styleClass = match.type === 'bold' ? 'font-weight:700' : 'font-style:italic';
+      const styleClass = markStyle(match.type, '');
       ranges.push({ from: match.from, to: match.from + match.markerLength, decoration: Decoration.replace({}) });
       // Le contenu est découpé en spans hors tokens ; chaque span passe
       // par le découpage récursif pour masquer à son tour les marqueurs
@@ -454,7 +467,7 @@ function buildDecorations(view: EditorView, colors: LivePreviewColors, callbacks
       for (const span of match.contentSpans) {
         pushMarkedRanges(ranges, text, span.from, span.to, styleClass);
       }
-      ranges.push({ from: match.to - match.markerLength, to: match.to, decoration: Decoration.replace({}) });
+      ranges.push({ from: match.to - closeLengthOf(match), to: match.to, decoration: Decoration.replace({}) });
     } else if (match.kind === 'heading') {
       // Taille PAR NIVEAU, nettement graduée — une échelle plate fait
       // h5/h6 à 1em, invisibles dans les notes qui structurent leurs
