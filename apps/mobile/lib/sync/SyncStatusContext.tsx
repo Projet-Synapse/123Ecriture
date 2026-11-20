@@ -4,6 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type { RealtimeChannel } from '@supabase/supabase-js';
 
 import { useAuth } from './AuthContext';
+import { partitionWatchEvents } from './ownWrites';
 import { appendJournalEntries, runSync as runSyncEngine, SYNC_JOURNAL_READ_PATH } from './syncEngine';
 import { loadPendingReview, type PendingReview } from './pendingReview';
 import { derivePause, deriveWarning, lastLoggedPause, pauseTransitionEntries, type SyncPause } from './syncPause';
@@ -461,12 +462,32 @@ export function SyncStatusProvider({ children }: { children: ReactNode }) {
     if (!preferences.autoSyncEnabled || !cloudSyncConfigured || !sync?.onLocalChanged) return;
     void sync.watchRestart?.().catch(() => undefined);
     let debounce: ReturnType<typeof setTimeout> | null = null;
-    const unsubscribe = sync.onLocalChanged(() => {
+    let afterEdit: ReturnType<typeof setTimeout> | null = null;
+    const changed = new Set<string>();
+    const unsubscribe = sync.onLocalChanged((filename) => {
+      if (filename) changed.add(filename);
       if (debounce) clearTimeout(debounce);
-      debounce = setTimeout(() => void runSync('surveillance du dossier'), 2000);
+      debounce = setTimeout(() => {
+        debounce = null;
+        // Perf desktop (lib/sync/ownWrites.ts) : seules NOS sauvegardes de
+        // la note en cours de frappe → pas de cycle maintenant (il la
+        // différerait de toute façon), un seul cycle quand elle refroidit.
+        const { others, ownHotUntil } = partitionWatchEvents(changed);
+        changed.clear();
+        if (others.length === 0 && ownHotUntil !== null) {
+          if (afterEdit) clearTimeout(afterEdit);
+          afterEdit = setTimeout(() => {
+            afterEdit = null;
+            void runSync('fin d’édition');
+          }, Math.max(ownHotUntil - Date.now(), 0) + 1_000);
+          return;
+        }
+        void runSync('surveillance du dossier');
+      }, 2000);
     });
     return () => {
       if (debounce) clearTimeout(debounce);
+      if (afterEdit) clearTimeout(afterEdit);
       unsubscribe();
     };
   }, [preferences.autoSyncEnabled, cloudSyncConfigured, runSync]);
