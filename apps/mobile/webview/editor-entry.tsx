@@ -177,6 +177,24 @@ function resolveEmbedViaNative(target: string): Promise<string | null> {
 // (api.runCommand ci-dessous, lib/editor/editorCommands.ts).
 let currentView: EditorView | null = null;
 
+// Position du curseur → RN (`caret`, coordonnées dans la WebView) : en
+// hauteur auto, c'est le ScrollView NATIF qui défile ; il s'en sert pour
+// garder le curseur au-dessus du clavier (lib/ui/caretReveal.ts). Une
+// fois par frame au plus, seulement si l'éditeur a le focus.
+let caretFrame = 0;
+function reportCaret(): void {
+  const view = currentView;
+  if (!view || !view.hasFocus) return;
+  cancelAnimationFrame(caretFrame);
+  caretFrame = requestAnimationFrame(() => {
+    const coords = view.coordsAtPos(view.state.selection.main.head);
+    if (coords) send('caret', { top: coords.top, bottom: coords.bottom });
+  });
+}
+const caretReporter = EditorView.updateListener.of((update) => {
+  if (update.selectionSet || update.docChanged || update.focusChanged) reportCaret();
+});
+
 function EditorApp() {
   const [version, setVersion] = useState(0);
   // Référence au setter remontée au niveau module (voir applyDoc/applyConfig)
@@ -248,6 +266,7 @@ function EditorApp() {
       }),
       searchExtension({ top: true }),
       keymap.of(searchKeymap),
+      caretReporter,
     ];
     // Mode Intermédiaire uniquement : l'aperçu vivant (marqueurs masqués,
     // titres stylés, pastilles). Le mode Source passe `livePreview: false`
@@ -314,6 +333,9 @@ function EditorApp() {
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => {
         send('height', { height: document.body.offsetHeight });
+        // La WebView va grandir (nouvelle ligne en fin de note) : renvoyer
+        // le curseur pour qu'il soit dégagé APRÈS l'agrandissement.
+        reportCaret();
       }, 120);
     };
     sendHeight();
@@ -372,6 +394,10 @@ const api = {
     // Éditeur pas encore créé : appliqué à sa création (onCreateEditor).
     config.content = text;
     bumpVersion();
+  },
+  // Clavier ouvert côté RN : renvoyer la position du curseur.
+  reportCaret(): void {
+    reportCaret();
   },
   // Réponse de RN à `resolveEmbed` (null = introuvable/illisible).
   embedResolved(id: number, url: string | null): void {

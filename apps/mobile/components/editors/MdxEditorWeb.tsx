@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { Keyboard, Platform, StyleSheet, View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 
 import { editorCommandScript, type EditorCommand } from '../../lib/editor/editorCommands';
 import { withImageMime } from '../../lib/files/imageFormats';
+import { CaretRevealContext } from '../../lib/ui/caretReveal';
 import { EDITOR_WEB_BUNDLE } from '../generated/editorWebBundle';
 import type { Theme } from '../../theme';
 
@@ -95,6 +96,15 @@ export function MdxEditorWeb({
 }: Props) {
   const [webHeight, setWebHeight] = useState(200);
   const webRef = useRef<WebView>(null);
+  // Curseur visible au-dessus du clavier (lib/ui/caretReveal.ts) : la page
+  // envoie `caret` (coordonnées dans la WebView), converties ici en
+  // coordonnées fenêtre pour le ScrollView natif englobant.
+  const containerRef = useRef<View>(null);
+  const revealCaret = useContext(CaretRevealContext);
+  const revealCaretRef = useRef(revealCaret);
+  useEffect(() => {
+    revealCaretRef.current = revealCaret;
+  }, [revealCaret]);
   // Dernier contenu CONNU du web : filtre les échos (le change renvoyé par
   // le web pour notre propre applyDoc ne repart pas vers onChange).
   const lastWebContent = useRef(value);
@@ -173,6 +183,8 @@ export function MdxEditorWeb({
         word?: string;
         id?: number;
         height?: number;
+        top?: number;
+        bottom?: number;
         bg?: string;
         accent?: string;
         autoHeight?: boolean;
@@ -201,6 +213,12 @@ export function MdxEditorWeb({
       if (message.type === 'change' && typeof message.content === 'string') {
         lastWebContent.current = message.content;
         if (message.content !== value) onChangeRef.current(message.content);
+        return;
+      }
+      if (message.type === 'caret' && typeof message.top === 'number' && typeof message.bottom === 'number') {
+        const reveal = revealCaretRef.current;
+        const { top, bottom } = message;
+        if (reveal) containerRef.current?.measureInWindow((_x, y) => reveal(y + top, y + bottom));
         return;
       }
       if (message.type === 'height' && typeof message.height === 'number') {
@@ -251,8 +269,18 @@ export function MdxEditorWeb({
     sendConfig();
   }, [sendConfig]);
 
+  // Le clavier vient de s'ouvrir (souvent APRÈS le tap qui a posé le
+  // curseur) : redemander la position du curseur pour le dégager.
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    const subscription = Keyboard.addListener('keyboardDidShow', () => {
+      inject('window.__editorApi && window.__editorApi.reportCaret && window.__editorApi.reportCaret();');
+    });
+    return () => subscription.remove();
+  }, [inject]);
+
   return (
-    <View style={styles.container}>
+    <View ref={containerRef} style={styles.container} collapsable={false}>
       <WebView
         ref={webRef}
         source={{ html: EDITOR_WEB_BUNDLE }}
