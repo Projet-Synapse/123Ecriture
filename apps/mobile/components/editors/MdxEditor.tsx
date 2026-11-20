@@ -1,12 +1,13 @@
-import { useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
-import CodeMirror, { EditorView, type ReactCodeMirrorRef } from '@uiw/react-codemirror';
+import CodeMirror, { EditorView, ExternalChange, type ReactCodeMirrorRef } from '@uiw/react-codemirror';
 import { markdown } from '@codemirror/lang-markdown';
 import { autocompletion } from '@codemirror/autocomplete';
 import { search as searchExtension, searchKeymap } from '@codemirror/search';
 import { keymap } from '@codemirror/view';
 import { Prec } from '@codemirror/state';
 
+import { DocSync } from '../../lib/editor/docSync';
 import { createLivePreviewExtension } from '../../lib/editor/mdxLivePreview';
 import { enableOsEmojiInsertion } from '../../lib/editor/osEmojiInsertion';
 import { occurrenceCompletionSource } from '../../lib/editor/occurrenceAutocomplete';
@@ -165,6 +166,36 @@ export function MdxEditor({
   closeBrackets = true,
   shortcuts,
 }: Props) {
+  // Synchro `value` → éditeur GARDÉE (lib/editor/docSync.ts) : le `value`
+  // contrôlé de @uiw/react-codemirror remplaçait tout le doc dès qu'un
+  // rendu en retard (ou un corps normalisé) différait du doc — et, pendant
+  // la frappe, il différait cette mise à jour PÉRIMÉE puis l'appliquait à
+  // la pause suivante : les dernières lettres tapées disparaissaient. On ne
+  // lui passe donc que la valeur INITIALE ; les changements externes sont
+  // appliqués ici, en diff, échos et versions antérieures ignorés.
+  const [seedValue] = useState(value);
+  const [docSync] = useState(() => new DocSync());
+  const viewRef = useRef<EditorView | null>(null);
+  const valueRef = useRef(value);
+  const syncFromParent = useCallback(
+    (view: EditorView, next: string) => {
+      const change = docSync.incoming(next, view.state.doc.toString());
+      if (change) view.dispatch({ changes: change, annotations: [ExternalChange.of(true)] });
+    },
+    [docSync],
+  );
+  useEffect(() => {
+    valueRef.current = value;
+    if (viewRef.current) syncFromParent(viewRef.current, value);
+  }, [value, syncFromParent]);
+  const handleChange = useCallback(
+    (text: string) => {
+      docSync.noteEmitted(text);
+      onChange(text);
+    },
+    [docSync, onChange],
+  );
+
   const editorTheme = useMemo(
     () =>
       EditorView.theme({
@@ -310,7 +341,7 @@ export function MdxEditor({
   return (
     <View style={styles.container}>
       <CodeMirror
-        value={value}
+        value={seedValue}
         height="100%"
         // `style` n'est PAS dans la liste des props reconnues par
         // @uiw/react-codemirror (voir son `esm/index.js`, `_excluded`) —
@@ -348,7 +379,11 @@ export function MdxEditor({
           autocompletion: false,
           closeBrackets,
         }}
-        onChange={onChange}
+        onChange={handleChange}
+        onCreateEditor={(view) => {
+          viewRef.current = view;
+          syncFromParent(view, valueRef.current);
+        }}
         ref={(ref) => {
           if (ref) onReady?.(ref);
         }}
