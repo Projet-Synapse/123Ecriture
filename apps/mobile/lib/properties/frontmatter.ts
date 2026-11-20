@@ -89,6 +89,36 @@ function detectEol(text: string): '\n' | '\r\n' {
 
 //////// 1. splitFrontmatter / parseFrontmatter — lecture (tolérante) ////////
 
+// Bloc frontmatter BRUT (sans parser le YAML) — clé de mémo bon marché
+// pour ne reparser les propriétés que quand le bloc change.
+export function frontmatterBlockOf(content: string): string {
+  return FRONTMATTER_PATTERN.exec(content)?.[0] ?? '';
+}
+
+// Dernier YAML parsé (perf desktop, v0.4.100) : pendant la frappe, le bloc
+// ne change pas mais splitFrontmatter est appelé plusieurs fois par lettre
+// (corps affiché, recomposition) — le YAML n'est reparsé que s'il change.
+// Une COPIE est rendue à chaque appel : aucun appelant ne partage l'objet.
+let lastYaml: string | null = null;
+let lastParsed: unknown = null;
+function cloneParsed(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(cloneParsed);
+  if (value instanceof Date) return new Date(value.getTime());
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value)) out[k] = cloneParsed(v);
+    return out;
+  }
+  return value;
+}
+function loadYamlCached(yaml: string): unknown {
+  if (yaml !== lastYaml) {
+    lastParsed = load(yaml);
+    lastYaml = yaml;
+  }
+  return cloneParsed(lastParsed);
+}
+
 // Découpe brute : voir les invariants en tête de fichier.
 export function splitFrontmatter(content: string): FrontmatterSplit {
   const bom = content.startsWith('\uFEFF') ? '\uFEFF' : '';
@@ -100,7 +130,7 @@ export function splitFrontmatter(content: string): FrontmatterSplit {
   let data: FrontmatterData;
   try {
     const yaml = match[2] ?? '';
-    const parsed: unknown = yaml.trim() === '' ? {} : load(yaml);
+    const parsed: unknown = yaml.trim() === '' ? {} : loadYamlCached(yaml);
     if (parsed === null || parsed === undefined) data = {};
     else if (typeof parsed === 'object' && !Array.isArray(parsed) && !(parsed instanceof Date)) {
       data = parsed as FrontmatterData;

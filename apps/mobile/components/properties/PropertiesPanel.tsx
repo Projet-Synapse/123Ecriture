@@ -62,19 +62,24 @@ type Props = {
   theme: Theme;
   activeNote: VaultEntry | null;
   content: string;
+  // Contenu À JOUR (ref de NotesScreen) : la frappe desktop publie `content`
+  // avec un léger retard — une modification de propriété doit partir du
+  // texte réel, sinon elle effacerait les dernières lettres tapées.
+  getContent?: () => string;
   onChangeContent: (text: string) => void;
   tree?: VaultTreeNode[];
 };
 
 //////// 2. PropertiesPanel — la liste des valeurs + le bouton d'ajout ////////////////////
 
-export function PropertiesPanel({ theme, activeNote, content, onChangeContent, tree }: Props) {
+export function PropertiesPanel({ theme, activeNote, content, onChangeContent, tree, getContent }: Props) {
   const propertiesBridge = typeof window !== 'undefined' ? window.properties : undefined;
   const { definitions, update, create } = usePropertyDefinitions();
   const { lines, availableToAdd, setValue, addValue, removeValue } = usePropertyValues(
     content,
     onChangeContent,
     definitions,
+    getContent,
   );
 
   if (!propertiesBridge) {

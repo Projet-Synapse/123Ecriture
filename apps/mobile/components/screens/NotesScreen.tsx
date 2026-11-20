@@ -81,6 +81,8 @@ import { SearchDialog } from '../dialogs/SearchDialog';
 import { lintMarkdown } from '../../lib/editor/markdownLinter';
 import { defaultTemplateFor, listTemplateNotes, renderTemplate } from '../../lib/notes/templates';
 import { attachmentEmbed } from '../../lib/notes/embedResolution';
+import { createTypingCommitter, type TypingCommitter } from '../../lib/editor/typingCommit';
+import { noteOwnEdit } from '../../lib/sync/ownWrites';
 import { VaultTreeView } from '../vault/VaultTreeView';
 import { NoteIconByKind } from '../vault/FileIcons';
 import { FolderPreview } from '../vault/FolderPreview';
@@ -283,7 +285,44 @@ export function NotesScreen({
   // vient du retour et ne doit pas ré-empiler la note quittée.
   const [noteHistory, setNoteHistory] = useState<string[]>([]);
   const navigatingBackRef = useRef(false);
-  const [content, setContent] = useState('');
+  const [content, setContentState] = useState('');
+  // Contenu courant tenu à jour dans une ref : lue par la sauvegarde,
+  // flushSave/openNote (sans les recréer à chaque frappe) et par les
+  // éditeurs de propriétés. TOUJOURS à jour, même quand l'état React
+  // `content` attend sa publication (frappe desktop, voir typingCommit).
+  const contentRef = useRef('');
+  // Desktop : publication de la frappe regroupée (lib/editor/typingCommit.ts)
+  // — la frappe ne re-rend plus tout l'écran à chaque lettre. Créé à la
+  // première frappe (jamais pendant le rendu).
+  const typingCommitRef = useRef<TypingCommitter | null>(null);
+  useEffect(() => () => typingCommitRef.current?.cancel(), []);
+  // Remplacement du contenu (ouverture, conversion, propriétés…) : immédiat,
+  // et toute publication de frappe en attente est abandonnée.
+  const setContent = useCallback((text: string) => {
+    typingCommitRef.current?.cancel();
+    contentRef.current = text;
+    setContentState(text);
+  }, []);
+  // Frappe dans l'éditeur : ref immédiate ; état React publié après une
+  // courte pause sur desktop/web, tout de suite sur Android (éditeur en
+  // WebView, fil séparé : le re-rendu n'y freine pas la frappe).
+  const typeContent = useCallback((text: string) => {
+    contentRef.current = text;
+    if (Platform.OS !== 'web') {
+      typingCommitRef.current?.cancel();
+      setContentState(text);
+      return;
+    }
+    if (!typingCommitRef.current) {
+      typingCommitRef.current = createTypingCommitter({
+        delayMs: 250,
+        maxWaitMs: 1000,
+        commit: () => setContentState(contentRef.current),
+      });
+    }
+    typingCommitRef.current.schedule();
+  }, []);
+  const getContent = useCallback(() => contentRef.current, []);
   const [status, setStatus] = useState<Status>('idle');
   const [viewMode, setViewMode] = useState<ViewMode>(preferences.editorDefaultMode);
   // Sur natif, l'éditeur CodeMirror est du pur DOM (crash au montage) :
@@ -444,10 +483,7 @@ export function NotesScreen({
   // frappe pour rien (voir l'effet Ctrl/Cmd+S/K/N plus bas). Déclaré ici
   // (avant openNote qui le lit) : react-hooks/immutability exige que la
   // mutation de la ref précède sa capture par un hook.
-  const contentRef = useRef(content);
-  useEffect(() => {
-    contentRef.current = content;
-  }, [content]);
+  // (contentRef : déclarée avec l'état `content`, plus haut.)
 
   // Bulles de sauvegarde (lib/notify) : succès DISCRET — au plus une toutes
   // les 60 s, désactivable (Paramètres → Notifications) — ; échec toujours
@@ -847,7 +883,10 @@ export function NotesScreen({
           saveTimer.current = null;
           const leftNote = activeNoteRef.current;
           void materializeTimestamps(leftNote.relPath, contentRef.current, leftNote.kind)
-            .then((finalText) => vault.writeNote(leftNote.relPath, finalText))
+            .then((finalText) => {
+              noteOwnEdit(leftNote.relPath);
+              return vault.writeNote(leftNote.relPath, finalText);
+            })
             .catch((error) => {
               console.error('[vault] échec de la sauvegarde différée au changement de note :', error);
             });
@@ -883,7 +922,7 @@ export function NotesScreen({
         setStatus('error');
       }
     },
-    [vault, preferences.editorDefaultMode, applyOpenTabs, materializeTimestamps],
+    [vault, setContent, preferences.editorDefaultMode, materializeTimestamps, applyOpenTabs],
   );
 
 
@@ -922,7 +961,7 @@ export function NotesScreen({
       setContent('');
       setStatus('idle');
     },
-    [applyOpenTabs, openNote, tree, vault],
+    [applyOpenTabs, openNote, setContent, tree, vault],
   );
 
   // Ctrl+Tab / Ctrl+Shift+Tab : onglet suivant/précédent, en boucle
@@ -1320,7 +1359,7 @@ export function NotesScreen({
       }
       if (isActive || converted !== source) await vault.writeNote(newRelPath, converted);
     },
-    [vault],
+    [setContent, vault],
   );
 
   // Liens internes mis à jour dans tout le coffre (comme Obsidian, voir
@@ -1392,7 +1431,7 @@ export function NotesScreen({
       }
       return total;
     },
-    [vault],
+    [setContent, vault],
   );
 
   // Suites communes d'un renommage réussi : onglets, note active, favoris,
@@ -1434,7 +1473,7 @@ export function NotesScreen({
       await updateLinksAfterRename(oldRelPath, result.relPath);
       await refreshTree();
     },
-    [updateOpenTabsAfterPathChange, remapFavoritesAfterRename, convertRenamedNote, updateLinksAfterRename, refreshTree],
+    [updateOpenTabsAfterPathChange, remapFavoritesAfterRename, updateLinksAfterRename, refreshTree, setContent, convertRenamedNote],
   );
 
   const submitRename = useCallback(async () => {
@@ -1507,7 +1546,7 @@ export function NotesScreen({
         console.error('[vault] échec du déplacement :', error);
       }
     },
-    [vault, refreshTree, updateOpenTabsAfterPathChange, updateLinksAfterRename, withPathChange],
+    [vault, withPathChange, updateOpenTabsAfterPathChange, updateLinksAfterRename, refreshTree, setContent],
   );
 
   const submitMove = useCallback(
@@ -1545,7 +1584,7 @@ export function NotesScreen({
         console.error('[vault] échec de la suppression :', error);
       }
     },
-    [vault, syncStatus, refreshTree, updateOpenTabsAfterPathChange],
+    [vault, syncStatus, updateOpenTabsAfterPathChange, refreshTree, setContent],
   );
 
   // "Dupliquer" (menu contextuel) — copie DANS LE MÊME dossier (voir
@@ -2067,6 +2106,7 @@ export function NotesScreen({
             // clés créées (created/modified) apparaissent à la réouverture.
             // Revérifié APRÈS l'attente : un renommage a pu démarrer.
             if (!writable()) return;
+            noteOwnEdit(activeNote.relPath);
             await vault.writeNote(activeNote.relPath, finalText);
             setStatus('saved');
             // PAS de refreshTree() ici (contrairement à flushSave) : un
@@ -2097,7 +2137,16 @@ export function NotesScreen({
       setContent(text);
       scheduleSave();
     },
-    [scheduleSave],
+    [scheduleSave, setContent],
+  );
+  // Frappe dans l'éditeur Markdown (Source) : publication regroupée sur
+  // desktop (typeContent) — la sauvegarde lit contentRef, toujours à jour.
+  const handleTypeContent = useCallback(
+    (text: string) => {
+      typeContent(text);
+      scheduleSave();
+    },
+    [scheduleSave, typeContent],
   );
 
   // Menu « ⋯ » de l'en-tête de l'éditeur (bouton rendu plus bas) — mêmes
@@ -2169,6 +2218,7 @@ export function NotesScreen({
         ) {
           return;
         }
+        noteOwnEdit(activeNote.relPath);
         await vault.writeNote(activeNote.relPath, finalText);
         setStatus('saved');
         await refreshTree();
@@ -2339,10 +2389,11 @@ export function NotesScreen({
   // celle-ci. scheduleSave lit contentRef au déclenchement du minuteur.
   const handleChangeBody = useCallback(
     (newBody: string) => {
-      setContent((previous) => joinFrontmatter(splitFrontmatter(previous).block, newBody));
+      // Base = contentRef (pas l'état, qui peut attendre sa publication).
+      typeContent(joinFrontmatter(splitFrontmatter(contentRef.current).block, newBody));
       scheduleSave();
     },
-    [scheduleSave],
+    [scheduleSave, typeContent],
   );
 
   // Dispatché directement sur l'EditorView (pas de setContent/scheduleSave
@@ -2459,7 +2510,7 @@ export function NotesScreen({
         // Natif : inséré au curseur dans l'éditeur WebView.
         nativeEditorCommandRef.current({ kind: 'insert', text: embed });
       } else {
-        const newText = `${content}${embed}`;
+        const newText = `${contentRef.current}${embed}`;
         setContent(newText);
         scheduleSave();
       }
@@ -2467,7 +2518,7 @@ export function NotesScreen({
       console.error('[vault] échec de l’import de la pièce jointe :', error);
       setAttachmentError(errorMessage(error));
     }
-  }, [vault, activeNote, content, scheduleSave, refreshTree]);
+  }, [vault, activeNote, scheduleSave, refreshTree, setContent]);
 
 
 //////// 7. Favoris, multi-sélection et vue Tags ///////////////////////////
@@ -2633,7 +2684,7 @@ export function NotesScreen({
       }
       await refreshTree();
     },
-    [vault, selectedRelPaths, refreshTree, updateOpenTabsAfterPathChange, updateLinksAfterRename, withPathChange],
+    [vault, selectedRelPaths, refreshTree, withPathChange, updateLinksAfterRename, updateOpenTabsAfterPathChange, setContent],
   );
 
   // "Supprimer" de la barre d'actions groupées — boucle sur `vault.delete`
@@ -2666,7 +2717,7 @@ export function NotesScreen({
     }
     setSelectedRelPaths(new Set());
     await refreshTree();
-  }, [vault, selectedRelPaths, refreshTree, updateOpenTabsAfterPathChange]);
+  }, [vault, selectedRelPaths, refreshTree, updateOpenTabsAfterPathChange, setContent]);
 
 
   // Bascule Fichiers ⇄ Tags (bouton à côté du tri ⇅) — charge la liste des
@@ -3332,6 +3383,7 @@ export function NotesScreen({
                             activeNote={activeNote}
                             content={content}
                             onChangeContent={handleChangeContent}
+                            getContent={getContent}
                             tree={tree}
                           />
                           <NoteRenderer
@@ -3360,6 +3412,7 @@ export function NotesScreen({
                             activeNote={activeNote}
                             content={content}
                             onChangeContent={handleChangeContent}
+                            getContent={getContent}
                             tree={tree}
                           />
                           {/* Corps SEUL (frontmatter retiré, affiché par la
@@ -3424,6 +3477,7 @@ export function NotesScreen({
                             activeNote={activeNote}
                             content={content}
                             onChangeContent={handleChangeContent}
+                            getContent={getContent}
                             tree={tree}
                           />
                           <MdxEditor
@@ -3457,7 +3511,7 @@ export function NotesScreen({
                           {renderContentTitle(activeNote)}
                           <MdxEditor
                             value={content}
-                            onChange={handleChangeContent}
+                            onChange={handleTypeContent}
                             livePreview={false}
                             autoHeight
                             theme={theme}
@@ -3520,6 +3574,7 @@ export function NotesScreen({
                         activeNote={activeNote}
                         content={content}
                         onChangeContent={handleChangeContent}
+                            getContent={getContent}
                         tree={tree}
                       />
                     ) : sidebarTab === 'outline' ? (
