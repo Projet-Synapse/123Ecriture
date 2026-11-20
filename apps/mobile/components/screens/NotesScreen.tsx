@@ -29,6 +29,7 @@ import { linkRewriteKind, renamedPath, rewriteCanvasLinks, rewriteNoteLinks } fr
 import { notify } from '../../lib/notify/notify';
 import { linksUpdatedMessage } from '../../lib/notify/notifyCore';
 import { noteTitlePlacement } from '../../lib/notes/noteTitle';
+import { isPathChanging, shouldWriteSave } from '../../lib/notes/saveGuard';
 import type { FormattingResult, Selection } from '../../lib/editor/mdxFormatting';
 import { NOTES_TOOLBAR_ACTIONS, type ToolbarAction } from '../../lib/editor/notesToolbarActions';
 import { toolbarRoute, type EditorCommand } from '../../lib/editor/editorCommands';
@@ -421,6 +422,13 @@ export function NotesScreen({
   } | null>(null);
   const draggingRelPathRef = useRef<string | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Renommage / déplacement en cours (lib/notes/saveGuard.ts) : aucune
+  // sauvegarde ne doit écrire sur ces chemins — sinon l'ancien fichier
+  // était RECRÉÉ après le déplacement (conversion .md → .mdx : les deux
+  // fichiers). saveInFlight : écriture de sauvegarde en cours, attendue
+  // avant de déplacer le fichier.
+  const changingPathsRef = useRef<Set<string>>(new Set());
+  const saveInFlightRef = useRef<Promise<void> | null>(null);
   // Note active tenue à jour dans une ref, même rôle que `contentRef`
   // ci-dessous : flusher l'autosave en attente au changement de note
   // (openNote) sans dépendre du state `activeNote` d'une closure créée à un
@@ -1214,6 +1222,32 @@ export function NotesScreen({
     setRenamingValue('');
   }, []);
 
+  // Renommage / déplacement ATOMIQUE vis-à-vis des sauvegardes
+  // (lib/notes/saveGuard.ts) : pendant l'opération, aucune sauvegarde
+  // n'écrit sur les chemins touchés ; les frappes en attente de la note
+  // ouverte sont écrites AVANT, sur l'ancien chemin (elles voyagent avec le
+  // fichier, rien ne se perd), et une écriture déjà lancée est attendue.
+  // Sans cela, une sauvegarde arrivée après le déplacement RECRÉAIT
+  // l'ancien fichier (conversion .md → .mdx : les deux fichiers).
+  const withPathChange = useCallback(
+    async <T,>(relPaths: string[], operation: () => Promise<T>): Promise<T> => {
+      for (const relPath of relPaths) changingPathsRef.current.add(relPath);
+      try {
+        const active = activeNoteRef.current;
+        if (vault && active && saveTimer.current && isPathChanging(active.relPath, new Set(relPaths))) {
+          clearTimeout(saveTimer.current);
+          saveTimer.current = null;
+          await vault.writeNote(active.relPath, contentRef.current);
+        }
+        if (saveInFlightRef.current) await saveInFlightRef.current;
+        return await operation();
+      } finally {
+        for (const relPath of relPaths) changingPathsRef.current.delete(relPath);
+      }
+    },
+    [vault],
+  );
+
   // Changement de format par renommage (« Note.md » → « Note.mdx » ou
   // l'inverse) : le fichier a déjà été DÉPLACÉ par l'adaptateur (règle de
   // nom partagée, lib/notes/renameTarget.ts) ; ici, une seule fois pour
@@ -1316,6 +1350,12 @@ export function NotesScreen({
   const applyRenameResult = useCallback(
     async (oldRelPath: string, result: { relPath: string; name: string }) => {
       updateOpenTabsAfterPathChange(oldRelPath, result.relPath);
+      // Tout de suite (sans attendre le rendu) : une sauvegarde programmée
+      // pour l'ancien chemin voit qu'il n'est plus celui de la note ouverte.
+      const opened = activeNoteRef.current;
+      if (opened?.relPath === oldRelPath) {
+        activeNoteRef.current = { ...opened, relPath: result.relPath, name: result.name };
+      }
       setActiveNote((current) => {
         if (!current) return current;
         if (current.relPath === oldRelPath) {
@@ -1358,10 +1398,11 @@ export function NotesScreen({
     setRenamingValue('');
 
     try {
-      const run = async () => {
-        const result = await vault.rename(relPath, value);
-        await applyRenameResult(relPath, result);
-      };
+      const run = () =>
+        withPathChange([relPath], async () => {
+          const result = await vault.rename(relPath, value);
+          await applyRenameResult(relPath, result);
+        });
       // Changement de format : exclusif avec la synchro — le déplacement ET
       // la conversion forment un seul changement vu par le cycle suivant
       // (jamais un état « déplacé, pas encore converti » poussé entre deux).
@@ -1379,7 +1420,7 @@ export function NotesScreen({
         setEditingPathNode(node);
       }
     }
-  }, [vault, syncStatus, tree, renamingRelPath, renamingValue, applyRenameResult]);
+  }, [vault, syncStatus, tree, renamingRelPath, renamingValue, applyRenameResult, withPathChange]);
 
   const startMove = useCallback((node: VaultTreeNode) => {
     setMovingNode(node);
@@ -1393,7 +1434,11 @@ export function NotesScreen({
     async (node: VaultTreeNode, destinationRelPath?: string) => {
       if (!vault) return;
       try {
-        const result = await vault.move(node.relPath, destinationRelPath);
+        const result = await withPathChange([node.relPath], () => vault.move(node.relPath, destinationRelPath));
+        const opened = activeNoteRef.current;
+        if (opened?.relPath === node.relPath) {
+          activeNoteRef.current = { ...opened, relPath: result.relPath, name: result.name };
+        }
         updateOpenTabsAfterPathChange(node.relPath, result.relPath);
         setActiveNote((current) => {
           if (!current) return current;
@@ -1412,7 +1457,7 @@ export function NotesScreen({
         console.error('[vault] échec du déplacement :', error);
       }
     },
-    [vault, refreshTree, updateOpenTabsAfterPathChange, updateLinksAfterRename],
+    [vault, refreshTree, updateOpenTabsAfterPathChange, updateLinksAfterRename, withPathChange],
   );
 
   const submitMove = useCallback(
@@ -1488,7 +1533,7 @@ export function NotesScreen({
       if (!vault || !editingPathNode) return;
       const node = editingPathNode;
       try {
-        await syncStatus.runSyncExclusive(async () => {
+        await syncStatus.runSyncExclusive(() => withPathChange([node.relPath], async () => {
           const result = await vault.setPath(node.relPath, newRelPath);
           // Fermé seulement en cas de SUCCÈS — en cas d'erreur (collision,
           // chemin invalide...), la boîte reste ouverte avec le message pour
@@ -1498,13 +1543,13 @@ export function NotesScreen({
           // Onglets, note active, favoris, conversion .md ⇄ .mdx, arbre :
           // mêmes suites qu'un renommage depuis l'explorateur.
           await applyRenameResult(node.relPath, result);
-        });
+        }));
       } catch (error) {
         console.error('[vault] échec de la modification du chemin :', error);
         setEditPathError(errorMessage(error));
       }
     },
-    [vault, syncStatus, editingPathNode, applyRenameResult],
+    [vault, syncStatus, editingPathNode, applyRenameResult, withPathChange],
   );
 
   const toggleCollapse = useCallback(
@@ -1938,12 +1983,19 @@ export function NotesScreen({
       // où l'écriture a réellement lieu.
       if (saveTimer.current) clearTimeout(saveTimer.current);
       saveTimer.current = setTimeout(() => {
-        void (async () => {
+        saveTimer.current = null;
+        const run = (async () => {
           try {
             // La note a été quittée pendant les 600 ms (openNote a flushé
-            // elle-même) : abandonner plutôt que réécrire l'ancien fichier
-            // avec le contenu courant d'une AUTRE note.
-            if (activeNoteRef.current?.relPath !== activeNote.relPath) return;
+            // elle-même) ou est en cours de renommage : abandonner plutôt
+            // que réécrire (ou recréer) l'ancien fichier.
+            const writable = () =>
+              shouldWriteSave({
+                targetPath: activeNote.relPath,
+                activePath: activeNoteRef.current?.relPath,
+                changing: changingPathsRef.current,
+              });
+            if (!writable()) return;
             setStatus('saving');
             // Texte lu au MOMENT de l'exécution (pas au schedule) : une
             // frappe arrivée entre les deux doit être incluse — sinon la
@@ -1955,6 +2007,8 @@ export function NotesScreen({
             // pendant l'aller-retour. La matérialisation des dates va sur
             // le DISQUE ; l'éditeur reste la source de l'affichage, les
             // clés créées (created/modified) apparaissent à la réouverture.
+            // Revérifié APRÈS l'attente : un renommage a pu démarrer.
+            if (!writable()) return;
             await vault.writeNote(activeNote.relPath, finalText);
             setStatus('saved');
             // PAS de refreshTree() ici (contrairement à flushSave) : un
@@ -1968,6 +2022,10 @@ export function NotesScreen({
             setStatus('error');
           }
         })();
+        saveInFlightRef.current = run;
+        void run.finally(() => {
+          if (saveInFlightRef.current === run) saveInFlightRef.current = null;
+        });
       }, AUTOSAVE_DELAY_MS);
     },
     [vault, activeNote, materializeTimestamps],
@@ -2037,8 +2095,10 @@ export function NotesScreen({
   const flushSave = useCallback(() => {
     if (!vault || !activeNote) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = null;
+    if (isPathChanging(activeNote.relPath, changingPathsRef.current)) return;
     setStatus('saving');
-    void (async () => {
+    const run = (async () => {
       try {
         // Mêmes garde-fous que scheduleSave : ne pas réécrire l'ancien
         // fichier si la note a changé pendant l'aller-retour, et ne pas
@@ -2046,6 +2106,11 @@ export function NotesScreen({
         // intégral CodeMirror = curseur déplacé, frappes écrasées).
         if (activeNoteRef.current?.relPath !== activeNote.relPath) return;
         const finalText = await materializeTimestamps(activeNote.relPath, contentRef.current, activeNote.kind);
+        if (
+          !shouldWriteSave({ targetPath: activeNote.relPath, activePath: activeNoteRef.current?.relPath, changing: changingPathsRef.current })
+        ) {
+          return;
+        }
         await vault.writeNote(activeNote.relPath, finalText);
         setStatus('saved');
         await refreshTree();
@@ -2054,6 +2119,10 @@ export function NotesScreen({
         setStatus('error');
       }
     })();
+    saveInFlightRef.current = run;
+    void run.finally(() => {
+      if (saveInFlightRef.current === run) saveInFlightRef.current = null;
+    });
   }, [vault, activeNote, refreshTree, materializeTimestamps]);
 
   // Bouton/geste retour Android, dans l'ordre (lib/ui/backStack.ts) :
@@ -2430,7 +2499,11 @@ export function NotesScreen({
       const pathProperties = await loadPathPropertyNames();
       for (const relPath of relPaths) {
         try {
-          const result = await vault.move(relPath, destinationRelPath);
+          const result = await withPathChange([relPath], () => vault.move(relPath, destinationRelPath));
+          const opened = activeNoteRef.current;
+          if (opened?.relPath === relPath) {
+            activeNoteRef.current = { ...opened, relPath: result.relPath, name: result.name };
+          }
           const isFolder = findNodeByPath(treeRef.current, relPath)?.type === 'folder';
           const linkTotal = await updateLinksAfterRename(relPath, result.relPath, knownFiles, pathProperties);
           bulkTotal.links += linkTotal.links;
@@ -2459,7 +2532,7 @@ export function NotesScreen({
       }
       await refreshTree();
     },
-    [vault, selectedRelPaths, refreshTree, updateOpenTabsAfterPathChange, updateLinksAfterRename],
+    [vault, selectedRelPaths, refreshTree, updateOpenTabsAfterPathChange, updateLinksAfterRename, withPathChange],
   );
 
   // "Supprimer" de la barre d'actions groupées — boucle sur `vault.delete`

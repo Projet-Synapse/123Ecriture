@@ -6,7 +6,7 @@ import {
   PENDING_REVIEW_REL_PATH,
   PendingReviewUnreadableError,
 } from './pendingReview';
-import { collectRemoteDeletionCandidates, shouldArchiveBeforeOverwrite, shouldTripBreaker } from './safetyNet';
+import { collectRemoteDeletionCandidates, shouldArchiveBeforeOverwrite, shouldTripBreaker, splitRenameFollowUps } from './safetyNet';
 
 function fakeVault(initial: Record<string, string> = {}, failRead?: Error) {
   const files = { ...initial };
@@ -112,5 +112,33 @@ describe('collectRemoteDeletionCandidates — renommages', () => {
     });
     expect(candidates.find((c) => c.path === 'Note.md')?.renamedTo).toBe('Note.mdx');
     expect(candidates.find((c) => c.path === 'Vraie.md')).not.toHaveProperty('renamedTo');
+  });
+});
+
+// Régression : conversion .md → .mdx faite sur un autre appareil — l'ancien
+// .md restait ici « en attente de validation » à côté du .mdx reçu.
+describe('splitRenameFollowUps', () => {
+  const at = '2026-11-20T00:00:00.000Z';
+  it("l'ancien nom intact suit le renommage, sans revue", () => {
+    const { followUps, review } = splitRenameFollowUps([{ path: 'Idée.md', modified: false, at, renamedTo: 'Idée.mdx' }]);
+    expect(followUps).toEqual([{ path: 'Idée.md', renamedTo: 'Idée.mdx' }]);
+    expect(review).toEqual([]);
+  });
+
+  it('modifié ici, ou vraie suppression : revue manuelle (aucune perte)', () => {
+    const { followUps, review } = splitRenameFollowUps([
+      { path: 'Idée.md', modified: true, at, renamedTo: 'Idée.mdx' },
+      { path: 'Supprimé.md', modified: false, at },
+    ]);
+    expect(followUps).toEqual([]);
+    expect(review.map((r) => r.path)).toEqual(['Idée.md', 'Supprimé.md']);
+  });
+
+  it("renommage connu d'un cycle précédent (déjà en revue) : suit aussi", () => {
+    const { followUps } = splitRenameFollowUps(
+      [{ path: 'Idée.md', modified: false, at }],
+      [{ path: 'Idée.md', modified: false, at, renamedTo: 'Idée.mdx' }],
+    );
+    expect(followUps).toEqual([{ path: 'Idée.md', renamedTo: 'Idée.mdx' }]);
   });
 });

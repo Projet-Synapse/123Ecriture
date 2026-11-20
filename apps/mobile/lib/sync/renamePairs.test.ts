@@ -114,3 +114,26 @@ describe('planSync — un renommage n’est pas une suppression massive', () => 
     expect(plan.actions.find((a) => a.relPath === 'A.md')).toMatchObject({ kind: 'tombstone-remote', renamedTo: 'B.md' });
   });
 });
+
+// Régression « les deux fichiers .md et .mdx existent après une conversion ».
+describe('conversion .md ⇄ .mdx : un seul fichier final partout', () => {
+  it('aller-retour .md → .mdx → .md : le .md (pierre tombale) est renvoyé et restauré, pas mis en revue', () => {
+    const p = planSync({
+      local: [{ relPath: 'Idée.md', hash: 'md2' }, { relPath: 'Autre.md', hash: 'a' }, { relPath: 'B.md', hash: 'b' }],
+      remote: [
+        { relPath: 'Idée.md', hash: 'md1', deleted: true, version: 3 },
+        { relPath: 'Idée.mdx', hash: 'mdx1', deleted: false, version: 1 },
+        { relPath: 'Autre.md', hash: 'a', deleted: false, version: 1 },
+        { relPath: 'B.md', hash: 'b', deleted: false, version: 1 },
+      ],
+      base: { 'Idée.mdx': { hash: 'mdx1' }, 'Autre.md': { hash: 'a' }, 'B.md': { hash: 'b' } },
+    });
+    const back = p.actions.find((a) => a.relPath === 'Idée.md');
+    expect(back?.kind).toBe('push');
+    expect(back?.restore).toBe(true);
+    const gone = p.actions.find((a) => a.relPath === 'Idée.mdx');
+    expect(gone?.kind).toBe('tombstone-remote');
+    expect(gone?.renamedTo).toBe('Idée.md');
+    expect(p.guard.suspended).toBe(false);
+  });
+});

@@ -5,6 +5,7 @@
 // syncEngine.ts :
 //   1. Archiver avant écrasement ? (shouldArchiveBeforeOverwrite, #191)
 //   2. Suppressions distantes à mettre en revue (collectRemoteDeletionCandidates, #193)
+//      — sauf l'ancien nom d'un renommage fait ailleurs (splitRenameFollowUps)
 //   3. Disjoncteur (shouldTripBreaker)
 //
 //////////////////////////////////////////////////////////////////////////////
@@ -59,6 +60,29 @@ export function collectRemoteDeletionCandidates(args: {
     });
   }
   return { paths, candidates };
+}
+
+// Renommage (ou conversion .md ⇄ .mdx) fait sur un autre appareil : l'ancien
+// nom n'est PAS une vraie suppression — son contenu vit sous le nouveau nom.
+// S'il n'a pas été modifié ici, il suit le renommage automatiquement (mis à
+// la corbeille du coffre, après réception du nouveau fichier) au lieu
+// d'attendre une validation : sinon les DEUX fichiers restaient côte à côte
+// sur cet appareil. Modifié ici : revue manuelle, comme toute suppression.
+// `renamedTo` d'un cycle précédent (déjà en revue) compte aussi.
+export type RenameFollowUp = { path: string; renamedTo: string };
+export function splitRenameFollowUps(
+  candidates: RemoteDeletionReview[],
+  previous: readonly RemoteDeletionReview[] = [],
+): { followUps: RenameFollowUp[]; review: RemoteDeletionReview[] } {
+  const known = new Map(previous.filter((e) => e.renamedTo).map((e) => [e.path, e.renamedTo as string]));
+  const followUps: RenameFollowUp[] = [];
+  const review: RemoteDeletionReview[] = [];
+  for (const candidate of candidates) {
+    const renamedTo = candidate.renamedTo ?? known.get(candidate.path);
+    if (renamedTo && !candidate.modified) followUps.push({ path: candidate.path, renamedTo });
+    else review.push(candidate);
+  }
+  return { followUps, review };
 }
 
 //////// 3. Disjoncteur ////////////////////////////////////////////////////////
