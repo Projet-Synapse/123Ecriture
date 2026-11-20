@@ -21,6 +21,7 @@ import { search as searchExtension, searchKeymap } from '@codemirror/search';
 import { keymap } from '@codemirror/view';
 import { redo, undo } from '@codemirror/commands';
 
+import { attachmentPasteExtension, type AttachmentFile } from '../lib/editor/attachmentPaste';
 import { DocSync } from '../lib/editor/docSync';
 import { applyTextCommand, parseEditorCommand } from '../lib/editor/editorCommands';
 import { createLivePreviewExtension } from '../lib/editor/mdxLivePreview';
@@ -76,6 +77,9 @@ type EntryConfig = {
   // RN sait résoudre les embeds `![[image]]` (MdxEditorWeb reçoit
   // resolveEmbedUrl) : le widget image demande la data URL par le pont.
   embeds?: boolean;
+  // RN sait copier une pièce jointe dans le coffre (MdxEditorWeb reçoit
+  // importAttachment) : collage / glisser-déposer d'un fichier → pont.
+  attachments?: boolean;
 };
 
 let config: EntryConfig = {
@@ -173,6 +177,27 @@ function resolveEmbedViaNative(target: string): Promise<string | null> {
   return pending;
 }
 
+// Pièce jointe COLLÉE / GLISSÉE (lib/editor/attachmentPaste.ts) : les
+// octets partent vers RN (`importAttachment`), qui les copie dans le
+// dossier des pièces jointes du coffre et répond le nom final
+// (api.attachmentImported) — `![[nom]]` est alors inséré ici.
+const attachmentWaiters = new Map<number, (name: string | null) => void>();
+let nextAttachmentRequest = 1;
+function importAttachmentViaNative(file: AttachmentFile): Promise<string | null> {
+  const id = nextAttachmentRequest++;
+  return new Promise<string | null>((resolve) => {
+    attachmentWaiters.set(id, resolve);
+    // Filet : pas de réponse en 60 s → rien d'inséré.
+    setTimeout(() => {
+      if (attachmentWaiters.delete(id)) resolve(null);
+    }, 60000);
+    send('importAttachment', { id, name: file.name, base64: file.base64, mimeType: file.mimeType });
+  });
+}
+const attachmentPaste = attachmentPasteExtension(importAttachmentViaNative, (message) =>
+  send('attachmentError', { message }),
+);
+
 // EditorView courante — cible des commandes de la barre d'outils native
 // (api.runCommand ci-dessous, lib/editor/editorCommands.ts).
 let currentView: EditorView | null = null;
@@ -267,6 +292,7 @@ function EditorApp() {
       searchExtension({ top: true }),
       keymap.of(searchKeymap),
       caretReporter,
+      ...(config.attachments ? [attachmentPaste] : []),
     ];
     // Mode Intermédiaire uniquement : l'aperçu vivant (marqueurs masqués,
     // titres stylés, pastilles). Le mode Source passe `livePreview: false`
@@ -405,6 +431,13 @@ const api = {
     if (!resolve) return;
     embedWaiters.delete(id);
     resolve(url);
+  },
+  // Réponse de RN à `importAttachment` (null = échec de copie).
+  attachmentImported(id: number, name: string | null): void {
+    const resolve = attachmentWaiters.get(id);
+    if (!resolve) return;
+    attachmentWaiters.delete(id);
+    resolve(name);
   },
   // Barre d'outils NATIVE (NotesScreen → MdxEditorWeb) : mise en forme,
   // annuler/rétablir, insertion — même logique que le desktop, appliquée

@@ -91,6 +91,10 @@ declare global {
     // Electron relit le disque à chaque listTree, pas besoin).
     rescan?: () => Promise<void>;
     importAttachment: () => Promise<{ relPath: string; name: string } | null>;
+    // Pièce jointe déjà lue (collage, glisser-déposer, bouton Android) :
+    // copiée dans `<attachmentsFolder>/` (créé s'il manque), nom libre
+    // (`photo 2.jpg`). Optionnel : le coffre web ne l'implémente pas.
+    importAttachmentData?: (name: string, base64: string, mimeType?: string) => Promise<{ relPath: string; name: string }>;
     readAttachmentDataUrl: (relPath: string) => Promise<string>;
     // Ouvre une pièce jointe hors de l'app (bouton « Ouvrir » des images non
     // affichables) — desktop : application par défaut ; web : téléchargement.

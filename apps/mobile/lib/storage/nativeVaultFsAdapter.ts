@@ -5,6 +5,12 @@ import * as FileSystem from "expo-file-system/legacy";
 
 import { parseFrontmatter } from "../properties/frontmatter";
 import { mimeTypeForFile } from "../files/imageFormats";
+import {
+  availableAttachmentName,
+  resolveAttachmentTarget,
+  safeAttachmentName,
+} from "../notes/embedResolution";
+import { readAttachmentsFolderPref } from "./attachmentsFolder";
 import { resolveRenameName } from "../notes/renameTarget";
 import {
   getActiveVaultRootUri,
@@ -504,6 +510,8 @@ export function createVaultFsAdapter(deps: VaultFsAdapterDeps) {
       return adapter.listTree();
     },
 
+    // 📎 Pièce jointe : copie dans `<attachmentsFolder>/` (créé s'il
+    // manque), nom libre (`photo 2.jpg`…), puis `![[nom]]` côté appelant.
     importAttachment: async () => {
       const result = await DocumentPicker.getDocumentAsync({
         copyToCacheDirectory: true,
@@ -511,32 +519,43 @@ export function createVaultFsAdapter(deps: VaultFsAdapterDeps) {
       if (result.canceled) return null;
       const asset = result.assets?.[0];
       if (!asset) return null;
-      let folder = "attachments";
-      try {
-        const prefs =
-          (await window.preferences?.get()) as Partial<Preferences> | null;
-        if (
-          prefs?.attachmentsFolder &&
-          typeof prefs.attachmentsFolder === "string"
-        )
-          folder = prefs.attachmentsFolder;
-      } catch {
-        // défaut
-      }
-      const name = findAvailableName(
-        asset.name,
-        siblings(normalizeRelPath(folder)),
-      );
-      const relPath = join(normalizeRelPath(folder), name);
-      // asset.uri = copie dans le CACHE PRIVÉ de l'app (hors coffre).
+      // asset.uri = copie dans le CACHE PRIVÉ de l'app (file://, jamais le
+      // content:// du fournisseur, illisible une fois le sélecteur fermé).
       const base64 = await FileSystem.readAsStringAsync(asset.uri, {
         encoding: FileSystem.EncodingType.Base64,
       });
+      return adapter.importAttachmentData!(asset.name, base64, asset.mimeType);
+    },
+
+    importAttachmentData: async (rawName, base64, mimeType) => {
+      const folder = await readAttachmentsFolderPref();
+      // Index incomplet (cache au démarrage) : relu pour ne jamais écraser
+      // un homonyme pas encore vu.
+      if (!fullyIndexed) await refresh().catch(() => undefined);
+      const name = availableAttachmentName(
+        safeAttachmentName(rawName, mimeType),
+        siblings(normalizeRelPath(folder)),
+      );
+      const relPath = join(normalizeRelPath(folder), name);
       await write(relPath, base64, "base64");
       return { relPath, name };
     },
 
-    readAttachmentDataUrl: async (relPath) => {
+    // Résolution façon Obsidian (lib/notes/embedResolution.ts) — avant :
+    // cible lue TELLE QUELLE, `![[photo.jpg]]` cherché à la racine alors
+    // que le fichier est dans `attachments/` → « introuvable ».
+    readAttachmentDataUrl: async (target) => {
+      const folder = await readAttachmentsFolderPref();
+      const files = () =>
+        [...index.entries()]
+          .filter(([, e]) => !e.isDirectory)
+          .map(([p]) => p);
+      let relPath = resolveAttachmentTarget(target, files(), folder);
+      if (!relPath) {
+        await refresh();
+        relPath = resolveAttachmentTarget(target, files(), folder);
+      }
+      if (!relPath) throw new Error(`Pièce jointe introuvable : ${target}`);
       const base64 = await read(relPath, "base64");
       return `data:${mimeTypeForFile(relPath)};base64,${base64}`;
     },

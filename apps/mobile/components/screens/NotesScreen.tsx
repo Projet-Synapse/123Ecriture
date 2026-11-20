@@ -80,6 +80,7 @@ import { OutlinePanel } from '../vault/OutlinePanel';
 import { SearchDialog } from '../dialogs/SearchDialog';
 import { lintMarkdown } from '../../lib/editor/markdownLinter';
 import { defaultTemplateFor, listTemplateNotes, renderTemplate } from '../../lib/notes/templates';
+import { attachmentEmbed } from '../../lib/notes/embedResolution';
 import { VaultTreeView } from '../vault/VaultTreeView';
 import { NoteIconByKind } from '../vault/FileIcons';
 import { FolderPreview } from '../vault/FolderPreview';
@@ -2415,13 +2416,35 @@ export function NotesScreen({
   // `attachments/` (voir vault:import-attachment) et insère la syntaxe
   // d'embed `![[nom]]` à la position du curseur, même mécanique que
   // applyFormatting.
+  // Fichier collé / glissé dans l'éditeur Android (MdxEditorWeb →
+  // lib/editor/attachmentPaste.ts) : même copie que le bouton 📎.
+  const importAttachmentFile = useCallback(
+    async (file: { name: string; base64: string; mimeType?: string }): Promise<string | null> => {
+      if (!vault?.importAttachmentData) return null;
+      setAttachmentError(null);
+      try {
+        const result = await vault.importAttachmentData(file.name, file.base64, file.mimeType);
+        void refreshTree();
+        return result.name;
+      } catch (error) {
+        console.error('[vault] échec de la copie de la pièce jointe :', error);
+        setAttachmentError(errorMessage(error));
+        return null;
+      }
+    },
+    [vault, refreshTree],
+  );
+
   const handleInsertAttachment = useCallback(async () => {
     if (!vault || !activeNote) return;
     setAttachmentError(null);
     try {
       const result = await vault.importAttachment();
       if (!result) return; // dialogue annulé
-      const embed = `![[${result.name}]]`;
+      // Le fichier est dans `<attachmentsFolder>/` : l'explorateur le
+      // montre, et `![[nom]]` s'y résout (embedResolution, toutes plateformes).
+      void refreshTree();
+      const embed = attachmentEmbed(result.name);
       const view = viewRef.current;
       if (view) {
         const sel = view.state.selection.main;
@@ -2444,7 +2467,7 @@ export function NotesScreen({
       console.error('[vault] échec de l’import de la pièce jointe :', error);
       setAttachmentError(errorMessage(error));
     }
-  }, [vault, activeNote, content, scheduleSave]);
+  }, [vault, activeNote, content, scheduleSave, refreshTree]);
 
 
 //////// 7. Favoris, multi-sélection et vue Tags ///////////////////////////
@@ -3351,6 +3374,8 @@ export function NotesScreen({
                             notePaths={notePathList}
                             currentRelPath={activeNoteRelPath}
                             resolveEmbedUrl={embedUrlResolver}
+                            importAttachment={vault?.importAttachmentData ? importAttachmentFile : undefined}
+                            onAttachmentError={setAttachmentError}
                             theme={theme}
                             fontSize={preferences.editorFontSize}
                             fontFamily={preferences.editorFontFamily}
@@ -3376,6 +3401,8 @@ export function NotesScreen({
                             onCreateOccurrence={handleCreateOccurrence}
                             occurrenceWords={occurrenceWordList}
                             noteNames={noteNameList}
+                            importAttachment={vault?.importAttachmentData ? importAttachmentFile : undefined}
+                            onAttachmentError={setAttachmentError}
                             theme={theme}
                             fontSize={preferences.editorFontSize}
                             fontFamily={preferences.editorFontFamily}
