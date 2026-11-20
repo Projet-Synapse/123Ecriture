@@ -1,4 +1,4 @@
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { Text, View } from 'react-native';
 
@@ -17,6 +17,9 @@ import { AuthProvider } from './lib/sync/AuthContext';
 import { SyncStatusProvider } from './lib/sync/SyncStatusContext';
 import { VaultsProvider } from './lib/sync/VaultsContext';
 import { SECTIONS } from './navigation';
+import { BACK_PRIORITY, shouldExitOnBack } from './lib/ui/backStack';
+import { useBackHandler } from './lib/ui/useBackHandler';
+import { notify } from './lib/notify/notify';
 
 // ✒️ 123ECRITURE — App.tsx — la racine de l'application
 //////////////////////////////////////////////////////////////////////////////
@@ -88,6 +91,42 @@ class RootErrorBoundary extends React.Component<
 function Root() {
   const { theme } = usePreferences();
   const [activeId, setActiveId] = useState(SECTIONS[0].id);
+
+  // Bouton/geste retour Android (lib/ui/backStack.ts) — sections : retour à
+  // la section précédente (paramètres, tâches… → Notes par défaut) ; à la
+  // racine, « appuyez encore pour quitter ». Les étapes plus fines
+  // (menus, fichier précédent, explorateur) vivent dans NotesScreen.
+  const rootSectionId = SECTIONS[0].id;
+  const sectionHistory = useRef<string[]>([]);
+  const previousSection = useRef(activeId);
+  const goingBack = useRef(false);
+  useEffect(() => {
+    if (previousSection.current !== activeId && !goingBack.current) {
+      sectionHistory.current = [...sectionHistory.current.filter((id) => id !== previousSection.current), previousSection.current].slice(-10);
+    }
+    goingBack.current = false;
+    previousSection.current = activeId;
+  }, [activeId]);
+  useBackHandler(
+    BACK_PRIORITY.SECTION,
+    () => {
+      const history = sectionHistory.current.filter((id) => id !== activeId);
+      const target = history.pop() ?? rootSectionId;
+      sectionHistory.current = history;
+      goingBack.current = true;
+      setActiveId(target);
+      return true;
+    },
+    activeId !== rootSectionId,
+  );
+  const lastRootBack = useRef<number | null>(null);
+  useBackHandler(BACK_PRIORITY.ROOT, () => {
+    const now = Date.now();
+    if (shouldExitOnBack(now, lastRootBack.current)) return false;
+    lastRootBack.current = now;
+    notify({ type: 'info', message: 'Appuyez encore sur retour pour quitter', duration: 2000, key: 'back-exit' });
+    return true;
+  });
 
   // Mécanisme partagé "ouvrir cet élément" depuis un autre écran (recherche
   // globale, palette de commandes, "Ouvrir la note du jour" du Calendrier —
