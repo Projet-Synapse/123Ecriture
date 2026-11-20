@@ -20,7 +20,8 @@
 //   • Un token (wikilink/tag/occurrence/embed) gagne TOUJOURS sur la mise
 //     en forme qui l'entoure — le mark est DÉCOUPÉ autour de lui, pas
 //     l'inverse.
-//   • Portée : gras `**...**` et `__...__`, italique `_..._` et `*...*`
+//   • Portée : gras `**...**` et `__...__`, italique `_..._` et `*...*`,
+//     barré `~~...~~`, souligné `<u>...</u>`
 //     — pas le triple `***…***`, ambigu en pur regex sans un vrai
 //     parseur.
 //
@@ -38,10 +39,13 @@
 
 export type MarkMatch = {
   kind: 'mark';
-  type: 'bold' | 'italic';
+  type: 'bold' | 'italic' | 'strike' | 'underline';
   from: number;
   to: number;
+  // Longueur du marqueur OUVRANT ; `closeLength` celle du fermant quand
+  // elle diffère (`<u>` / `</u>`), sinon identique.
   markerLength: number;
+  closeLength?: number;
   // Segments du CONTENU (entre les marqueurs) qui ne recouvrent aucun
   // token retenu — un token gagne toujours sur la mise en forme qui
   // l'entoure : le mark est DÉCOUPÉ autour de lui (les marqueurs **/_
@@ -141,6 +145,35 @@ export function findItalic(text: string): MarkMatch[] {
     }
   }
   return matches;
+}
+
+// Barré `~~…~~` (GFM) et souligné `<u>…</u>` (HTML) — sur une ligne.
+export function findStrikeAndUnderline(text: string): MarkMatch[] {
+  const matches: MarkMatch[] = [];
+  const patterns: { re: RegExp; type: 'strike' | 'underline'; open: number; close: number }[] = [
+    { re: /~~(?!\s)([^~\n]*[^~\s])~~/g, type: 'strike', open: 2, close: 2 },
+    { re: /<u>([^<\n]+?)<\/u>/g, type: 'underline', open: 3, close: 4 },
+  ];
+  for (const { re, type, open, close } of patterns) {
+    let match: RegExpExecArray | null;
+    while ((match = re.exec(text))) {
+      matches.push({
+        kind: 'mark',
+        type,
+        from: match.index,
+        to: match.index + match[0].length,
+        markerLength: open,
+        closeLength: close,
+        contentSpans: [],
+      });
+    }
+  }
+  return matches;
+}
+
+// Longueur du marqueur fermant d'un mark.
+export function closeLengthOf(match: MarkMatch): number {
+  return match.closeLength ?? match.markerLength;
 }
 
 function findHeadings(text: string): HeadingMatch[] {
@@ -294,7 +327,7 @@ export function findLiveMatches(text: string): LiveMatch[] {
   // Passe 2 — marks/titres : survivent s'ils ne chevauchent ni un token
   // retenu ni un autre mark déjà retenu ; leur contenu est découpé autour
   // des tokens.
-  const others = [...findBold(text), ...findItalic(text), ...findHeadings(text)];
+  const others = [...findBold(text), ...findItalic(text), ...findStrikeAndUnderline(text), ...findHeadings(text)];
   others.sort((a, b) => a.from - b.from);
 
   const marksAndHeadings: (MarkMatch | HeadingMatch)[] = [];
@@ -311,14 +344,14 @@ export function findLiveMatches(text: string): LiveMatch[] {
       // morceaux. On pousse une copie avec contentSpans calculées, hors
       // du classement anti-chevauchement des plages entières.
       const contentFrom = match.kind === 'mark' ? match.from + match.markerLength : match.contentFrom;
-      const contentTo = match.kind === 'mark' ? match.to - match.markerLength : match.to;
+      const contentTo = match.kind === 'mark' ? match.to - closeLengthOf(match) : match.to;
       match.contentSpans = subtractSpans(contentFrom, contentTo, keptTokens);
       marksAndHeadings.push(match);
       lastOtherTo = Math.max(lastOtherTo, match.to);
       continue;
     }
     const contentFrom = match.kind === 'mark' ? match.from + match.markerLength : match.contentFrom;
-    const contentTo = match.kind === 'mark' ? match.to - match.markerLength : match.to;
+    const contentTo = match.kind === 'mark' ? match.to - closeLengthOf(match) : match.to;
     match.contentSpans = [{ from: contentFrom, to: contentTo }];
     marksAndHeadings.push(match);
     lastOtherTo = match.to;
