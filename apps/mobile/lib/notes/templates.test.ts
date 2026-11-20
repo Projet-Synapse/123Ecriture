@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import { defaultTemplateFor, listTemplateNotes, renderTemplate } from './templates';
+import {
+  insertableTemplates,
+  listTemplateNotes,
+  matchingTemplateRules,
+  normalizeTemplateRules,
+  renderTemplate,
+  templateForNewFile,
+} from './templates';
 
 const note = (relPath: string): VaultNoteNode =>
   ({ type: 'note', relPath, name: relPath.split('/').pop()!.replace(/\.[^.]+$/, ''), kind: 'markdown' }) as VaultNoteNode;
@@ -38,18 +45,64 @@ describe('renderTemplate', () => {
   });
 });
 
-describe('defaultTemplateFor', () => {
-  const templates = listTemplateNotes(tree, 'Gabarits');
-  it('appliqué à une nouvelle note Markdown si le modèle existe', () => {
-    expect(defaultTemplateFor({ templateRelPath: 'Gabarits/Journal.md', newRelPath: 'Sans titre.md', kind: 'markdown', templates })).toBe(
-      'Gabarits/Journal.md',
-    );
+describe('templateForNewFile (règles par chemin)', () => {
+  const templateNotes = listTemplateNotes(tree, 'Gabarits');
+  const existing = ['Gabarits/Journal.md', 'Gabarits/Sous/Réunion.mdx', '0. BASE/📁 MODÈLES/Fiche.md'];
+  const rules = [
+    { folder: 'Projets', template: 'Gabarits/Journal.md' },
+    { folder: 'Projets/Réunions', template: 'Gabarits/Sous/Réunion.mdx' },
+    { folder: 'Plantes', template: 'Gabarits/Supprimé.md' },
+  ];
+  const pick = (newRelPath: string, kind = 'markdown', defaultTemplate = '0. BASE/📁 MODÈLES/Fiche.md') =>
+    templateForNewFile({ newRelPath, kind, rules, defaultTemplate, existingNotes: existing, templateNotes });
+
+  it('la règle la plus spécifique gagne, sous-dossiers compris', () => {
+    expect(pick('Projets/Réunions/2026/Lundi.md')).toBe('Gabarits/Sous/Réunion.mdx');
+    expect(pick('projets/Idée.md')).toBe('Gabarits/Journal.md');
   });
 
-  it('aucun : réglage vide, modèle disparu, autre type de fichier, fichier créé dans les modèles', () => {
-    expect(defaultTemplateFor({ templateRelPath: '', newRelPath: 'A.md', kind: 'markdown', templates })).toBeNull();
-    expect(defaultTemplateFor({ templateRelPath: 'Gabarits/Supprimé.md', newRelPath: 'A.md', kind: 'markdown', templates })).toBeNull();
-    expect(defaultTemplateFor({ templateRelPath: 'Gabarits/Journal.md', newRelPath: 'A.canvas', kind: 'canvas', templates })).toBeNull();
-    expect(defaultTemplateFor({ templateRelPath: 'Gabarits/Journal.md', newRelPath: 'Gabarits/Sous/Réunion.mdx', kind: 'markdown', templates })).toBeNull();
+  it('sinon le template par défaut, ou aucun', () => {
+    expect(pick('Ailleurs/Note.md')).toBe('0. BASE/📁 MODÈLES/Fiche.md');
+    expect(pick('Ailleurs/Note.md', 'markdown', '')).toBeNull();
+    expect(pick('Projets-old/Note.md', 'markdown', '')).toBeNull();
+  });
+
+  it('template de règle disparu → règle moins spécifique / défaut', () => {
+    expect(pick('Plantes/Rose.md')).toBe('0. BASE/📁 MODÈLES/Fiche.md');
+  });
+
+  it('jamais pour un fichier non-Markdown ni pour un template', () => {
+    expect(pick('Projets/A.canvas', 'canvas')).toBeNull();
+    expect(pick('Gabarits/Journal.md')).toBeNull();
+  });
+
+  it('à profondeur égale, ordre de la liste ; règle racine = tout le coffre', () => {
+    const r = [
+      { folder: '', template: 'Gabarits/Journal.md' },
+      { folder: 'A', template: 'Gabarits/Sous/Réunion.mdx' },
+      { folder: 'A', template: 'Gabarits/Journal.md' },
+    ];
+    expect(matchingTemplateRules('A/x.md', r).map((x) => x.template)).toEqual([
+      'Gabarits/Sous/Réunion.mdx',
+      'Gabarits/Journal.md',
+      'Gabarits/Journal.md',
+    ]);
+    expect(matchingTemplateRules('B/x.md', r)).toHaveLength(1);
+  });
+});
+
+describe('normalizeTemplateRules / insertableTemplates', () => {
+  it('réglage tolérant', () => {
+    expect(normalizeTemplateRules([{ folder: ' /Projets/ ', template: 'T.md' }, { folder: 1 }, null])).toEqual([
+      { folder: 'Projets', template: 'T.md' },
+    ]);
+    expect(normalizeTemplateRules(undefined)).toEqual([]);
+  });
+
+  it('les templates des règles s\'ajoutent au menu d\'insertion', () => {
+    expect(insertableTemplates(tree, undefined, ['Libre.md', 'Absent.md']).map((n) => n.relPath)).toEqual([
+      '0. BASE/📁 MODÈLES/Fiche.md',
+      'Libre.md',
+    ]);
   });
 });
