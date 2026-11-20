@@ -10,6 +10,8 @@ import {
 } from './notesToolbarActions';
 import {
   buildNotesToolbarItems,
+  compactSubMenuSize,
+  TOOLBAR_TOUCH_TARGET,
   NOTES_TOOLBAR_CATALOG,
   notesToolbarChipLabels,
   notesToolbarReserve,
@@ -134,5 +136,25 @@ describe('cohérence Paramètres ↔ barre de l’éditeur', () => {
     const labels = notesToolbarChipLabels();
     expect(labels.bold).toBe('G  Gras');
     expect(Object.keys(labels)).toEqual(NOTES_TOOLBAR_ACTION_IDS);
+  });
+});
+
+describe('mode compact (mobile)', () => {
+  it('menu d’un groupe : une rangée quand elle tient dans l’écran', () => {
+    const size = compactSubMenuSize(6, 400);
+    expect(size.height).toBe(TOOLBAR_TOUCH_TARGET + 14);
+    expect(size.width).toBeLessThanOrEqual(400 - 16);
+    expect(size.width).toBeGreaterThanOrEqual(6 * TOOLBAR_TOUCH_TARGET);
+  });
+
+  it('écran étroit : plusieurs rangées, jamais plus large que l’écran', () => {
+    const size = compactSubMenuSize(6, 200);
+    expect(size.width).toBeLessThanOrEqual(200 - 16);
+    expect(size.height).toBeGreaterThan(TOOLBAR_TOUCH_TARGET + 14);
+  });
+
+  it('cible tactile d’au moins 40', () => {
+    expect(TOOLBAR_TOUCH_TARGET).toBeGreaterThanOrEqual(40);
+    expect(compactSubMenuSize(0, 400).width).toBeGreaterThan(TOOLBAR_TOUCH_TARGET);
   });
 });
