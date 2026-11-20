@@ -7,6 +7,7 @@ import { AccountSyncSection } from './settings/AccountSyncSection';
 import { EditorSection } from './settings/EditorSection';
 import { FilesLinksSection } from './settings/FilesLinksSection';
 import { TemplatesSection } from './settings/TemplatesSection';
+import { FormattingSection } from './settings/FormattingSection';
 import { NotificationsSection } from './settings/NotificationsSection';
 import { PersonalizationCard } from './PersonalizationCard';
 import { PrivacyDataSection } from './settings/PrivacyDataSection';
@@ -49,6 +50,7 @@ type SettingsSectionId =
   | 'journal'
   | 'files'
   | 'templates'
+  | 'formatting'
   | 'editor'
   | 'properties'
   | 'notifications'
@@ -70,6 +72,7 @@ const SETTINGS_SECTIONS: SettingsSectionDef[] = [
   { id: 'journal', label: 'Journal de synchronisation', icon: '🔄' },
   { id: 'files', label: 'Gestion des fichiers et des liens', icon: '🗂️' },
   { id: 'templates', label: 'Templates', icon: '🧩' },
+  { id: 'formatting', label: 'Formatage', icon: '✨' },
   { id: 'editor', label: 'Éditeur', icon: '✍️' },
   { id: 'properties', label: 'Gestion des propriétés', icon: '🏷️' },
   { id: 'notifications', label: 'Notifications', icon: '🔔' },
@@ -96,6 +99,8 @@ function renderSection(id: SettingsSectionId) {
       );
     case 'templates':
       return <TemplatesSection />;
+    case 'formatting':
+      return <FormattingSection />;
     case 'editor':
       return <EditorSection />;
     case 'properties':

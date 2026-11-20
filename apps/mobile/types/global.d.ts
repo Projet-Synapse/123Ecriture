@@ -583,6 +583,15 @@ declare global {
     // fichiers (relPath, '' = aucun). Optionnels : configurations anciennes.
     templatesFolder?: string;
     defaultNewNoteTemplate?: string;
+    // Paramètres → Formatage (v0.4.100, lib/editor/formatter.ts) — lu via
+    // normalizeFormattingSettings (absent = réglages par défaut).
+    formatting?: {
+      rules: Record<string, boolean>;
+      customRules: { id: string; name: string; pattern: string; replacement: string; flags: string; enabled: boolean }[];
+      formatOnSave: boolean;
+      includeFrontmatter: boolean;
+      includeCode: boolean;
+    };
     // Règles « dossier du coffre → fichier template » (v0.4.100) : la plus
     // spécifique s'applique à la création, sinon defaultNewNoteTemplate.
     templateRules?: { folder: string; template: string }[];

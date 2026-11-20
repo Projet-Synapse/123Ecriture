@@ -78,7 +78,8 @@ import { ExplorerToggleButton } from '../explorer/ExplorerToggleButton';
 import { RightSidebar, type SidebarTab } from '../vault/RightSidebar';
 import { OutlinePanel } from '../vault/OutlinePanel';
 import { SearchDialog } from '../dialogs/SearchDialog';
-import { lintMarkdown } from '../../lib/editor/markdownLinter';
+import { formatMarkdown, normalizeFormattingSettings } from '../../lib/editor/formatter';
+import { minimalChange } from '../../lib/editor/docSync';
 import {
   insertableTemplates,
   listTemplateNotes,
@@ -2177,6 +2178,43 @@ export function NotesScreen({
   // (« ✨ Formater la note ») — déclaré const plus haut dans le composant,
   // l'utiliser avant sa déclaration relevait à la fois du TDZ et de la
   // règle react-hooks du compilateur.
+  // « ✨ Formater le fichier » (Paramètres → Formatage, lib/editor/
+  // formatter.ts). Dans l'éditeur ouvert : changement MINIMAL dispatché
+  // dans CodeMirror (desktop : EditorView ; Android : pont WebView) —
+  // curseur conservé, annulable par Ctrl+Z / ↶. Sans éditeur (Aperçu) :
+  // le contenu est remplacé. Regex personnalisée invalide : signalée, les
+  // autres règles s'appliquent quand même.
+  const formatActiveFile = useCallback(() => {
+    if (!activeNote || activeNote.kind !== 'markdown') return;
+    const settings = normalizeFormattingSettings(preferences.formatting);
+    const { text: formatted, errors } = formatMarkdown(contentRef.current, settings);
+    if (errors.length) {
+      setWikilinkNotice(
+        `Formatage : ${errors.length} règle(s) ignorée(s) — ${errors.map((e) => `« ${e.name} » : ${e.message}`).join(' ; ')}`,
+      );
+    }
+    const view = viewRef.current;
+    if (view) {
+      const doc = view.state.doc.toString();
+      const change = minimalChange(doc, formatMarkdown(doc, settings).text);
+      if (change) view.dispatch({ changes: change });
+      view.focus();
+      return;
+    }
+    if (nativeEditorCommandRef.current) {
+      nativeEditorCommandRef.current({ kind: 'formatDoc', settings });
+      return;
+    }
+    if (formatted !== contentRef.current) handleChangeContent(formatted);
+  }, [activeNote, preferences.formatting, handleChangeContent]);
+  // Lus par le raccourci Ctrl+S (écouteur global) sans le réenregistrer.
+  const formatActiveFileRef = useRef<(() => void) | null>(null);
+  const formatOnSaveRef = useRef(false);
+  useEffect(() => {
+    formatActiveFileRef.current = formatActiveFile;
+    formatOnSaveRef.current = normalizeFormattingSettings(preferences.formatting).formatOnSave;
+  }, [formatActiveFile, preferences.formatting]);
+
   const showEditorActionsMenu = useCallback(() => {
     if (!activeNote) return;
     const node: VaultTreeNode = { type: 'note', ...activeNote };
@@ -2185,7 +2223,7 @@ export function NotesScreen({
       { id: 'move', label: 'Déplacer vers…' },
       { id: 'edit-path', label: 'Modifier le chemin' },
       { id: 'duplicate', label: 'Dupliquer' },
-      { id: 'lint-note', label: '✨ Formater la note' },
+      { id: 'lint-note', label: '✨ Formater le fichier' },
       {
         id: 'toggle-favorite',
         label: preferences.favoriteRelPaths.includes(node.relPath)
@@ -2198,7 +2236,7 @@ export function NotesScreen({
       if (choice === 'move') startMove(node);
       if (choice === 'edit-path') startEditPath(node);
       if (choice === 'duplicate') void handleDuplicateNode(node);
-      if (choice === 'lint-note') handleChangeContent(lintMarkdown(contentRef.current));
+      if (choice === 'lint-note') formatActiveFile();
       if (choice === 'toggle-favorite') void toggleFavorite(node.relPath);
       if (choice === 'delete') void handleDeleteNode(node);
     });
@@ -2212,7 +2250,7 @@ export function NotesScreen({
     handleDuplicateNode,
     toggleFavorite,
     handleDeleteNode,
-    handleChangeContent,
+    formatActiveFile,
   ]);
 
 
@@ -2334,6 +2372,9 @@ export function NotesScreen({
       switch (event.key.toLowerCase()) {
         case 's':
           event.preventDefault();
+          // Paramètres → Formatage → « Formater à l'enregistrement » :
+          // formater (dans l'éditeur, annulable) PUIS enregistrer.
+          if (formatOnSaveRef.current) formatActiveFileRef.current?.();
           flushSave();
           break;
         case 'n':
@@ -3363,7 +3404,7 @@ export function NotesScreen({
                             return;
                           }
                           if (item.run.id === 'lint') {
-                            handleChangeContent(lintMarkdown(contentRef.current));
+                            formatActiveFile();
                             return;
                           }
                           if (item.run.id === 'attach') {

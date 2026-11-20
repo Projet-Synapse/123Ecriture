@@ -22,7 +22,8 @@ import { keymap } from '@codemirror/view';
 import { redo, undo } from '@codemirror/commands';
 
 import { attachmentPasteExtension, type AttachmentFile } from '../lib/editor/attachmentPaste';
-import { DocSync } from '../lib/editor/docSync';
+import { DocSync, minimalChange } from '../lib/editor/docSync';
+import { formatMarkdown, normalizeFormattingSettings } from '../lib/editor/formatter';
 import { applyTextCommand, parseEditorCommand } from '../lib/editor/editorCommands';
 import { createLivePreviewExtension } from '../lib/editor/mdxLivePreview';
 import { occurrenceCompletionSource } from '../lib/editor/occurrenceAutocomplete';
@@ -449,6 +450,15 @@ const api = {
     if (!cmd || !view) return;
     if (cmd.kind === 'undo' || cmd.kind === 'redo') {
       (cmd.kind === 'undo' ? undo : redo)(view);
+      view.focus();
+      return;
+    }
+    if (cmd.kind === 'formatDoc') {
+      // Changement MINIMAL (préfixe/suffixe communs) : curseur conservé,
+      // annulable d'un seul Ctrl+Z / ↶.
+      const doc = view.state.doc.toString();
+      const change = minimalChange(doc, formatMarkdown(doc, normalizeFormattingSettings(cmd.settings)).text);
+      if (change) view.dispatch({ changes: change });
       view.focus();
       return;
     }
