@@ -38,7 +38,7 @@ describe('normalizeNotesToolbarOrder', () => {
     // v0.4.43 : l'ordre stocké ancien ne connaît ni attach ni undo/redo —
     // ils rejoignent la fin (l'ordre du registre), 'table' restant dernier
     // du registre avant eux.
-    expect(normalized.map((item) => item.id).slice(-3)).toEqual(['redo', 'template', 'lint']);
+    expect(normalized.map((item) => item.id).slice(-4)).toEqual(['align-left', 'align-center', 'align-right', 'align-justify']);
     expect(normalized).toHaveLength(DEFAULT_NOTES_TOOLBAR_ORDER.length);
   });
 });

@@ -30,6 +30,7 @@
 //   3. Détection des tokens (wikilinks/embeds, tags, occurrences)
 //   4. Dédoublonnage et découpage (subtractSpans, findLiveMatches)
 //   5. Tableaux GFM (findTableBlocks)
+//   6. Paragraphes alignés (findAlignedBlocks)
 //
 //////////////////////////////////////////////////////////////////////////////
 
@@ -388,6 +389,61 @@ export function findTableBlocks(text: string): TableBlock[] {
     }
     index += 1;
     offset += line.length + 1; // +1 pour le \n
+  }
+  return blocks;
+}
+
+//////// 6. Paragraphes alignés (findAlignedBlocks) ////////////////////////////
+
+export type AlignedBlock = {
+  align: 'left' | 'center' | 'right' | 'justify';
+  // Bloc entier (de la balise ouvrante à la fermante incluse).
+  from: number;
+  to: number;
+  // Balises à masquer hors édition (chacune sur UNE ligne).
+  openTo: number;
+  closeFrom: number;
+  // Débuts de ligne du bloc (décoration de ligne text-align).
+  lineStarts: number[];
+};
+
+const ALIGNED_OPEN_LIVE = /^<(p) align="(left|center|right|justify)">|^<(div) style="text-align:\s*(left|center|right|justify);?\s*">/;
+
+// Même forme que la règle de rendu (markdownPlugins.ts, alignedBlockRule) :
+// balise ouvrante en début de ligne, fermante en fin de ligne, sans ligne
+// vide entre les deux.
+export function findAlignedBlocks(text: string): AlignedBlock[] {
+  const lines = text.split('\n');
+  const blocks: AlignedBlock[] = [];
+  let offset = 0;
+  const starts = lines.map((line) => {
+    const start = offset;
+    offset += line.length + 1;
+    return start;
+  });
+  for (let index = 0; index < lines.length; index += 1) {
+    const open = ALIGNED_OPEN_LIVE.exec(lines[index]);
+    if (!open) continue;
+    const close = `</${open[1] ?? open[3]}>`;
+    let last = index;
+    while (last < lines.length && !lines[last].trimEnd().endsWith(close)) {
+      if (last > index && lines[last].trim() === '') break;
+      last += 1;
+    }
+    if (last >= lines.length || !lines[last].trimEnd().endsWith(close)) continue;
+    const closeLineEnd = starts[last] + lines[last].trimEnd().length;
+    const closeFrom = closeLineEnd - close.length;
+    const openTo = starts[index] + open[0].length;
+    if (closeFrom < openTo) continue;
+    blocks.push({
+      align: (open[2] ?? open[4]) as AlignedBlock['align'],
+      from: starts[index],
+      to: closeLineEnd,
+      openTo,
+      closeFrom,
+      lineStarts: starts.slice(index, last + 1),
+    });
+    index = last;
   }
   return blocks;
 }

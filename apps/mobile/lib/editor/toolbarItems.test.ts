@@ -121,13 +121,28 @@ describe('cohérence Paramètres ↔ barre de l’éditeur', () => {
     const stored = [{ id: 'a', label: 'A', collapsible: false, buttons: ['bold'] as ToolbarActionId[] }];
     // Préférences d'avant le champ `notesToolbarKnownButtons` : tout ce qui
     // manque est nouveau → visible (comportement d'avant).
-    expect(normalizeNotesToolbarGroups(stored)[0].buttons).toEqual([
-      'bold',
-      ...NOTES_TOOLBAR_ACTION_IDS.filter((id) => id !== 'bold'),
+    // Préférences d'avant le champ `notesToolbarKnownButtons` : tout ce qui
+    // manque est nouveau → visible, dans son groupe par défaut (recréé).
+    const migrated = normalizeNotesToolbarGroups(stored);
+    expect(migrated.flatMap((group) => group.buttons).sort()).toEqual([...NOTES_TOOLBAR_ACTION_IDS].sort());
+    expect(migrated.find((group) => group.id === 'alignement')?.buttons).toEqual([
+      'align-left',
+      'align-center',
+      'align-right',
+      'align-justify',
     ]);
-    // Tous connus sauf 'lint' (bouton « nouveau ») : seul lint revient.
-    const known = NOTES_TOOLBAR_ACTION_IDS.filter((id) => id !== 'lint');
-    expect(normalizeNotesToolbarGroups(stored, known)[0].buttons).toEqual(['bold', 'lint']);
+    // Tous connus sauf l'alignement (boutons « nouveaux ») : seul le groupe
+    // Alignement est ajouté, le reste masqué le reste.
+    const known = NOTES_TOOLBAR_ACTION_IDS.filter((id) => !id.startsWith('align-'));
+    const withAlign = normalizeNotesToolbarGroups(stored, known);
+    expect(withAlign.map((group) => [group.id, group.buttons])).toEqual([
+      ['a', ['bold']],
+      ['alignement', ['align-left', 'align-center', 'align-right', 'align-justify']],
+    ]);
+    // Groupe d'accueil existant : les nouveaux boutons y sont ajoutés.
+    const home = [{ id: 'divers', label: 'Divers', collapsible: false, buttons: ['table'] as ToolbarActionId[] }];
+    const known2 = NOTES_TOOLBAR_ACTION_IDS.filter((id) => id !== 'lint');
+    expect(normalizeNotesToolbarGroups(home, known2)[0].buttons).toEqual(['table', 'lint']);
     // Tous connus : rien n'est rajouté, le masquage tient.
     expect(normalizeNotesToolbarGroups(stored, NOTES_TOOLBAR_ACTION_IDS)[0].buttons).toEqual(['bold']);
   });

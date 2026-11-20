@@ -28,6 +28,7 @@
 //////////////////////////////////////////////////////////////////////////////
 
 import {
+  applyAlignment,
   applyHeading,
   insertLink,
   insertTable,
@@ -59,7 +60,11 @@ export type ToolbarActionId =
   | 'undo'
   | 'redo'
   | 'template'
-  | 'lint';
+  | 'lint'
+  | 'align-left'
+  | 'align-center'
+  | 'align-right'
+  | 'align-justify';
 
 export type ToolbarAction = {
   id: ToolbarActionId;
@@ -115,6 +120,14 @@ export const NOTES_TOOLBAR_ACTIONS: ToolbarAction[] = [
   // Linter : normalisation conservatrice (voir lib/markdownLinter.ts) —
   // branché sur handleChangeContent(lintMarkdown(...)) côté NotesScreen.
   { id: 'lint', label: '✨', run: (text, sel) => ({ text, selection: sel }) },
+  // Alignement du/des paragraphe(s) visé(s) : enveloppe HTML compatible
+  // Obsidian (voir applyAlignment). « Gauche » retire l'enveloppe.
+  // Pas de raccourci : Ctrl+Maj+R/I/J sont pris par Electron/Chromium
+  // (rechargement, outils de développement) et Ctrl+E est déjà « code ».
+  { id: 'align-left', label: '⇤', run: (text, sel) => applyAlignment(text, sel, 'left') },
+  { id: 'align-center', label: '↔', run: (text, sel) => applyAlignment(text, sel, 'center') },
+  { id: 'align-right', label: '⇥', run: (text, sel) => applyAlignment(text, sel, 'right') },
+  { id: 'align-justify', label: '☰', run: (text, sel) => applyAlignment(text, sel, 'justify') },
 ];
 
 //////// 2. Libellés et raccourcis lisibles pour Paramètres ////////////////////
@@ -141,6 +154,10 @@ export const NOTES_TOOLBAR_DESCRIPTIONS: Record<ToolbarActionId, string> = {
   redo: 'Rétablir',
   template: 'Insérer un modèle',
   lint: 'Formater (linter)',
+  'align-left': 'Aligner à gauche',
+  'align-center': 'Centrer',
+  'align-right': 'Aligner à droite',
+  'align-justify': 'Justifier',
 };
 
 // Affichage humain du raccourci (⌘/Ctrl selon la plateforme) pour Paramètres
@@ -236,6 +253,12 @@ export const DEFAULT_NOTES_TOOLBAR_GROUPS: NotesToolbarGroup[] = [
   // bout par la normalisation) — désormais écrits ici, pour que les
   // défauts décrivent la barre réellement affichée.
   { id: 'divers', label: 'Divers', collapsible: false, buttons: ['table', 'attach', 'template', 'lint'] },
+  {
+    id: 'alignement',
+    label: 'Alignement',
+    collapsible: true,
+    buttons: ['align-left', 'align-center', 'align-right', 'align-justify'],
+  },
 ];
 
 // Tous les ids de bouton existants (ordre du registre).
@@ -306,10 +329,16 @@ export function normalizeNotesToolbarGroups(
   }));
   const known = new Set(knownButtons ?? []);
   const missing = NOTES_TOOLBAR_ACTION_IDS.filter((id) => !placed.has(id) && !known.has(id));
-  if (missing.length > 0) {
-    const last = next[next.length - 1];
-    if (last) last.buttons.push(...missing);
-    else next.push({ id: 'divers', label: 'Divers', collapsible: false, buttons: missing });
+  for (const id of missing) {
+    // Bouton nouveau : dans SON groupe par défaut (ex. « Alignement ») —
+    // le groupe est recréé s'il n'existe pas chez l'utilisatrice ; à
+    // défaut, dans le dernier groupe.
+    const home = DEFAULT_NOTES_TOOLBAR_GROUPS.find((group) => group.buttons.includes(id));
+    const target =
+      (home && next.find((group) => group.id === home.id)) ??
+      (home ? (next[next.push({ ...home, buttons: [] }) - 1] as NotesToolbarGroup) : next[next.length - 1]);
+    if (target) target.buttons.push(id);
+    else next.push({ id: 'divers', label: 'Divers', collapsible: false, buttons: [id] });
   }
   return next;
 }

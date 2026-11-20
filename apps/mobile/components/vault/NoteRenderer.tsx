@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Children, cloneElement, isValidElement, useEffect, useMemo, useState, type ReactElement, type ReactNode } from 'react';
 import { Image, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SvgXml } from 'react-native-svg';
 import Markdown, { type ASTNode, type RenderRules } from 'react-native-markdown-display';
@@ -210,6 +210,15 @@ function unresolvedLinkColor(theme: Theme): string {
   return translucent === theme.accent ? theme.textMuted : translucent;
 }
 
+// Pose `textAlign` sur les éléments texte enfants (récursif pour les vues).
+function alignChildren(children: ReactNode, textAlign: 'left' | 'center' | 'right' | 'justify'): ReactNode {
+  return Children.map(children, (child) => {
+    if (!isValidElement(child)) return child;
+    const element = child as ReactElement<{ style?: unknown; children?: ReactNode }>;
+    return cloneElement(element, { style: [element.props.style, { textAlign, width: '100%' }] });
+  });
+}
+
 //////// 2. NoteRenderer — la config markdown-it et les rules de rendu ////////////////////
 
 export function NoteRenderer({
@@ -300,6 +309,22 @@ export function NoteRenderer({
           >
             🔤 {node.content}
           </Text>
+        );
+      },
+      // Paragraphe aligné (<p align="center">…</p>, voir markdownPlugins.ts) :
+      // l'alignement est un style de Text en React Native — il est posé
+      // sur chaque groupe de texte enfant.
+      aligned: (node, children) => {
+        const align = String((node as NodeWithMeta & { sourceMeta?: { align?: string } }).sourceMeta?.align ?? 'left');
+        const textAlign = (['left', 'center', 'right', 'justify'].includes(align) ? align : 'left') as
+          | 'left'
+          | 'center'
+          | 'right'
+          | 'justify';
+        return (
+          <View key={node.key} style={{ alignSelf: 'stretch', marginVertical: 6 }}>
+            {alignChildren(children, textAlign)}
+          </View>
         );
       },
       embed: (node) => {
