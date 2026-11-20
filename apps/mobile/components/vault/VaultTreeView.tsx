@@ -129,6 +129,25 @@ function VaultTreeViewImpl({
   // Couleurs de l'explorateur (fond réglable — explorerColors.ts) : guides,
   // texte et sélection restent lisibles quel que soit le fond.
   const ex = theme.explorer ?? buildExplorerColors(theme);
+  // Props transmises TELLES QUELLES aux sous-arbres (dossiers dépliés).
+  // Un seul objet : une prop ajoutée ici ne peut plus être oubliée dans un
+  // des appels récursifs — c'est ce qui était arrivé à onNodeLongPress
+  // (appui long sans effet sur tout ce qui est DANS un dossier, Android).
+  const childProps: Omit<Props, 'nodes' | 'depth'> = {
+    theme,
+    activeRelPath,
+    activeFolderRelPath,
+    collapsedPaths,
+    onToggleCollapse,
+    onOpenFolder,
+    onOpenNote,
+    rename,
+    selectedRelPaths,
+    draggingRelPath,
+    dragOverInsertion,
+    dragEnabled,
+    onNodeLongPress,
+  };
   return (
     <>
       {nodes.map((node) => {
@@ -263,22 +282,7 @@ function VaultTreeViewImpl({
               <View style={[styles.topContainer, { borderColor: ex.guide, backgroundColor: `${theme.accent}1A` }]}>
                 {row}
                 {isFolder && !isCollapsed && (
-                  <VaultTreeViewImpl
-                    nodes={node.children}
-                    depth={depth + 1}
-                    theme={theme}
-                    activeRelPath={activeRelPath}
-                    activeFolderRelPath={activeFolderRelPath}
-                    collapsedPaths={collapsedPaths}
-                    onToggleCollapse={onToggleCollapse}
-                    onOpenFolder={onOpenFolder}
-                    onOpenNote={onOpenNote}
-                    rename={rename}
-                    selectedRelPaths={selectedRelPaths}
-                    draggingRelPath={draggingRelPath}
-                    dragOverInsertion={dragOverInsertion}
-                    dragEnabled={dragEnabled}
-                  />
+                  <VaultTreeViewImpl {...childProps} nodes={node.children} depth={depth + 1} />
                 )}
               </View>
               {insertionEdge === 'below' && (
@@ -304,22 +308,7 @@ function VaultTreeViewImpl({
               </View>
             )}
             {isFolder && !isCollapsed && (
-              <VaultTreeViewImpl
-                nodes={node.children}
-                depth={depth + 1}
-                theme={theme}
-                activeRelPath={activeRelPath}
-                activeFolderRelPath={activeFolderRelPath}
-                collapsedPaths={collapsedPaths}
-                onToggleCollapse={onToggleCollapse}
-                onOpenFolder={onOpenFolder}
-                onOpenNote={onOpenNote}
-                rename={rename}
-                selectedRelPaths={selectedRelPaths}
-                draggingRelPath={draggingRelPath}
-                dragOverInsertion={dragOverInsertion}
-                dragEnabled={dragEnabled}
-              />
+              <VaultTreeViewImpl {...childProps} nodes={node.children} depth={depth + 1} />
             )}
           </Fragment>
         );
