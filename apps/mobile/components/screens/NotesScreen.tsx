@@ -79,7 +79,13 @@ import { RightSidebar, type SidebarTab } from '../vault/RightSidebar';
 import { OutlinePanel } from '../vault/OutlinePanel';
 import { SearchDialog } from '../dialogs/SearchDialog';
 import { lintMarkdown } from '../../lib/editor/markdownLinter';
-import { defaultTemplateFor, listTemplateNotes, renderTemplate } from '../../lib/notes/templates';
+import {
+  insertableTemplates,
+  listTemplateNotes,
+  normalizeTemplateRules,
+  renderTemplate,
+  templateForNewFile,
+} from '../../lib/notes/templates';
 import { attachmentEmbed } from '../../lib/notes/embedResolution';
 import { VaultTreeView } from '../vault/VaultTreeView';
 import { NoteIconByKind } from '../vault/FileIcons';
@@ -1002,11 +1008,15 @@ export function NotesScreen({
   const applyDefaultTemplate = useCallback(
     async (entry: VaultEntry) => {
       if (!vault) return;
-      const templateRelPath = defaultTemplateFor({
-        templateRelPath: preferences.defaultNewNoteTemplate,
+      // Règle de chemin la plus spécifique, sinon template par défaut
+      // (lib/notes/templates.ts, templateForNewFile).
+      const templateRelPath = templateForNewFile({
         newRelPath: entry.relPath,
         kind: entry.kind,
-        templates: listTemplateNotes(tree, preferences.templatesFolder),
+        rules: normalizeTemplateRules(preferences.templateRules),
+        defaultTemplate: preferences.defaultNewNoteTemplate,
+        existingNotes: flattenNotes(tree).map((n) => n.relPath),
+        templateNotes: listTemplateNotes(tree, preferences.templatesFolder),
       });
       if (!templateRelPath) return;
       try {
@@ -1017,7 +1027,7 @@ export function NotesScreen({
         console.error('[modèles] échec du modèle par défaut :', error);
       }
     },
-    [vault, tree, preferences.defaultNewNoteTemplate, preferences.templatesFolder],
+    [vault, tree, preferences.defaultNewNoteTemplate, preferences.templatesFolder, preferences.templateRules],
   );
 
   const handleCreateNote = useCallback(
@@ -1790,7 +1800,10 @@ export function NotesScreen({
   // curseur (via ActionMenu, natif ET desktop), en appelant
   // insertTemplateById ci-dessus.
   const showTemplateMenu = useCallback(() => {
-    const notes = listTemplateNotes(tree, preferences.templatesFolder);
+    const notes = insertableTemplates(tree, preferences.templatesFolder, [
+      ...normalizeTemplateRules(preferences.templateRules).map((rule) => rule.template),
+      preferences.defaultNewNoteTemplate ?? '',
+    ]);
     if (!activeNote) return;
     if (notes.length === 0) {
       setWikilinkNotice(
@@ -1806,7 +1819,15 @@ export function NotesScreen({
     ).then((choice) => {
       if (choice) void insertTemplateById(choice);
     });
-  }, [tree, activeNote, presentMenu, insertTemplateById, preferences.templatesFolder]);
+  }, [
+    tree,
+    activeNote,
+    presentMenu,
+    insertTemplateById,
+    preferences.templatesFolder,
+    preferences.templateRules,
+    preferences.defaultNewNoteTemplate,
+  ]);
 
   // Un seul écouteur "contextmenu" délégué sur tout le conteneur de la
   // liste, plutôt qu'un handler par ligne : chaque ligne de VaultTreeView

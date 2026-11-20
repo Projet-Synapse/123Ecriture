@@ -70,6 +70,7 @@ const DEFAULT_PREFERENCES: Preferences = {
   newNoteCustomFolder: '',
   templatesFolder: '',
   defaultNewNoteTemplate: '',
+  templateRules: [],
   fileSortMode: 'alphabetical',
   explorerExpandMode: 'last',
   propertiesSortMode: 'alpha-asc',

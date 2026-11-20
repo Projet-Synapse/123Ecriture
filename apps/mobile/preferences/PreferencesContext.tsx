@@ -49,6 +49,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   newNoteCustomFolder: '',
   templatesFolder: '',
   defaultNewNoteTemplate: '',
+  templateRules: [],
   fileSortMode: 'alphabetical',
   // Explorateur : 'last' (défaut historique) restaure les dossiers repliés
   // persistés par coffre ; 'all' / 'none' déplient/replient tout au
@@ -130,6 +131,7 @@ type PreferencesContextValue = {
   setNewNoteCustomFolder: (folder: string) => Promise<void>;
   setTemplatesFolder: (folder: string) => Promise<void>;
   setDefaultNewNoteTemplate: (relPath: string) => Promise<void>;
+  setTemplateRules: (rules: { folder: string; template: string }[]) => Promise<void>;
   setFileSortMode: (mode: FileSortMode) => Promise<void>;
   setExplorerExpandMode: (mode: ExplorerExpandMode) => Promise<void>;
   setPropertiesSortMode: (mode: PropertySortMode) => Promise<void>;
@@ -423,6 +425,10 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     (relPath: string) => persist({ defaultNewNoteTemplate: relPath }),
     [persist],
   );
+  const setTemplateRules = useCallback(
+    (rules: { folder: string; template: string }[]) => persist({ templateRules: rules }),
+    [persist],
+  );
   const setFileSortMode = useCallback((mode: FileSortMode) => persist({ fileSortMode: mode }), [persist]);
   const setExplorerExpandMode = useCallback(
     (mode: ExplorerExpandMode) => persist({ explorerExpandMode: mode }),
@@ -634,6 +640,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       setNewNoteCustomFolder,
       setTemplatesFolder,
       setDefaultNewNoteTemplate,
+      setTemplateRules,
       setFileSortMode,
       setExplorerExpandMode,
       setPropertiesSortMode,
@@ -684,6 +691,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       setNewNoteCustomFolder,
       setTemplatesFolder,
       setDefaultNewNoteTemplate,
+      setTemplateRules,
       setFileSortMode,
       setExplorerExpandMode,
       setPropertiesSortMode,

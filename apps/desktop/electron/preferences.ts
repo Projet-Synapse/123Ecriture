@@ -57,6 +57,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   newNoteCustomFolder: '',
   templatesFolder: '',
   defaultNewNoteTemplate: '',
+  templateRules: [],
   fileSortMode: 'alphabetical',
   // Écran Tâches (tri par échéance / masquage des terminées) — voir
   // TasksScreen.tsx pour la consommation réelle.

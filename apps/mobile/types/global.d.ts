@@ -583,6 +583,9 @@ declare global {
     // fichiers (relPath, '' = aucun). Optionnels : configurations anciennes.
     templatesFolder?: string;
     defaultNewNoteTemplate?: string;
+    // Règles « dossier du coffre → fichier template » (v0.4.100) : la plus
+    // spécifique s'applique à la création, sinon defaultNewNoteTemplate.
+    templateRules?: { folder: string; template: string }[];
     fileSortMode: FileSortMode;
     // Ouverture des dossiers de l'explorateur au chargement du coffre —
     // voir ExplorerExpandMode ci-dessus et NotesScreen.tsx pour l'application
