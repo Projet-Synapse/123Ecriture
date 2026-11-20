@@ -8,6 +8,8 @@ import { newNoteFrontmatter, parseFrontmatter } from '../properties/frontmatter'
 import { CODE_FILE_EXTENSIONS } from '../editor/codeLanguages';
 import { resolveRenameName } from '../notes/renameTarget';
 import { IMAGE_EXTENSIONS, mimeTypeForFile } from '../files/imageFormats';
+import { availableAttachmentName, resolveAttachmentTarget, safeAttachmentName } from '../notes/embedResolution';
+import { readAttachmentsFolderPref } from './attachmentsFolder';
 import { getActiveVaultRootUri, requestAndRegisterVault } from './nativeVaultsAdapter';
 import { vaultStorageObjectKey } from '../sync/storageKeys';
 
@@ -1331,46 +1333,48 @@ export const nativeVaultAdapter: VaultBridge = {
     if (result.canceled) return null;
     const asset = result.assets?.[0];
     if (!asset) return null;
-
-    // Dossier cible : préférence attachmentsFolder (défaut 'attachments').
-    let folder = 'attachments';
-    try {
-      const prefs = (await window.preferences?.get()) as Partial<Preferences> | null;
-      if (prefs?.attachmentsFolder && typeof prefs.attachmentsFolder === 'string') {
-        folder = prefs.attachmentsFolder;
-      }
-    } catch {
-      // Préférences indisponibles : le dossier par défaut convient.
-    }
-
-    const extension = asset.name.includes('.') ? asset.name.slice(asset.name.lastIndexOf('.')) : '';
-    const stem = extension ? asset.name.slice(0, asset.name.length - extension.length) : asset.name;
-    let name = asset.name;
-    let relPath = folder ? `${folder}/${name}` : name;
-    // SAF ne sait pas écraser : suffixe (2), (3)… si le nom est déjà pris
-    // (même règle que createNote côté desktop).
-    let counter = 2;
-    while (pathIndex.has(relPath)) {
-      name = `${stem} (${counter})${extension}`;
-      relPath = folder ? `${folder}/${name}` : name;
-      counter += 1;
-    }
-
+    // asset.uri = copie file:// dans le cache de l'app (jamais le content://
+    // du fournisseur, dont la permission expire à la fermeture du sélecteur).
     const base64 = await FileSystem.readAsStringAsync(asset.uri, {
       encoding: FileSystem.EncodingType.Base64,
     });
+    return nativeVaultAdapter.importAttachmentData!(asset.name, base64, asset.mimeType);
+  },
+
+  // Copie de données déjà lues (bouton, collage, glisser-déposer) dans
+  // `<attachmentsFolder>/` — dossier créé s'il manque (ensureSafDir), nom
+  // libre (`photo 2.jpg`…) : SAF ne sait pas écraser.
+  importAttachmentData: async (rawName, base64, mimeType) => {
+    const folder = await readAttachmentsFolderPref();
+    const prefix = `${folder}/`;
+    const taken: string[] = [];
+    for (const key of pathIndex.keys()) {
+      if (key.startsWith(prefix) && !key.slice(prefix.length).includes('/')) taken.push(key.slice(prefix.length));
+    }
+    const name = availableAttachmentName(safeAttachmentName(rawName, mimeType), taken);
+    const relPath = `${folder}/${name}`;
     await writeNoteBinaryInternal(relPath, base64);
     return { relPath, name };
   },
 
-  readAttachmentDataUrl: async (relPath) => {
+  // Résolution façon Obsidian (lib/notes/embedResolution.ts) — avant :
+  // cible lue TELLE QUELLE, `![[photo.jpg]]` cherché à la racine alors que
+  // l'import l'avait copiée dans `attachments/` → « introuvable ».
+  readAttachmentDataUrl: async (target) => {
+    const folder = await readAttachmentsFolderPref();
+    const files = () => [...pathIndex.entries()].filter(([, e]) => !e.isDirectory).map(([p]) => p);
+    let relPath = resolveAttachmentTarget(target, files(), folder);
+    if (!relPath) {
+      await refreshIndex();
+      relPath = resolveAttachmentTarget(target, files(), folder);
+    }
+    if (!relPath) throw new Error(`Pièce jointe introuvable : ${target}`);
     const { uri } = resolveIndexed(relPath);
     const tmpPath = `${FileSystem.cacheDirectory}saf-attachment-${Date.now()}`;
     try {
       await FileSystem.copyAsync({ from: uri, to: tmpPath });
       const base64 = await FileSystem.readAsStringAsync(tmpPath, { encoding: FileSystem.EncodingType.Base64 });
-      // MIME partagé (lib/files/imageFormats.ts) — avant : png/jpg/gif
-      // seulement, un .webp/.jfif partait en octet-stream et ne s'affichait pas.
+      // MIME partagé (lib/files/imageFormats.ts).
       return `data:${mimeTypeForFile(relPath)};base64,${base64}`;
     } finally {
       await FileSystem.deleteAsync(tmpPath, { idempotent: true });

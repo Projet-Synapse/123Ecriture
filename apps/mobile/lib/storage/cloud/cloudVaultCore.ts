@@ -2,6 +2,8 @@ import { loadSyncSettings } from '../../sync/syncSettings';
 import { mimeTypeForFile } from '../../files/imageFormats';
 import { folderToMarker, isFolderMarker } from '../../sync/folderMarker';
 import { resolveRenameName } from '../../notes/renameTarget';
+import { availableAttachmentName, resolveAttachmentTarget, safeAttachmentName } from '../../notes/embedResolution';
+import { readAttachmentsFolderPref } from '../attachmentsFolder';
 // ✒️ 123ECRITURE — lib/storage/cloud/cloudVaultCore.ts — le coffre Android 100 % cloud
 //////////////////////////////////////////////////////////////////////////////
 //
@@ -800,15 +802,27 @@ export function createCloudVault(deps: CloudVaultDeps) {
       if (!h.pickAttachment) return null;
       const picked = await h.pickAttachment();
       if (!picked) return null;
+      return adapter.importAttachmentData!(picked.name, picked.base64);
+    },
+
+    // Dossier du réglage attachmentsFolder (avant : 'attachments' en dur,
+    // incohérent avec la résolution) ; nom libre `photo 2.jpg`.
+    importAttachmentData: async (rawName, base64, mimeType) => {
       const s = await load();
-      const folder = 'attachments';
-      const name = h.findAvailableName(picked.name, siblings(s, folder));
+      const folder = await readAttachmentsFolderPref();
+      const name = availableAttachmentName(safeAttachmentName(rawName, mimeType), siblings(s, folder));
       const relPath = join(folder, name);
-      await write(relPath, picked.base64, 'base64');
+      await write(relPath, base64, 'base64');
       return { relPath, name };
     },
 
-    readAttachmentDataUrl: async (relPath) => {
+    // Résolution façon Obsidian (lib/notes/embedResolution.ts) — avant :
+    // cible lue telle quelle (`![[photo.jpg]]` cherché à la racine).
+    readAttachmentDataUrl: async (target) => {
+      const s = await load();
+      const folder = await readAttachmentsFolderPref();
+      const files = [...effective(s).keys()].filter((p) => !p.startsWith('.') && !isFolderMarker(p));
+      const relPath = resolveAttachmentTarget(target, files, folder) ?? target;
       const base64 = await read(relPath, 'base64');
       return `data:${mimeTypeForFile(relPath)};base64,${base64}`;
     },

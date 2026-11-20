@@ -79,6 +79,7 @@ import { isCodeFile } from '../../../mobile/lib/editor/codeLanguages';
 import { isImageFile } from '../../../mobile/lib/files/imageFormats';
 import { normalizeRelPath } from '../../../mobile/lib/sync/relPath';
 import { resolveRenameName } from '../../../mobile/lib/notes/renameTarget';
+import { normalizeAttachmentsFolder, safeAttachmentName } from '../../../mobile/lib/notes/embedResolution';
 import { newNoteFrontmatter } from '../../../mobile/lib/properties/frontmatter';
 export { EXTENSION_TO_KIND, resolveInVault, getVaultPath, walkTree } from './coffre-outils';
 // Critères de résolution des cibles d'embed façon Obsidian (chemin exact →
@@ -329,14 +330,21 @@ export function registerVaultHandlers(getWindow: GetWindow): void {
     if (result.canceled || result.filePaths.length === 0) return null;
 
     const sourcePath = result.filePaths[0];
-    const attachmentsDir = path.join(vaultPath, getAttachmentsFolder());
-    await fs.mkdir(attachmentsDir, { recursive: true });
-    const extension = path.extname(sourcePath);
-    const baseName = path.basename(sourcePath, extension);
-    const finalName = findAvailableName(attachmentsDir, baseName, extension);
-    const destPath = path.join(attachmentsDir, finalName);
+    const { destPath, finalName } = await attachmentDestination(vaultPath, path.basename(sourcePath));
     await fs.copyFile(sourcePath, destPath);
 
+    return { relPath: normalizeRelPath(path.relative(vaultPath, destPath)), name: finalName };
+  });
+
+  // Pièce jointe COLLÉE ou GLISSÉE dans l'éditeur (données déjà lues par
+  // le renderer, en base64) : même destination et même règle de nom que
+  // le bouton 📎 ci-dessus.
+  ipcMain.handle('vault:import-attachment-data', async (_event, name: string, base64: string, mimeType?: string) => {
+    const vaultPath = getVaultPath();
+    if (!vaultPath) throw new Error('Aucun vault sélectionné');
+    if (typeof base64 !== 'string') throw new Error('Pièce jointe : contenu invalide.');
+    const { destPath, finalName } = await attachmentDestination(vaultPath, safeAttachmentName(name, mimeType));
+    await fs.writeFile(destPath, Buffer.from(base64, 'base64'));
     return { relPath: normalizeRelPath(path.relative(vaultPath, destPath)), name: finalName };
   });
 
@@ -352,6 +360,17 @@ export function registerVaultHandlers(getWindow: GetWindow): void {
   // alors que l'image vit n'importe où (« Pièces jointes/ », sous-dossier,
   // à côté de la note…) : sans l'étape 3, tout embed d'un coffre importé
   // reste « pièce jointe introuvable ».
+  // `<coffre>/<attachmentsFolder>/` (créé s'il manque), nom sûr pour
+  // `![[...]]` (sans `[ ] | # ^`) et libre (`photo 2.jpg`).
+  async function attachmentDestination(vaultPath: string, rawName: string) {
+    const attachmentsDir = resolveInVault(vaultPath, normalizeAttachmentsFolder(getAttachmentsFolder()));
+    await fs.mkdir(attachmentsDir, { recursive: true });
+    const safeName = safeAttachmentName(rawName);
+    const extension = path.extname(safeName);
+    const finalName = findAvailableName(attachmentsDir, path.basename(safeName, extension), extension);
+    return { destPath: path.join(attachmentsDir, finalName), finalName };
+  }
+
   const resolveAttachment = async (relPath: string): Promise<string> => {
     const vaultPath = getVaultPath();
     if (!vaultPath) throw new Error('Aucun vault sélectionné');

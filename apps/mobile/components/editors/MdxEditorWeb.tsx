@@ -70,6 +70,11 @@ type Props = {
   // demande la data URL par le pont (`resolveEmbed`), même résolveur (et
   // même cache) que le desktop. Absent = pastille 📎 comme avant.
   resolveEmbedUrl?: (target: string) => Promise<string | null>;
+  // Fichier collé / glissé dans la note (lib/editor/attachmentPaste.ts) :
+  // copié dans le coffre, renvoie le nom final (null = échec). Absent =
+  // collage CodeMirror ordinaire.
+  importAttachment?: (file: { name: string; base64: string; mimeType?: string }) => Promise<string | null>;
+  onAttachmentError?: (message: string) => void;
   // Barre d'outils native : reçoit la fonction qui envoie une commande
   // (mise en forme, annuler/rétablir, insertion) à l'éditeur de la page —
   // null au démontage. Voir lib/editor/editorCommands.ts.
@@ -92,6 +97,8 @@ export function MdxEditorWeb({
   livePreview = true,
   autoHeight = false,
   resolveEmbedUrl,
+  importAttachment,
+  onAttachmentError,
   commandRef,
 }: Props) {
   const [webHeight, setWebHeight] = useState(200);
@@ -115,12 +122,16 @@ export function MdxEditorWeb({
   const onOpenWikilinkRef = useRef(onOpenWikilink);
   const onCreateOccurrenceRef = useRef(onCreateOccurrence);
   const resolveEmbedUrlRef = useRef(resolveEmbedUrl);
+  const importAttachmentRef = useRef(importAttachment);
+  const onAttachmentErrorRef = useRef(onAttachmentError);
   useEffect(() => {
     onChangeRef.current = onChange;
     onOpenWikilinkRef.current = onOpenWikilink;
     onCreateOccurrenceRef.current = onCreateOccurrence;
     resolveEmbedUrlRef.current = resolveEmbedUrl;
-  }, [onChange, onOpenWikilink, onCreateOccurrence, resolveEmbedUrl]);
+    importAttachmentRef.current = importAttachment;
+    onAttachmentErrorRef.current = onAttachmentError;
+  }, [onChange, onOpenWikilink, onCreateOccurrence, resolveEmbedUrl, importAttachment, onAttachmentError]);
 
   const inject = useCallback((script: string) => {
     webRef.current?.injectJavaScript(`${script}; true;`);
@@ -151,6 +162,7 @@ export function MdxEditorWeb({
       livePreview,
       autoHeight,
       embeds: Boolean(resolveEmbedUrl),
+      attachments: Boolean(importAttachment),
       occurrenceWords,
       noteNames,
       notePaths: notePaths ?? null,
@@ -170,7 +182,7 @@ export function MdxEditorWeb({
     });
     inject(`window.__editorApi && window.__editorApi.applyConfig(${JSON.stringify(payload)});`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [inject, fontSize, fontFamily, closeBrackets, livePreview, occurrenceWords, noteNames, notePaths, currentRelPath, theme, resolveEmbedUrl]);
+  }, [inject, fontSize, fontFamily, closeBrackets, livePreview, occurrenceWords, noteNames, notePaths, currentRelPath, theme, resolveEmbedUrl, importAttachment]);
 
 //////// 2. Pont web → RN (messages) et synchronisation externe ////////////
 
@@ -188,6 +200,10 @@ export function MdxEditorWeb({
         bg?: string;
         accent?: string;
         autoHeight?: boolean;
+        name?: string;
+        base64?: string;
+        mimeType?: string;
+        message?: string;
       };
       try {
         message = JSON.parse(event.nativeEvent.data) as typeof message;
@@ -246,6 +262,23 @@ export function MdxEditorWeb({
           const safeUrl = url ? withImageMime(url, target) : null;
           inject(`window.__editorApi && window.__editorApi.embedResolved(${id}, ${JSON.stringify(safeUrl)});`);
         });
+        return;
+      }
+      if (message.type === 'importAttachment' && typeof message.id === 'number' && typeof message.base64 === 'string') {
+        const id = message.id;
+        const importer = importAttachmentRef.current;
+        const file = {
+          name: typeof message.name === 'string' ? message.name : '',
+          base64: message.base64,
+          mimeType: typeof message.mimeType === 'string' ? message.mimeType : undefined,
+        };
+        void (importer ? importer(file).catch(() => null) : Promise.resolve(null)).then((name) => {
+          inject(`window.__editorApi && window.__editorApi.attachmentImported(${id}, ${JSON.stringify(name)});`);
+        });
+        return;
+      }
+      if (message.type === 'attachmentError' && typeof message.message === 'string') {
+        onAttachmentErrorRef.current?.(message.message);
         return;
       }
       if (message.type === 'createOccurrence' && typeof message.word === 'string') {

@@ -7,6 +7,7 @@ import { search as searchExtension, searchKeymap } from '@codemirror/search';
 import { keymap } from '@codemirror/view';
 import { Prec } from '@codemirror/state';
 
+import { attachmentPasteExtension } from '../../lib/editor/attachmentPaste';
 import { DocSync } from '../../lib/editor/docSync';
 import { createLivePreviewExtension } from '../../lib/editor/mdxLivePreview';
 import { enableOsEmojiInsertion } from '../../lib/editor/osEmojiInsertion';
@@ -145,6 +146,28 @@ function openAttachmentOutside(target: string): void {
   const open = typeof window !== 'undefined' ? window.vault?.openAttachment : undefined;
   if (!open) return;
   open(target).catch((err: unknown) => console.error('[embed] ouverture impossible :', err));
+}
+
+// Fichier COLLÉ ou GLISSÉ dans la note (lib/editor/attachmentPaste.ts) :
+// copié dans `<attachmentsFolder>/` par le pont du coffre, puis `![[nom]]`.
+// Extension de module (stable) ; absente si le coffre ne sait pas importer
+// (coffre web) — le collage garde alors le comportement de CodeMirror.
+// Lu à la création des extensions (pas au chargement du module : le pont
+// peut être installé après).
+let attachmentPaste: ReturnType<typeof attachmentPasteExtension> | null = null;
+function attachmentPasteIfSupported() {
+  if (attachmentPaste) return attachmentPaste;
+  const vault = typeof window !== 'undefined' ? window.vault : undefined;
+  if (!vault?.importAttachmentData) return null;
+  attachmentPaste = attachmentPasteExtension(
+    async ({ name, base64, mimeType }) => {
+      const importData = window.vault?.importAttachmentData;
+      if (!importData) return null;
+      return (await importData(name, base64, mimeType)).name;
+    },
+    (message) => console.error('[pièces jointes]', message),
+  );
+  return attachmentPaste;
 }
 
 export function MdxEditor({
@@ -330,6 +353,8 @@ export function MdxEditor({
 
   const extensions = useMemo(() => {
     const base = [markdown(), EditorView.lineWrapping, enableOsEmojiInsertion, completionExtension, ...searchExtensions];
+    const paste = attachmentPasteIfSupported();
+    if (paste) base.push(paste);
     const withShortcuts = shortcutsExtension ? [...base, shortcutsExtension] : base;
     const withLive = livePreview ? [...withShortcuts, liveExtension] : withShortcuts;
     // Titres SANS soulignement (voir lib/codemirrorHighlight.ts) — en
