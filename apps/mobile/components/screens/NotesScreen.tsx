@@ -38,6 +38,8 @@ import { openSearchResult } from '../../lib/notes/searchResults';
 import { useResizablePanel } from '../../lib/ui/useResizablePanel';
 import { CaretRevealContext, keyboardBottomPadding, revealScrollOffset } from '../../lib/ui/caretReveal';
 import { useKeyboardFrame } from '../../lib/ui/useKeyboardHeight';
+import { BACK_PRIORITY, popNoteHistory, pushNoteHistory } from '../../lib/ui/backStack';
+import { useBackHandler } from '../../lib/ui/useBackHandler';
 import { collectFolderRelPaths } from '../../lib/notes/treeExpansion';
 import { createWikilinkResolver, resolveWikilink } from '../../lib/notes/wikilinkResolution';
 import {
@@ -274,6 +276,11 @@ export function NotesScreen({
   // lieu de l'éditeur de note. null = pas d'aperçu (une note est ouverte,
   // ou rien).
   const [previewFolderRelPath, setPreviewFolderRelPath] = useState<string | null>(null);
+  // Historique des fichiers ouverts — bouton retour Android = fichier
+  // précédent (lib/ui/backStack.ts). navigatingBack : l'ouverture en cours
+  // vient du retour et ne doit pas ré-empiler la note quittée.
+  const [noteHistory, setNoteHistory] = useState<string[]>([]);
+  const navigatingBackRef = useRef(false);
   const [content, setContent] = useState('');
   const [status, setStatus] = useState<Status>('idle');
   const [viewMode, setViewMode] = useState<ViewMode>(preferences.editorDefaultMode);
@@ -834,7 +841,10 @@ export function NotesScreen({
               console.error('[vault] échec de la sauvegarde différée au changement de note :', error);
             });
         }
+        const leftRelPath = activeNoteRef.current?.relPath ?? null;
         const text = await vault.readNote(node.relPath);
+        if (navigatingBackRef.current) navigatingBackRef.current = false;
+        else setNoteHistory((history) => pushNoteHistory(history, leftRelPath, node.relPath));
         setActiveNote(node);
         setPreviewFolderRelPath(null);
         setContent(text);
@@ -857,6 +867,7 @@ export function NotesScreen({
           applyOpenTabs([...tabs, node.relPath]);
         }
       } catch (error) {
+        navigatingBackRef.current = false;
         console.error('[vault] échec de lecture de la note :', error);
         setStatus('error');
       }
@@ -2044,6 +2055,66 @@ export function NotesScreen({
       }
     })();
   }, [vault, activeNote, refreshTree, materializeTimestamps]);
+
+  // Bouton/geste retour Android, dans l'ordre (lib/ui/backStack.ts) :
+  // menus/panneaux → [section, App.tsx] → fichier précédent → explorateur
+  // → [quitter, App.tsx]. Les Modal (menus, dialogues, recherche, popover
+  // de la barre d'outils) se ferment d'elles-mêmes via onRequestClose.
+  const overlayOpen =
+    renamingRelPath !== null || sidebarOpen || selectedRelPaths.size > 0 || previewFolderRelPath !== null;
+  useBackHandler(
+    BACK_PRIORITY.OVERLAY,
+    () => {
+      if (renamingRelPath !== null) cancelRename();
+      else if (sidebarOpen) setSidebarOpen(false);
+      else if (selectedRelPaths.size > 0) setSelectedRelPaths(new Set());
+      else if (previewFolderRelPath !== null) setPreviewFolderRelPath(null);
+      else return false;
+      return true;
+    },
+    overlayOpen,
+  );
+  const editorShown = isNativeLayout && pagerPage === 1;
+  useBackHandler(
+    BACK_PRIORITY.HISTORY,
+    () => {
+      const { target, history } = popNoteHistory(noteHistory, activeNoteRef.current?.relPath ?? null, (relPath) => {
+        const node = findNodeByPath(treeRef.current, relPath);
+        return Boolean(node && node.type === 'note');
+      });
+      setNoteHistory(history);
+      const node = target ? findNodeByPath(treeRef.current, target) : null;
+      if (!node || node.type !== 'note') return false;
+      // openNote flushe la sauvegarde en attente de la note quittée.
+      navigatingBackRef.current = true;
+      void openNote(node);
+      return true;
+    },
+    editorShown && noteHistory.length > 0,
+  );
+  useBackHandler(
+    BACK_PRIORITY.EXPLORER,
+    () => {
+      showExplorer();
+      return true;
+    },
+    editorShown,
+  );
+  // Avant de quitter (ou de changer de section) : rien de non sauvegardé.
+  // Ne consomme jamais l'appui.
+  useBackHandler(BACK_PRIORITY.SAVE, () => {
+    if (saveTimer.current) flushSave();
+    return false;
+  });
+  // Idem quand l'app passe en arrière-plan (retour qui quitte, bouton
+  // accueil) : la sauvegarde débouncée de 600 ms pourrait ne jamais partir.
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'background' && saveTimer.current) flushSave();
+    });
+    return () => subscription.remove();
+  }, [flushSave]);
 
   // Raccourcis clavier globaux (Ctrl sur Windows/Linux, Cmd sur macOS) —
   // Ctrl/Cmd+S force la sauvegarde immédiate, Ctrl/Cmd+N crée une nouvelle
