@@ -36,6 +36,8 @@ import { buildNotesToolbarItems } from '../../lib/editor/toolbarItems';
 import { resolveNewNoteParent, wikilinkCreationTarget } from '../../lib/notes/newNotePath';
 import { openSearchResult } from '../../lib/notes/searchResults';
 import { useResizablePanel } from '../../lib/ui/useResizablePanel';
+import { CaretRevealContext, keyboardBottomPadding, revealScrollOffset } from '../../lib/ui/caretReveal';
+import { useKeyboardFrame } from '../../lib/ui/useKeyboardHeight';
 import { collectFolderRelPaths } from '../../lib/notes/treeExpansion';
 import { createWikilinkResolver, resolveWikilink } from '../../lib/notes/wikilinkResolution';
 import {
@@ -3488,27 +3490,72 @@ function NativeScrollbar({ viewportHeight, contentHeight, scrollOffset, color, s
 // défilement (maintenant maintenable au doigt, voir NativeScrollbar).
 // Utilisé aussi sur web (même comportement, overlay en plus), et par le
 // mode Intermédiaire natif (WebView en hauteur auto — même scroll commun).
+//
+// Clavier Android (edge-to-edge : il se superpose sans redimensionner) :
+// l'espacement bas grandit de la hauteur du clavier (la fin du fichier
+// peut remonter au-dessus), et l'éditeur WebView demande, via
+// CaretRevealContext, de faire défiler pour garder le curseur visible.
 function NativeReadingScroll({ scrollbarColor, children }: { scrollbarColor: string; children: ReactNode }) {
   const [viewHeight, setViewHeight] = useState(0);
   const [contentHeight, setContentHeight] = useState(0);
   const [scrollOffset, setScrollOffset] = useState(0);
   const scrollRef = useRef<ScrollView>(null);
+  const scrollOffsetRef = useRef(0);
+  // Cadre du lecteur (même rectangle que le ScrollView) — mesuré en
+  // coordonnées fenêtre pour le report du curseur.
+  const frameRef = useRef<View>(null);
+  const keyboard = useKeyboardFrame();
+  const keyboardTopRef = useRef<number | null>(null);
+  useEffect(() => {
+    keyboardTopRef.current = keyboard.top;
+  }, [keyboard.top]);
+  const revealTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (revealTimer.current) clearTimeout(revealTimer.current);
+    },
+    [],
+  );
+  const reveal = useCallback((caretTop: number, caretBottom: number) => {
+    // Laisser passer une frame : l'espacement du clavier et la nouvelle
+    // hauteur de la WebView doivent être posés avant de défiler.
+    if (revealTimer.current) clearTimeout(revealTimer.current);
+    revealTimer.current = setTimeout(() => {
+      frameRef.current?.measureInWindow((_x, y, _w, h) => {
+        const keyboardTop = keyboardTopRef.current;
+        const viewportBottom = keyboardTop !== null ? Math.min(y + h, keyboardTop) : y + h;
+        const next = revealScrollOffset({
+          caretTop,
+          caretBottom,
+          viewportTop: y,
+          viewportBottom,
+          scrollOffset: scrollOffsetRef.current,
+        });
+        if (next !== null) scrollRef.current?.scrollTo({ y: next, animated: false });
+      });
+    }, 30);
+  }, []);
   return (
-    <View style={{ flex: 1 }}>
-      <ScrollView
-        ref={scrollRef}
-        style={styles.previewFull}
-        contentContainerStyle={{ paddingBottom: 40 }}
-        onScroll={(event) => setScrollOffset(event.nativeEvent.contentOffset.y)}
-        onLayout={(event) => setViewHeight(event.nativeEvent.layout.height)}
-        onContentSizeChange={(_, height) => setContentHeight(height)}
-        scrollEventThrottle={16}
-        // Un tap sur une suggestion de valeur de propriété doit la choisir,
-        // pas seulement fermer le clavier (PropertyValueField).
-        keyboardShouldPersistTaps="handled"
-      >
-        {children}
-      </ScrollView>
+    <View ref={frameRef} style={{ flex: 1 }} collapsable={false}>
+      <CaretRevealContext.Provider value={reveal}>
+        <ScrollView
+          ref={scrollRef}
+          style={styles.previewFull}
+          contentContainerStyle={{ paddingBottom: keyboardBottomPadding(40, keyboard.height) }}
+          onScroll={(event) => {
+            scrollOffsetRef.current = event.nativeEvent.contentOffset.y;
+            setScrollOffset(event.nativeEvent.contentOffset.y);
+          }}
+          onLayout={(event) => setViewHeight(event.nativeEvent.layout.height)}
+          onContentSizeChange={(_, height) => setContentHeight(height)}
+          scrollEventThrottle={16}
+          // Un tap sur une suggestion de valeur de propriété doit la choisir,
+          // pas seulement fermer le clavier (PropertyValueField).
+          keyboardShouldPersistTaps="handled"
+        >
+          {children}
+        </ScrollView>
+      </CaretRevealContext.Provider>
       <NativeScrollbar
         viewportHeight={viewHeight}
         contentHeight={contentHeight}
