@@ -3,7 +3,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { CANVAS_TOOLBAR_DESCRIPTIONS } from '../../lib/editor/canvasToolbarActions';
 import { EDITOR_FONT_STACKS } from '../editors/MdxEditor';
 import { CHART_TOOLBAR_DESCRIPTIONS } from '../../lib/editor/chartToolbarActions';
-import { NOTES_TOOLBAR_DESCRIPTIONS } from '../../lib/editor/notesToolbarActions';
+import { notesToolbarChipLabels } from '../../lib/editor/toolbarItems';
 import { usePreferences } from '../../preferences/PreferencesContext';
 import { SettingsToggle } from './SettingsToggle';
 import { settingsStyles as s } from './settingsStyles';
@@ -160,7 +160,7 @@ export function EditorSection() {
         </Text>
         <ToolbarGroupsEditor
           groups={preferences.notesToolbarGroups}
-          descriptions={NOTES_TOOLBAR_DESCRIPTIONS}
+          descriptions={notesToolbarChipLabels()}
           onChange={(groups) => void setNotesToolbarGroups(groups)}
           theme={theme}
         />

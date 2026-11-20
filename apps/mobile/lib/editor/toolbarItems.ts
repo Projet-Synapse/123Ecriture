@@ -12,16 +12,29 @@
 //     rien, sur toutes les plateformes.)
 //   • toolbarPressEffect décide de l'effet d'un appui : déplier/replier un
 //     groupe, déléguer l'action (`run`), ou appeler `onPress`.
+//   • SOURCE UNIQUE pour la barre de l'éditeur ET Paramètres → Éditeur :
+//     le catalogue (NOTES_TOOLBAR_CATALOG) liste tous les boutons qui
+//     existent ; la barre affiche exactement les boutons des groupes, la
+//     réserve de Paramètres exactement les autres (notesToolbarReserve) —
+//     aucun bouton introuvable, aucune entrée fantôme (test de cohérence).
 //
 // SOMMAIRE :
 //   1. Types
 //   2. Construction des items de la barre des notes
 //   3. Effet d'un appui
+//   4. Catalogue et réserve (Paramètres)
 //
 //////////////////////////////////////////////////////////////////////////////
 
 import type { FormattingResult, Selection } from './mdxFormatting';
-import { NOTES_TOOLBAR_ACTIONS, type NotesToolbarGroup, type ToolbarAction } from './notesToolbarActions';
+import {
+  NOTES_TOOLBAR_ACTIONS,
+  NOTES_TOOLBAR_DESCRIPTIONS,
+  NOTES_TOOLBAR_SHORTCUT_LABELS,
+  type NotesToolbarGroup,
+  type ToolbarAction,
+  type ToolbarActionId,
+} from './notesToolbarActions';
 
 //////// 1. Types /////////////////////////////////////////////////////////////
 
@@ -50,11 +63,14 @@ export type ToolbarItem = {
 
 export function buildNotesToolbarItems(groups: NotesToolbarGroup[]): ToolbarItem[] {
   const items: ToolbarItem[] = [];
-  groups.forEach((group, groupIndex) => {
-    if (groupIndex > 0) items.push({ id: `divider-${group.id}`, label: '', divider: true });
+  groups.forEach((group) => {
     const resolved = group.buttons
       .map((id) => NOTES_TOOLBAR_ACTIONS.find((action) => action.id === id))
       .filter((action): action is ToolbarAction => Boolean(action));
+    // Groupe vide : rien dans la barre (ni séparateur orphelin, ni bouton
+    // dépliant qui ne déplierait rien).
+    if (resolved.length === 0) return;
+    if (items.length > 0) items.push({ id: `divider-${group.id}`, label: '', divider: true });
     const runOf = (action: ToolbarAction): ToolbarRun => ({ id: action.id, formatRun: action.run });
     if (group.collapsible) {
       items.push({
@@ -81,4 +97,39 @@ export function toolbarPressEffect(item: ToolbarItem | ToolbarSubItem): ToolbarP
   if (item.run) return 'run';
   if (item.onPress) return 'press';
   return 'none';
+}
+
+//////// 4. Catalogue et réserve (Paramètres) ////////////////////////////////
+
+export type ToolbarCatalogEntry = {
+  id: ToolbarActionId;
+  // Glyphe affiché sur le bouton de l'éditeur (ex. « G »).
+  glyph: string;
+  // Nom lisible (ex. « Gras »).
+  description: string;
+  shortcut?: string;
+};
+
+export const NOTES_TOOLBAR_CATALOG: ToolbarCatalogEntry[] = NOTES_TOOLBAR_ACTIONS.map((action) => ({
+  id: action.id,
+  glyph: action.label,
+  description: NOTES_TOOLBAR_DESCRIPTIONS[action.id],
+  shortcut: NOTES_TOOLBAR_SHORTCUT_LABELS[action.id],
+}));
+
+// Libellé d'une puce de Paramètres : le glyphe du bouton de la barre suivi
+// de son nom, pour reconnaître d'un coup d'œil le bouton de l'éditeur.
+export function notesToolbarChipLabels(): Record<string, string> {
+  return Object.fromEntries(
+    NOTES_TOOLBAR_CATALOG.map((entry) => [
+      entry.id,
+      entry.glyph === entry.description ? entry.description : `${entry.glyph}  ${entry.description}`,
+    ]),
+  );
+}
+
+// Boutons existants rangés dans AUCUN groupe : la réserve « hors barre ».
+export function notesToolbarReserve(groups: NotesToolbarGroup[]): ToolbarActionId[] {
+  const placed = new Set<string>(groups.flatMap((group) => group.buttons));
+  return NOTES_TOOLBAR_CATALOG.map((entry) => entry.id).filter((id) => !placed.has(id));
 }

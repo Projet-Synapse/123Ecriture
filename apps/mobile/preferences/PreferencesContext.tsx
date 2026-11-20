@@ -8,6 +8,7 @@ import {
   DEFAULT_NOTES_TOOLBAR_ORDER,
   DEFAULT_NOTES_TOOLBAR_GROUPS,
   migrateNotesToolbarGroups,
+  NOTES_TOOLBAR_ACTION_IDS,
   normalizeNotesToolbarGroups,
   normalizeNotesToolbarOrder,
 } from '../lib/editor/notesToolbarActions';
@@ -197,7 +198,7 @@ function mergeStoredPreferences(stored: Partial<Preferences> | null | undefined)
   // migration depuis l'ancien ordre plat (respect des masqués/groupes
   // d'alors) ; sinon simple complétion des boutons nouveaux.
   merged.notesToolbarGroups = stored?.notesToolbarGroups
-    ? normalizeNotesToolbarGroups(stored.notesToolbarGroups)
+    ? normalizeNotesToolbarGroups(stored.notesToolbarGroups, stored.notesToolbarKnownButtons)
     : migrateNotesToolbarGroups(stored?.notesToolbarOrder);
   return merged;
 }
@@ -382,7 +383,11 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     [persist],
   );
   const setNotesToolbarGroups = useCallback(
-    (groups: NotesToolbarGroup[]) => persist({ notesToolbarGroups: groups }),
+    // Boutons existants enregistrés avec les groupes : un bouton rangé hors
+    // barre reste masqué, seul un bouton d'une version future apparaîtra
+    // (normalizeNotesToolbarGroups).
+    (groups: NotesToolbarGroup[]) =>
+      persist({ notesToolbarGroups: groups, notesToolbarKnownButtons: [...NOTES_TOOLBAR_ACTION_IDS] }),
     [persist],
   );
   const setCanvasToolbarOrder = useCallback(

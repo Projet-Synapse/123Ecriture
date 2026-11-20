@@ -232,8 +232,14 @@ export const DEFAULT_NOTES_TOOLBAR_GROUPS: NotesToolbarGroup[] = [
   { id: 'titres', label: 'Titres', collapsible: true, buttons: ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'] },
   { id: 'mise-en-forme', label: 'Mise en forme', collapsible: false, buttons: ['undo', 'redo', 'bold', 'italic', 'code', 'quote'] },
   { id: 'listes-liens', label: 'Listes & liens', collapsible: false, buttons: ['bullet', 'numbered', 'link'] },
-  { id: 'divers', label: 'Divers', collapsible: false, buttons: ['table', 'attach'] },
+  // Modèle et Linter : présents dans la barre depuis toujours (ajoutés en
+  // bout par la normalisation) — désormais écrits ici, pour que les
+  // défauts décrivent la barre réellement affichée.
+  { id: 'divers', label: 'Divers', collapsible: false, buttons: ['table', 'attach', 'template', 'lint'] },
 ];
+
+// Tous les ids de bouton existants (ordre du registre).
+export const NOTES_TOOLBAR_ACTION_IDS: ToolbarActionId[] = NOTES_TOOLBAR_ACTIONS.map((action) => action.id);
 
 // Migration : construit les groupes depuis l'ANCIEN ordre plat ({id,
 // visible, group?}) — boutons masqués restés hors barre, noms de groupes
@@ -271,16 +277,39 @@ export function migrateNotesToolbarGroups(order: ToolbarItemConfig[] | undefined
   return groups.filter((group) => group.buttons.length > 0 || groups.length === 1);
 }
 
-// Complète les groupes stockés : tout bouton d'action inconnu des groupes
-// (nouvelle version) rejoint le dernier groupe — même contrat que
-// normalizeNotesToolbarOrder pour l'ancien format.
-export function normalizeNotesToolbarGroups(groups: NotesToolbarGroup[]): NotesToolbarGroup[] {
-  const placed = new Set(groups.flatMap((group) => group.buttons));
-  const missing = NOTES_TOOLBAR_ACTIONS.filter((action) => !placed.has(action.id));
-  if (missing.length === 0) return groups;
-  const next = groups.map((group) => ({ ...group, buttons: [...group.buttons] }));
-  const last = next[next.length - 1];
-  if (last) last.buttons.push(...missing.map((action) => action.id));
-  else next.push({ id: 'divers', label: 'Divers', collapsible: false, buttons: missing.map((action) => action.id) });
+// Met les groupes stockés en accord avec les boutons qui EXISTENT, pour que
+// Paramètres et la barre de l'éditeur montrent exactement la même chose :
+//   • id inconnu (bouton retiré d'une version, 'heading-group'…) : enlevé —
+//     jamais d'entrée fantôme dans Paramètres ;
+//   • bouton présent dans deux groupes : gardé à sa première place ;
+//   • bouton NOUVEAU (absent de `knownButtons`, la liste des boutons
+//     existants lors du dernier enregistrement) : ajouté VISIBLE au
+//     dernier groupe ;
+//   • bouton déjà connu mais rangé hors barre par l'utilisatrice : reste
+//     masqué. (Avant, tout bouton hors groupe revenait au chargement
+//     suivant : on ne pouvait rien masquer durablement.)
+// Sans `knownButtons` (préférences d'avant ce champ) : tout bouton absent
+// est considéré comme nouveau — c'était déjà ce qui s'affichait.
+export function normalizeNotesToolbarGroups(
+  groups: NotesToolbarGroup[],
+  knownButtons?: readonly string[],
+): NotesToolbarGroup[] {
+  const existing = new Set<string>(NOTES_TOOLBAR_ACTION_IDS);
+  const placed = new Set<string>();
+  const next = groups.map((group) => ({
+    ...group,
+    buttons: group.buttons.filter((id) => {
+      if (!existing.has(id) || placed.has(id)) return false;
+      placed.add(id);
+      return true;
+    }),
+  }));
+  const known = new Set(knownButtons ?? []);
+  const missing = NOTES_TOOLBAR_ACTION_IDS.filter((id) => !placed.has(id) && !known.has(id));
+  if (missing.length > 0) {
+    const last = next[next.length - 1];
+    if (last) last.buttons.push(...missing);
+    else next.push({ id: 'divers', label: 'Divers', collapsible: false, buttons: missing });
+  }
   return next;
 }
