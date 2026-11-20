@@ -327,6 +327,12 @@ export function NoteRenderer({
           </View>
         );
       },
+      // Souligné `<u>…</u>` (voir underlineRule, markdownPlugins.ts).
+      underline: (node, children) => (
+        <Text key={node.key} style={{ textDecorationLine: 'underline' }}>
+          {children}
+        </Text>
+      ),
       embed: (node) => {
         const target = String((node as NodeWithMeta).sourceMeta?.target ?? node.content);
         return <EmbedNode key={node.key} target={target} theme={theme} />;

@@ -144,6 +144,34 @@ function tagRule(state: StateInline, silent: boolean): boolean {
   return true;
 }
 
+// `<u>…</u>` — souligné (seul HTML inline reconnu, `html: false` gardé) :
+// paire `underline_open` / `underline_close` autour du contenu, qui reste
+// analysé en Markdown (gras, liens…). Une balise ouvrante sans fermante
+// plus loin dans le bloc, ou une fermante orpheline, reste du texte.
+interface PairRuleState extends InlineRuleState {
+  tokens: { type: string }[];
+}
+
+function underlineRule(state: PairRuleState, silent: boolean): boolean {
+  const { src, pos } = state;
+  if (src.charCodeAt(pos) !== 0x3c /* < */) return false;
+  if (src.startsWith('<u>', pos)) {
+    if (src.indexOf('</u>', pos + 3) === -1) return false;
+    if (!silent) state.push('underline_open', 'u', 1);
+    state.pos = pos + 3;
+    return true;
+  }
+  if (src.startsWith('</u>', pos)) {
+    const opened = state.tokens.filter((token) => token.type === 'underline_open').length;
+    const closed = state.tokens.filter((token) => token.type === 'underline_close').length;
+    if (opened <= closed) return false;
+    if (!silent) state.push('underline_close', 'u', -1);
+    state.pos = pos + 4;
+    return true;
+  }
+  return false;
+}
+
 //////// 2 bis. Bloc aligné (<p align="center">…</p>) ///////////////////////
 
 // Seul HTML reconnu (le reste reste désactivé, `html: false`) : l'enveloppe
@@ -214,6 +242,7 @@ export function createConfiguredMarkdownIt(knownWords: Set<string> = new Set()):
   md.inline.ruler.before('link', 'wikilink', wikilinkRule);
   md.inline.ruler.before('emphasis', 'tag', tagRule);
   md.inline.ruler.before('emphasis', 'occurrence', makeOccurrenceRule(knownWords));
+  md.inline.ruler.before('emphasis', 'underline', underlineRule as never);
   // Avant `paragraph` (et `html_block`, inactif) : un paragraphe aligné.
   md.block.ruler.before('html_block', 'aligned', alignedBlockRule as never, {
     alt: ['paragraph', 'reference', 'blockquote'],

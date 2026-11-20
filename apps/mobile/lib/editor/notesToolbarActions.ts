@@ -34,6 +34,7 @@ import {
   insertTable,
   toggleLinePrefix,
   toggleNumberedList,
+  toggleWrap,
   wrapSelection,
   type FormattingResult,
   type Selection,
@@ -50,6 +51,8 @@ export type ToolbarActionId =
   | 'h6'
   | 'bold'
   | 'italic'
+  | 'strike'
+  | 'underline'
   | 'code'
   | 'quote'
   | 'bullet'
@@ -94,6 +97,12 @@ export const NOTES_TOOLBAR_ACTIONS: ToolbarAction[] = [
   ...HEADING_ACTIONS,
   { id: 'bold', label: 'G', run: (text, sel) => wrapSelection(text, sel, '**'), shortcut: 'Mod-b' },
   { id: 'italic', label: 'I', run: (text, sel) => wrapSelection(text, sel, '_'), shortcut: 'Mod-i' },
+  // Barré (GFM, compris par Obsidian) et souligné (HTML <u>, seul moyen en
+  // Markdown, rendu par Obsidian) — bascules. Mod-u : remplace le
+  // « annuler la sélection » de CodeMirror (rarement utilisé) ; Mod-Shift-x
+  // est libre (Électron/Chromium n'y associent rien).
+  { id: 'strike', label: 'S̶', run: (text, sel) => toggleWrap(text, sel, '~~', '~~'), shortcut: 'Mod-Shift-x' },
+  { id: 'underline', label: 'U̲', run: (text, sel) => toggleWrap(text, sel, '<u>', '</u>'), shortcut: 'Mod-u' },
   { id: 'code', label: '</>', run: (text, sel) => wrapSelection(text, sel, '`'), shortcut: 'Mod-e' },
   // Mod-Shift-7/8/9 : suite mnémotechnique liste numérotée/à puces/citation
   // (7/8 reprennent la convention Google Docs/Word pour les listes).
@@ -143,6 +152,8 @@ export const NOTES_TOOLBAR_DESCRIPTIONS: Record<ToolbarActionId, string> = {
   h6: 'Titre 6',
   bold: 'Gras',
   italic: 'Italique',
+  strike: 'Barré',
+  underline: 'Souligné',
   code: 'Code',
   quote: 'Citation',
   bullet: 'Liste à puces',
@@ -247,7 +258,7 @@ export type NotesToolbarGroup = {
 
 export const DEFAULT_NOTES_TOOLBAR_GROUPS: NotesToolbarGroup[] = [
   { id: 'titres', label: 'Titres', collapsible: true, buttons: ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'] },
-  { id: 'mise-en-forme', label: 'Mise en forme', collapsible: false, buttons: ['undo', 'redo', 'bold', 'italic', 'code', 'quote'] },
+  { id: 'mise-en-forme', label: 'Mise en forme', collapsible: false, buttons: ['undo', 'redo', 'bold', 'italic', 'strike', 'underline', 'code', 'quote'] },
   { id: 'listes-liens', label: 'Listes & liens', collapsible: false, buttons: ['bullet', 'numbered', 'link'] },
   // Modèle et Linter : présents dans la barre depuis toujours (ajoutés en
   // bout par la normalisation) — désormais écrits ici, pour que les

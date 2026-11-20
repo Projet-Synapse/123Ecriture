@@ -15,7 +15,7 @@
 //
 // SOMMAIRE :
 //   1. Types et bornes de ligne
-//   2. Mise en forme en ligne (wrapSelection, applyHeading)
+//   2. Mise en forme en ligne (wrapSelection, toggleWrap, applyHeading)
 //   3. Blocs et listes en bascule (toggleLinePrefix, toggleNumberedList)
 //   4. Insertions (insertLink, insertTable)
 //
@@ -48,6 +48,57 @@ export function wrapSelection(text: string, selection: Selection, marker: string
   }
   const cursor = start + marker.length;
   return { text: newText, selection: { start: cursor, end: cursor } };
+}
+
+// BASCULE d'une mise en forme à marqueurs ouvrant/fermant (barré `~~…~~`,
+// souligné `<u>…</u>`) :
+//   • sélection déjà entourée (marqueurs juste autour, ou inclus au début
+//     et à la fin de la sélection) → marqueurs retirés ;
+//   • curseur sans sélection DANS une zone marquée de la ligne → la zone
+//     est démarquée ;
+//   • sinon → marqueurs ajoutés (curseur entre les deux s'il n'y a pas de
+//     sélection, prêt à taper).
+export function toggleWrap(text: string, selection: Selection, open: string, close: string): FormattingResult {
+  const start = Math.min(selection.start, selection.end);
+  const end = Math.max(selection.start, selection.end);
+  const selected = text.slice(start, end);
+  // 1. Marqueurs juste autour de la sélection.
+  if (text.slice(start - open.length, start) === open && text.slice(end, end + close.length) === close) {
+    return {
+      text: text.slice(0, start - open.length) + selected + text.slice(end + close.length),
+      selection: { start: start - open.length, end: end - open.length },
+    };
+  }
+  // 2. Marqueurs inclus dans la sélection.
+  if (selected.length >= open.length + close.length && selected.startsWith(open) && selected.endsWith(close)) {
+    const inner = selected.slice(open.length, selected.length - close.length);
+    return { text: text.slice(0, start) + inner + text.slice(end), selection: { start, end: start + inner.length } };
+  }
+  // 3. Curseur dans une zone marquée de la ligne.
+  if (start === end) {
+    const { lineStart, lineEnd } = getLineRange(text, start);
+    const line = text.slice(lineStart, lineEnd);
+    let from = line.indexOf(open);
+    while (from !== -1) {
+      const to = line.indexOf(close, from + open.length);
+      if (to === -1) break;
+      const absFrom = lineStart + from;
+      const absTo = lineStart + to + close.length;
+      if (start >= absFrom + open.length && start <= absTo - close.length) {
+        const inner = line.slice(from + open.length, to);
+        return {
+          text: text.slice(0, absFrom) + inner + text.slice(absTo),
+          selection: { start: start - open.length, end: start - open.length },
+        };
+      }
+      from = line.indexOf(open, to + close.length);
+    }
+  }
+  // 4. Ajout.
+  return {
+    text: text.slice(0, start) + open + selected + close + text.slice(end),
+    selection: { start: start + open.length, end: end + open.length },
+  };
 }
 
 // Applique un titre Markdown (# / ## / ###) sur la ligne courante,
