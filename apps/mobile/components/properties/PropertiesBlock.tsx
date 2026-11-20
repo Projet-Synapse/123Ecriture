@@ -61,6 +61,10 @@ type Props = {
   theme: Theme;
   activeNote: VaultEntry;
   content: string;
+  // Contenu À JOUR (ref de NotesScreen) : la frappe desktop publie `content`
+  // avec un léger retard — une modification de propriété doit partir du
+  // texte réel, sinon elle effacerait les dernières lettres tapées.
+  getContent?: () => string;
   onChangeContent: (text: string) => void;
   tree: VaultTreeNode[];
   interactive?: boolean;
@@ -68,12 +72,13 @@ type Props = {
 
 //////// 2. PropertiesBlock — le bloc repliable clé/valeur ////////////////////////////////
 
-export function PropertiesBlock({ theme, activeNote, content, onChangeContent, tree, interactive = false }: Props) {
+export function PropertiesBlock({ theme, activeNote, content, onChangeContent, tree, getContent, interactive = false }: Props) {
   const { definitions, update, create } = usePropertyDefinitions();
   const { lines, availableToAdd, setValue, addValue, removeValue } = usePropertyValues(
     content,
     onChangeContent,
     definitions,
+    getContent,
   );
   const [collapsed, setCollapsed] = useState(false);
 

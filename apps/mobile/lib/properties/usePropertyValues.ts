@@ -1,6 +1,6 @@
 import { useCallback, useMemo } from 'react';
 
-import { parseFrontmatter, reorderFrontmatterData, replaceFrontmatterData, type FrontmatterData } from './frontmatter';
+import { frontmatterBlockOf, parseFrontmatter, reorderFrontmatterData, replaceFrontmatterData, type FrontmatterData } from './frontmatter';
 import { defaultValueForType } from './propertyTypes';
 
 // ✒️ 123ECRITURE — lib/properties/usePropertyValues.ts — édition des valeurs de propriétés d'une note
@@ -54,17 +54,21 @@ export function usePropertyValues(
   content: string,
   onChangeContent: (text: string) => void,
   definitions: PropertyDefinition[],
+  getContent?: () => string,
 ) {
-  const { data } = useMemo(() => parseFrontmatter(content), [content]);
+  // Parse YAML seulement quand le BLOC change (pas à chaque frappe dans le
+  // corps) : clé de mémo = le bloc brut, découpé sans parser.
+  const block = frontmatterBlockOf(content);
+  const { data } = useMemo(() => parseFrontmatter(block), [block]);
 
   // replaceFrontmatterData (et non serializeFrontmatter(data, body)) : seul
   // le bloc est réécrit — BOM, fins de ligne CRLF et corps du fichier
   // restent identiques à l'octet près.
   const commitData = useCallback(
     (nextData: FrontmatterData) => {
-      onChangeContent(replaceFrontmatterData(content, nextData));
+      onChangeContent(replaceFrontmatterData(getContent ? getContent() : content, nextData));
     },
-    [onChangeContent, content],
+    [onChangeContent, content, getContent],
   );
 
   const usedNames = useMemo(() => new Set(Object.keys(data)), [data]);

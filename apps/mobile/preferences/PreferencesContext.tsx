@@ -49,6 +49,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   newNoteCustomFolder: '',
   templatesFolder: '',
   defaultNewNoteTemplate: '',
+  templateRules: [],
   fileSortMode: 'alphabetical',
   // Explorateur : 'last' (défaut historique) restaure les dossiers repliés
   // persistés par coffre ; 'all' / 'none' déplient/replient tout au
@@ -131,6 +132,7 @@ type PreferencesContextValue = {
   setTemplatesFolder: (folder: string) => Promise<void>;
   setDefaultNewNoteTemplate: (relPath: string) => Promise<void>;
   setFormatting: (formatting: NonNullable<Preferences['formatting']>) => Promise<void>;
+  setTemplateRules: (rules: { folder: string; template: string }[]) => Promise<void>;
   setFileSortMode: (mode: FileSortMode) => Promise<void>;
   setExplorerExpandMode: (mode: ExplorerExpandMode) => Promise<void>;
   setPropertiesSortMode: (mode: PropertySortMode) => Promise<void>;
@@ -428,6 +430,10 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     (formatting: NonNullable<Preferences['formatting']>) => persist({ formatting }),
     [persist],
   );
+  const setTemplateRules = useCallback(
+    (rules: { folder: string; template: string }[]) => persist({ templateRules: rules }),
+    [persist],
+  );
   const setFileSortMode = useCallback((mode: FileSortMode) => persist({ fileSortMode: mode }), [persist]);
   const setExplorerExpandMode = useCallback(
     (mode: ExplorerExpandMode) => persist({ explorerExpandMode: mode }),
@@ -640,6 +646,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       setTemplatesFolder,
       setDefaultNewNoteTemplate,
       setFormatting,
+      setTemplateRules,
       setFileSortMode,
       setExplorerExpandMode,
       setPropertiesSortMode,
@@ -691,6 +698,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       setTemplatesFolder,
       setDefaultNewNoteTemplate,
       setFormatting,
+      setTemplateRules,
       setFileSortMode,
       setExplorerExpandMode,
       setPropertiesSortMode,
