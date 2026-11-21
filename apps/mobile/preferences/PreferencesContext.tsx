@@ -4,6 +4,7 @@ import { useColorScheme } from 'react-native';
 import { DEFAULT_CANVAS_TOOLBAR_ORDER } from '../lib/editor/canvasToolbarActions';
 import { remapPathsAfterRename } from '../lib/notes/renameTarget';
 import { normalizeLockedPaths, remapAiLocks, toggleAiLock as toggleAiLockPure } from '../lib/ai/aiLock';
+import { normalizeAiGateway, type AiGatewaySettings } from '../lib/ai/aiPolicy';
 import { DEFAULT_CHART_TOOLBAR_ORDER } from '../lib/editor/chartToolbarActions';
 import {
   DEFAULT_NOTES_TOOLBAR_ORDER,
@@ -139,6 +140,7 @@ type PreferencesContextValue = {
   toggleAiLock: (relPath: string) => Promise<void>;
   setAiLockedPaths: (paths: string[]) => Promise<void>;
   remapAiLocksAfterPathChange: (oldRelPath: string, newRelPath: string) => Promise<void>;
+  setAiGateway: (settings: AiGatewaySettings) => Promise<void>;
   setFileSortMode: (mode: FileSortMode) => Promise<void>;
   setExplorerExpandMode: (mode: ExplorerExpandMode) => Promise<void>;
   setPropertiesSortMode: (mode: PropertySortMode) => Promise<void>;
@@ -464,6 +466,11 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     [setAiLockedPaths],
   );
 
+  const setAiGateway = useCallback(
+    (settings: AiGatewaySettings) => persist({ aiGateway: normalizeAiGateway(settings) }),
+    [persist],
+  );
+
   const setTemplateRules = useCallback(
     (rules: { folder: string; template: string }[]) => persist({ templateRules: rules }),
     [persist],
@@ -684,6 +691,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       toggleAiLock,
       setAiLockedPaths,
       remapAiLocksAfterPathChange,
+      setAiGateway,
       setFileSortMode,
       setExplorerExpandMode,
       setPropertiesSortMode,
@@ -739,6 +747,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       toggleAiLock,
       setAiLockedPaths,
       remapAiLocksAfterPathChange,
+      setAiGateway,
       setFileSortMode,
       setExplorerExpandMode,
       setPropertiesSortMode,

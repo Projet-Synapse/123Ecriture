@@ -259,6 +259,14 @@ export interface Preferences {
   };
   templateRules?: { folder: string; template: string }[];
   aiLockedPaths?: string[];
+  aiGateway?: {
+    enabled: boolean;
+    permissions: Record<'read' | 'search' | 'create' | 'edit' | 'move' | 'delete' | 'template' | 'format', 'deny' | 'ask' | 'allow'>;
+    allowedFolders: string[];
+    tokenHash?: string;
+    tokenHint?: string;
+    tokenCreatedAt?: string;
+  };
   fileSortMode: FileSortMode;
   // Écran Tâches : tri par échéance et masquage des terminées — miroir de
   // apps/mobile/types/global.d.ts (types non partagés, à maintenir des deux
