@@ -71,6 +71,7 @@ const DEFAULT_PREFERENCES: Preferences = {
   templatesFolder: '',
   defaultNewNoteTemplate: '',
   templateRules: [],
+  aiLockedPaths: [],
   fileSortMode: 'alphabetical',
   explorerExpandMode: 'last',
   propertiesSortMode: 'alpha-asc',

@@ -24,6 +24,7 @@ import {
   splitFrontmatter,
 } from '../../lib/properties/frontmatter';
 import { applyPathChange, isPathAffected, mergeRestoredOpenTabs, tabScrollOffset, visibleOpenTabs } from '../../lib/notes/openTabs';
+import { aiLockMenuItem, normalizeLockedPaths } from '../../lib/ai/aiLock';
 import { convertNoteFormat, formatConversionBetween, willConvertFormat } from '../../lib/notes/renameTarget';
 import { linkRewriteKind, renamedPath, rewriteCanvasLinks, rewriteNoteLinks } from '../../lib/notes/linkRewrite';
 import { notify } from '../../lib/notify/notify';
@@ -239,8 +240,17 @@ export function NotesScreen({
   onRequestOpenCalendarDate,
   onRegisterActions,
 }: Props = {}) {
-  const { preferences, preferencesLoaded, theme, setFileSortMode, toggleFavorite, remapFavoritesAfterRename } =
-    usePreferences();
+  const {
+    preferences,
+    preferencesLoaded,
+    theme,
+    setFileSortMode,
+    toggleFavorite,
+    remapFavoritesAfterRename,
+    toggleAiLock,
+    remapAiLocksAfterPathChange,
+  } = usePreferences();
+  const aiLockedPaths = useMemo(() => normalizeLockedPaths(preferences.aiLockedPaths), [preferences.aiLockedPaths]);
   const vault = typeof window !== 'undefined' ? window.vault : undefined;
   // Gel des cycles de synchronisation pendant les actions structurantes
   // (suppression, renommage, déplacement) : un cycle partant au milieu
@@ -573,8 +583,12 @@ export function NotesScreen({
       if (next !== openTabRelPathsRef.current) applyOpenTabs(next);
       // Historique du bouton retour (#246) : mêmes règles que les onglets.
       setNoteHistory((history) => applyPathChange(history, oldRelPath, newRelPath ?? null));
+      // Verrouillage IA : le verrou suit l'élément renommé/déplacé (et
+      // tout ce qu'il contient). Suppression : le verrou reste (corbeille,
+      // restauration possible au même chemin).
+      if (newRelPath) void remapAiLocksAfterPathChange(oldRelPath, newRelPath);
     },
-    [applyOpenTabs],
+    [applyOpenTabs, remapAiLocksAfterPathChange],
   );
   const listAreaRef = useRef<View>(null);
   // "Fichier ouvert par défaut" (voir l'effet dédié plus bas) : ne doit
@@ -1744,6 +1758,7 @@ export function NotesScreen({
               { id: 'rename', label: 'Renommer' },
               { id: 'move', label: 'Déplacer vers…' },
               { id: 'edit-path', label: 'Modifier le chemin' },
+              aiLockMenuItem(node.relPath, aiLockedPaths),
               { id: 'delete', label: 'Supprimer' },
             ]
           : [
@@ -1757,6 +1772,7 @@ export function NotesScreen({
                   ? 'Retirer des favoris'
                   : 'Ajouter aux favoris',
               },
+              aiLockMenuItem(node.relPath, aiLockedPaths),
               { id: 'delete', label: 'Supprimer' },
             ];
 
@@ -1778,6 +1794,7 @@ export function NotesScreen({
         if (node && choice === 'edit-path') startEditPath(node);
         if (node && choice === 'duplicate') void handleDuplicateNode(node);
         if (node && choice === 'toggle-favorite') void toggleFavorite(node.relPath);
+        if (node && choice === 'toggle-ai-lock') void toggleAiLock(node.relPath);
         if (node && choice === 'delete') void handleDeleteNode(node);
       });
     },
@@ -1791,6 +1808,8 @@ export function NotesScreen({
       handleDuplicateNode,
       toggleFavorite,
       preferences.favoriteRelPaths,
+      aiLockedPaths,
+      toggleAiLock,
       handleDeleteNode,
     ],
   );
@@ -2230,6 +2249,7 @@ export function NotesScreen({
           ? 'Retirer des favoris'
           : 'Ajouter aux favoris',
       },
+      aiLockMenuItem(node.relPath, aiLockedPaths),
       { id: 'delete', label: 'Supprimer' },
     ]).then((choice) => {
       if (choice === 'rename') startRename(node);
@@ -2238,6 +2258,7 @@ export function NotesScreen({
       if (choice === 'duplicate') void handleDuplicateNode(node);
       if (choice === 'lint-note') formatActiveFile();
       if (choice === 'toggle-favorite') void toggleFavorite(node.relPath);
+      if (choice === 'toggle-ai-lock') void toggleAiLock(node.relPath);
       if (choice === 'delete') void handleDeleteNode(node);
     });
   }, [
@@ -2249,6 +2270,8 @@ export function NotesScreen({
     startEditPath,
     handleDuplicateNode,
     toggleFavorite,
+    aiLockedPaths,
+    toggleAiLock,
     handleDeleteNode,
     formatActiveFile,
   ]);
@@ -3046,6 +3069,7 @@ export function NotesScreen({
                   : null
               }
               onNodeLongPress={showContextMenuFor}
+              aiLockedPaths={aiLockedPaths}
             />
             {tree.length === 0 && (
               <Text style={[styles.muted, { color: theme.textMuted, padding: 16 }]}>

@@ -3,6 +3,7 @@ import { useColorScheme } from 'react-native';
 
 import { DEFAULT_CANVAS_TOOLBAR_ORDER } from '../lib/editor/canvasToolbarActions';
 import { remapPathsAfterRename } from '../lib/notes/renameTarget';
+import { normalizeLockedPaths, remapAiLocks, toggleAiLock as toggleAiLockPure } from '../lib/ai/aiLock';
 import { DEFAULT_CHART_TOOLBAR_ORDER } from '../lib/editor/chartToolbarActions';
 import {
   DEFAULT_NOTES_TOOLBAR_ORDER,
@@ -50,6 +51,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   templatesFolder: '',
   defaultNewNoteTemplate: '',
   templateRules: [],
+  aiLockedPaths: [],
   fileSortMode: 'alphabetical',
   // Explorateur : 'last' (défaut historique) restaure les dossiers repliés
   // persistés par coffre ; 'all' / 'none' déplient/replient tout au
@@ -133,6 +135,10 @@ type PreferencesContextValue = {
   setDefaultNewNoteTemplate: (relPath: string) => Promise<void>;
   setFormatting: (formatting: NonNullable<Preferences['formatting']>) => Promise<void>;
   setTemplateRules: (rules: { folder: string; template: string }[]) => Promise<void>;
+  // Verrouillage IA (lib/ai/aiLock.ts).
+  toggleAiLock: (relPath: string) => Promise<void>;
+  setAiLockedPaths: (paths: string[]) => Promise<void>;
+  remapAiLocksAfterPathChange: (oldRelPath: string, newRelPath: string) => Promise<void>;
   setFileSortMode: (mode: FileSortMode) => Promise<void>;
   setExplorerExpandMode: (mode: ExplorerExpandMode) => Promise<void>;
   setPropertiesSortMode: (mode: PropertySortMode) => Promise<void>;
@@ -430,6 +436,34 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     (formatting: NonNullable<Preferences['formatting']>) => persist({ formatting }),
     [persist],
   );
+  // Verrouillage IA : la liste COURANTE est tenue dans un ref mis à jour
+  // de façon synchrone — un déplacement groupé enchaîne plusieurs remaps
+  // avant le prochain rendu, chacun doit partir du résultat du précédent.
+  const aiLockedRef = useRef<string[]>(normalizeLockedPaths(preferences.aiLockedPaths));
+  useEffect(() => {
+    aiLockedRef.current = normalizeLockedPaths(preferences.aiLockedPaths);
+  }, [preferences.aiLockedPaths]);
+  const setAiLockedPaths = useCallback(
+    (paths: string[]) => {
+      const next = normalizeLockedPaths(paths);
+      aiLockedRef.current = next;
+      return persist({ aiLockedPaths: next });
+    },
+    [persist],
+  );
+  const toggleAiLock = useCallback(
+    (relPath: string) => setAiLockedPaths(toggleAiLockPure(aiLockedRef.current, relPath)),
+    [setAiLockedPaths],
+  );
+  const remapAiLocksAfterPathChange = useCallback(
+    (oldRelPath: string, newRelPath: string) => {
+      const current = aiLockedRef.current;
+      const next = remapAiLocks(current, oldRelPath, newRelPath);
+      return next === current ? Promise.resolve() : setAiLockedPaths([...next]);
+    },
+    [setAiLockedPaths],
+  );
+
   const setTemplateRules = useCallback(
     (rules: { folder: string; template: string }[]) => persist({ templateRules: rules }),
     [persist],
@@ -647,6 +681,9 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       setDefaultNewNoteTemplate,
       setFormatting,
       setTemplateRules,
+      toggleAiLock,
+      setAiLockedPaths,
+      remapAiLocksAfterPathChange,
       setFileSortMode,
       setExplorerExpandMode,
       setPropertiesSortMode,
@@ -699,6 +736,9 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       setDefaultNewNoteTemplate,
       setFormatting,
       setTemplateRules,
+      toggleAiLock,
+      setAiLockedPaths,
+      remapAiLocksAfterPathChange,
       setFileSortMode,
       setExplorerExpandMode,
       setPropertiesSortMode,

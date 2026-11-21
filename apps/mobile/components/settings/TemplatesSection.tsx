@@ -43,7 +43,7 @@ const NEW_NOTE_LOCATION_OPTIONS: { value: NewNoteLocation; label: string }[] = [
   { value: 'custom', label: 'Dossier personnalisé' },
 ];
 
-type Choice = { value: string; label: string };
+export type Choice = { value: string; label: string };
 
 function useVaultChoices(templatesFolder: string | undefined): { notes: Choice[]; folders: Choice[] } | null {
   const [choices, setChoices] = useState<{ notes: Choice[]; folders: Choice[] } | null>(null);
@@ -88,7 +88,7 @@ function useVaultChoices(templatesFolder: string | undefined): { notes: Choice[]
 
 //////// 2. VaultPicker — sélecteur avec recherche ///////////////////////////
 
-function VaultPicker({
+export function VaultPicker({
   value,
   choices,
   placeholder,
