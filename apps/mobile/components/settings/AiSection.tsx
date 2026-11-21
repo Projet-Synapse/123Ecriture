@@ -216,7 +216,9 @@ export function AiGatewaySection() {
       <Text style={[s.hint, { color: theme.textMuted }]}>
         Permet à une IA locale (le Qwen de ton PC, via Ollama) d’accéder à ton coffre, selon les règles ci-dessous.
         Les éléments verrouillés restent toujours inaccessibles.
-        {isDesktop ? '' : ' La passerelle tourne sur l’app PC ; ces réglages sont partagés par la synchronisation.'}
+        {isDesktop
+          ? ' Serveur MCP en lecture seule : http://127.0.0.1:37123/mcp (ce PC uniquement, jeton obligatoire, actif tant que l’app est ouverte). Mode d’emploi : docs/passerelle-ia.md.'
+          : ' La passerelle tourne sur l’app PC ; ces réglages sont partagés par la synchronisation.'}
       </Text>
       <SettingsToggle
         label="Activer la passerelle IA"
