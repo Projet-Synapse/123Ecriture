@@ -7,6 +7,7 @@ import fs from 'fs';
 import path from 'path';
 import { pathToFileURL, URL } from 'url';
 
+import { startAiGatewayWatcher, stopAiGateway } from './aiGateway';
 import { registerAuthHandlers, registerAuthProtocol } from './ponts-desktop/auth';
 import { registerCalendarHandlers } from './calendar';
 import { registerContextMenuHandlers } from './contextMenu';
@@ -137,6 +138,9 @@ if (!gotSingleInstanceLock) {
     registerOccurrencesHandlers();
     registerSearchHandlers();
     registerAuthProtocol();
+    // Passerelle IA (serveur MCP local, lecture seule) — n'écoute que si
+    // elle est activée dans Paramètres → 🤖 IA et qu'un jeton existe.
+    startAiGatewayWatcher();
 
     if (!isDev) {
       registerAppProtocol();
@@ -182,6 +186,7 @@ if (!gotSingleInstanceLock) {
   // quit : le renderer peut déjà être déchargé. Les données, elles, sont
   // déjà sur disque (sync-state/journal/revue écrits à chaque cycle).
   app.on('before-quit', () => {
+    stopAiGateway();
     try {
       const vaultPath = getActiveVaultPath();
       if (!vaultPath) return;
