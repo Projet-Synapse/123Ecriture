@@ -7,7 +7,7 @@ import { AccountSyncSection } from './settings/AccountSyncSection';
 import { EditorSection } from './settings/EditorSection';
 import { FilesLinksSection } from './settings/FilesLinksSection';
 import { TemplatesSection } from './settings/TemplatesSection';
-import { AiLockSection } from './settings/AiSection';
+import { AiGatewaySection, AiLockSection } from './settings/AiSection';
 import { FormattingSection } from './settings/FormattingSection';
 import { NotificationsSection } from './settings/NotificationsSection';
 import { PersonalizationCard } from './PersonalizationCard';
@@ -105,7 +105,12 @@ function renderSection(id: SettingsSectionId) {
     case 'formatting':
       return <FormattingSection />;
     case 'ai':
-      return <AiLockSection />;
+      return (
+        <>
+          <AiGatewaySection />
+          <AiLockSection />
+        </>
+      );
     case 'editor':
       return <EditorSection />;
     case 'properties':

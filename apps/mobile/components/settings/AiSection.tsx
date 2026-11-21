@@ -2,7 +2,20 @@ import { useEffect, useMemo, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 
 import { lockingPath, normalizeLockedPaths } from '../../lib/ai/aiLock';
+import {
+  AI_ACTIONS,
+  AI_JOURNAL_PATH,
+  AI_PERMISSION_LABELS,
+  generateAiToken,
+  normalizeAiGateway,
+  parseAiJournal,
+  type AiGatewaySettings,
+  type AiJournalEntry,
+  type AiPermission,
+} from '../../lib/ai/aiPolicy';
+import { sha256HexOfText } from '../../lib/sync/nativeSha256';
 import { usePreferences } from '../../preferences/PreferencesContext';
+import { SettingsToggle } from './SettingsToggle';
 import { settingsStyles as s } from './settingsStyles';
 import { VaultPicker, type Choice } from './TemplatesSection';
 
@@ -97,6 +110,196 @@ export function AiLockSection() {
             if (path) void setAiLockedPaths([...locked, path]);
           }}
         />
+      </View>
+    </View>
+  );
+}
+
+//////// Passerelle : activation, autorisations, dossiers, jeton, journal ////////
+
+function TriState({ value, onChange }: { value: AiPermission; onChange: (v: AiPermission) => void }) {
+  const { theme } = usePreferences();
+  return (
+    <View style={[s.row, { gap: 4 }]}>
+      {(['deny', 'ask', 'allow'] as AiPermission[]).map((p) => (
+        <Pressable
+          key={p}
+          onPress={() => onChange(p)}
+          accessibilityRole="button"
+          accessibilityState={{ selected: value === p }}
+          style={[
+            s.modeButton,
+            {
+              borderColor: value === p ? theme.accent : theme.border,
+              backgroundColor: value === p ? theme.accent : 'transparent',
+              paddingHorizontal: 8,
+            },
+          ]}
+        >
+          <Text style={{ color: value === p ? '#fff' : theme.text, fontSize: 12 }}>{AI_PERMISSION_LABELS[p]}</Text>
+        </Pressable>
+      ))}
+    </View>
+  );
+}
+
+function useAiJournal(): { entries: AiJournalEntry[]; reload: () => void; clear: () => void } {
+  const [entries, setEntries] = useState<AiJournalEntry[]>([]);
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    const vault = typeof window !== 'undefined' ? window.vault : undefined;
+    if (!vault?.readNote) return;
+    vault
+      .readNote(AI_JOURNAL_PATH)
+      .then((text) => !cancelled && setEntries(parseAiJournal(text)))
+      .catch(() => !cancelled && setEntries([]));
+    return () => {
+      cancelled = true;
+    };
+  }, [tick]);
+  const clear = () => {
+    const vault = typeof window !== 'undefined' ? window.vault : undefined;
+    if (!vault?.writeNote) return;
+    void vault.writeNote(AI_JOURNAL_PATH, '[]').then(() => setTick((t) => t + 1));
+  };
+  return { entries, reload: () => setTick((t) => t + 1), clear };
+}
+
+export function AiGatewaySection() {
+  const { preferences, theme, setAiGateway } = usePreferences();
+  const gateway = useMemo(() => normalizeAiGateway(preferences.aiGateway), [preferences.aiGateway]);
+  const save = (patch: Partial<AiGatewaySettings>) => void setAiGateway({ ...gateway, ...patch });
+  const entries = useVaultEntries();
+  const folderChoices = useMemo(
+    () =>
+      (entries ?? []).filter(
+        (e) => e.label.startsWith('📁') && !gateway.allowedFolders.some((f) => f.toLowerCase() === e.value.toLowerCase()),
+      ),
+    [entries, gateway.allowedFolders],
+  );
+  // Jeton affiché UNE seule fois, juste après sa création (seule son
+  // empreinte est enregistrée).
+  const [freshToken, setFreshToken] = useState<string | null>(null);
+  const [tokenError, setTokenError] = useState<string | null>(null);
+  const journal = useAiJournal();
+  const isDesktop = typeof window !== 'undefined' && !!window.preferences;
+
+  const createToken = () => {
+    const token = generateAiToken();
+    if (!token) {
+      setTokenError('Pas de générateur aléatoire sûr ici : crée le jeton depuis l’app PC.');
+      return;
+    }
+    setTokenError(null);
+    setFreshToken(token);
+    save({ tokenHash: sha256HexOfText(token), tokenHint: token.slice(-4), tokenCreatedAt: new Date().toISOString() });
+  };
+  const revokeToken = () => {
+    setFreshToken(null);
+    save({ tokenHash: undefined, tokenHint: undefined, tokenCreatedAt: undefined });
+  };
+  const button = (label: string, onPress: () => void, a11y?: string) => (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={a11y ?? label}
+      style={[s.modeButton, { borderColor: theme.border, paddingHorizontal: 10 }]}
+    >
+      <Text style={{ color: theme.text }}>{label}</Text>
+    </Pressable>
+  );
+
+  return (
+    <View style={[s.card, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+      <Text style={[s.cardTitle, { color: theme.text }]}>🤖 Passerelle IA</Text>
+      <Text style={[s.hint, { color: theme.textMuted }]}>
+        Permet à une IA locale (le Qwen de ton PC, via Ollama) d’accéder à ton coffre, selon les règles ci-dessous.
+        Les éléments verrouillés restent toujours inaccessibles.
+        {isDesktop ? '' : ' La passerelle tourne sur l’app PC ; ces réglages sont partagés par la synchronisation.'}
+      </Text>
+      <SettingsToggle
+        label="Activer la passerelle IA"
+        value={gateway.enabled}
+        onChange={(enabled) => save({ enabled })}
+        theme={theme}
+      />
+
+      <Text style={[s.label, { color: theme.textMuted }]}>Autorisations</Text>
+      {AI_ACTIONS.map((a) => (
+        <View key={a.id} style={[s.row, { alignItems: 'center', flexWrap: 'wrap' }]}>
+          <Text style={{ color: theme.text, flex: 1, minWidth: 180 }}>{a.label}</Text>
+          <TriState
+            value={gateway.permissions[a.id]}
+            onChange={(v) => save({ permissions: { ...gateway.permissions, [a.id]: v } })}
+          />
+        </View>
+      ))}
+
+      <Text style={[s.label, { color: theme.textMuted }]}>Dossiers autorisés</Text>
+      <Text style={[s.hint, { color: theme.textMuted }]}>
+        {gateway.allowedFolders.length === 0
+          ? 'Aucun : tout le coffre (sauf le verrouillé). Ajoute un dossier pour limiter l’IA à ces dossiers.'
+          : 'L’IA ne voit que ces dossiers (et leurs sous-dossiers), moins le verrouillé.'}
+      </Text>
+      {gateway.allowedFolders.map((f) => (
+        <View key={f} style={[s.row, { alignItems: 'center' }]}>
+          <Text style={{ color: theme.text, flex: 1 }} numberOfLines={1}>
+            📁 {f}
+          </Text>
+          {button('✕ Retirer', () => save({ allowedFolders: gateway.allowedFolders.filter((x) => x !== f) }), `Retirer ${f}`)}
+        </View>
+      ))}
+      <View style={s.row}>
+        <VaultPicker
+          value=""
+          choices={folderChoices}
+          placeholder={entries ? 'Ajouter un dossier autorisé…' : 'Chargement…'}
+          onSelect={(path) => {
+            if (path) save({ allowedFolders: [...gateway.allowedFolders, path] });
+          }}
+        />
+      </View>
+
+      <Text style={[s.label, { color: theme.textMuted }]}>Jeton d’accès</Text>
+      <Text style={[s.hint, { color: theme.textMuted }]}>
+        {gateway.tokenHash
+          ? `Jeton actif (…${gateway.tokenHint ?? ''}${gateway.tokenCreatedAt ? `, créé le ${new Date(gateway.tokenCreatedAt).toLocaleString('fr-FR')}` : ''}). Le révoquer coupe immédiatement l’accès.`
+          : 'Aucun jeton : aucune IA ne peut se connecter.'}
+      </Text>
+      {freshToken && (
+        <View style={{ gap: 4, borderWidth: 1, borderColor: theme.accent, borderRadius: 8, padding: 8 }}>
+          <Text style={[s.hint, { color: theme.text }]}>
+            Copie ce jeton maintenant, il ne sera plus affiché (seule son empreinte est enregistrée) :
+          </Text>
+          <Text selectable style={{ color: theme.text, fontFamily: 'monospace', fontSize: 12 }}>
+            {freshToken}
+          </Text>
+          {typeof navigator !== 'undefined' && navigator.clipboard
+            ? button('📋 Copier', () => void navigator.clipboard.writeText(freshToken))
+            : null}
+        </View>
+      )}
+      {tokenError && <Text style={[s.hint, { color: theme.danger }]}>{tokenError}</Text>}
+      <View style={s.row}>
+        {button(gateway.tokenHash ? '🔁 Générer un nouveau jeton' : '🔑 Générer un jeton', createToken)}
+        {gateway.tokenHash ? button('⛔ Révoquer', revokeToken) : null}
+      </View>
+
+      <Text style={[s.label, { color: theme.textMuted }]}>Journal des actions (cet appareil)</Text>
+      {journal.entries.length === 0 && (
+        <Text style={[s.hint, { color: theme.textMuted }]}>Aucune action de l’IA pour l’instant.</Text>
+      )}
+      {journal.entries.slice(0, 100).map((e, i) => (
+        <Text key={`${e.at}-${i}`} style={{ color: theme.text, fontSize: 12 }} numberOfLines={2}>
+          {e.decision === 'allow' ? '✅' : e.decision === 'ask' ? '❓' : '⛔'} {new Date(e.at).toLocaleString('fr-FR')} ·{' '}
+          {e.action} · {e.path || '/'}
+          {e.decision !== 'allow' ? ` — ${e.reason}` : ''}
+        </Text>
+      ))}
+      <View style={s.row}>
+        {button('↻ Rafraîchir', journal.reload)}
+        {journal.entries.length > 0 ? button('🗑 Vider le journal', journal.clear) : null}
       </View>
     </View>
   );
