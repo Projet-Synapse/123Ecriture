@@ -7,6 +7,7 @@ import { AccountSyncSection } from './settings/AccountSyncSection';
 import { EditorSection } from './settings/EditorSection';
 import { FilesLinksSection } from './settings/FilesLinksSection';
 import { TemplatesSection } from './settings/TemplatesSection';
+import { AiLockSection } from './settings/AiSection';
 import { FormattingSection } from './settings/FormattingSection';
 import { NotificationsSection } from './settings/NotificationsSection';
 import { PersonalizationCard } from './PersonalizationCard';
@@ -51,6 +52,7 @@ type SettingsSectionId =
   | 'files'
   | 'templates'
   | 'formatting'
+  | 'ai'
   | 'editor'
   | 'properties'
   | 'notifications'
@@ -73,6 +75,7 @@ const SETTINGS_SECTIONS: SettingsSectionDef[] = [
   { id: 'files', label: 'Gestion des fichiers et des liens', icon: '🗂️' },
   { id: 'templates', label: 'Templates', icon: '🧩' },
   { id: 'formatting', label: 'Formatage', icon: '✨' },
+  { id: 'ai', label: 'IA / Passerelle', icon: '🤖' },
   { id: 'editor', label: 'Éditeur', icon: '✍️' },
   { id: 'properties', label: 'Gestion des propriétés', icon: '🏷️' },
   { id: 'notifications', label: 'Notifications', icon: '🔔' },
@@ -101,6 +104,8 @@ function renderSection(id: SettingsSectionId) {
       return <TemplatesSection />;
     case 'formatting':
       return <FormattingSection />;
+    case 'ai':
+      return <AiLockSection />;
     case 'editor':
       return <EditorSection />;
     case 'properties':

@@ -5,6 +5,7 @@ import type { Theme } from '../../theme';
 import { buildExplorerColors } from '../../lib/theme/explorerColors';
 import { ChevronIcon, FolderOpenIcon, FolderClosedIcon, NoteIconByKind } from './FileIcons';
 import { TREE_ICON_SIZE } from '../../lib/ui/iconBox';
+import { isAiLocked, isDirectlyLocked } from '../../lib/ai/aiLock';
 
 // ✒️ 123ECRITURE — components/vault/VaultTreeView.tsx — l'arborescence du coffre
 //////////////////////////////////////////////////////////////////////////////
@@ -102,6 +103,9 @@ type Props = {
   // Maintien de doigt (natif) — l'équivalent tactile du clic droit desktop
   // (menu contextuel, voir NotesScreen.showContextMenuFor).
   onNodeLongPress?: (node: VaultTreeNode) => void;
+  // Verrouillage IA (lib/ai/aiLock.ts) : cadenas plein si verrouillé
+  // directement, estompé si hérité d'un dossier parent.
+  aiLockedPaths?: readonly string[];
 };
 
 // Mémoïsé (voir vaultTreePropsAreEqual en bas de fichier) : chaque FRAPPE
@@ -125,6 +129,7 @@ function VaultTreeViewImpl({
   dragOverInsertion,
   dragEnabled = true,
   onNodeLongPress,
+  aiLockedPaths,
 }: Props) {
   // Couleurs de l'explorateur (fond réglable — explorerColors.ts) : guides,
   // texte et sélection restent lisibles quel que soit le fond.
@@ -147,6 +152,7 @@ function VaultTreeViewImpl({
     dragOverInsertion,
     dragEnabled,
     onNodeLongPress,
+    aiLockedPaths,
   };
   return (
     <>
@@ -158,6 +164,8 @@ function VaultTreeViewImpl({
         const insertionEdge = dragOverInsertion?.relPath === node.relPath ? dragOverInsertion.edge : null;
         const isDropInsideTarget = insertionEdge === 'inside';
         const isSelected = !isFolder && (selectedRelPaths?.has(node.relPath) ?? false);
+        const lockDirect = !!aiLockedPaths?.length && isDirectlyLocked(node.relPath, aiLockedPaths);
+        const lockInherited = !lockDirect && !!aiLockedPaths?.length && isAiLocked(node.relPath, aiLockedPaths);
         const isFolderActive = isFolder && node.relPath === activeFolderRelPath;
         const isActiveNote = !isFolder && node.relPath === activeRelPath;
 
@@ -260,6 +268,14 @@ function VaultTreeViewImpl({
                 )}
               </Text>
             )}
+            {(lockDirect || lockInherited) && !isRenaming && (
+              <Text
+                accessibilityLabel={lockDirect ? 'Verrouillé pour l’IA' : 'Verrouillé pour l’IA (dossier parent)'}
+                style={{ fontSize: 11, opacity: lockDirect ? 1 : 0.45 }}
+              >
+                🔒
+              </Text>
+            )}
           </DraggablePressable>
         );
 
@@ -333,6 +349,7 @@ function vaultTreePropsAreEqual(prev: Props, next: Props): boolean {
     prev.draggingRelPath === next.draggingRelPath &&
     prev.dragOverInsertion === next.dragOverInsertion &&
     prev.dragEnabled === next.dragEnabled &&
+    prev.aiLockedPaths === next.aiLockedPaths &&
     prev.rename?.relPath === next.rename?.relPath &&
     prev.rename?.value === next.rename?.value
   );

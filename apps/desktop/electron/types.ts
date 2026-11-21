@@ -258,6 +258,7 @@ export interface Preferences {
     includeCode: boolean;
   };
   templateRules?: { folder: string; template: string }[];
+  aiLockedPaths?: string[];
   fileSortMode: FileSortMode;
   // Écran Tâches : tri par échéance et masquage des terminées — miroir de
   // apps/mobile/types/global.d.ts (types non partagés, à maintenir des deux
