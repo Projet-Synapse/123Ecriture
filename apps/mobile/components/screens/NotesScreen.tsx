@@ -80,7 +80,7 @@ import { ExplorerToggleButton } from '../explorer/ExplorerToggleButton';
 import { RightSidebar, type SidebarTab } from '../vault/RightSidebar';
 import { ElliePanel } from '../vault/ElliePanel';
 import { OutlinePanel } from '../vault/OutlinePanel';
-import { SearchDialog } from '../dialogs/SearchDialog';
+import { ExplorerSearch } from '../vault/ExplorerSearch';
 import { formatMarkdown, normalizeFormattingSettings } from '../../lib/editor/formatter';
 import { minimalChange } from '../../lib/editor/docSync';
 import {
@@ -451,10 +451,12 @@ export function NotesScreen({
     edge: -1,
     onCollapseIntent: () => setSidebarOpen(false),
   });
-  // Recherche globale (voir SearchDialog.tsx) — modale indépendante de
-  // `activeNote`, contrairement à sidebarOpen/sidebarTab qui n'ont de sens
-  // qu'avec une note ouverte.
+  // Recherche globale : champ inline en tête de l'explorateur
+  // (ExplorerSearch.tsx), indépendante de `activeNote`, contrairement à
+  // sidebarOpen/sidebarTab qui n'ont de sens qu'avec une note ouverte.
   const [searchOpen, setSearchOpen] = useState(false);
+  const [searchHasQuery, setSearchHasQuery] = useState(false);
+  const pendingRevealRef = useRef<{ relPath: string; offset: number } | null>(null);
   // Dictionnaire personnel des {{occurrences}} — chargé une fois ici (pas
   // dans OccurrencesPanel/NoteRenderer/MdxEditor séparément) puisque les
   // TROIS en ont besoin : NoteRenderer pour savoir quelles {{...}} styler
@@ -2333,12 +2335,19 @@ export function NotesScreen({
   // menus/panneaux → [section, App.tsx] → fichier précédent → explorateur
   // → [quitter, App.tsx]. Les Modal (menus, dialogues, recherche, popover
   // de la barre d'outils) se ferment d'elles-mêmes via onRequestClose.
+  // Sur mobile, la recherche vit dans le tiroir explorateur : le retour
+  // ne la ferme que si ce tiroir est visible (sinon il ramène d'abord
+  // à l'explorateur, comme avant).
+  const searchVisible = searchOpen && (!isNativeLayout || pagerPage === 0);
   const overlayOpen =
-    renamingRelPath !== null || sidebarOpen || selectedRelPaths.size > 0 || previewFolderRelPath !== null;
+    searchVisible || renamingRelPath !== null || sidebarOpen || selectedRelPaths.size > 0 || previewFolderRelPath !== null;
   useBackHandler(
     BACK_PRIORITY.OVERLAY,
     () => {
-      if (renamingRelPath !== null) cancelRename();
+      if (searchOpen) {
+        setSearchOpen(false);
+        setSearchHasQuery(false);
+      } else if (renamingRelPath !== null) cancelRename();
       else if (sidebarOpen) setSidebarOpen(false);
       else if (selectedRelPaths.size > 0) setSelectedRelPaths(new Set());
       else if (previewFolderRelPath !== null) setPreviewFolderRelPath(null);
@@ -2575,12 +2584,46 @@ export function NotesScreen({
   // `pendingOpenRelPath` d'App.tsx, réservé aux ouvertures venant d'un AUTRE
   // écran) : Canvas est maintenant embarqué ici même, pas besoin de
   // rebasculer d'onglet.
+  const revealSearchOffset = useCallback((relPath: string, offset: number) => {
+    const pos = Math.max(0, offset);
+    const view = viewRef.current;
+    if (view) {
+      const clamped = Math.min(pos, view.state.doc.length);
+      view.dispatch({
+        selection: { anchor: clamped, head: clamped },
+        scrollIntoView: true,
+      });
+      view.focus();
+      return true;
+    }
+    if (nativeEditorCommandRef.current) {
+      nativeEditorCommandRef.current({ kind: 'select', from: pos, to: pos });
+      return true;
+    }
+    return false;
+  }, []);
+
   const openNoteByRelPath = useCallback(
-    (relPath: string) => {
+    (relPath: string, offset?: number) => {
+      if (offset !== undefined) pendingRevealRef.current = { relPath, offset };
       const found = findNodeByPath(tree, relPath);
-      if (found && found.type === 'note') void openNote(found);
+      if (found && found.type === 'note') {
+        void Promise.resolve(openNote(found)).finally(() => {
+          const pending = pendingRevealRef.current;
+          if (!pending || pending.relPath !== relPath) return;
+          const tryReveal = () => {
+            if (pendingRevealRef.current?.relPath !== relPath) return;
+            if (revealSearchOffset(relPath, pending.offset)) pendingRevealRef.current = null;
+          };
+          requestAnimationFrame(() => {
+            tryReveal();
+            if (pendingRevealRef.current?.relPath === relPath) setTimeout(tryReveal, 250);
+          });
+        });
+      }
+      revealEditor();
     },
-    [tree, openNote],
+    [tree, openNote, revealSearchOffset, revealEditor],
   );
 
   // "📎 Joindre un fichier" — importe le fichier choisi dans
@@ -2982,11 +3025,21 @@ export function NotesScreen({
                 <Text style={{ color: theme.text }}>+</Text>
               </Pressable>
               <Pressable
-                onPress={() => setSearchOpen(true)}
-                style={[styles.searchButton, explorerHeaderStacked && styles.searchButtonFlex, { borderColor: theme.border }]}
+                onPress={() => {
+                  if (searchOpen) {
+                    setSearchOpen(false);
+                    setSearchHasQuery(false);
+                  } else setSearchOpen(true);
+                }}
+                style={[
+                  styles.searchButton,
+                  explorerHeaderStacked && styles.searchButtonFlex,
+                  { borderColor: theme.border },
+                  searchOpen && { backgroundColor: theme.accent, borderColor: theme.accent },
+                ]}
                 accessibilityLabel="Rechercher"
               >
-                <Text style={{ color: theme.text }}>🔍</Text>
+                <Text style={{ color: searchOpen ? '#fff' : theme.text }}>🔍</Text>
               </Pressable>
               <Pressable
                 onPress={showSortMenu}
@@ -3047,12 +3100,32 @@ export function NotesScreen({
           </View>
         )}
 
+        {searchOpen && (
+          <ExplorerSearch
+            theme={theme}
+            onHasQueryChange={setSearchHasQuery}
+            onOpenResult={(result) => {
+              // On laisse la recherche ouverte (comme Obsidian) : l'arbre
+              // réapparaît à la fermeture (✕ / Échap / retour).
+              openSearchResult(result, {
+                openNote: openNoteByRelPath,
+                openTask: (taskListId, taskId) => onRequestOpenTask?.(taskListId, taskId),
+                openCalendarEvent: (date) => onRequestOpenCalendarDate?.(date),
+              });
+            }}
+            onClose={() => {
+              setSearchOpen(false);
+              setSearchHasQuery(false);
+            }}
+          />
+        )}
+
         {/* "⭐ Favoris" — section FIXE en tête d'explorateur (pas dans le
             ScrollView du dessous) : reste visible même en scrollant une longue
             arborescence, comme une barre de raccourcis. N'apparaît que s'il y
             a au moins un favori RÉSOLU (voir favoriteNotes, //8) — jamais un
-            bandeau vide. */}
-        {favoriteNotes.length > 0 && (
+            bandeau vide. Masqué pendant une recherche avec requête. */}
+        {favoriteNotes.length > 0 && !searchHasQuery && (
           <View style={[styles.favoritesSection, { borderColor: theme.border }]}>
             <Text style={[styles.favoritesHeader, { color: theme.textMuted }]}>⭐ Favoris</Text>
             {favoriteNotes.map((node) => (
@@ -3078,7 +3151,7 @@ export function NotesScreen({
           </View>
         )}
 
-        {explorerViewMode === 'files' ? (
+        {!searchHasQuery && (explorerViewMode === 'files' ? (
           <ScrollView>
             <VaultTreeView
               onOpenFolder={openFolder}
@@ -3153,7 +3226,7 @@ export function NotesScreen({
                 );
               })}
           </ScrollView>
-        )}
+        ))}
       </View>
     );
   };
@@ -3859,26 +3932,6 @@ export function NotesScreen({
         onCancel={cancelEditPath}
       />
 
-      {searchOpen && (
-        <SearchDialog
-          theme={theme}
-          onOpenResult={(result) => {
-            setSearchOpen(false);
-            // Note/canvas/graphique/excalidraw : s'ouvre directement ICI
-            // (openNoteByRelPath, pas besoin de repasser par App.tsx
-            // puisqu'on est déjà sur Notes) — tâche/évènement : remontés à
-            // App.tsx via onRequestOpenTask/onRequestOpenCalendarDate, qui
-            // basculent d'écran ET révèlent l'élément (voir Props
-            // ci-dessus).
-            openSearchResult(result, {
-              openNote: openNoteByRelPath,
-              openTask: (taskListId, taskId) => onRequestOpenTask?.(taskListId, taskId),
-              openCalendarEvent: (date) => onRequestOpenCalendarDate?.(date),
-            });
-          }}
-          onCancel={() => setSearchOpen(false)}
-        />
-      )}
     </View>
   );
 }

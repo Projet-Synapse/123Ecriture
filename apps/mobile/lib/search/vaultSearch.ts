@@ -25,22 +25,29 @@
 //////////////////////////////////////////////////////////////////////////////
 
 import { parseFrontmatter } from '../properties/frontmatter';
+import { matchDocument, type SearchDoc } from './queryMatch';
+import { parseSearchQuery, queryNeedles, queryNeedsContent, type QueryNode } from './queryParser';
 
 //////// 1. Repli de texte (casse, accents, Unicode) //////////////////////////
 
+export type FoldOptions = { caseSensitive?: boolean };
+
 // Texte replié + position ORIGINALE (indice UTF-16) de chaque caractère
 // replié, plus une sentinelle finale = longueur du texte.
-export function foldWithMap(text: string): { folded: string; map: number[] } {
+// Accents et apostrophes sont toujours normalisés ; la casse n'est
+// conservée que si `caseSensitive` est vrai (bouton Aa).
+export function foldWithMap(text: string, options?: FoldOptions): { folded: string; map: number[] } {
   let folded = '';
   const map: number[] = [];
   let i = 0;
+  const keepCase = Boolean(options?.caseSensitive);
   for (const ch of text) {
-    const f = ch
+    let f = ch
       .normalize('NFD')
       .replace(/[\u0300-\u036f]/g, '')
-      .toLowerCase()
       // Apostrophes typographiques ≡ apostrophe droite.
       .replace(/[\u2018\u2019\u02bc]/g, "'");
+    if (!keepCase) f = f.toLowerCase();
     for (let k = 0; k < f.length; k += 1) map.push(i);
     folded += f;
     i += ch.length;
@@ -49,15 +56,19 @@ export function foldWithMap(text: string): { folded: string; map: number[] } {
   return { folded, map };
 }
 
-export function foldForSearch(text: string): string {
-  return foldWithMap(text).folded;
+export function foldForSearch(text: string, options?: FoldOptions): string {
+  return foldWithMap(text, options).folded;
 }
 
 // Première occurrence de `needle` (DÉJÀ replié) dans `text` → position et
 // longueur dans le texte ORIGINAL, ou null.
-export function findFolded(text: string, foldedNeedle: string): { index: number; length: number } | null {
+export function findFolded(
+  text: string,
+  foldedNeedle: string,
+  options?: FoldOptions,
+): { index: number; length: number } | null {
   if (!foldedNeedle) return null;
-  const { folded, map } = foldWithMap(text);
+  const { folded, map } = foldWithMap(text, options);
   const at = folded.indexOf(foldedNeedle);
   if (at === -1) return null;
   const start = map[at];
@@ -69,9 +80,13 @@ export function findFolded(text: string, foldedNeedle: string): { index: number;
 }
 
 // Toutes les occurrences (pour le surlignage).
-export function findAllFolded(text: string, foldedNeedle: string): { index: number; length: number }[] {
+export function findAllFolded(
+  text: string,
+  foldedNeedle: string,
+  options?: FoldOptions,
+): { index: number; length: number }[] {
   if (!foldedNeedle) return [];
-  const { folded, map } = foldWithMap(text);
+  const { folded, map } = foldWithMap(text, options);
   const out: { index: number; length: number }[] = [];
   let from = 0;
   for (;;) {
@@ -87,13 +102,37 @@ export function findAllFolded(text: string, foldedNeedle: string): { index: numb
   return out;
 }
 
+// Cherche `needle` brut : le replie avec les mêmes options que le texte.
+export function locateNeedle(
+  text: string,
+  needle: string,
+  options?: FoldOptions,
+): { index: number; length: number } | null {
+  return findFolded(text, foldForSearch(needle, options), options);
+}
+
+export function locateAllNeedles(
+  text: string,
+  needle: string,
+  options?: FoldOptions,
+): { index: number; length: number }[] {
+  return findAllFolded(text, foldForSearch(needle, options), options);
+}
+
 //////// 2. Recherche ////////////////////////////////////////////////////////
 
 const SNIPPET_RADIUS = 60;
-const TAG_PATTERN = /(^|[\s])#([\p{L}\p{N}_-]+)/gu;
+export const TAG_PATTERN = /(^|[\s])#([\p{L}\p{N}_-]+)/gu;
+
+export function extractTags(text: string): string[] {
+  const tags = new Set<string>();
+  for (const match of text.matchAll(TAG_PATTERN)) tags.add(match[2]);
+  return [...tags];
+}
+
 const MONTHS_SHORT_FR = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
 
-function buildSnippet(text: string, index: number, length: number): string {
+export function buildSnippet(text: string, index: number, length: number): string {
   const start = Math.max(0, index - SNIPPET_RADIUS);
   const end = Math.min(text.length, index + length + SNIPPET_RADIUS);
   return `${start > 0 ? '…' : ''}${text.slice(start, end).replace(/\s+/g, ' ').trim()}${end < text.length ? '…' : ''}`;
@@ -166,29 +205,67 @@ async function mapPool<T, R>(items: readonly T[], limit: number, fn: (item: T) =
   return out;
 }
 
+function withPropertyFilter(ast: QueryNode | null, options?: SearchOptions): QueryNode | null {
+  if (!options?.propertyId) return ast;
+  const filter: QueryNode = {
+    type: 'property',
+    name: options.propertyId,
+    value: options.propertyValue?.trim() ? options.propertyValue : null,
+  };
+  return ast ? { type: 'and', children: [filter, ast] } : filter;
+}
+
+function toSearchResult(
+  base: Pick<SearchResult, 'relPath' | 'name' | 'kind'> & Partial<SearchResult>,
+  hit: { matchType: SearchMatchType; matchCount: number; snippet?: string; offset?: number },
+  needles: string[],
+): SearchResult {
+  return {
+    ...base,
+    matchType: hit.matchType,
+    snippet: hit.snippet,
+    matchCount: hit.matchCount,
+    offset: hit.offset,
+    needles,
+  };
+}
+
+function docFromEntry(entry: FlatEntry, body?: string, properties?: Record<string, unknown>, bodyOffset?: number): SearchDoc {
+  return {
+    relPath: entry.relPath,
+    name: entry.name,
+    fileName: entry.fileName,
+    kind: entry.kind,
+    body,
+    bodyOffset,
+    properties,
+  };
+}
+
 export async function searchVault(
   source: VaultSearchSource,
   query: string,
-  options?: { propertyId?: string; propertyValue?: string },
+  options?: SearchOptions,
 ): Promise<SearchResult[]> {
   const trimmed = (query ?? '').trim();
-  const propertyId = options?.propertyId;
-  if (!trimmed && !propertyId) return [];
-  const needle = foldForSearch(trimmed);
+  const parsed = parseSearchQuery(trimmed);
+  const ast = withPropertyFilter(parsed.ast, options);
+  if (!ast) return [];
+  const fold = { caseSensitive: Boolean(options?.caseSensitive) };
+  const needles = queryNeedles(ast);
+  const needsContent = queryNeedsContent(ast);
   const entries = flattenTree(await source.listTree());
   const results: SearchResult[] = [];
   const toRead: FlatEntry[] = [];
 
   for (const entry of entries) {
-    if (propertyId) {
-      if (entry.kind === 'markdown') toRead.push(entry);
+    const pending = needsContent && entry.kind === 'markdown';
+    if (pending) {
+      toRead.push(entry);
       continue;
     }
-    if (findFolded(entry.name, needle) || findFolded(entry.fileName, needle)) {
-      results.push({ relPath: entry.relPath, name: entry.name, kind: entry.kind, matchType: 'title' });
-    } else if (entry.kind === 'markdown') {
-      toRead.push(entry);
-    }
+    const hit = matchDocument(docFromEntry(entry), ast, fold);
+    if (hit) results.push(toSearchResult(entry, hit, needles));
   }
 
   const contents = await mapPool(toRead, 6, (entry) => readCached(source, entry));
@@ -202,67 +279,49 @@ export async function searchVault(
     } catch {
       // Frontmatter invalide : tout le texte compte comme corps.
     }
-    if (propertyId) {
-      const value = data[propertyId];
-      if (value === undefined || value === null || value === '') return;
-      if (options?.propertyValue && !findFolded(String(value), foldForSearch(options.propertyValue))) return;
-      if (!trimmed) {
-        results.push({ relPath: entry.relPath, name: entry.name, kind: entry.kind, matchType: 'property' });
-        return;
-      }
-      if (findFolded(entry.name, needle) || findFolded(entry.fileName, needle)) {
-        results.push({ relPath: entry.relPath, name: entry.name, kind: entry.kind, matchType: 'title' });
-        return;
-      }
-    }
-    for (const m of body.matchAll(TAG_PATTERN)) {
-      if (foldForSearch(m[2]).includes(needle)) {
-        results.push({ relPath: entry.relPath, name: entry.name, kind: entry.kind, matchType: 'tag' });
-        return;
-      }
-    }
-    const hit = findFolded(body, needle);
-    if (hit) {
-      results.push({
-        relPath: entry.relPath,
-        name: entry.name,
-        kind: entry.kind,
-        matchType: 'content',
-        snippet: buildSnippet(body, hit.index, hit.length),
-      });
-    }
+    const bodyOffset = raw.endsWith(body) ? raw.length - body.length : 0;
+    const hit = matchDocument(docFromEntry(entry, body, data, bodyOffset), ast, fold);
+    if (hit) results.push(toSearchResult(entry, hit, needles));
   });
 
-  if (trimmed && !propertyId) {
-    const tasks = source.listTasks ? await source.listTasks().catch(() => [] as Task[]) : [];
-    for (const task of tasks) {
-      const base = { relPath: '', name: task.text, kind: 'task' as const, taskId: task.id, taskListId: task.listId };
-      if (findFolded(task.text, needle)) {
-        results.push({ ...base, matchType: 'title' });
-        continue;
-      }
-      const description = task.description ?? '';
-      const d = findFolded(description, needle);
-      if (d) {
-        results.push({ ...base, matchType: 'content', snippet: buildSnippet(description, d.index, d.length) });
-        continue;
-      }
-      const due = typeof task.dueDate === 'string' ? task.dueDate : null;
-      const dueLabel = due ? formatDueDateFr(due) : null;
-      if (due && dueLabel && (due.includes(trimmed) || findFolded(dueLabel, needle))) {
-        results.push({ ...base, matchType: 'content', snippet: `Échéance : ${dueLabel}` });
-      }
+  // Tâches et évènements : évalués par le même parseur (un [propriété]
+  // les écarte tout seuls, ils n'ont pas de frontmatter).
+  const tasks = source.listTasks ? await source.listTasks().catch(() => [] as Task[]) : [];
+  for (const task of tasks) {
+    const due = typeof task.dueDate === 'string' ? task.dueDate : null;
+    const dueLabel = due ? formatDueDateFr(due) : null;
+    const extra = [task.description ?? '', due ?? '', dueLabel ? `Échéance : ${dueLabel}` : ''].filter(Boolean).join('\n');
+    const hit = matchDocument(
+      { relPath: '', name: task.text, fileName: task.text, kind: 'task', body: extra || undefined },
+      ast,
+      fold,
+    );
+    if (hit) {
+      results.push(
+        toSearchResult(
+          { relPath: '', name: task.text, kind: 'task', taskId: task.id, taskListId: task.listId },
+          hit,
+          needles,
+        ),
+      );
     }
-    const events = source.listEvents ? await source.listEvents().catch(() => [] as CalendarEvent[]) : [];
-    for (const event of events) {
-      const base = { relPath: '', name: event.title, kind: 'calendar-event' as const, eventId: event.id, eventDate: event.date };
-      if (findFolded(event.title, needle)) {
-        results.push({ ...base, matchType: 'title' });
-        continue;
-      }
-      const notes = event.notes ?? '';
-      const n = findFolded(notes, needle);
-      if (n) results.push({ ...base, matchType: 'content', snippet: buildSnippet(notes, n.index, n.length) });
+  }
+  const events = source.listEvents ? await source.listEvents().catch(() => [] as CalendarEvent[]) : [];
+  for (const event of events) {
+    const notes = event.notes ?? '';
+    const hit = matchDocument(
+      { relPath: '', name: event.title, fileName: event.title, kind: 'calendar-event', body: notes || undefined },
+      ast,
+      fold,
+    );
+    if (hit) {
+      results.push(
+        toSearchResult(
+          { relPath: '', name: event.title, kind: 'calendar-event', eventId: event.id, eventDate: event.date },
+          hit,
+          needles,
+        ),
+      );
     }
   }
 

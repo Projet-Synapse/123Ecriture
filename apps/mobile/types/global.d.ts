@@ -364,6 +364,12 @@ declare global {
     kind: SearchResultKind;
     matchType: SearchMatchType;
     snippet?: string;
+    // Nombre de correspondances dans le fichier (extrait), et termes à
+    // surligner (requête structurée : plusieurs aiguilles possibles).
+    matchCount?: number;
+    needles?: string[];
+    // Position dans le fichier brut (pour ouvrir l'éditeur au bon endroit).
+    offset?: number;
     // Uniquement kind==='task' — une tâche n'existe que dans le contexte de
     // sa LISTE (voir TaskListsBridge.switch), les deux identifiants sont
     // donc nécessaires pour la rouvrir.
@@ -378,6 +384,7 @@ declare global {
   interface SearchOptions {
     propertyId?: string;
     propertyValue?: string;
+    caseSensitive?: boolean;
   }
 
   interface SearchBridge {

@@ -89,7 +89,7 @@ export function searchResultKey(result: SearchResult): string {
 // révèlent l'élément trouvé (voir App.tsx, `requestOpenTask`/
 // `requestOpenCalendarDate`, généralisation de `pendingOpenRelPath`).
 export type SearchResultOpenHandlers = {
-  openNote: (relPath: string) => void;
+  openNote: (relPath: string, offset?: number) => void;
   openTask: (taskListId: string, taskId: string) => void;
   openCalendarEvent: (date: string) => void;
 };
@@ -106,16 +106,32 @@ export type MatchSegment = { text: string; isMatch: boolean };
 // à la casse) de `query`. Requête vide/absente → un seul segment non
 // marqué (le rendu n'a alors rien à surligner, état initial d'une
 // recherche pas encore tapée).
-export function splitMatchSegments(text: string, query: string): MatchSegment[] {
-  const needle = query.trim();
-  if (!needle) return [{ text, isMatch: false }];
+export function splitMatchSegments(
+  text: string,
+  query: string | string[],
+  options?: { caseSensitive?: boolean },
+): MatchSegment[] {
+  const needles = (Array.isArray(query) ? query : [query]).map((n) => n.trim()).filter(Boolean);
+  if (needles.length === 0) return [{ text, isMatch: false }];
 
   // Même comparaison « repliée » que la recherche (casse, accents, NFC/NFD
   // ignorés — lib/search/vaultSearch.ts), positions dans le texte ORIGINAL.
-  const matches = findAllFolded(text, foldForSearch(needle));
+  const matches = needles
+    .flatMap((needle) => findAllFolded(text, foldForSearch(needle, options), options))
+    .sort((a, b) => a.index - b.index || b.length - a.length);
+  // Fusionne les chevauchements (plusieurs termes qui se recouvrent).
+  const merged: { index: number; length: number }[] = [];
+  for (const m of matches) {
+    const last = merged[merged.length - 1];
+    if (last && m.index < last.index + last.length) {
+      last.length = Math.max(last.length, m.index + m.length - last.index);
+    } else {
+      merged.push({ ...m });
+    }
+  }
   const segments: MatchSegment[] = [];
   let cursor = 0;
-  for (const { index, length } of matches) {
+  for (const { index, length } of merged) {
     if (index > cursor) segments.push({ text: text.slice(cursor, index), isMatch: false });
     segments.push({ text: text.slice(index, index + length), isMatch: true });
     cursor = index + length;
@@ -139,7 +155,7 @@ export function openSearchResult(result: SearchResult, handlers: SearchResultOpe
     case 'chart':
     case 'excalidraw':
     case 'code':
-      handlers.openNote(result.relPath);
+      handlers.openNote(result.relPath, result.offset);
       return;
     case 'task':
       if (result.taskListId && result.taskId) handlers.openTask(result.taskListId, result.taskId);
