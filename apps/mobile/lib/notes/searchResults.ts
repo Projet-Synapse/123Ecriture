@@ -1,3 +1,5 @@
+import { findAllFolded, foldForSearch } from '../search/vaultSearch';
+
 // ✒️ 123ECRITURE — lib/notes/searchResults.ts — affichage et ouverture d'un résultat de recherche
 //////////////////////////////////////////////////////////////////////////////
 //
@@ -108,16 +110,15 @@ export function splitMatchSegments(text: string, query: string): MatchSegment[] 
   const needle = query.trim();
   if (!needle) return [{ text, isMatch: false }];
 
-  const lowerText = text.toLowerCase();
-  const lowerNeedle = needle.toLowerCase();
+  // Même comparaison « repliée » que la recherche (casse, accents, NFC/NFD
+  // ignorés — lib/search/vaultSearch.ts), positions dans le texte ORIGINAL.
+  const matches = findAllFolded(text, foldForSearch(needle));
   const segments: MatchSegment[] = [];
   let cursor = 0;
-  let index = lowerText.indexOf(lowerNeedle, cursor);
-  while (index !== -1) {
+  for (const { index, length } of matches) {
     if (index > cursor) segments.push({ text: text.slice(cursor, index), isMatch: false });
-    segments.push({ text: text.slice(index, index + needle.length), isMatch: true });
-    cursor = index + needle.length;
-    index = lowerText.indexOf(lowerNeedle, cursor);
+    segments.push({ text: text.slice(index, index + length), isMatch: true });
+    cursor = index + length;
   }
   if (cursor < text.length) segments.push({ text: text.slice(cursor), isMatch: false });
   return segments;
