@@ -456,6 +456,17 @@ const api = {
       view.focus();
       return;
     }
+    if (cmd.kind === 'select') {
+      const len = view.state.doc.length;
+      const from = Math.max(0, Math.min(Math.round(cmd.from), len));
+      const to = Math.max(0, Math.min(Math.round(cmd.to), len));
+      view.dispatch({
+        selection: { anchor: from, head: to },
+        scrollIntoView: true,
+      });
+      view.focus();
+      return;
+    }
     if (cmd.kind === 'formatDoc') {
       // Changement MINIMAL (préfixe/suffixe communs) : curseur conservé,
       // annulable d'un seul Ctrl+Z / ↶.

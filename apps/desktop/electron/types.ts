@@ -376,6 +376,9 @@ export interface SearchResult {
   kind: SearchResultKind;
   matchType: SearchMatchType;
   snippet?: string;
+  matchCount?: number;
+  needles?: string[];
+  offset?: number;
   // Uniquement kind==='task' — de quoi rouvrir la tâche : une tâche n'existe
   // que dans le contexte de sa LISTE (voir tasklists:switch dans tasks.ts),
   // donc les deux identifiants sont nécessaires, pas juste `taskId`.
@@ -391,6 +394,7 @@ export interface SearchResult {
 export interface SearchOptions {
   propertyId?: string;
   propertyValue?: string;
+  caseSensitive?: boolean;
 }
 
 // Vue dédiée aux tags (voir NotesScreen.tsx, bascule Fichiers/Tags à côté
