@@ -446,7 +446,7 @@ function buildDecorations(view: EditorView, colors: LivePreviewColors, callbacks
       if (!touches(match.from, match.to)) {
         ranges.push({ from: match.from, to: match.contentFrom, decoration: Decoration.replace({}) });
       }
-      const headingStyle = `font-weight:700;font-size:${sizeByLevel[match.level]}${colorize ? `;color:${colors.accent}` : ''}`;
+      const headingStyle = `font-weight:700;font-size:${sizeByLevel[match.level]};text-decoration:none${colorize ? `;color:${colors.accent}` : ''}`;
       // Un titre contenant un token ([[lien]] etc.) est DÉCOUPÉ (voir
       // liveDecorations.ts) : seuls les segments hors token portent le
       // style — la plage du token porte sa propre décoration. Chaque

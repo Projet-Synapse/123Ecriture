@@ -8,30 +8,35 @@ import { tags as t } from '@lezer/highlight';
 // editor-entry.tsx mobile — même composition d'extensions).
 //
 // Invariants du fichier :
-//   • Le `basicSetup` de CodeMirror inclut `defaultHighlightStyle` en
-//     `fallback`, qui SOULIGNE les titres markdown — effet retiré : le
-//     soulignement est réservé à une vraie mise en forme à venir, pas à
-//     un effet de style automatique.
-//   • Ce soulignement ne peut PAS se surcharger par un simple theme
-//     EditorView (les classes générées par HighlightStyle sont minifiées,
-//     pas ciblables par nom), et poser UN autre style non-fallback
-//     effacerait tout le fallback de basicSetup (il ne s'applique que si
-//     aucun autre style n'existe) : tous les autres tags perdraient leur
-//     couleur. D'où ces deux extensions à poser APRÈS basicSetup :
-//     1. `defaultHighlightStyle` redéclaré tel quel, non-fallback —
-//        re-fournit toutes les couleurs ;
-//     2. l'override heading — ses règles sont montées APRÈS les siennes,
-//        à spécificité égale c'est donc la dernière feuille qui gagne :
-//        `text-decoration: none` l'emporte, `font-weight: 700` est
-//        conservé (redéclaré ici pour ne jamais dépendre de l'ordre de
-//        cascade).
+//   • Le `basicSetup` de CodeMirror / @uiw/react-codemirror inclut
+//     `defaultHighlightStyle` en `fallback`, qui SOULIGNE les titres
+//     markdown (`text-decoration: underline` sur `tags.heading`). Le
+//     soulignement est réservé à une vraie mise en forme (`<u>`), pas à
+//     un effet automatique des en-têtes.
+//   • On ne peut PAS se contenter d'ajouter un second HighlightStyle
+//     `{ tag: t.heading, textDecoration: 'none' }` après le style par
+//     défaut. `syntaxHighlighting` applique l'UNION des classes : le
+//     titre porte alors à la fois `.ͼ7 { text-decoration: underline }`
+//     et `.ͼo { text-decoration: none }`. À spécificité égale, c'est
+//     l'ordre d'injection des feuilles (non garanti) qui décide — d'où
+//     des titres encore soulignés selon la session ou la plateforme.
+//   • D'où UN seul style, calqué sur `defaultHighlightStyle` mais sans
+//     soulignement des titres (`font-weight: 700` conservé). Les liens
+//     et le `<u>` gardent leur soulignement.
+//   • `basicSetup.syntaxHighlighting` doit être à `false` (MdxEditor et
+//     editor-entry) : sinon le module CSS du style par défaut est
+//     quand même monté, même en fallback, et la règle `underline`
+//     reste dans la page.
 //
 //////////////////////////////////////////////////////////////////////////////
-export const editorHighlightExtensions = [
-  syntaxHighlighting(defaultHighlightStyle),
-  syntaxHighlighting(
-    HighlightStyle.define([
-      { tag: t.heading, textDecoration: 'none', fontWeight: 'bold' },
-    ]),
-  ),
-];
+function withoutHeadingUnderline(spec: (typeof defaultHighlightStyle.specs)[number]) {
+  const tags = Array.isArray(spec.tag) ? spec.tag : [spec.tag];
+  if (!tags.includes(t.heading)) return spec;
+  return { ...spec, textDecoration: 'none' };
+}
+
+export const editorHighlightStyle = HighlightStyle.define(
+  defaultHighlightStyle.specs.map(withoutHeadingUnderline),
+);
+
+export const editorHighlightExtensions = [syntaxHighlighting(editorHighlightStyle)];

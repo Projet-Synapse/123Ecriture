@@ -51,13 +51,14 @@ type NodeWithMeta = ASTNode & { sourceMeta?: { target?: string } };
 // Style d'un titre d'aperçu — taille par niveau (voir les rules) + mise en
 // forme commune. `node.children` est l'arbre déjà rendu par la lib (gras,
 // liens… imbriqués conservés).
-function headingStyle(theme: Theme, fontSize: number): { fontSize: number; fontWeight: '700'; color: string; marginTop: number; marginBottom: number } {
+function headingStyle(theme: Theme, fontSize: number): { fontSize: number; fontWeight: '700'; color: string; marginTop: number; marginBottom: number; textDecorationLine: 'none' } {
   return {
     fontSize,
     fontWeight: '700',
     color: theme.text,
     marginTop: fontSize >= 24 ? 14 : 8,
     marginBottom: 4,
+    textDecorationLine: 'none',
   };
 }
 

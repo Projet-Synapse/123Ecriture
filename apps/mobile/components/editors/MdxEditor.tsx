@@ -357,9 +357,9 @@ export function MdxEditor({
     if (paste) base.push(paste);
     const withShortcuts = shortcutsExtension ? [...base, shortcutsExtension] : base;
     const withLive = livePreview ? [...withShortcuts, liveExtension] : withShortcuts;
-    // Titres SANS soulignement (voir lib/codemirrorHighlight.ts) — en
-    // dernier pour que ses règles de coloration soient montées après
-    // celles du basicSetup.
+    // Titres SANS soulignement (voir lib/codemirrorHighlight.ts) — un
+    // seul style, pas un override en cascade (l'union des classes
+    // laissait le soulignement dépendre de l'ordre des feuilles CSS).
     return [...withLive, ...editorHighlightExtensions];
   }, [livePreview, liveExtension, completionExtension, shortcutsExtension, searchExtensions]);
 
@@ -403,6 +403,9 @@ export function MdxEditor({
           highlightActiveLine: false,
           autocompletion: false,
           closeBrackets,
+          // Évite de monter le CSS de defaultHighlightStyle (titres
+          // soulignés) : la coloration vient de editorHighlightExtensions.
+          syntaxHighlighting: false,
         }}
         onChange={handleChange}
         onCreateEditor={(view) => {

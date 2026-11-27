@@ -328,9 +328,9 @@ function EditorApp() {
         ]
       : base;
     return [...withLive, editorTheme,
-      // Titres SANS soulignement (voir lib/codemirrorHighlight.ts) — en
-      // dernier pour que ses règles de coloration soient montées après
-      // celles du basicSetup.
+      // Titres SANS soulignement (voir lib/codemirrorHighlight.ts) — un
+      // seul style, pas un override en cascade (l'union des classes
+      // laissait le soulignement dépendre de l'ordre des feuilles CSS).
       ...editorHighlightExtensions,
     ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -394,6 +394,9 @@ function EditorApp() {
         highlightActiveLine: false,
         autocompletion: false,
         closeBrackets: config.closeBrackets,
+        // Évite de monter le CSS de defaultHighlightStyle (titres
+        // soulignés) : la coloration vient de editorHighlightExtensions.
+        syntaxHighlighting: false,
       }}
       onChange={(value) => {
         latestContent.current = value;
