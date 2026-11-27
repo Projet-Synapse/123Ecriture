@@ -48,6 +48,9 @@ import type {
 //     relue et vérifiée (taille + SHA-256) — sinon la promesse est rejetée et
 //     le moteur de synchro ne marque PAS le fichier synchronisé ;
 //   • supprimer = déplacer dans `.trash/` du coffre (confirmation sauf silent).
+//   • après un rename/move, l'index est mis à jour tout de suite ; un parcours
+//     SAF encore périmé ne réinscrit pas l'ancien chemin. Si la source est
+//     introuvable mais que la cible existe déjà, l'adaptateur resynchronise.
 //
 //////////////////////////////////////////////////////////////////////////////
 
@@ -122,6 +125,74 @@ export function normalizeRelPath(relPath: string): string {
     .normalize("NFC");
 }
 
+// Déplacement encore « en cours » pour l'index : un parcours SAF lancé
+// avant, ou une liste encore périmée, ne doit pas réafficher l'ancien chemin.
+export type VaultFsRelocation = { from: string; to: string; at: number };
+
+export function isVaultFsNotFound(error: unknown): boolean {
+  const msg = error instanceof Error ? error.message : String(error ?? "");
+  return /introuvable|e_not_found/i.test(msg);
+}
+
+export function applyRelocationToIndex<T>(
+  map: Map<string, T>,
+  from: string,
+  to: string,
+): void {
+  if (from === to) return;
+  const updates: [string, T][] = [];
+  for (const key of [...map.keys()]) {
+    if (key === from || key.startsWith(`${from}/`)) {
+      const dest = `${to}${key.slice(from.length)}`;
+      const entry = map.get(key);
+      if (entry === undefined) continue;
+      map.delete(key);
+      updates.push([dest, entry]);
+    }
+  }
+  for (const [key, entry] of updates) {
+    if (!map.has(key)) map.set(key, entry);
+  }
+}
+
+function indexCovers<T>(map: Map<string, T>, path: string): boolean {
+  if (map.has(path)) return true;
+  const prefix = `${path}/`;
+  for (const key of map.keys()) if (key.startsWith(prefix)) return true;
+  return false;
+}
+
+// Réapplique les déplacements connus sur un parcours qui les ignore encore
+// (liste SAF en retard, parcours commencé avant le renommage).
+export function reconcileRelocations<T>(
+  listed: Map<string, T>,
+  memory: Map<string, T>,
+  relocations: VaultFsRelocation[],
+  startedAt: number,
+): { index: Map<string, T>; pending: VaultFsRelocation[] } {
+  const next = new Map(listed);
+  for (const rel of relocations) {
+    const hasFrom = indexCovers(next, rel.from);
+    const hasTo = indexCovers(next, rel.to);
+    if (rel.at > startedAt || hasFrom !== hasTo || (!hasFrom && !hasTo)) {
+      if (!hasFrom && !hasTo) {
+        for (const [key, entry] of memory) {
+          if (key === rel.to || key.startsWith(`${rel.to}/`)) {
+            if (!next.has(key)) next.set(key, entry);
+          }
+        }
+      }
+      applyRelocationToIndex(next, rel.from, rel.to);
+    }
+  }
+  const pending = relocations.filter((rel) => {
+    const hasFrom = indexCovers(next, rel.from);
+    const hasTo = indexCovers(next, rel.to);
+    return !(rel.at <= startedAt && hasTo && !hasFrom);
+  });
+  return { index: next, pending };
+}
+
 export function createVaultFsAdapter(deps: VaultFsAdapterDeps) {
   const { fs } = deps;
   let index = new Map<string, VaultFsIndexEntry>();
@@ -135,6 +206,8 @@ export function createVaultFsAdapter(deps: VaultFsAdapterDeps) {
   // Cache d'index déjà tenté pour ce coffre (affichage instantané).
   let cacheTried = false;
   let refreshing: Promise<void> | null = null;
+  let mutationSeq = 0;
+  let relocations: VaultFsRelocation[] = [];
 
   async function root(): Promise<string> {
     const uri = await deps.getRootUri();
@@ -145,6 +218,8 @@ export function createVaultFsAdapter(deps: VaultFsAdapterDeps) {
       cachedTree = null;
       fullyIndexed = false;
       cacheTried = false;
+      mutationSeq = 0;
+      relocations = [];
     }
     return uri;
   }
@@ -156,6 +231,7 @@ export function createVaultFsAdapter(deps: VaultFsAdapterDeps) {
   }
 
   async function doRefresh(): Promise<void> {
+    const startedAt = mutationSeq;
     const treeUri = await root();
     let allowed = true;
     try {
@@ -171,11 +247,11 @@ export function createVaultFsAdapter(deps: VaultFsAdapterDeps) {
     }
     permissionLost = false;
     const { entries, errors } = await fs.listTree(treeUri);
-    const next = new Map<string, VaultFsIndexEntry>();
+    const listed = new Map<string, VaultFsIndexEntry>();
     for (const e of entries as VaultFsTreeEntry[]) {
       const relPath = normalizeRelPath(e.relPath);
       if (!keepInIndex(relPath)) continue;
-      next.set(relPath, {
+      listed.set(relPath, {
         uri: e.docId,
         isDirectory: e.isDirectory,
         size: e.size,
@@ -186,11 +262,16 @@ export function createVaultFsAdapter(deps: VaultFsAdapterDeps) {
     for (const err of errors) {
       const prefix = err.relPath ? `${normalizeRelPath(err.relPath)}/` : "";
       for (const [relPath, entry] of index) {
-        if (relPath.startsWith(prefix) && !next.has(relPath))
-          next.set(relPath, entry);
+        if (relPath.startsWith(prefix) && !listed.has(relPath))
+          listed.set(relPath, entry);
       }
     }
-    index = next;
+    // Un parcours commencé avant un renommage, ou une liste SAF encore
+    // périmée, ne doit pas réinscrire l'ancien chemin (sinon l'explorateur
+    // montre encore le .md alors que le fichier est déjà en .mdx).
+    const reconciled = reconcileRelocations(listed, index, relocations, startedAt);
+    index = reconciled.index;
+    relocations = reconciled.pending;
     fullyIndexed = true;
     lastErrors = errors;
     cachedTree = null;
@@ -267,11 +348,47 @@ export function createVaultFsAdapter(deps: VaultFsAdapterDeps) {
     return removed;
   }
 
-  async function relocate(from: string, to: string): Promise<void> {
-    const moved = removeSubtree(from);
-    for (const old of moved) deps.markDirty(old);
-    await refresh(); // docIds changent au déplacement (ExternalStorageProvider) : on relit
-    for (const old of moved) deps.markDirty(to + old.slice(from.length));
+  async function relocate(fromRaw: string, toRaw: string): Promise<void> {
+    const from = normalizeRelPath(fromRaw);
+    const to = normalizeRelPath(toRaw);
+    // L'index est mis à jour TOUT DE SUITE : on n'attend pas un parcours
+    // SAF qui peut encore lister l'ancien nom. Les lectures/écritures
+    // passent par le relPath (pas le docId caché), donc l'explorateur et
+    // l'éditeur voient le nouveau chemin sans délai.
+    const moved = [...index.keys()].filter(
+      (key) =>
+        (key === from || key.startsWith(`${from}/`)) &&
+        !index.get(key)?.isDirectory,
+    );
+    applyRelocationToIndex(index, from, to);
+    invalidate();
+    if (from !== to) {
+      relocations.push({ from, to, at: ++mutationSeq });
+    }
+    for (const old of moved) {
+      deps.markDirty(old);
+      deps.markDirty(to + old.slice(from.length));
+    }
+    // Parcours en arrière-plan pour rafraîchir les docId ; s'il est périmé,
+    // reconcileRelocations conserve le nouveau chemin.
+    void refresh().catch(() => undefined);
+  }
+
+  async function recoverIfAlreadyMoved(
+    from: string,
+    to: string,
+    error: unknown,
+  ): Promise<{ relPath: string; name: string } | null> {
+    if (!isVaultFsNotFound(error)) return null;
+    const treeUri = await root();
+    const source = await fs.stat(treeUri, from).catch(() => null);
+    const target = await fs.stat(treeUri, to).catch(() => null);
+    if (source || !target) return null;
+    await relocate(from, to);
+    return {
+      relPath: to,
+      name: target.isDirectory ? nameOf(to) : baseNameOf(to),
+    };
   }
 
   type State = {
@@ -395,30 +512,63 @@ export function createVaultFsAdapter(deps: VaultFsAdapterDeps) {
       const sib = siblings(parent);
       sib.delete(name);
       const finalName = findAvailableName(candidate, sib);
-      const newRelPath = await fs.rename(await root(), relPath, finalName);
-      await relocate(relPath, newRelPath);
-      return {
-        relPath: newRelPath,
-        name: entry?.isDirectory ? finalName : baseNameOf(finalName),
-      };
+      const displayName = (isDir: boolean, fileName: string) =>
+        isDir ? fileName : baseNameOf(fileName);
+      try {
+        const newRelPath = await fs.rename(await root(), relPath, finalName);
+        await relocate(relPath, newRelPath);
+        return {
+          relPath: newRelPath,
+          name: displayName(entry?.isDirectory ?? false, nameOf(newRelPath)),
+        };
+      } catch (error) {
+        // Premier essai déjà réussi sur le disque, index encore à l'ancien
+        // chemin : on resynchronise au lieu d'afficher « Introuvable ».
+        const intended = join(parent, candidate);
+        const recovered =
+          (await recoverIfAlreadyMoved(relPath, intended, error)) ??
+          (finalName !== candidate
+            ? await recoverIfAlreadyMoved(relPath, join(parent, finalName), error)
+            : null);
+        if (recovered) return recovered;
+        throw error;
+      }
     },
 
     move: async (relPathRaw, destinationParentRelPath) => {
       const relPath = normalizeRelPath(relPathRaw);
       const dest = normalizeRelPath(destinationParentRelPath ?? "");
       const entry = index.get(relPath);
-      const newRelPath = await fs.move(await root(), relPath, dest);
-      await relocate(relPath, newRelPath);
-      const name = nameOf(newRelPath);
-      return {
-        relPath: newRelPath,
-        name: entry?.isDirectory ? name : baseNameOf(name),
-      };
+      const intended = join(dest, nameOf(relPath));
+      try {
+        const newRelPath = await fs.move(await root(), relPath, dest);
+        await relocate(relPath, newRelPath);
+        const name = nameOf(newRelPath);
+        return {
+          relPath: newRelPath,
+          name: entry?.isDirectory ? name : baseNameOf(name),
+        };
+      } catch (error) {
+        const recovered = await recoverIfAlreadyMoved(relPath, intended, error);
+        if (recovered) return recovered;
+        throw error;
+      }
     },
 
-    setPath: async (relPath, newRelPath) => {
+    setPath: async (relPathRaw, newRelPath) => {
+      const from = normalizeRelPath(relPathRaw);
       const target = normalizeRelPath(newRelPath);
-      const moved = await adapter.move(relPath, parentOf(target) || undefined);
+      const entry = index.get(from);
+      if (from === target) {
+        const name = nameOf(from);
+        return { relPath: from, name: entry?.isDirectory ? name : baseNameOf(name) };
+      }
+      // Même dossier : un move vers le parent actuel voyait le fichier
+      // lui-même et échouait (« existe déjà »). On ne fait qu'un renommage.
+      if (parentOf(from) === parentOf(target)) {
+        return adapter.rename(from, nameOf(target));
+      }
+      const moved = await adapter.move(from, parentOf(target) || undefined);
       if (nameOf(moved.relPath) !== nameOf(target))
         return adapter.rename(moved.relPath, nameOf(target));
       return moved;

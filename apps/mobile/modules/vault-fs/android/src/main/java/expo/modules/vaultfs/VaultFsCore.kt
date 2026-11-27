@@ -340,11 +340,30 @@ class VaultFsCore(private val resolver: ContentResolver) {
     }
   }
 
+  private fun joinRel(parentRel: String, name: String): String =
+    if (parentRel.isEmpty()) name else "$parentRel/$name"
+
   fun rename(treeUri: Uri, relPath: String, newName: String): String {
     if (newName.contains('/') || newName.isBlank()) throw VaultFsException("E_NAME", "Nom invalide : $newName")
     val norm = normalizeRelPath(relPath)
-    val (parentId, child) = parentAndChild(treeUri, norm)
-    if (sameName(child.name, newName)) return norm
+    val segments = segmentsOf(norm)
+    if (segments.isEmpty()) throw VaultFsException("E_PATH", "Impossible d'agir sur la racine du coffre")
+    var parentId = rootDocId(treeUri)
+    for (segment in segments.dropLast(1)) {
+      parentId = findChild(treeUri, parentId, segment)?.docId
+        ?: throw VaultFsException("E_NOT_FOUND", "Introuvable : $relPath")
+    }
+    val parentRel = segments.dropLast(1).joinToString("/")
+    val child = findChild(treeUri, parentId, segments.last())
+    if (child == null) {
+      // Déjà renommé sur le disque (premier essai réussi, index JS encore
+      // à l'ancien chemin) : on renvoie la cible au lieu d'échouer.
+      val already = findChild(treeUri, parentId, newName)
+        ?: throw VaultFsException("E_NOT_FOUND", "Introuvable : $relPath")
+      val info = queryOne(treeUri, already.docId)
+      return joinRel(parentRel, info?.name ?: already.name)
+    }
+    if (sameName(child.name, newName)) return joinRel(parentRel, child.name)
     if (findChild(treeUri, parentId, newName) != null) throw VaultFsException("E_EXISTS", "« $newName » existe déjà")
     val newId = tryRename(treeUri, child.docId, newName) ?: throw VaultFsException("E_RENAME", "Renommage refusé par le fournisseur")
     val info = queryOne(treeUri, newId)
@@ -352,25 +371,36 @@ class VaultFsCore(private val resolver: ContentResolver) {
       info?.let { tryRename(treeUri, it.docId, child.name) }
       throw VaultFsException("E_NAME", "Nom non représentable sur cet appareil : « $newName »")
     }
-    val parentRel = norm.substringBeforeLast('/', "")
-    return if (parentRel.isEmpty()) info.name else "$parentRel/${info.name}"
+    return joinRel(parentRel, info.name)
   }
 
   fun move(treeUri: Uri, relPath: String, destParentRelPath: String): String {
     val norm = normalizeRelPath(relPath)
     val destNorm = normalizeRelPath(destParentRelPath)
     if (destNorm == norm || destNorm.startsWith("$norm/")) throw VaultFsException("E_MOVE", "Impossible de déplacer un dossier dans lui-même")
-    val (parentId, child) = parentAndChild(treeUri, norm)
-    val destId = mkdirs(treeUri, destNorm)
-    if (findChild(treeUri, destId, child.name) != null) throw VaultFsException("E_EXISTS", "« ${child.name} » existe déjà dans la destination")
-    val target = if (destNorm.isEmpty()) child.name else "$destNorm/${child.name}"
+    val parentRel = if (norm.contains('/')) norm.substringBeforeLast('/') else ""
+    val name = if (norm.contains('/')) norm.substringAfterLast('/') else norm
+    val targetName = { n: String -> joinRel(destNorm, n) }
+    // Même dossier : aucun déplacement. Sinon findChild voyait le fichier
+    // lui-même et levait « existe déjà » (conversion .md → .mdx via setPath).
+    if (destNorm == parentRel) return norm
     try {
-      moveDoc(treeUri, child, parentId, destId)
-    } catch (e: Exception) {
-      if (child.isDir) throw VaultFsException("E_MOVE", "Déplacement du dossier refusé : ${e.message}")
-      writeFileAtomic(treeUri, target, readBytes(treeUri, child.docId))
-      DocumentsContract.deleteDocument(resolver, docUri(treeUri, child.docId))
+      val (parentId, child) = parentAndChild(treeUri, norm)
+      val destId = mkdirs(treeUri, destNorm)
+      if (parentId == destId) return targetName(child.name)
+      if (findChild(treeUri, destId, child.name) != null) throw VaultFsException("E_EXISTS", "« ${child.name} » existe déjà dans la destination")
+      val target = targetName(child.name)
+      try {
+        moveDoc(treeUri, child, parentId, destId)
+      } catch (e: Exception) {
+        if (child.isDir) throw VaultFsException("E_MOVE", "Déplacement du dossier refusé : ${e.message}")
+        writeFileAtomic(treeUri, target, readBytes(treeUri, child.docId))
+        DocumentsContract.deleteDocument(resolver, docUri(treeUri, child.docId))
+      }
+      return target
+    } catch (e: VaultFsException) {
+      if (e.code == "E_NOT_FOUND" && resolve(treeUri, targetName(name)) != null) return targetName(name)
+      throw e
     }
-    return target
   }
 }

@@ -1,7 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { VaultFsNativeModule } from "../../modules/vault-fs/src";
-import { createVaultFsAdapter, normalizeRelPath } from "./nativeVaultFsAdapter";
+import {
+  createVaultFsAdapter,
+  isVaultFsNotFound,
+  normalizeRelPath,
+  reconcileRelocations,
+} from "./nativeVaultFsAdapter";
 
 vi.mock("react-native", () => ({
   Alert: { alert: vi.fn() },
@@ -46,9 +51,11 @@ class FakeVaultFs implements VaultFsNativeModule {
   async listTree(treeUri: string) {
     expect(treeUri).toBe(ROOT);
     this.calls.push("listTree");
+    const files = this.heldListing?.files ?? this.files;
+    const dirs = this.heldListing?.dirs ?? this.dirs;
     const entries = [];
     const errors = [];
-    for (const d of this.dirs) {
+    for (const d of dirs) {
       if ([...this.unreadable].some((u) => d.startsWith(`${u}/`))) continue;
       entries.push({
         relPath: d,
@@ -60,7 +67,7 @@ class FakeVaultFs implements VaultFsNativeModule {
     }
     for (const u of this.unreadable)
       errors.push({ relPath: u, message: "Function not implemented" });
-    for (const [p, c] of this.files) {
+    for (const [p, c] of files) {
       if ([...this.unreadable].some((u) => p.startsWith(`${u}/`))) continue;
       entries.push({
         relPath: p,
@@ -72,14 +79,33 @@ class FakeVaultFs implements VaultFsNativeModule {
     }
     return { entries, errors };
   }
+  // Si défini, listTree renvoie cette photo (parcours SAF périmé).
+  heldListing: { files: Map<string, string>; dirs: Set<string> } | null = null;
+
+  holdListing() {
+    this.heldListing = {
+      files: new Map(this.files),
+      dirs: new Set(this.dirs),
+    };
+  }
+
   async stat(_t: string, relPath: string) {
+    const name = relPath.slice(relPath.lastIndexOf("/") + 1);
     if (this.files.has(relPath))
       return {
         docId: `f:${relPath}`,
-        name: relPath,
+        name,
         isDirectory: false,
         mtime: 5,
-        size: 1,
+        size: this.files.get(relPath)!.length,
+      };
+    if (this.dirs.has(relPath))
+      return {
+        docId: `d:${relPath}`,
+        name,
+        isDirectory: true,
+        mtime: 5,
+        size: 0,
       };
     return null;
   }
@@ -124,6 +150,11 @@ class FakeVaultFs implements VaultFsNativeModule {
     return { trashRelPath: t };
   }
   async rename(_t: string, relPath: string, newName: string) {
+    if (!this.files.has(relPath) && !this.dirs.has(relPath)) {
+      throw new Error(
+        `Call to function 'VaultFs.rename' has been rejected. → Caused by: Introuvable : ${relPath}`,
+      );
+    }
     const parent = relPath.includes("/")
       ? relPath.slice(0, relPath.lastIndexOf("/"))
       : "";
@@ -132,6 +163,15 @@ class FakeVaultFs implements VaultFsNativeModule {
     return target;
   }
   async move(_t: string, relPath: string, dest: string) {
+    if (!this.files.has(relPath) && !this.dirs.has(relPath)) {
+      throw new Error(
+        `Call to function 'VaultFs.move' has been rejected. → Caused by: Introuvable : ${relPath}`,
+      );
+    }
+    const parent = relPath.includes("/")
+      ? relPath.slice(0, relPath.lastIndexOf("/"))
+      : "";
+    if (parent === dest) return relPath;
     const target = dest
       ? `${dest}/${relPath.split("/").pop()}`
       : relPath.split("/").pop()!;
@@ -349,5 +389,147 @@ describe("explorateur instantané (cache d'index)", () => {
     const { adapter, isFullyIndexed } = make();
     expect(JSON.stringify(await adapter.listTree())).toContain('"D"');
     expect(isFullyIndexed()).toBe(true);
+  });
+});
+
+describe("isVaultFsNotFound", () => {
+  it("reconnaît l'erreur native Android (Introuvable / E_NOT_FOUND)", () => {
+    expect(
+      isVaultFsNotFound(
+        new Error(
+          "Call to function 'VaultFs.rename' has been rejected. → Caused by: Introuvable : 👩🏻 Kyani Larsson.md",
+        ),
+      ),
+    ).toBe(true);
+    expect(isVaultFsNotFound(new Error("E_NOT_FOUND"))).toBe(true);
+    expect(isVaultFsNotFound(new Error("existe déjà"))).toBe(false);
+  });
+});
+
+describe("reconcileRelocations", () => {
+  const entry = { uri: "u", isDirectory: false };
+
+  it("réapplique un renommage ignoré par une liste périmée", () => {
+    const listed = new Map([["note.md", entry]]);
+    const memory = new Map([["note.mdx", entry]]);
+    const { index, pending } = reconcileRelocations(
+      listed,
+      memory,
+      [{ from: "note.md", to: "note.mdx", at: 1 }],
+      0,
+    );
+    expect([...index.keys()]).toEqual(["note.mdx"]);
+    expect(pending).toHaveLength(1);
+  });
+
+  it("garde le nouveau chemin si le parcours n'a encore ni l'ancien ni le nouveau", () => {
+    const { index } = reconcileRelocations(
+      new Map(),
+      new Map([["note.mdx", entry]]),
+      [{ from: "note.md", to: "note.mdx", at: 2 }],
+      1,
+    );
+    expect([...index.keys()]).toEqual(["note.mdx"]);
+  });
+
+  it("oublie le déplacement une fois le parcours à jour", () => {
+    const { index, pending } = reconcileRelocations(
+      new Map([["note.mdx", entry]]),
+      new Map([["note.mdx", entry]]),
+      [{ from: "note.md", to: "note.mdx", at: 1 }],
+      1,
+    );
+    expect([...index.keys()]).toEqual(["note.mdx"]);
+    expect(pending).toEqual([]);
+  });
+});
+
+describe("conversion .md ⇄ .mdx et index après renommage", () => {
+  const character =
+    "1. 👁 L'ENCHANTERESSE/📖 TEMPLATES/5. 👤 PERSONNAGES/🥇 PRINCIPAUX/👩🏻 Kyani Larsson.md";
+
+  it("garde le nouveau chemin même si listTree renvoie encore l'ancien .md", async () => {
+    const parent = character.slice(0, character.lastIndexOf("/"));
+    fs.files.set(character, "fiche");
+    for (let i = 1; i < parent.split("/").length; i++)
+      fs.dirs.add(parent.split("/").slice(0, i).join("/"));
+    fs.dirs.add(parent);
+    const { adapter, getIndexKeys } = make();
+    await adapter.listTree();
+    fs.holdListing();
+    const res = await adapter.rename(character, "👩🏻 Kyani Larsson.mdx");
+    const next = character.replace(/\.md$/, ".mdx");
+    expect(res.relPath).toBe(next);
+    expect(getIndexKeys()).toContain(next);
+    expect(getIndexKeys()).not.toContain(character);
+    const tree = JSON.stringify(await adapter.listTree());
+    expect(tree).toContain("👩🏻 Kyani Larsson.mdx");
+    expect(getIndexKeys()).not.toContain(character);
+  });
+
+  it("un parcours commencé avant le renommage ne réinscrit pas l'ancien chemin", async () => {
+    fs.files.set("note.md", "hello");
+    const { adapter, getIndexKeys } = make();
+    await adapter.listTree();
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const stale = {
+      files: new Map(fs.files),
+      dirs: new Set(fs.dirs),
+    };
+    const realList = fs.listTree.bind(fs);
+    let started = false;
+    fs.listTree = async (u: string) => {
+      started = true;
+      await gate;
+      const prev = fs.heldListing;
+      fs.heldListing = stale;
+      try {
+        return await realList(u);
+      } finally {
+        fs.heldListing = prev;
+      }
+    };
+    const rescan = adapter.rescan!();
+    while (!started) await new Promise((r) => setTimeout(r, 0));
+    const res = await adapter.rename("note.md", "note.mdx");
+    expect(res.relPath).toBe("note.mdx");
+    expect(getIndexKeys()).toContain("note.mdx");
+    expect(getIndexKeys()).not.toContain("note.md");
+    release();
+    await rescan;
+    expect(getIndexKeys()).toContain("note.mdx");
+    expect(getIndexKeys()).not.toContain("note.md");
+  });
+
+  it("si la source est introuvable mais que la cible existe, resynchronise l'index", async () => {
+    fs.files.set("note.md", "hello");
+    const { adapter, getIndexKeys } = make();
+    await adapter.listTree();
+    fs.files.delete("note.md");
+    fs.files.set("note.mdx", "hello");
+    const res = await adapter.rename("note.md", "note.mdx");
+    expect(res.relPath).toBe("note.mdx");
+    expect(getIndexKeys()).toContain("note.mdx");
+    expect(getIndexKeys()).not.toContain("note.md");
+  });
+
+  it("setPath dans le même dossier convertit .md → .mdx sans passer par move", async () => {
+    fs.dirs.add("Dossier");
+    fs.files.set("Dossier/note.md", "hello");
+    const { adapter, getIndexKeys } = make();
+    await adapter.listTree();
+    const moves: unknown[] = [];
+    const realMove = fs.move.bind(fs);
+    fs.move = async (t, rel, dest) => {
+      moves.push([rel, dest]);
+      return realMove(t, rel, dest);
+    };
+    const res = await adapter.setPath("Dossier/note.md", "Dossier/note.mdx");
+    expect(moves).toEqual([]);
+    expect(res.relPath).toBe("Dossier/note.mdx");
+    expect(fs.files.has("Dossier/note.mdx")).toBe(true);
+    expect(fs.files.has("Dossier/note.md")).toBe(false);
+    expect(getIndexKeys()).toContain("Dossier/note.mdx");
   });
 });

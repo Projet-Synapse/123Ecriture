@@ -1492,8 +1492,14 @@ export function NotesScreen({
         await convertRenamedNote(oldRelPath, result.relPath);
       } catch (error) {
         // Le déplacement a réussi : le contenu reste lisible dans l'ancien
-        // format, seule la conversion a échoué.
+        // format, seule la conversion a échoué — on le dit, au lieu de
+        // laisser croire que rien ne s'est passé.
         console.error('[vault] échec de la conversion de format :', error);
+        notify({
+          type: 'error',
+          key: 'format-conversion',
+          message: `La conversion de format a échoué : ${errorMessage(error)}`,
+        });
       }
       await updateLinksAfterRename(oldRelPath, result.relPath);
       await refreshTree();
@@ -1528,13 +1534,16 @@ export function NotesScreen({
       // Collision de nom, format non convertible… : le dialogue habituel
       // « Modifier le chemin » s'ouvre avec le message, pour corriger sans
       // tout retaper (au lieu d'un échec silencieux).
-      const node = findNodeByPath(tree, relPath);
+      const node = findNodeByPath(tree, relPath) ?? findNodeByPath(treeRef.current, relPath);
       if (node) {
         setEditPathError(errorMessage(error));
         setEditingPathNode(node);
+      } else {
+        notify({ type: 'error', key: 'rename-error', message: errorMessage(error) });
+        await refreshTree();
       }
     }
-  }, [vault, syncStatus, tree, renamingRelPath, renamingValue, applyRenameResult, withPathChange]);
+  }, [vault, syncStatus, tree, renamingRelPath, renamingValue, applyRenameResult, withPathChange, refreshTree]);
 
   const startMove = useCallback((node: VaultTreeNode) => {
     setMovingNode(node);
@@ -1649,21 +1658,23 @@ export function NotesScreen({
       try {
         await syncStatus.runSyncExclusive(() => withPathChange([node.relPath], async () => {
           const result = await vault.setPath(node.relPath, newRelPath);
-          // Fermé seulement en cas de SUCCÈS — en cas d'erreur (collision,
-          // chemin invalide...), la boîte reste ouverte avec le message pour
-          // que l'utilisatrice puisse corriger sans tout retaper.
-          setEditingPathNode(null);
-          setEditPathError(null);
           // Onglets, note active, favoris, conversion .md ⇄ .mdx, arbre :
           // mêmes suites qu'un renommage depuis l'explorateur.
+          // On ne ferme la boîte QU'APRÈS ces suites : si on la fermait
+          // juste après setPath, un échec plus loin laissait l'explorateur
+          // inchangé, sans message (« il ne s'est rien passé »).
           await applyRenameResult(node.relPath, result);
+          setEditingPathNode(null);
+          setEditPathError(null);
         }));
       } catch (error) {
         console.error('[vault] échec de la modification du chemin :', error);
         setEditPathError(errorMessage(error));
+        notify({ type: 'error', key: 'edit-path-error', message: errorMessage(error) });
+        await refreshTree();
       }
     },
-    [vault, syncStatus, editingPathNode, applyRenameResult, withPathChange],
+    [vault, syncStatus, editingPathNode, applyRenameResult, withPathChange, refreshTree],
   );
 
   const toggleCollapse = useCallback(
