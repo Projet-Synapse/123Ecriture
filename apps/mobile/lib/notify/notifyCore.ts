@@ -23,6 +23,11 @@
 
 export type NotifyType = 'success' | 'info' | 'warning' | 'error';
 
+export type ToastAction = {
+  kind: 'ellie-suggestion';
+  body: string;
+};
+
 export type NotifyInput = {
   type?: NotifyType;
   message: string;
@@ -32,6 +37,8 @@ export type NotifyInput = {
   key?: string;
   // Pas de réaffichage de la même clé avant ce délai (ms).
   throttleMs?: number;
+  // Clic sur la bulle : ouvrir un détail (ex. suggestion Ellie). Le ✕ ferme sans agir.
+  action?: ToastAction;
 };
 
 export type Toast = {
@@ -41,6 +48,7 @@ export type Toast = {
   message: string;
   count: number;
   leaving: boolean;
+  action?: ToastAction;
 };
 
 export const DEFAULT_DURATIONS: Record<NotifyType, number> = {
@@ -114,7 +122,7 @@ export function createNotifyStore(clock: NotifyClock): NotifyStore {
     if (existing) {
       toasts = toasts.map((t) =>
         t.id === existing.id
-          ? { ...t, type, message, count: t.message === message ? t.count + 1 : 1 }
+          ? { ...t, type, message, count: t.message === message ? t.count + 1 : 1, action: input.action ?? t.action }
           : t,
       );
       lastShownAt.set(key, now);
@@ -126,7 +134,7 @@ export function createNotifyStore(clock: NotifyClock): NotifyStore {
     if (input.throttleMs && last !== undefined && now - last < input.throttleMs) return null;
     lastShownAt.set(key, now);
     const id = `t${++seq}`;
-    toasts = [...toasts, { id, key, type, message, count: 1, leaving: false }];
+    toasts = [...toasts, { id, key, type, message, count: 1, leaving: false, action: input.action }];
     const visible = toasts.filter((t) => !t.leaving);
     if (visible.length > MAX_TOASTS) {
       const victim = visible.find((t) => t.type !== 'error') ?? visible[0];

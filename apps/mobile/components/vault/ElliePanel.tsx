@@ -5,6 +5,7 @@ import { normalizeAiGateway } from '../../lib/ai/aiPolicy';
 import { runEllieTurn, type EllieNoteContext } from '../../lib/ai/ellieChat';
 import { resolveEllieHttp, type EllieChatMessage } from '../../lib/ai/ellieClient';
 import { normalizeAiChat } from '../../lib/ai/ellieSettings';
+import { subscribeEllieSuggestion } from '../../lib/ai/ellieSuggestions';
 import {
   ELLIE_CONVERSATIONS_PATH,
   newConversation,
@@ -125,6 +126,37 @@ export function ElliePanel({ theme, currentNote, onInsertIntoNote, onOpenWikilin
     const vault = typeof window !== 'undefined' ? window.vault : undefined;
     if (!vault?.writeNote) return;
     void vault.writeNote(ELLIE_CONVERSATIONS_PATH, serializeEllieConversations(list)).catch(() => undefined);
+  }, []);
+
+  const conversationsRef = useRef(conversations);
+  const activeRef = useRef(active);
+  const persistRef = useRef(persist);
+  useEffect(() => {
+    conversationsRef.current = conversations;
+    activeRef.current = active;
+    persistRef.current = persist;
+  }, [conversations, active, persist]);
+
+  // Suggestion ouverte depuis une notification : ajoutée comme message
+  // assistant (Copier / Insérer restent un clic). Si le panneau n'était
+  // pas monté, la file d'attente livrera le texte à l'abonnement.
+  useEffect(() => {
+    return subscribeEllieSuggestion((text) => {
+      const body = text.trim();
+      if (!body) return;
+      const now = new Date().toISOString();
+      const current = activeRef.current;
+      const assistant: EllieStoredMessage = { id: newId(), role: 'assistant', content: body, at: now };
+      const next: EllieConversation = {
+        ...current,
+        title: current.messages.length === 0 ? 'Suggestions' : current.title,
+        updatedAt: now,
+        messages: [...current.messages, assistant],
+      };
+      setActive(next);
+      persistRef.current(upsertConversation(conversationsRef.current, next));
+      requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true }));
+    });
   }, []);
 
   const saveActive = useCallback(

@@ -100,6 +100,17 @@ describe('createNotifyStore', () => {
     expect(s.getToasts().map((t) => t.message)).toEqual(['E', 'm1', 'm2', 'm3']);
   });
 
+  it('conserve une action de clic (suggestion Ellie)', () => {
+    const s = createNotifyStore(fakeClock().clock);
+    s.notify({
+      type: 'info',
+      message: 'Clarifier le titre',
+      duration: 0,
+      action: { kind: 'ellie-suggestion', body: 'Clarifier le titre de la note.' },
+    });
+    expect(s.getToasts()[0].action).toEqual({ kind: 'ellie-suggestion', body: 'Clarifier le titre de la note.' });
+  });
+
   it('message vide ignoré ; abonnement notifié', () => {
     const s = createNotifyStore(fakeClock().clock);
     let calls = 0;
