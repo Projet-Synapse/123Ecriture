@@ -2,7 +2,7 @@
   "expo": {
     "name": "123Ecriture",
     "slug": "123ecriture",
-    "version": "0.5.0",
+    "version": "0.5.1",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -30,7 +30,7 @@
         "WAKE_LOCK",
         "RECEIVE_BOOT_COMPLETED"
       ],
-      "versionCode": 50099
+      "versionCode": 50199
     },
     "web": {
       "favicon": "./assets/favicon.png"
