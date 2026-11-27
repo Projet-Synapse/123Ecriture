@@ -1,5 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  StatusBar,
+  StyleSheet,
+  Text,
+  TextInput,
+  useWindowDimensions,
+  View,
+} from 'react-native';
 
 import {
   isSearchResultOpenable,
@@ -9,6 +21,8 @@ import {
   splitMatchSegments,
 } from '../../lib/notes/searchResults';
 import { useScrollIntoView } from '../../lib/ui/useScrollIntoView';
+import { useKeyboardFrame } from '../../lib/ui/useKeyboardHeight';
+import { searchDialogLayout } from '../../lib/ui/searchDialogLayout';
 import type { Theme } from '../../theme';
 import { errorMessage } from '../../lib/errorMessage';
 import { FileTypeIcon } from '../vault/FileIcons';
@@ -75,6 +89,15 @@ export function SearchDialog({ theme, onOpenResult, onCancel }: Props) {
   // lib/useScrollIntoView.ts pour la forme "handlers inline" imposée par
   // react-hooks/refs).
   const { scrollRef, recordItemLayout, handleListLayout, handleListScroll, ensureVisible } = useScrollIntoView();
+  // Taille adaptée à l'écran et au clavier (lib/ui/searchDialogLayout.ts).
+  const window_ = useWindowDimensions();
+  const keyboard = useKeyboardFrame();
+  const layout = searchDialogLayout({
+    windowWidth: window_.width,
+    windowHeight: window_.height,
+    keyboardHeight: keyboard.height,
+    statusBarHeight: Platform.OS === 'android' ? (StatusBar.currentHeight ?? 24) : 0,
+  });
 
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [properties, setProperties] = useState<PropertyDefinition[]>([]);
@@ -82,6 +105,11 @@ export function SearchDialog({ theme, onOpenResult, onCancel }: Props) {
   const [propertyValue, setPropertyValue] = useState('');
 
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Numéro de la DERNIÈRE recherche lancée : sur Android (lecture SAF),
+  // une recherche ancienne peut finir APRÈS la suivante — sa réponse est
+  // alors ignorée (sinon « Aucun résultat » d'une frappe précédente
+  // pouvait écraser les bons résultats).
+  const searchSeq = useRef(0);
   // Vrai dès qu'il y a une requête active (texte ou filtre) — la liste de
   // résultats affichée se base là-dessus plutôt que de vider `results` via
   // un setState synchrone dans l'effet ci-dessous (juste dérivé pendant le
@@ -98,15 +126,22 @@ export function SearchDialog({ theme, onOpenResult, onCancel }: Props) {
     if (debounceTimer.current) clearTimeout(debounceTimer.current);
 
     debounceTimer.current = setTimeout(() => {
+      searchSeq.current += 1;
+      const seq = searchSeq.current;
       setLoading(true);
       void searchBridge
         .run(query, selectedProperty ? { propertyId: selectedProperty.id, propertyValue: propertyValue || undefined } : undefined)
         .then((found) => {
+          if (seq !== searchSeq.current) return;
           setResults(found);
           setError(null);
         })
-        .catch((err) => setError(errorMessage(err)))
-        .finally(() => setLoading(false));
+        .catch((err) => {
+          if (seq === searchSeq.current) setError(errorMessage(err));
+        })
+        .finally(() => {
+          if (seq === searchSeq.current) setLoading(false);
+        });
     }, SEARCH_DEBOUNCE_MS);
 
     return () => {
@@ -191,12 +226,29 @@ export function SearchDialog({ theme, onOpenResult, onCancel }: Props) {
 //////// 3. Rendu (modale, filtres, résultats) et styles ///////////////////
 
   return (
-    <Modal visible transparent animationType="fade" onRequestClose={onCancel}>
-      <Pressable style={styles.backdrop} onPress={onCancel}>
+    <Modal visible transparent animationType="fade" onRequestClose={onCancel} statusBarTranslucent>
+      <Pressable
+        style={[
+          styles.backdrop,
+          layout.compact ? styles.backdropCompact : null,
+          { paddingTop: layout.paddingTop, paddingBottom: layout.paddingBottom },
+        ]}
+        onPress={onCancel}
+      >
         <Pressable
-          style={[styles.dialog, { backgroundColor: theme.surface }]}
+          style={[styles.dialog, { backgroundColor: theme.surface, width: layout.width, maxHeight: layout.maxHeight }]}
           onPress={(e) => e.stopPropagation()}
         >
+          {layout.compact && (
+            // Téléphone : « Fermer » EN HAUT, toujours visible même clavier
+            // ouvert (le bas de la boîte est alors caché par le clavier).
+            <View style={styles.header}>
+              <Text style={[styles.headerTitle, { color: theme.text }]}>Rechercher</Text>
+              <Pressable onPress={onCancel} accessibilityRole="button" hitSlop={8} style={styles.cancelButton}>
+                <Text style={{ color: theme.accent, fontWeight: '600' }}>Fermer</Text>
+              </Pressable>
+            </View>
+          )}
           <TextInput
             autoFocus
             value={query}
@@ -244,7 +296,10 @@ export function SearchDialog({ theme, onOpenResult, onCancel }: Props) {
             ref={scrollRef}
             onLayout={(event) => handleListLayout(event)}
             onScroll={(event) => handleListScroll(event)}
-            style={styles.resultsList}
+            style={layout.compact ? styles.resultsListCompact : styles.resultsList}
+            // Toucher un résultat clavier ouvert : ouvre directement (sans
+            // un premier toucher « perdu » à fermer le clavier).
+            keyboardShouldPersistTaps="handled"
           >
             {loading && (
               <View style={styles.statusRow}>
@@ -323,9 +378,11 @@ export function SearchDialog({ theme, onOpenResult, onCancel }: Props) {
               })}
           </ScrollView>
 
-          <Pressable onPress={onCancel} style={styles.cancelButton}>
-            <Text style={{ color: theme.textMuted }}>Fermer</Text>
-          </Pressable>
+          {!layout.compact && (
+            <Pressable onPress={onCancel} style={styles.cancelButton}>
+              <Text style={{ color: theme.textMuted }}>Fermer</Text>
+            </Pressable>
+          )}
         </Pressable>
       </Pressable>
     </Modal>
@@ -339,9 +396,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  // Téléphone : en haut, pleine largeur (marges = padding calculé).
+  backdropCompact: {
+    justifyContent: 'flex-start',
+  },
   dialog: {
-    width: 480,
-    maxHeight: 520,
     borderRadius: 12,
     padding: 16,
     gap: 10,
@@ -379,6 +438,21 @@ const styles = StyleSheet.create({
   },
   resultsList: {
     maxHeight: 340,
+    flexShrink: 1,
+  },
+  // Téléphone : la liste prend la place restante et défile.
+  resultsListCompact: {
+    flexGrow: 0,
+    flexShrink: 1,
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  headerTitle: {
+    fontSize: 16,
+    fontWeight: '600',
   },
   statusRow: {
     flexDirection: 'row',

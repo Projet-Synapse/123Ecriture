@@ -8,6 +8,7 @@ import { nativeTaskListsBridge, nativeTasksBridge } from './nativeTasksAdapter';
 import { nativeCalendarBridge } from './nativeCalendarAdapter';
 import { nativePropertiesBridge } from './nativePropertiesAdapter';
 import { installNativeAuthBridge } from './nativeAuthBridge';
+import { nativeSearchAdapter } from './nativeSearchAdapter';
 
 // ✒️ 123ECRITURE — lib/storage/installNativeBridges.ts — installation des ponts natifs (Android)
 //////////////////////////////////////////////////////////////////////////////
@@ -67,5 +68,8 @@ export function installNativeBridges(): void {
   // Propriétés PAR COFFRE (.123ecriture/properties.json) — voir
   // nativePropertiesAdapter.ts : panneau, bloc et Gestion des propriétés.
   window.properties = nativePropertiesBridge;
+  // Recherche globale (fichiers, textes, #mots-clés, tâches, évènements) —
+  // absente avant v0.4.100 : la recherche Android ne trouvait rien.
+  window.search = nativeSearchAdapter;
   installNativeAuthBridge();
 }
