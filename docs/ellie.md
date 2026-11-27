@@ -71,6 +71,18 @@ Source ou Intermédiaire.
 Les conversations sont enregistrées localement dans
 `.123ecriture/ellie-conversations.json` (comme le journal, non synchronisé).
 
+## 5. Ampoule 💡 — suggestions sur la note ouverte
+
+À côté du statut **Enregistré** de l’éditeur, le bouton **💡** demande à
+Ellie d’analyser la note ouverte (même connexion, mêmes verrous). Il est
+grisé si l’IA n’est pas activée ou si le fichier est verrouillé 🔒.
+
+Pendant l’analyse, l’ampoule affiche un indicateur de chargement ; un
+nouveau clic annule. Les suggestions arrivent en **notifications
+empilables** (lisibles, fermables par ✕). Un clic sur une bulle ouvre le
+détail dans le panneau Ellie : **Copier** et **Insérer dans la note**
+exigent toujours un clic. Rien n’est modifié tout seul.
+
 ## Limites actuelles
 
 - Le panneau s’ouvre depuis l’éditeur (une note ouverte).

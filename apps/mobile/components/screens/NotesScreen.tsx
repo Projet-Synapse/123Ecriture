@@ -26,9 +26,20 @@ import {
 } from '../../lib/properties/frontmatter';
 import { applyPathChange, isPathAffected, mergeRestoredOpenTabs, tabScrollOffset, visibleOpenTabs } from '../../lib/notes/openTabs';
 import { aiLockMenuItem, normalizeLockedPaths } from '../../lib/ai/aiLock';
+import { normalizeAiGateway } from '../../lib/ai/aiPolicy';
+import { runEllieTurn } from '../../lib/ai/ellieChat';
+import { resolveEllieHttp } from '../../lib/ai/ellieClient';
+import { normalizeAiChat } from '../../lib/ai/ellieSettings';
+import {
+  canRequestEllieAnalysis,
+  ELLIE_ANALYZE_PROMPT,
+  parseEllieSuggestions,
+  queueEllieSuggestion,
+} from '../../lib/ai/ellieSuggestions';
+import { createRendererEllieVault } from '../../lib/ai/ellieVault';
 import { convertNoteFormat, formatConversionBetween, willConvertFormat } from '../../lib/notes/renameTarget';
 import { linkRewriteKind, renamedPath, rewriteCanvasLinks, rewriteNoteLinks } from '../../lib/notes/linkRewrite';
-import { notify } from '../../lib/notify/notify';
+import { notify, setToastActionHandler } from '../../lib/notify/notify';
 import { linksUpdatedMessage } from '../../lib/notify/notifyCore';
 import { noteTitlePlacement } from '../../lib/notes/noteTitle';
 import { isPathChanging, shouldWriteSave } from '../../lib/notes/saveGuard';
@@ -78,6 +89,7 @@ import { ResizeHandle } from '../ResizeHandle';
 import { ExplorerPager, type ExplorerPagerHandle } from '../explorer/ExplorerPager';
 import { ExplorerToggleButton } from '../explorer/ExplorerToggleButton';
 import { RightSidebar, type SidebarTab } from '../vault/RightSidebar';
+import { EllieAmpouleButton } from '../vault/EllieAmpouleButton';
 import { ElliePanel } from '../vault/ElliePanel';
 import { OutlinePanel } from '../vault/OutlinePanel';
 import { ExplorerSearch } from '../vault/ExplorerSearch';
@@ -2543,6 +2555,95 @@ export function NotesScreen({
     view.focus();
   };
 
+  const openElliePanel = useCallback(() => {
+    if (isNativeLayout) setEllieSheetOpen(true);
+    else {
+      setSidebarTab('ellie');
+      setSidebarOpen(true);
+    }
+  }, [isNativeLayout]);
+
+  const analysisAbortRef = useRef<AbortController | null>(null);
+  const [analyzingNote, setAnalyzingNote] = useState(false);
+  const ellieAccess = canRequestEllieAnalysis(
+    normalizeAiGateway(preferences.aiGateway),
+    aiLockedPaths,
+    activeNote?.relPath,
+  );
+
+  const requestEllieAnalysis = async () => {
+    if (analyzingNote) {
+      analysisAbortRef.current?.abort();
+      return;
+    }
+    if (ellieAccess.ok === false) {
+      notify({ type: 'warning', message: ellieAccess.reason });
+      return;
+    }
+    if (!activeNote) return;
+    const gateway = normalizeAiGateway(preferences.aiGateway);
+    const chat = normalizeAiChat(preferences.aiChat);
+    const ctrl = new AbortController();
+    analysisAbortRef.current = ctrl;
+    setAnalyzingNote(true);
+    try {
+      const vaultAi = createRendererEllieVault(async () => ({ settings: gateway, locked: aiLockedPaths }), chat.name);
+      const result = await runEllieTurn({
+        settings: chat,
+        gateway,
+        history: [],
+        userText: ELLIE_ANALYZE_PROMPT,
+        includeNote: true,
+        note: { relPath: activeNote.relPath, name: activeNote.name, content: bodyOnly },
+        http: resolveEllieHttp(),
+        vault: vaultAi,
+        signal: ctrl.signal,
+      });
+      if (ctrl.signal.aborted) return;
+      const suggestions = parseEllieSuggestions(result.content);
+      if (suggestions.length === 0) {
+        notify({ type: 'info', message: `${chat.name} n’a pas proposé d’amélioration.` });
+        return;
+      }
+      const overflow = suggestions.length > 4;
+      const shown = overflow ? suggestions.slice(0, 3) : suggestions;
+      shown.forEach((suggestion, i) => {
+        const preview = suggestion.length > 180 ? `${suggestion.slice(0, 177)}…` : suggestion;
+        notify({
+          type: 'info',
+          key: `ellie-suggestion:${Date.now()}:${i}`,
+          message: preview,
+          duration: 0,
+          action: { kind: 'ellie-suggestion', body: suggestion },
+        });
+      });
+      if (overflow) {
+        notify({
+          type: 'info',
+          key: `ellie-suggestion:${Date.now()}:more`,
+          message: `… et ${suggestions.length - 3} autres suggestions — ouvrir dans Ellie`,
+          duration: 0,
+          action: { kind: 'ellie-suggestion', body: suggestions.map((s) => `- ${s}`).join('\n') },
+        });
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (!/interrompue|Aborted/i.test(message)) notify({ type: 'error', message });
+    } finally {
+      if (analysisAbortRef.current === ctrl) analysisAbortRef.current = null;
+      setAnalyzingNote(false);
+    }
+  };
+
+  useEffect(() => {
+    setToastActionHandler((action) => {
+      if (action.kind !== 'ellie-suggestion') return;
+      queueEllieSuggestion(action.body);
+      openElliePanel();
+    });
+    return () => setToastActionHandler(null);
+  }, [openElliePanel]);
+
   // Clic sur un [[lien interne]] (voir NoteRenderer.tsx) — résout par NOM
   // de note (comme Obsidian, insensible à la casse) ou par chemin quand le
   // lien en porte un, alias et ancre ignorés (resolveWikilink). Si la cible
@@ -3333,17 +3434,23 @@ export function NotesScreen({
                     <Text style={[styles.editorTitle, { color: theme.text }]}>{activeNote.name}</Text>
                   </Pressable>
                 ))}
-              {/* Groupe de droite de l'en-tête : compteur (markdown
-                  uniquement), statut de sauvegarde, menu ⋯ des actions de
-                  la note, panneau latéral — regroupés pour que
-                  space-between ne disperse pas quatre éléments sur toute
-                  la largeur (le titre reste seul à gauche). */}
+              {/* Groupe de droite de l'en-tête : statut de sauvegarde,
+                  ampoule Ellie 💡, menu ⋯ des actions de la note, 💬 Ellie,
+                  panneau latéral — regroupés pour que space-between ne
+                  disperse pas les éléments (le titre reste seul à gauche). */}
               <View style={styles.editorHeaderRight}>
                 <Text style={[styles.status, { color: theme.textMuted }]}>
                   {status === 'saving' && 'Enregistrement…'}
                   {status === 'saved' && 'Enregistré'}
                   {status === 'error' && '⚠️ Échec de la sauvegarde'}
                 </Text>
+                <EllieAmpouleButton
+                  theme={theme}
+                  disabled={ellieAccess.ok === false}
+                  analyzing={analyzingNote}
+                  disabledReason={ellieAccess.ok === false ? ellieAccess.reason : undefined}
+                  onPress={() => void requestEllieAnalysis()}
+                />
                 <Pressable
                   onPress={showEditorActionsMenu}
                   style={styles.sidebarToggle}

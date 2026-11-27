@@ -9,9 +9,9 @@
 
 import { useSyncExternalStore } from 'react';
 
-import { createNotifyStore, type NotifyInput, type Toast } from './notifyCore';
+import { createNotifyStore, type NotifyInput, type Toast, type ToastAction } from './notifyCore';
 
-export type { NotifyInput, NotifyType, Toast } from './notifyCore';
+export type { NotifyInput, NotifyType, Toast, ToastAction } from './notifyCore';
 
 const store = createNotifyStore({
   now: () => Date.now(),
@@ -29,4 +29,16 @@ export function dismissToast(id: string): void {
 
 export function useToasts(): Toast[] {
   return useSyncExternalStore(store.subscribe, store.getToasts, store.getToasts);
+}
+
+// Gestionnaire unique pour le clic-action d'une bulle (enregistré par NotesScreen,
+// invoqué par ToastHost). Pas de fonction dans le store : la logique reste pure.
+let toastActionHandler: ((action: ToastAction) => void) | null = null;
+
+export function setToastActionHandler(handler: ((action: ToastAction) => void) | null): void {
+  toastActionHandler = handler;
+}
+
+export function runToastAction(action: ToastAction): void {
+  toastActionHandler?.(action);
 }

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Animated, Platform, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
-import { dismissToast, notify, useToasts, type Toast } from '../lib/notify/notify';
+import { dismissToast, notify, runToastAction, useToasts, type Toast } from '../lib/notify/notify';
 import { solidColor } from '../lib/ui/popover';
 import { usePreferences } from '../preferences/PreferencesContext';
 import type { Theme } from '../theme';
@@ -55,17 +55,32 @@ function ToastBubble({ toast, theme }: { toast: Toast; theme: Theme }) {
       }}
     >
       <Pressable
-        onPress={() => dismissToast(toast.id)}
+        onPress={() => {
+          if (toast.action) runToastAction(toast.action);
+          dismissToast(toast.id);
+        }}
         accessibilityRole="alert"
-        accessibilityHint="Toucher pour fermer"
+        accessibilityHint={toast.action ? 'Toucher pour ouvrir le détail' : 'Toucher pour fermer'}
         style={[styles.bubble, { backgroundColor: background, borderColor: theme.border, borderLeftColor: color }]}
       >
-        <Text style={[styles.icon, { color }]}>{TYPE_ICONS[toast.type]}</Text>
-        <Text style={[styles.message, { color: theme.text }]}>
+        <Text style={[styles.icon, { color }]}>{toast.action?.kind === 'ellie-suggestion' ? '💡' : TYPE_ICONS[toast.type]}</Text>
+        <Text style={[styles.message, { color: theme.text }]} numberOfLines={6}>
           {toast.message}
           {toast.count > 1 ? <Text style={{ color: theme.textMuted }}>{`  ×${toast.count}`}</Text> : null}
         </Text>
-        {toast.type === 'error' ? <Text style={[styles.close, { color: theme.textMuted }]}>✕</Text> : null}
+        {toast.action || toast.type === 'error' ? (
+          <Pressable
+            onPress={(e) => {
+              e.stopPropagation?.();
+              dismissToast(toast.id);
+            }}
+            accessibilityRole="button"
+            accessibilityLabel="Fermer la notification"
+            hitSlop={8}
+          >
+            <Text style={[styles.close, { color: theme.textMuted }]}>✕</Text>
+          </Pressable>
+        ) : null}
       </Pressable>
     </Animated.View>
   );
