@@ -8,6 +8,7 @@ import { EditorSection } from './settings/EditorSection';
 import { FilesLinksSection } from './settings/FilesLinksSection';
 import { TemplatesSection } from './settings/TemplatesSection';
 import { AiGatewaySection, AiLockSection } from './settings/AiSection';
+import { EllieChatSection } from './settings/EllieChatSection';
 import { FormattingSection } from './settings/FormattingSection';
 import { NotificationsSection } from './settings/NotificationsSection';
 import { PersonalizationCard } from './PersonalizationCard';
@@ -108,6 +109,7 @@ function renderSection(id: SettingsSectionId) {
       return (
         <>
           <AiGatewaySection />
+          <EllieChatSection />
           <AiLockSection />
         </>
       );

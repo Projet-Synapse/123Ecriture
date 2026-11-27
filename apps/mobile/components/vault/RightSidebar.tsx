@@ -8,7 +8,7 @@ import type { Theme } from '../../theme';
 //
 // Panneau persistant à droite de l'éditeur Notes (voir NotesScreen.tsx,
 // bouton de repli dans l'en-tête) : un rail de boutons en haut choisit quel
-// contenu afficher en dessous (Propriétés / Occurrences / Plan).
+// contenu afficher en dessous (Propriétés / Occurrences / Plan / Ellie).
 //
 // Invariants du fichier :
 //   • Composant purement présentationnel : NotesScreen possède l'état
@@ -20,7 +20,7 @@ import type { Theme } from '../../theme';
 //
 //////////////////////////////////////////////////////////////////////////////
 
-export type SidebarTab = 'properties' | 'occurrences' | 'outline';
+export type SidebarTab = 'properties' | 'occurrences' | 'outline' | 'ellie';
 
 type SidebarTabConfig = { id: SidebarTab; icon: string; label: string };
 
@@ -28,6 +28,7 @@ const TABS: SidebarTabConfig[] = [
   { id: 'properties', icon: '🏷️', label: 'Propriétés' },
   { id: 'occurrences', icon: '🔤', label: 'Occurrences' },
   { id: 'outline', icon: '📑', label: 'Plan' },
+  { id: 'ellie', icon: '💬', label: 'Ellie' },
 ];
 
 type Props = {

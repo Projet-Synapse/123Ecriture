@@ -66,3 +66,11 @@ tester directement depuis LM Studio.
 - Fonctionne seulement app PC ouverte ; pas de serveur sur Android.
 - Port fixe 37123 ; s'il est déjà pris, le serveur ne démarre pas (message dans
   la console de l'app).
+
+
+## Chat Ellie (dans l’app)
+
+Pour parler avec Qwen *dans* 123Écriture (panneau 💬 Ellie), voir
+`docs/ellie.md`. Les mêmes verrous, autorisations, dossiers autorisés et
+le même journal s’appliquent. Le chat est inerte tant que « Activer la
+passerelle IA » n’est pas coché.

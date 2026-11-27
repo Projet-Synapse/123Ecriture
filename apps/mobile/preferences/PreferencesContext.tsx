@@ -5,6 +5,7 @@ import { DEFAULT_CANVAS_TOOLBAR_ORDER } from '../lib/editor/canvasToolbarActions
 import { remapPathsAfterRename } from '../lib/notes/renameTarget';
 import { normalizeLockedPaths, remapAiLocks, toggleAiLock as toggleAiLockPure } from '../lib/ai/aiLock';
 import { normalizeAiGateway, type AiGatewaySettings } from '../lib/ai/aiPolicy';
+import { normalizeAiChat, type AiChatSettings } from '../lib/ai/ellieSettings';
 import { DEFAULT_CHART_TOOLBAR_ORDER } from '../lib/editor/chartToolbarActions';
 import {
   DEFAULT_NOTES_TOOLBAR_ORDER,
@@ -141,6 +142,7 @@ type PreferencesContextValue = {
   setAiLockedPaths: (paths: string[]) => Promise<void>;
   remapAiLocksAfterPathChange: (oldRelPath: string, newRelPath: string) => Promise<void>;
   setAiGateway: (settings: AiGatewaySettings) => Promise<void>;
+  setAiChat: (settings: AiChatSettings) => Promise<void>;
   setFileSortMode: (mode: FileSortMode) => Promise<void>;
   setExplorerExpandMode: (mode: ExplorerExpandMode) => Promise<void>;
   setPropertiesSortMode: (mode: PropertySortMode) => Promise<void>;
@@ -470,6 +472,10 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     (settings: AiGatewaySettings) => persist({ aiGateway: normalizeAiGateway(settings) }),
     [persist],
   );
+  const setAiChat = useCallback(
+    (settings: AiChatSettings) => persist({ aiChat: normalizeAiChat(settings) }),
+    [persist],
+  );
 
   const setTemplateRules = useCallback(
     (rules: { folder: string; template: string }[]) => persist({ templateRules: rules }),
@@ -692,6 +698,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       setAiLockedPaths,
       remapAiLocksAfterPathChange,
       setAiGateway,
+      setAiChat,
       setFileSortMode,
       setExplorerExpandMode,
       setPropertiesSortMode,
@@ -748,6 +755,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       setAiLockedPaths,
       remapAiLocksAfterPathChange,
       setAiGateway,
+      setAiChat,
       setFileSortMode,
       setExplorerExpandMode,
       setPropertiesSortMode,
