@@ -9,6 +9,8 @@
 //
 //////////////////////////////////////////////////////////////////////////////
 
+import { assertLocalHttpAllowed } from './localHttpGuard';
+
 export type AiChatProvider = 'ollama' | 'openai';
 
 export type AiChatSettings = {
@@ -69,5 +71,8 @@ export function normalizeEllieBaseUrl(url: string): string {
   if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash) {
     throw new Error('URL HTTP(S) requise, sans identifiants, paramètres ni fragment.');
   }
+  // http:// seulement vers le réseau local (Android autorise le HTTP non
+  // chiffré pour tous les hôtes : le filtre est ici — localHttpGuard.ts).
+  assertLocalHttpAllowed(trimmed);
   return parsed.toString().replace(/\/$/, '').replace(/\/v1$/, '');
 }

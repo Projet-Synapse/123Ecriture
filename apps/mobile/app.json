@@ -36,7 +36,8 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-notifications"
+      "expo-notifications",
+      "./plugins/withLocalNetworkCleartext"
     ]
   }
 }
