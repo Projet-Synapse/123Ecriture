@@ -8,6 +8,7 @@ describe('parseEditorCommand', () => {
     expect(parseEditorCommand({ kind: 'undo' })).toEqual({ kind: 'undo' });
     expect(parseEditorCommand({ kind: 'redo', extra: 1 })).toEqual({ kind: 'redo' });
     expect(parseEditorCommand({ kind: 'insert', text: '![[a.png]]' })).toEqual({ kind: 'insert', text: '![[a.png]]' });
+    expect(parseEditorCommand({ kind: 'select', from: 12, to: 18 })).toEqual({ kind: 'select', from: 12, to: 18 });
   });
 
   it('rejette le reste', () => {
@@ -15,6 +16,7 @@ describe('parseEditorCommand', () => {
     expect(parseEditorCommand({ kind: 'eval', code: 'x' })).toBeNull();
     expect(parseEditorCommand({ kind: 'format' })).toBeNull();
     expect(parseEditorCommand({ kind: 'insert', text: 3 })).toBeNull();
+    expect(parseEditorCommand({ kind: 'select', from: '0', to: 1 })).toBeNull();
     expect(parseEditorCommand(null)).toBeNull();
   });
 });
@@ -47,6 +49,10 @@ describe('applyTextCommand', () => {
     expect(applyTextCommand('a', { start: 0, end: 0 }, { kind: 'format', id: 'attach' })).toBeNull();
     expect(applyTextCommand('a', { start: 0, end: 0 }, { kind: 'undo' })).toBeNull();
   });
+
+  it('select : ne modifie pas le texte (saut géré par la WebView)', () => {
+    expect(applyTextCommand('abcdef', { start: 0, end: 0 }, { kind: 'select', from: 2, to: 4 })).toBeNull();
+  });
 });
 
 describe('toolbarRoute', () => {
@@ -59,3 +65,4 @@ describe('toolbarRoute', () => {
     expect(toolbarRoute('lint')).toBe('lint');
   });
 });
+

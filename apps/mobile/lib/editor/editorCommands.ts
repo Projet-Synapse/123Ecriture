@@ -12,7 +12,8 @@
 // Invariants du fichier :
 //   • Une commande est du JSON pur : `format` (id d'action de la barre),
 //     `undo`/`redo`, `insert` (texte inséré à la place de la sélection —
-//     pièce jointe, modèle).
+//     pièce jointe, modèle), `select` (saut à un offset, ex. résultat de
+//     recherche — ne modifie pas le texte).
 //   • parseEditorCommand rejette tout ce qui n'est pas une commande connue
 //     (la page web n'exécute jamais un message arbitraire).
 //   • applyTextCommand est PURE (texte + sélection → texte + sélection) ;
@@ -37,7 +38,8 @@ export type EditorCommand =
   | { kind: 'insert'; text: string }
   // « ✨ Formater le fichier » (lib/editor/formatter.ts) appliqué DANS
   // l'éditeur, en un changement minimal : annulable par Ctrl+Z / ↶.
-  | { kind: 'formatDoc'; settings: unknown };
+  | { kind: 'formatDoc'; settings: unknown }
+  | { kind: 'select'; from: number; to: number };
 
 export function parseEditorCommand(raw: unknown): EditorCommand | null {
   let value: unknown = raw;
@@ -54,6 +56,15 @@ export function parseEditorCommand(raw: unknown): EditorCommand | null {
   if (cmd.kind === 'format' && typeof cmd.id === 'string') return { kind: 'format', id: cmd.id };
   if (cmd.kind === 'insert' && typeof cmd.text === 'string') return { kind: 'insert', text: cmd.text };
   if (cmd.kind === 'formatDoc') return { kind: 'formatDoc', settings: cmd.settings };
+  if (
+    cmd.kind === 'select' &&
+    typeof cmd.from === 'number' &&
+    Number.isFinite(cmd.from) &&
+    typeof cmd.to === 'number' &&
+    Number.isFinite(cmd.to)
+  ) {
+    return { kind: 'select', from: cmd.from, to: cmd.to };
+  }
   return null;
 }
 

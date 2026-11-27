@@ -14,6 +14,9 @@ import { normalizeRelPath } from '../../mobile/lib/sync/relPath';
 // Découpe du frontmatter PARTAGÉE avec le renderer (autrefois dupliquée
 // ici : la copie avait divergé — ni BOM, ni espaces après `---`).
 import { parseFrontmatter } from '../../mobile/lib/properties/frontmatter';
+import { matchDocument } from '../../mobile/lib/search/queryMatch';
+import { parseSearchQuery, queryNeedles, queryNeedsContent, type QueryNode } from '../../mobile/lib/search/queryParser';
+
 
 // Module "Recherche globale" (voir .claude/References/Sources.md §2,
 // bouton en haut de l'explorateur de fichiers) : parcourt le coffre à la
@@ -34,7 +37,6 @@ const NOTE_EXTENSIONS: Record<string, VaultEntryKind> = {
   '.excalidraw': 'excalidraw',
 };
 
-const SNIPPET_RADIUS = 60;
 
 function getVaultPath(): string | null {
   return vaults.getActiveVaultPath();
@@ -87,225 +89,126 @@ function extractTags(text: string): string[] {
   return [...tags];
 }
 
-function buildSnippet(text: string, matchIndex: number, matchLength: number): string {
-  const start = Math.max(0, matchIndex - SNIPPET_RADIUS);
-  const end = Math.min(text.length, matchIndex + matchLength + SNIPPET_RADIUS);
-  const prefix = start > 0 ? '…' : '';
-  const suffix = end < text.length ? '…' : '';
-  return `${prefix}${text.slice(start, end).replace(/\s+/g, ' ').trim()}${suffix}`;
-}
-
-// Étend la recherche globale aux TÂCHES (voir electron/tasks.ts) — cherche
-// le texte de la tâche ET sa description, un résultat par tâche
-// correspondante. `taskId`/`taskListId` (pas de `relPath`, une tâche n'a pas
-// de fichier) portent de quoi la rouvrir côté renderer (voir
-// lib/searchResults.ts, `openSearchResult`).
-//
-// L'échéance est cherchable aussi (depuis PR #25 chaque tâche peut en
-// porter une) : en ISO (2026-09-14 — un préfixe "2026-09" marche donc
-// aussi) ET en formatage français ("14 sept. 2026" / "14 sept."), pour ne
-// pas obliger à connaître le format de stockage. Même tableau de mois que
-// lib/taskDueDates.ts (formatDueDate côté renderer), dupliqué ici (deux
-// paquets séparés, pas de package partagé).
-const MONTHS_SHORT_FR = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
-
-function formatDueDateFr(dueDate: string): string | null {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(dueDate)) return null;
-  const [year, month, day] = dueDate.split('-').map(Number);
-  const label = MONTHS_SHORT_FR[month - 1];
-  if (!label) return null;
-  return `${day} ${label} ${year}`;
-}
-
-function searchTasks(vaultPath: string, needle: string): SearchResult[] {
-  // Assure la migration (listId attribué à toute tâche créée avant les
-  // listes multiples) avant de lire — sans ça une tâche legacy remonterait
-  // sans `taskListId` exploitable pour la rouvrir.
-  getTaskLists(vaultPath);
-  const results: SearchResult[] = [];
-
-  for (const task of readTasks(vaultPath)) {
-    const textIndex = task.text.toLowerCase().indexOf(needle);
-    if (textIndex !== -1) {
-      results.push({
-        relPath: '',
-        name: task.text,
-        kind: 'task',
-        matchType: 'title',
-        taskId: task.id,
-        taskListId: task.listId,
-      });
-      continue;
-    }
-
-    const description = task.description ?? '';
-    const descriptionIndex = description.toLowerCase().indexOf(needle);
-    if (descriptionIndex !== -1) {
-      results.push({
-        relPath: '',
-        name: task.text,
-        kind: 'task',
-        matchType: 'content',
-        snippet: buildSnippet(description, descriptionIndex, needle.length),
-        taskId: task.id,
-        taskListId: task.listId,
-      });
-      continue;
-    }
-
-    const dueDate = typeof task.dueDate === 'string' ? task.dueDate : null;
-    const dueLabel = dueDate ? formatDueDateFr(dueDate) : null;
-    const dueMatched =
-      (dueDate !== null && dueDate.includes(needle)) ||
-      (dueLabel !== null && dueLabel.toLowerCase().includes(needle));
-    if (dueMatched && dueDate && dueLabel) {
-      results.push({
-        relPath: '',
-        name: task.text,
-        kind: 'task',
-        matchType: 'content',
-        snippet: `Échéance : ${dueLabel}`,
-        taskId: task.id,
-        taskListId: task.listId,
-      });
-    }
-  }
-
-  return results;
-}
-
-// Étend la recherche globale aux ÉVÈNEMENTS du calendrier (voir
-// electron/calendar.ts) — cherche le titre ET les notes de l'évènement.
-// `eventDate` (AAAA-MM-JJ) suffit à révéler le bon jour côté renderer
-// (CalendarScreen.tsx, `openDay`) ; `eventId` sert surtout de clé de rendu.
-function searchCalendarEvents(vaultPath: string, needle: string): SearchResult[] {
-  const results: SearchResult[] = [];
-
-  for (const event of readEvents(vaultPath)) {
-    const titleIndex = event.title.toLowerCase().indexOf(needle);
-    if (titleIndex !== -1) {
-      results.push({
-        relPath: '',
-        name: event.title,
-        kind: 'calendar-event',
-        matchType: 'title',
-        eventId: event.id,
-        eventDate: event.date,
-      });
-      continue;
-    }
-
-    const notes = event.notes ?? '';
-    const notesIndex = notes.toLowerCase().indexOf(needle);
-    if (notesIndex !== -1) {
-      results.push({
-        relPath: '',
-        name: event.title,
-        kind: 'calendar-event',
-        matchType: 'content',
-        snippet: buildSnippet(notes, notesIndex, needle.length),
-        eventId: event.id,
-        eventDate: event.date,
-      });
-    }
-  }
-
-  return results;
+function withPropertyFilter(ast: QueryNode | null, options?: SearchOptions): QueryNode | null {
+  if (!options?.propertyId) return ast;
+  const filter: QueryNode = {
+    type: 'property',
+    name: options.propertyId,
+    value: options.propertyValue?.trim() ? options.propertyValue : null,
+  };
+  return ast ? { type: 'and', children: [filter, ast] } : filter;
 }
 
 async function runSearch(vaultPath: string, query: string, options: SearchOptions | undefined): Promise<SearchResult[]> {
-  const trimmedQuery = (query ?? '').trim();
-  const propertyId = options?.propertyId;
-  // Ni texte ni filtre : pas de "tout lister", la recherche reste vide
-  // tant qu'on ne lui demande rien de précis.
-  if (!trimmedQuery && !propertyId) return [];
-
-  const needle = trimmedQuery.toLowerCase();
+  const parsed = parseSearchQuery((query ?? '').trim());
+  const ast = withPropertyFilter(parsed.ast, options);
+  if (!ast) return [];
+  const fold = { caseSensitive: Boolean(options?.caseSensitive) };
+  const needles = queryNeedles(ast);
+  const needsContent = queryNeedsContent(ast);
   const entries = await walkAll(vaultPath, vaultPath);
   const results: SearchResult[] = [];
 
   for (const entry of entries) {
-    // Filtre par propriété : ne concerne que les notes (le frontmatter
-    // n'existe que là), silencieusement ignoré pour dossiers/pièces
-    // jointes/canvas/graphiques plutôt que de les exclure par erreur.
-    if (propertyId && entry.kind !== 'markdown') continue;
-
-    let data: Record<string, unknown> = {};
-    let body = '';
-    let hasReadContent = false;
-    const readNoteOnce = async () => {
-      if (hasReadContent) return;
-      hasReadContent = true;
+    let data: Record<string, unknown> | undefined;
+    let body: string | undefined;
+    let bodyOffset = 0;
+    if (needsContent && entry.kind === 'markdown') {
       try {
-        const content = await fs.readFile(entry.fullPath, 'utf8');
-        ({ data, body } = parseFrontmatter(content));
+        const raw = await fs.readFile(entry.fullPath, 'utf8');
+        try {
+          ({ data, body } = parseFrontmatter(raw));
+        } catch {
+          body = raw;
+        }
+        bodyOffset = body && raw.endsWith(body) ? raw.length - body.length : 0;
       } catch {
-        // Fichier illisible entre le listage et la lecture (supprimé,
-        // permissions...) — ignoré plutôt que de faire échouer toute la
-        // recherche pour un seul fichier.
-      }
-    };
-
-    if (propertyId) {
-      await readNoteOnce();
-      const rawValue = data[propertyId];
-      if (rawValue === undefined || rawValue === null || rawValue === '') continue;
-      if (options?.propertyValue) {
-        const serialized = String(rawValue).toLowerCase();
-        if (!serialized.includes(options.propertyValue.toLowerCase())) continue;
+        // Fichier illisible : on continue avec le seul nom/chemin.
       }
     }
-
-    if (!trimmedQuery) {
-      // Filtre par propriété seul, sans texte — tout ce qui a passé le
-      // filtre ci-dessus est un résultat.
-      results.push({ relPath: entry.relPath, name: entry.name, kind: entry.kind, matchType: 'property' });
-      continue;
-    }
-
-    const nameIndex = entry.name.toLowerCase().indexOf(needle);
-    if (nameIndex !== -1) {
-      results.push({ relPath: entry.relPath, name: entry.name, kind: entry.kind, matchType: 'title' });
-      continue;
-    }
-
-    if (entry.kind !== 'markdown') continue;
-
-    await readNoteOnce();
-
-    const tags = extractTags(body);
-    if (tags.some((tag) => tag.includes(needle))) {
-      results.push({ relPath: entry.relPath, name: entry.name, kind: entry.kind, matchType: 'tag' });
-      continue;
-    }
-
-    const bodyLower = body.toLowerCase();
-    const contentIndex = bodyLower.indexOf(needle);
-    if (contentIndex !== -1) {
+    const fileName = path.basename(entry.fullPath);
+    const hit = matchDocument(
+      {
+        relPath: entry.relPath,
+        name: entry.name,
+        fileName,
+        kind: entry.kind,
+        body,
+        bodyOffset,
+        properties: data,
+      },
+      ast,
+      fold,
+    );
+    if (hit) {
       results.push({
         relPath: entry.relPath,
         name: entry.name,
         kind: entry.kind,
-        matchType: 'content',
-        snippet: buildSnippet(body, contentIndex, needle.length),
+        matchType: hit.matchType,
+        snippet: hit.snippet,
+        matchCount: hit.matchCount,
+        offset: hit.offset,
+        needles,
       });
     }
   }
 
-  // Tâches et évènements du calendrier n'ont pas de frontmatter/propriétés
-  // — un filtre par propriété actif les exclut donc entièrement plutôt que
-  // de les inclure à tort (ils ne peuvent jamais satisfaire ce filtre).
-  if (trimmedQuery && !propertyId) {
-    results.push(...searchTasks(vaultPath, needle));
-    results.push(...searchCalendarEvents(vaultPath, needle));
+  getTaskLists(vaultPath);
+  for (const task of readTasks(vaultPath)) {
+    const due = typeof task.dueDate === 'string' ? task.dueDate : null;
+    const dueLabel = due
+      ? (() => {
+          const [year, month, day] = due.split('-').map(Number);
+          const months = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
+          const label = months[month - 1];
+          return label ? `${day} ${label} ${year}` : null;
+        })()
+      : null;
+    const extra = [task.description ?? '', due ?? '', dueLabel ? `Échéance : ${dueLabel}` : ''].filter(Boolean).join('\n');
+    const hit = matchDocument(
+      { relPath: '', name: task.text, fileName: task.text, kind: 'task', body: extra || undefined },
+      ast,
+      fold,
+    );
+    if (hit) {
+      results.push({
+        relPath: '',
+        name: task.text,
+        kind: 'task',
+        matchType: hit.matchType,
+        snippet: hit.snippet,
+        matchCount: hit.matchCount,
+        needles,
+        taskId: task.id,
+        taskListId: task.listId,
+      });
+    }
+  }
+  for (const event of readEvents(vaultPath)) {
+    const notes = event.notes ?? '';
+    const hit = matchDocument(
+      { relPath: '', name: event.title, fileName: event.title, kind: 'calendar-event', body: notes || undefined },
+      ast,
+      fold,
+    );
+    if (hit) {
+      results.push({
+        relPath: '',
+        name: event.title,
+        kind: 'calendar-event',
+        matchType: hit.matchType,
+        snippet: hit.snippet,
+        matchCount: hit.matchCount,
+        needles,
+        eventId: event.id,
+        eventDate: event.date,
+      });
+    }
   }
 
-  // Titre d'abord, puis mots-clés, puis contenu, puis propriété seule —
-  // une correspondance "plus directe" (le nom lui-même) est plus
-  // pertinente qu'une mention perdue dans le corps.
   const priority: Record<SearchResult['matchType'], number> = { title: 0, tag: 1, content: 2, property: 3 };
   results.sort((a, b) => priority[a.matchType] - priority[b.matchType]);
-
   return results;
 }
 
