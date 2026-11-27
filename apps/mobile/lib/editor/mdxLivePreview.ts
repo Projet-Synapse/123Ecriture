@@ -5,14 +5,12 @@ import { isImageEmbedTarget } from '../notes/embedResolution';
 import { unsupportedImageMessage, withImageMime } from '../files/imageFormats';
 import {
   findAlignedBlocks,
-  closeLengthOf,
-  findBold,
-  findItalic,
   findLiveMatches,
-  findStrikeAndUnderline,
   findTableBlocks,
+  planInline,
+  planMark,
+  type InlinePiece,
   type LiveMatch,
-  type MarkMatch,
   type TokenType,
 } from './liveDecorations';
 
@@ -369,6 +367,15 @@ function selectionTouches(view: EditorView, from: number, to: number): boolean {
   return view.state.selection.ranges.some((range) => range.from < to && range.to > from);
 }
 
+// Mise en forme (gras, italique…) : révélée aussi quand le curseur est
+// COLLÉ à un bord (juste avant le premier marqueur, juste après le
+// dernier) — comportement Obsidian demandé (v0.4.100) : cliquer au bout
+// d'un mot en gras montre ses `**`. Les pastilles (liens, tags) et blocs
+// gardent la règle stricte ci-dessus.
+function selectionTouchesInclusive(view: EditorView, from: number, to: number): boolean {
+  return view.state.selection.ranges.some((range) => range.from <= to && range.to >= from);
+}
+
 type DecorationRange = { from: number; to: number; decoration: Decoration };
 
 // Garde-fou : les décorations du Live Preview coûtent une passe de
@@ -381,51 +388,16 @@ const MAX_LIVE_PREVIEW_CHARS = 500_000;
 
 //////// 4. Découpage récursif des marqueurs imbriqués (pushMarkedRanges) ///////
 
-// Découpe RÉCURSIVE de [from, to) — masque les marqueurs de gras/italique
-// IMBRIQUÉS (`**_texte_**`, `__** Corbeaux **__`, titres contenant du
-// gras…) en cumulant les styles, et stylise le texte libre avec `style`.
-// Sans elle, l'italique dans le gras (`**_Procédure_**`) est abandonné par
-// le dédoublonnage de findLiveMatches : les `_` restent visibles autour du
-// mot, seul le gras extérieur est décoré.
-// `style` cumule ceux des ancêtres (titre → gras → italique). Chaque
-// niveau de récursion consomme au moins les deux marqueurs, donc
-// l'imbrication terminée est garantie ; les plages sortent de gauche à
-// droite (le tri final de Decoration.set couvre le reste).
-// Style CSS d'un mark (barré + souligné se cumulent : text-decoration-line
-// porte les deux quand ils sont imbriqués).
-function markStyle(type: MarkMatch['type'], inherited: string): string {
-  if (type === 'bold') return 'font-weight:700';
-  if (type === 'italic') return 'font-style:italic';
-  const lines = /text-decoration-line:([^;]*)/.exec(inherited)?.[1]?.trim().split(/\s+/) ?? [];
-  const next = type === 'strike' ? 'line-through' : 'underline';
-  return `text-decoration-line:${[...new Set([...lines, next])].join(' ')}`;
-}
-
-function pushMarkedRanges(ranges: DecorationRange[], text: string, from: number, to: number, style: string): void {
-  const slice = text.slice(from, to);
-  const inner = [...findBold(slice), ...findItalic(slice), ...findStrikeAndUnderline(slice)].sort((a, b) => a.from - b.from);
-  let cursor = from;
-  const emitPlain = (f: number, t: number) => {
-    if (f < t) ranges.push({ from: f, to: t, decoration: Decoration.mark({ attributes: { style } }) });
-  };
-  for (const segment of inner) {
-    const absFrom = from + segment.from;
-    const absTo = from + segment.to;
-    if (absFrom < cursor) continue; // chevauche le segment retenu (dédoublonnage local)
-    emitPlain(cursor, absFrom);
-    const closeLength = closeLengthOf(segment);
-    ranges.push({ from: absFrom, to: absFrom + segment.markerLength, decoration: Decoration.replace({}) });
-    pushMarkedRanges(
-      ranges,
-      text,
-      absFrom + segment.markerLength,
-      absTo - closeLength,
-      `${style};${markStyle(segment.type, style)}`,
-    );
-    ranges.push({ from: absTo - closeLength, to: absTo, decoration: Decoration.replace({}) });
-    cursor = absTo;
+// Le découpage (marques imbriquées, styles cumulés, marqueurs masqués ou
+// RÉVÉLÉS selon la sélection) est calculé hors CodeMirror par
+// planMark/planInline (lib/editor/liveDecorations.ts, testés) ; ici on ne
+// fait que traduire les morceaux en décorations.
+function pushPieces(ranges: DecorationRange[], pieces: InlinePiece[]): void {
+  for (const piece of pieces) {
+    if (piece.from >= piece.to) continue;
+    if (piece.kind === 'hide') ranges.push({ from: piece.from, to: piece.to, decoration: Decoration.replace({}) });
+    else ranges.push({ from: piece.from, to: piece.to, decoration: Decoration.mark({ attributes: { style: piece.style } }) });
   }
-  emitPlain(cursor, to);
 }
 
 //////// 5. buildDecorations — décorations inline ///////////////////////////////
@@ -449,6 +421,7 @@ function buildDecorations(view: EditorView, colors: LivePreviewColors, callbacks
   // l'éditeur). Curseur dans le tableau : texte brut révélé, les
   // correspondances internes redeviennent actives comme partout.
   const renderedTables = findRenderedTables(view.state);
+  const touches = (from: number, to: number) => selectionTouchesInclusive(view, from, to);
   const insideRenderedTable = (from: number, to: number): boolean =>
     renderedTables.some((block) => from < block.to && to > block.from);
 
@@ -457,23 +430,20 @@ function buildDecorations(view: EditorView, colors: LivePreviewColors, callbacks
     const active = selectionTouches(view, match.from, match.to);
 
     if (match.kind === 'mark') {
-      if (active) continue; // texte brut révélé pendant l'édition
-      const styleClass = markStyle(match.type, '');
-      ranges.push({ from: match.from, to: match.from + match.markerLength, decoration: Decoration.replace({}) });
-      // Le contenu est découpé en spans hors tokens ; chaque span passe
-      // par le découpage récursif pour masquer à son tour les marqueurs
-      // de gras/italique IMBRIQUÉS (`**_Procédure_**` : les `_`
-      // disparaissent aussi).
-      for (const span of match.contentSpans) {
-        pushMarkedRanges(ranges, text, span.from, span.to, styleClass);
-      }
-      ranges.push({ from: match.to - closeLengthOf(match), to: match.to, decoration: Decoration.replace({}) });
+      // Marqueurs masqués, RÉVÉLÉS (visibles, éditables) dès que le
+      // curseur est dedans ou collé aux bords — y compris les marqueurs
+      // imbriqués (`**_x_**`) ; le contenu reste stylé (v0.4.100 : avant,
+      // les marqueurs imbriqués ou dans un titre ne réapparaissaient
+      // jamais, impossible de corriger un astérisque parasite).
+      pushPieces(ranges, planMark(text, match, match.contentSpans, '', touches));
     } else if (match.kind === 'heading') {
       // Taille PAR NIVEAU, nettement graduée — une échelle plate fait
       // h5/h6 à 1em, invisibles dans les notes qui structurent leurs
       // sections en #####.
       const sizeByLevel = [0, '2em', '1.75em', '1.5em', '1.3em', '1.15em', '1em'];
-      if (!active) {
+      // Préfixe « ## » révélé dès que le curseur est sur le titre, bouts
+      // de ligne compris (cliquer en fin de titre le montre aussi).
+      if (!touches(match.from, match.to)) {
         ranges.push({ from: match.from, to: match.contentFrom, decoration: Decoration.replace({}) });
       }
       const headingStyle = `font-weight:700;font-size:${sizeByLevel[match.level]};text-decoration:none${colorize ? `;color:${colors.accent}` : ''}`;
@@ -483,7 +453,7 @@ function buildDecorations(view: EditorView, colors: LivePreviewColors, callbacks
       // segment passe par le découpage récursif : ses `**`/`__`/`_`/`*`
       // imbriqués sont masqués et stylés.
       for (const span of match.contentSpans) {
-        pushMarkedRanges(ranges, text, span.from, span.to, headingStyle);
+        pushPieces(ranges, planInline(text, span.from, span.to, headingStyle, touches));
       }
     } else {
       // token : wikilink/tag/occurrence/embed
