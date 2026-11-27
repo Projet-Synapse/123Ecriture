@@ -8,6 +8,7 @@ import path from 'path';
 import { pathToFileURL, URL } from 'url';
 
 import { startAiGatewayWatcher, stopAiGateway } from './aiGateway';
+import { registerEllieHandlers } from './ellieProxy';
 import { registerAuthHandlers, registerAuthProtocol } from './ponts-desktop/auth';
 import { registerCalendarHandlers } from './calendar';
 import { registerContextMenuHandlers } from './contextMenu';
@@ -137,6 +138,7 @@ if (!gotSingleInstanceLock) {
     registerPropertiesHandlers();
     registerOccurrencesHandlers();
     registerSearchHandlers();
+    registerEllieHandlers();
     registerAuthProtocol();
     // Passerelle IA (serveur MCP local, lecture seule) — n'écoute que si
     // elle est activée dans Paramètres → 🤖 IA et qu'un jeton existe.

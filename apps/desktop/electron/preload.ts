@@ -207,3 +207,30 @@ contextBridge.exposeInMainWorld('taskLists', {
     return () => ipcRenderer.removeListener('tasklists:changed', handler);
   },
 });
+
+
+contextBridge.exposeInMainWorld('ellie', {
+  request: (input: { url: string; method: string; headers: Record<string, string>; body?: string }) =>
+    ipcRenderer.invoke('ellie:request', input),
+  streamLines: (
+    input: { url: string; method: string; headers: Record<string, string>; body: string; signal?: AbortSignal },
+    onLine: (line: string) => void,
+  ) => {
+    const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const handler = (_event: Electron.IpcRendererEvent, payload: { id: string; line: string }) => {
+      if (payload.id === id) onLine(payload.line);
+    };
+    ipcRenderer.on('ellie:line', handler);
+    const abort = () => ipcRenderer.send('ellie:abort', id);
+    if (input.signal) {
+      if (input.signal.aborted) abort();
+      else input.signal.addEventListener('abort', abort, { once: true });
+    }
+    return ipcRenderer
+      .invoke('ellie:stream', { id, url: input.url, method: input.method, headers: input.headers, body: input.body })
+      .finally(() => {
+        ipcRenderer.removeListener('ellie:line', handler);
+        input.signal?.removeEventListener('abort', abort);
+      });
+  },
+});

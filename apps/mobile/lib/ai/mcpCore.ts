@@ -93,7 +93,7 @@ function snippetAround(content: string, index: number, length: number): string {
   return `${start > 0 ? '…' : ''}${content.slice(start, end).replace(/\s+/g, ' ').trim()}${end < content.length ? '…' : ''}`;
 }
 
-async function callTool(name: string, args: Record<string, unknown>, deps: McpDeps): Promise<ToolResult> {
+export async function runVaultAiTool(name: string, args: Record<string, unknown>, deps: McpDeps): Promise<ToolResult> {
   const { settings, locked } = await deps.load();
   const at = (deps.now ?? (() => new Date()))().toISOString();
   const log = (action: AiJournalEntry['action'], path: string, decision: AiJournalEntry['decision'], reason: string) =>
@@ -192,7 +192,7 @@ export async function handleMcpMessage(msg: JsonRpcRequest, deps: McpDeps): Prom
         unknown
       >;
       try {
-        return ok(await callTool(name, args, deps));
+        return ok(await runVaultAiTool(name, args, deps));
       } catch (error) {
         return ok(text(`Erreur : ${error instanceof Error ? error.message : String(error)}`, true));
       }

@@ -613,6 +613,16 @@ declare global {
       tokenHint?: string;
       tokenCreatedAt?: string;
     };
+    // Chat Ellie (lib/ai/ellieSettings.ts) — connexion Ollama / LM Studio.
+    aiChat?: {
+      provider: 'ollama' | 'openai';
+      baseUrl: string;
+      model: string;
+      name: string;
+      systemPrompt: string;
+      includeCurrentNote: boolean;
+      apiKey?: string;
+    };
     fileSortMode: FileSortMode;
     // Ouverture des dossiers de l'explorateur au chargement du coffre —
     // voir ExplorerExpandMode ci-dessus et NotesScreen.tsx pour l'application
@@ -796,5 +806,13 @@ declare global {
     properties?: PropertiesBridge;
     occurrences?: OccurrencesBridge;
     search?: SearchBridge;
+    // Proxy HTTP du chat Ellie (process principal, voir electron/ellieProxy.ts).
+    ellie?: {
+      request: (input: { url: string; method: string; headers: Record<string, string>; body?: string }) => Promise<{ ok: boolean; status: number; text: string }>;
+      streamLines: (
+        input: { url: string; method: string; headers: Record<string, string>; body: string; signal?: AbortSignal },
+        onLine: (line: string) => void,
+      ) => Promise<{ ok: boolean; status: number; text: string }>;
+    };
   }
 }

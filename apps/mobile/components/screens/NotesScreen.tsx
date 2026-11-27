@@ -12,6 +12,7 @@ import {
   TextInput,
   useWindowDimensions,
   View,
+  Modal,
 } from 'react-native';
 
 import { EditorView, type ReactCodeMirrorRef } from '@uiw/react-codemirror';
@@ -77,6 +78,7 @@ import { ResizeHandle } from '../ResizeHandle';
 import { ExplorerPager, type ExplorerPagerHandle } from '../explorer/ExplorerPager';
 import { ExplorerToggleButton } from '../explorer/ExplorerToggleButton';
 import { RightSidebar, type SidebarTab } from '../vault/RightSidebar';
+import { ElliePanel } from '../vault/ElliePanel';
 import { OutlinePanel } from '../vault/OutlinePanel';
 import { ExplorerSearch } from '../vault/ExplorerSearch';
 import { formatMarkdown, normalizeFormattingSettings } from '../../lib/editor/formatter';
@@ -400,6 +402,7 @@ export function NotesScreen({
   // côté du contenu quel qu'il soit.
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>('properties');
+  const [ellieSheetOpen, setEllieSheetOpen] = useState(false);
   // Redimensionnement/repli au curseur des 2 barres latérales internes à
   // cet écran (voir lib/useResizablePanel.ts, components/ResizeHandle.tsx —
   // la 3e, la nav générale, est gérée par AppShell.tsx). Le panneau droit
@@ -2519,6 +2522,27 @@ export function NotesScreen({
     view.focus();
   };
 
+  // Insertion d'une proposition d'Ellie au curseur — uniquement sur clic
+  // (« Insérer dans la note »). Même chemin que l'insertion d'un modèle.
+  const insertEllieText = (text: string) => {
+    const view = viewRef.current;
+    if (!view) {
+      if (nativeEditorCommandRef.current) {
+        nativeEditorCommandRef.current({ kind: 'insert', text });
+        return;
+      }
+      setWikilinkNotice("L'insertion se fait depuis un éditeur Source ou Intermédiaire.");
+      return;
+    }
+    const sel = view.state.selection.main;
+    const doc = view.state.doc.toString();
+    view.dispatch({
+      changes: { from: 0, to: doc.length, insert: doc.slice(0, sel.from) + text + doc.slice(sel.to) },
+      selection: { anchor: sel.from + text.length },
+    });
+    view.focus();
+  };
+
   // Clic sur un [[lien interne]] (voir NoteRenderer.tsx) — résout par NOM
   // de note (comme Obsidian, insensible à la casse) ou par chemin quand le
   // lien en porte un, alias et ancre ignorés (resolveWikilink). Si la cible
@@ -3328,6 +3352,19 @@ export function NotesScreen({
                   <Text style={{ color: theme.textMuted }}>⋯</Text>
                 </Pressable>
                 <Pressable
+                  onPress={() => {
+                    if (isNativeLayout) setEllieSheetOpen(true);
+                    else {
+                      setSidebarTab('ellie');
+                      setSidebarOpen(true);
+                    }
+                  }}
+                  style={styles.sidebarToggle}
+                  accessibilityLabel="Parler avec Ellie"
+                >
+                  <Text style={{ color: ellieSheetOpen || (sidebarOpen && sidebarTab === 'ellie') ? theme.accent : theme.textMuted }}>💬</Text>
+                </Pressable>
+                <Pressable
                   onPress={() => setSidebarOpen((open) => !open)}
                   style={styles.sidebarToggle}
                   accessibilityLabel={sidebarOpen ? 'Masquer le panneau latéral' : 'Afficher le panneau latéral'}
@@ -3766,6 +3803,13 @@ export function NotesScreen({
                           view.focus();
                         }}
                       />
+                    ) : sidebarTab === 'ellie' ? (
+                      <ElliePanel
+                        theme={theme}
+                        currentNote={activeNote ? { relPath: activeNote.relPath, name: activeNote.name, content: bodyOnly } : null}
+                        onInsertIntoNote={insertEllieText}
+                        onOpenWikilink={(target) => void handleOpenWikilink(target)}
+                      />
                     ) : (
                       <OccurrencesPanel
                         theme={theme}
@@ -3777,6 +3821,24 @@ export function NotesScreen({
                     )}
                   </RightSidebar>
                 </>
+              )}
+              {isNativeLayout && (
+                <Modal visible={ellieSheetOpen} animationType="slide" onRequestClose={() => setEllieSheetOpen(false)}>
+                  <View style={{ flex: 1, backgroundColor: theme.background }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: theme.border }}>
+                      <Text style={{ color: theme.text, fontWeight: '700' }}>Ellie</Text>
+                      <Pressable onPress={() => setEllieSheetOpen(false)} accessibilityLabel="Fermer Ellie" style={styles.sidebarToggle}>
+                        <Text style={{ color: theme.textMuted }}>Fermer</Text>
+                      </Pressable>
+                    </View>
+                    <ElliePanel
+                      theme={theme}
+                      currentNote={activeNote ? { relPath: activeNote.relPath, name: activeNote.name, content: bodyOnly } : null}
+                      onInsertIntoNote={insertEllieText}
+                      onOpenWikilink={(target) => void handleOpenWikilink(target)}
+                    />
+                  </View>
+                </Modal>
               )}
             </View>
           </>
