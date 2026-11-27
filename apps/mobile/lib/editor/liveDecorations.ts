@@ -21,9 +21,13 @@
 //     en forme qui l'entoure — le mark est DÉCOUPÉ autour de lui, pas
 //     l'inverse.
 //   • Portée : gras `**...**` et `__...__`, italique `_..._` et `*...*`,
-//     barré `~~...~~`, souligné `<u>...</u>`
-//     — pas le triple `***…***`, ambigu en pur regex sans un vrai
-//     parseur.
+//     gras+italique `***...***` et `___...___` (v0.4.100), barré
+//     `~~...~~`, souligné `<u>...</u>`.
+//   • Un marqueur SANS partenaire (`**Présentation du mode_*`, `**1•`)
+//     n'est jamais masqué : il reste visible en texte brut, pour pouvoir
+//     repérer et corriger les astérisques parasites.
+//   • `_` collé à une lettre/chiffre (snake_case, `mode_`) n'ouvre ni ne
+//     ferme rien — même règle que le rendu Markdown (et Obsidian).
 //
 // SOMMAIRE :
 //   1. Types des correspondances (mark, titre, token)
@@ -39,7 +43,7 @@
 
 export type MarkMatch = {
   kind: 'mark';
-  type: 'bold' | 'italic' | 'strike' | 'underline';
+  type: 'bold' | 'italic' | 'boldItalic' | 'strike' | 'underline';
   from: number;
   to: number;
   // Longueur du marqueur OUVRANT ; `closeLength` celle du fermant quand
@@ -94,6 +98,10 @@ export function findBold(text: string): MarkMatch[] {
   for (const re of [/\*\*([^*\n]+?)\*\*/g, /__([^_\n]+?)__/g]) {
     let match: RegExpExecArray | null;
     while ((match = re.exec(text))) {
+      if (re.source.startsWith('__') && !underscoreBoundaryOk(text, match.index, match.index + match[0].length)) {
+        re.lastIndex = match.index + 1;
+        continue;
+      }
       matches.push({
         kind: 'mark',
         type: 'bold',
@@ -105,6 +113,43 @@ export function findBold(text: string): MarkMatch[] {
     }
   }
   return matches;
+}
+
+const WORD_CHAR = /[\p{L}\p{N}]/u;
+
+// `_` intra-mot (snake_case, `mode_`) : ni ouvrant ni fermant.
+function underscoreBoundaryOk(text: string, from: number, to: number): boolean {
+  const before = text[from - 1];
+  const after = text[to];
+  return !(before && WORD_CHAR.test(before)) && !(after && WORD_CHAR.test(after));
+}
+
+// Gras+italique `***…***` / `___…___` (v0.4.100) : sans cette règle, le
+// triple était découpé en morceaux incohérents (`*` visibles, italique
+// sur un seul astérisque).
+export function findBoldItalic(text: string): MarkMatch[] {
+  const matches: MarkMatch[] = [];
+  for (const re of [/\*\*\*(?!\s)([^*\n]*?[^*\s])\*\*\*/g, /___(?!\s)([^_\n]*?[^_\s])___/g]) {
+    let match: RegExpExecArray | null;
+    while ((match = re.exec(text))) {
+      const end = match.index + match[0].length;
+      const delimiter = match[0][0];
+      // Délimiteur supplémentaire collé (`****x***`) : ambigu, texte brut.
+      if (text[match.index - 1] === delimiter || text[end] === delimiter) continue;
+      if (delimiter === '_' && !underscoreBoundaryOk(text, match.index, end)) continue;
+      matches.push({ kind: 'mark', type: 'boldItalic', from: match.index, to: end, markerLength: 3, contentSpans: [] });
+    }
+  }
+  return matches;
+}
+
+// Toutes les marques de mise en forme d'un texte (une ligne ou un
+// segment), triées par position — les recouvrements sont arbitrés par
+// l'appelant (premier trié gagne ; à position égale, la plus LONGUE).
+export function findAllMarks(text: string): MarkMatch[] {
+  return [...findBoldItalic(text), ...findBold(text), ...findItalic(text), ...findStrikeAndUnderline(text)].sort(
+    (a, b) => a.from - b.from || b.to - a.to,
+  );
 }
 
 // Exporté pour le découpage des titres en segments stylés (voir findBold).
@@ -125,8 +170,10 @@ export function findItalic(text: string): MarkMatch[] {
   // stylise d'un seul mouvement. (`**gras**` COMPLET reste couvert par le
   // gras, qui gagne au dédoublonnage de findLiveMatches.)
   const patterns: { re: RegExp; delimiter: string }[] = [
-    { re: /_([^_\n]+?)_/g, delimiter: '_' },
-    { re: /\*(?!\s)([^*\n]*\S)\*/g, delimiter: '*' },
+    { re: /_(?!\s)([^_\n]*?[^_\s])_/g, delimiter: '_' },
+    // Contenu terminé par un caractère qui n'est ni espace NI `*` : sinon
+    // `***` seul (début d'un gras+italique) passait pour un italique.
+    { re: /\*(?!\s)([^*\n]*[^*\s])\*/g, delimiter: '*' },
   ];
   for (const { re, delimiter } of patterns) {
     let match: RegExpExecArray | null;
@@ -134,6 +181,10 @@ export function findItalic(text: string): MarkMatch[] {
       const charBefore = text[match.index - 1];
       const charAfter = text[match.index + match[0].length];
       if (charBefore === delimiter || charAfter === delimiter) continue;
+      if (delimiter === '_' && !underscoreBoundaryOk(text, match.index, match.index + match[0].length)) {
+        re.lastIndex = match.index + 1;
+        continue;
+      }
       matches.push({
         kind: 'mark',
         type: 'italic',
@@ -327,8 +378,8 @@ export function findLiveMatches(text: string): LiveMatch[] {
   // Passe 2 — marks/titres : survivent s'ils ne chevauchent ni un token
   // retenu ni un autre mark déjà retenu ; leur contenu est découpé autour
   // des tokens.
-  const others = [...findBold(text), ...findItalic(text), ...findStrikeAndUnderline(text), ...findHeadings(text)];
-  others.sort((a, b) => a.from - b.from);
+  const others = [...findAllMarks(text), ...findHeadings(text)];
+  others.sort((a, b) => a.from - b.from || b.to - a.to);
 
   const marksAndHeadings: (MarkMatch | HeadingMatch)[] = [];
   let lastOtherTo = -1;
@@ -479,4 +530,86 @@ export function findAlignedBlocks(text: string): AlignedBlock[] {
     index = last;
   }
   return blocks;
+}
+
+//////// 7. Plan des décorations de mise en forme (planMark, planInline) ///////
+
+// Morceau de décoration inline, calculé SANS CodeMirror (testable) :
+//   • 'hide'   — marqueur masqué (Decoration.replace) ;
+//   • 'marker' — marqueur RÉVÉLÉ : visible, éditable, estompé ;
+//   • 'text'   — texte stylé (gras, italique, titre…).
+export type InlinePiece = { from: number; to: number; kind: 'hide' | 'marker' | 'text'; style: string };
+
+// Le curseur/la sélection « touche » une plage : DEDANS ou collé à ses
+// bords (comportement Obsidian). Fournie par l'appelant.
+export type TouchTest = (from: number, to: number) => boolean;
+
+const REVEALED_MARKER_STYLE = 'opacity:0.55';
+
+// Style CSS d'un mark (barré + souligné se cumulent : text-decoration-line
+// porte les deux quand ils sont imbriqués).
+export function markStyle(type: MarkMatch['type'], inherited: string): string {
+  if (type === 'bold') return 'font-weight:700';
+  if (type === 'italic') return 'font-style:italic';
+  if (type === 'boldItalic') return 'font-weight:700;font-style:italic';
+  const lines = /text-decoration-line:([^;]*)/.exec(inherited)?.[1]?.trim().split(/\s+/) ?? [];
+  const next = type === 'strike' ? 'line-through' : 'underline';
+  return `text-decoration-line:${[...new Set([...lines, next])].join(' ')}`;
+}
+
+function joinStyle(a: string, b: string): string {
+  return a && b ? `${a};${b}` : a || b;
+}
+
+// Une marque : ses marqueurs sont MASQUÉS, sauf si la sélection la touche
+// (ou touche une marque qui la contient) — ils sont alors visibles et
+// éditables ; le contenu garde son style dans les deux cas (pas de saut
+// de mise en page au clic).
+export function planMark(
+  text: string,
+  mark: MarkMatch,
+  spans: { from: number; to: number }[],
+  inherited: string,
+  touches: TouchTest,
+  parentRevealed = false,
+): InlinePiece[] {
+  const revealed = parentRevealed || touches(mark.from, mark.to);
+  const style = joinStyle(inherited, markStyle(mark.type, inherited));
+  const closeLength = closeLengthOf(mark);
+  const marker = (from: number, to: number): InlinePiece =>
+    revealed ? { from, to, kind: 'marker', style: joinStyle(style, REVEALED_MARKER_STYLE) } : { from, to, kind: 'hide', style: '' };
+  const pieces: InlinePiece[] = [marker(mark.from, mark.from + mark.markerLength)];
+  for (const span of spans) pieces.push(...planInline(text, span.from, span.to, style, touches, revealed));
+  pieces.push(marker(mark.to - closeLength, mark.to));
+  return pieces;
+}
+
+// Découpe RÉCURSIVE de [from, to) : marques imbriquées (`**_x_**`, gras
+// dans un titre…) avec styles cumulés ; le reste reçoit `style`. Un
+// marqueur sans partenaire n'est pas une marque : il reste en texte.
+export function planInline(
+  text: string,
+  from: number,
+  to: number,
+  style: string,
+  touches: TouchTest,
+  parentRevealed = false,
+): InlinePiece[] {
+  const pieces: InlinePiece[] = [];
+  const emitText = (f: number, t: number) => {
+    if (f < t && style) pieces.push({ from: f, to: t, kind: 'text', style });
+  };
+  let cursor = from;
+  for (const segment of findAllMarks(text.slice(from, to))) {
+    const absFrom = from + segment.from;
+    const absTo = from + segment.to;
+    if (absFrom < cursor) continue; // chevauche le segment retenu
+    emitText(cursor, absFrom);
+    const absolute: MarkMatch = { ...segment, from: absFrom, to: absTo };
+    const inner = { from: absFrom + segment.markerLength, to: absTo - closeLengthOf(segment) };
+    pieces.push(...planMark(text, absolute, [inner], style, touches, parentRevealed));
+    cursor = absTo;
+  }
+  emitText(cursor, to);
+  return pieces;
 }
