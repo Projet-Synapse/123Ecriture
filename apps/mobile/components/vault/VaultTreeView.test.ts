@@ -11,7 +11,11 @@ const source = readFileSync(join(__dirname, 'VaultTreeView.tsx'), 'utf8');
 
 describe('VaultTreeView — sous-arbres', () => {
   it('chaque appel récursif transmet childProps', () => {
-    const calls = source.match(/<VaultTreeViewImpl[^>]*\/>/g) ?? [];
+    const calls = (source.match(/<VaultTreeViewImpl[^>]*\/>/g) ?? []).filter(
+      // La racine (VaultTreeViewRoot) transmet `{...props}` ; seuls les
+      // appels RÉCURSIFS doivent passer par childProps.
+      (call) => !call.includes('{...props}'),
+    );
     expect(calls.length).toBeGreaterThan(0);
     for (const call of calls) expect(call).toContain('{...childProps}');
   });
