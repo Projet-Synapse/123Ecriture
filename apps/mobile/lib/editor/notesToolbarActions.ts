@@ -241,17 +241,17 @@ export function normalizeNotesToolbarOrder(order: ToolbarItemConfig[]): ToolbarI
 //////// 4. Groupes de la barre d'outils (conteneurs ordonnés) //////////////////
 
 // La barre est composée de CONTENEURS ordonnés : chaque groupe a un nom,
-// peut être dépliant (un bouton qui déploie ses boutons au survol/appui)
-// ou déplié en permanence (boutons côte à côte), et porte ses boutons
-// dans l'ordre. Un bouton absent des groupes = masqué de la barre (choix
-// façon Obsidian : on choisit ce qui est présent) — il reste proposé
-// dans la réserve de Paramètres pour être (re)placé par glisser-déposer.
+// peut être dépliant (un bouton qui déploie son menu au clic/tap seulement)
+// ou ouvert (boutons côte à côte en un bloc, séparateur entre groupes),
+// et porte ses boutons dans l'ordre. Un bouton absent des groupes = masqué
+// de la barre (choix façon Obsidian : on choisit ce qui est présent) — il
+// reste proposé dans la réserve de Paramètres pour être (re)placé.
 
 export type NotesToolbarGroup = {
   id: string;
   label: string;
-  // Dépliant : un seul bouton (libellé du groupe) qui déploie sa rangée au
-  // survol (PC) / à l'appui (tactile). Non dépliant : boutons côte à côte.
+  // Dépliant : un seul bouton (libellé du groupe) qui déploie son menu au
+  // clic/tap (pas au survol). Non dépliant : boutons côte à côte en un bloc.
   collapsible: boolean;
   buttons: ToolbarActionId[];
 };
