@@ -259,6 +259,7 @@ export interface Preferences {
   };
   templateRules?: { folder: string; template: string }[];
   aiLockedPaths?: string[];
+  graphGroups?: { id: string; query: string; color: string }[];
   aiGateway?: {
     enabled: boolean;
     permissions: Record<'read' | 'search' | 'create' | 'edit' | 'move' | 'delete' | 'template' | 'format', 'deny' | 'ask' | 'allow'>;
