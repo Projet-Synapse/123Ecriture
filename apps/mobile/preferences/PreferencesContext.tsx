@@ -7,6 +7,7 @@ import { normalizeLockedPaths, remapAiLocks, toggleAiLock as toggleAiLockPure } 
 import { normalizeAiGateway, type AiGatewaySettings } from '../lib/ai/aiPolicy';
 import { normalizeAiChat, type AiChatSettings } from '../lib/ai/ellieSettings';
 import { DEFAULT_CHART_TOOLBAR_ORDER } from '../lib/editor/chartToolbarActions';
+import { normalizeGraphGroups, type GraphGroup } from '../lib/graph/graphGroups';
 import {
   DEFAULT_NOTES_TOOLBAR_ORDER,
   DEFAULT_NOTES_TOOLBAR_GROUPS,
@@ -140,6 +141,9 @@ type PreferencesContextValue = {
   // Verrouillage IA (lib/ai/aiLock.ts).
   toggleAiLock: (relPath: string) => Promise<void>;
   setAiLockedPaths: (paths: string[]) => Promise<void>;
+  // Vue graphique : groupes de couleurs par requête (lib/graph/graphGroups.ts),
+  // répliqués dans le coffre avec le reste des préférences.
+  setGraphGroups: (groups: GraphGroup[]) => Promise<void>;
   remapAiLocksAfterPathChange: (oldRelPath: string, newRelPath: string) => Promise<void>;
   setAiGateway: (settings: AiGatewaySettings) => Promise<void>;
   setAiChat: (settings: AiChatSettings) => Promise<void>;
@@ -455,6 +459,10 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     },
     [persist],
   );
+  const setGraphGroups = useCallback(
+    (groups: GraphGroup[]) => persist({ graphGroups: normalizeGraphGroups(groups) }),
+    [persist],
+  );
   const toggleAiLock = useCallback(
     (relPath: string) => setAiLockedPaths(toggleAiLockPure(aiLockedRef.current, relPath)),
     [setAiLockedPaths],
@@ -696,6 +704,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       setTemplateRules,
       toggleAiLock,
       setAiLockedPaths,
+      setGraphGroups,
       remapAiLocksAfterPathChange,
       setAiGateway,
       setAiChat,
@@ -753,6 +762,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       setTemplateRules,
       toggleAiLock,
       setAiLockedPaths,
+      setGraphGroups,
       remapAiLocksAfterPathChange,
       setAiGateway,
       setAiChat,
