@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Modal, Platform, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
 import {
@@ -6,6 +6,7 @@ import {
   TOOLBAR_TOUCH_TARGET,
   toolbarPressEffect,
   type ToolbarItem,
+  type ToolbarSubItem,
 } from '../../lib/editor/toolbarItems';
 import { placePopover, solidColor, type Rect } from '../../lib/ui/popover';
 
@@ -21,10 +22,10 @@ import type { Theme } from '../../theme';
 // `{id, label, onPress}` (déjà filtrée/ordonnée selon les préférences —
 // voir NotesScreen.tsx/CanvasEditor.tsx/ChartEditor.tsx), ce composant ne
 // fait que l'afficher de façon identique partout. Un item avec `subItems`
-// est un groupe dépliant (ex. bouton "H" qui déploie H1-H6) : il déploie
-// une seconde rangée en flux normal plutôt qu'un menu flottant ancré —
-// aucun popover positionné n'existe ailleurs dans l'app (RN Web n'a pas
-// de portail natif), la rangée reste simple et sans mesure de layout.
+// est un groupe dépliant : il ne s'ouvre qu'au clic/tap (jamais au survol,
+// pointerenter, pressIn ou touchmove), et se ferme au clic extérieur,
+// à Échap, ou en choisissant une action. Un item `cluster` est un groupe
+// ouvert : ses boutons forment un bloc, séparateur entre groupes seulement.
 //
 // Invariants du fichier :
 //   • Un item `run` n'exécute rien lui-même : il remonte l'item à
@@ -40,7 +41,7 @@ import type { Theme } from '../../theme';
 //     taille tactile (TOOLBAR_TOUCH_TARGET), et un groupe dépliant s'ouvre
 //     en MENU flottant (Modal transparent + placePopover, fond opaque)
 //     au-dessus de l'éditeur — la ligne ne bouge pas. Desktop (web) :
-//     rendu inchangé (rangées qui passent à la ligne, rangée secondaire).
+//     rangées qui passent à la ligne, rangée secondaire au clic.
 //
 // SOMMAIRE :
 //   1. Types d'items (groupe, séparateur, action déléguée)
@@ -51,6 +52,7 @@ import type { Theme } from '../../theme';
 //////// 1. Types d'items (groupe, séparateur, action déléguée) ////////////
 // Types et logique d'appui : lib/editor/toolbarItems.ts (testés).
 type Item = ToolbarItem;
+type Leaf = ToolbarSubItem;
 
 //////// 2. Rendu (boutons, groupe dépliant, rangée secondaire) ////////////
 
@@ -66,16 +68,44 @@ export function EditorToolbar({ items, theme, onItemRun, compact = Platform.OS !
   const [openGroupId, setOpenGroupId] = useState<string | null>(null);
   const [anchor, setAnchor] = useState<Rect | null>(null);
   const buttonRefs = useRef(new Map<string, View | null>());
+  const rootRef = useRef<View>(null);
   const screen = useWindowDimensions();
+
+  // Fermeture au clic extérieur (desktop) et à Échap (partout où le clavier
+  // est disponible). En compact, le fond du Modal ferme déjà le menu.
+  useEffect(() => {
+    if (!openGroupId) return;
+    if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpenGroupId(null);
+    };
+    window.addEventListener('keydown', onKey);
+    if (compact) return () => window.removeEventListener('keydown', onKey);
+    const onPointerDown = (event: Event) => {
+      const root = rootRef.current as unknown as { contains?: (node: Node) => boolean } | null;
+      const target = 'target' in event ? (event as Event & { target: EventTarget | null }).target : null;
+      if (root?.contains && target instanceof Node && !root.contains(target)) setOpenGroupId(null);
+    };
+    window.addEventListener('pointerdown', onPointerDown, true);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('pointerdown', onPointerDown, true);
+    };
+  }, [openGroupId, compact]);
 
   if (items.length === 0) return null;
 
   const openGroup = items.find((item) => item.id === openGroupId && item.subItems);
 
-  const runLeaf = (leaf: Item | NonNullable<Item['subItems']>[number]) => {
+  const runLeaf = (leaf: Item | Leaf) => {
     const effect = toolbarPressEffect(leaf);
     if (effect === 'run') onItemRun?.(leaf);
     else if (effect === 'press') leaf.onPress?.();
+  };
+
+  const closeThenRun = (leaf: Item | Leaf) => {
+    setOpenGroupId(null);
+    runLeaf(leaf);
   };
 
   // Compact : mesure le bouton du groupe pour placer le menu sous lui.
@@ -92,9 +122,36 @@ export function EditorToolbar({ items, theme, onItemRun, compact = Platform.OS !
     }
   };
 
+  const renderLeaf = (leaf: Item | Leaf, key: string) => (
+    <Pressable
+      key={key}
+      accessibilityRole="button"
+      onPress={() => closeThenRun(leaf)}
+      style={[styles.toolbarButton, compact && styles.compactButton, { backgroundColor: theme.surface }]}
+    >
+      <Text
+        numberOfLines={1}
+        style={[styles.toolbarButtonText, compact && styles.compactButtonText, { color: theme.text }]}
+      >
+        {leaf.label}
+      </Text>
+    </Pressable>
+  );
+
   const buttons = items.map((item) => {
     if (item.divider) {
       return <View key={item.id} style={[styles.divider, { backgroundColor: theme.border }]} />;
+    }
+    if (item.cluster) {
+      return (
+        <View
+          key={item.id}
+          accessibilityLabel={item.label}
+          style={compact ? styles.clusterCompact : styles.cluster}
+        >
+          {item.cluster.map((leaf) => renderLeaf(leaf, leaf.id))}
+        </View>
+      );
     }
     const isGroup = Boolean(item.subItems);
     const isOpen = isGroup && item.id === openGroupId;
@@ -114,12 +171,8 @@ export function EditorToolbar({ items, theme, onItemRun, compact = Platform.OS !
             else setOpenGroupId(item.id);
             return;
           }
-          runLeaf(item);
+          closeThenRun(item);
         }}
-        // Groupe dépliant (desktop) : le survol OU l'appui suffit à le
-        // déployer. En compact, seul l'appui ouvre le menu flottant.
-        onHoverIn={() => !compact && isGroup && setOpenGroupId(item.id)}
-        onPressIn={() => !compact && isGroup && setOpenGroupId(item.id)}
         style={[
           styles.toolbarButton,
           compact && styles.compactButton,
@@ -146,7 +199,7 @@ export function EditorToolbar({ items, theme, onItemRun, compact = Platform.OS !
       : { left: Math.max(8, (screen.width - size.width) / 2), top: 80, maxHeight: screen.height - 160 };
     const solid = solidColor(theme.surface, solidColor(theme.background, '#ffffff'));
     return (
-      <View style={[styles.compactContainer, { borderColor: theme.border }]}>
+      <View ref={rootRef} style={[styles.compactContainer, { borderColor: theme.border }]}>
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
@@ -168,10 +221,7 @@ export function EditorToolbar({ items, theme, onItemRun, compact = Platform.OS !
               <Pressable
                 key={subItem.id}
                 accessibilityRole="button"
-                onPress={() => {
-                  setOpenGroupId(null);
-                  runLeaf(subItem);
-                }}
+                onPress={() => closeThenRun(subItem)}
                 style={({ pressed }) => [
                   styles.toolbarButton,
                   styles.compactButton,
@@ -188,19 +238,14 @@ export function EditorToolbar({ items, theme, onItemRun, compact = Platform.OS !
   }
 
   return (
-    <View style={[styles.container, { borderColor: theme.border }]}>
+    <View ref={rootRef} style={[styles.container, { borderColor: theme.border }]}>
       <View style={styles.toolbar}>{buttons}</View>
       {openGroup?.subItems && (
         <View style={[styles.subToolbar, { borderColor: theme.border }]}>
           {openGroup.subItems.map((subItem) => (
             <Pressable
               key={subItem.id}
-              onPress={() => {
-                // Même chemin qu'un bouton à plat : `run` remonte à
-                // l'appelant (H1…H6 du groupe « Titres »).
-                runLeaf(subItem);
-                setOpenGroupId(null);
-              }}
+              onPress={() => closeThenRun(subItem)}
               style={[styles.toolbarButton, { backgroundColor: theme.surface }]}
             >
               <Text style={[styles.toolbarButtonText, { color: theme.text }]}>{subItem.label}</Text>
@@ -218,6 +263,18 @@ const styles = StyleSheet.create({
     alignSelf: 'stretch',
     marginHorizontal: 4,
     marginVertical: 6,
+  },
+  cluster: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: 6,
+  },
+  clusterCompact: {
+    flexDirection: 'row',
+    flexWrap: 'nowrap',
+    alignItems: 'center',
+    gap: 4,
   },
   container: {
     borderBottomWidth: 1,

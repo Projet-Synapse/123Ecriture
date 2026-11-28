@@ -364,7 +364,7 @@ export function MdxEditor({
   }, [livePreview, liveExtension, completionExtension, shortcutsExtension, searchExtensions]);
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: theme.editorBackground ?? theme.background }]}>
       <CodeMirror
         value={seedValue}
         height="100%"
