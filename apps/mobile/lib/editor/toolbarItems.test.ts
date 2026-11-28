@@ -6,6 +6,7 @@ import {
   NOTES_TOOLBAR_ACTIONS,
   NOTES_TOOLBAR_DESCRIPTIONS,
   normalizeNotesToolbarGroups,
+  type NotesToolbarGroup,
   type ToolbarActionId,
 } from './notesToolbarActions';
 import {
@@ -17,6 +18,12 @@ import {
   notesToolbarReserve,
   toolbarPressEffect,
 } from './toolbarItems';
+
+function leavesOf(groups: Parameters<typeof buildNotesToolbarItems>[0]) {
+  return buildNotesToolbarItems(groups).flatMap((item) =>
+    item.subItems ? item.subItems : item.cluster ? item.cluster : item.divider ? [] : [item],
+  );
+}
 
 describe('buildNotesToolbarItems', () => {
   it('les sous-boutons d’un groupe dépliant (Titres → H1…H6) portent une action', () => {
@@ -34,21 +41,80 @@ describe('buildNotesToolbarItems', () => {
     expect(group.subItems?.[1].run?.formatRun?.('Titre', { start: 0, end: 0 }).text).toBe('## Titre');
   });
 
-  it('boutons à plat et séparateurs inchangés', () => {
+  it('groupe ouvert : un bloc, séparateur entre groupes seulement', () => {
     const items = buildNotesToolbarItems([
       { id: 'a', label: 'A', collapsible: false, buttons: ['bold', 'italic'] },
       { id: 'b', label: 'B', collapsible: false, buttons: ['link'] },
     ]);
-    expect(items.map((item) => item.id)).toEqual(['bold', 'divider-a-1', 'italic', 'divider-b', 'link']);
-    expect(items[0].run?.id).toBe('bold');
+    expect(items.map((item) => item.id)).toEqual(['group-a', 'divider-b', 'group-b']);
+    expect(items[0].cluster?.map((leaf) => leaf.id)).toEqual(['bold', 'italic']);
+    expect(items[0].cluster?.[0].run?.id).toBe('bold');
     expect(items[1].divider).toBe(true);
+    expect(items[2].cluster?.map((leaf) => leaf.id)).toEqual(['link']);
+    expect(items.some((item) => item.id.includes('-1'))).toBe(false);
   });
 
   it('groupes par défaut : aucun bouton sans action', () => {
-    const items = buildNotesToolbarItems(DEFAULT_NOTES_TOOLBAR_GROUPS);
-    const leaves = items.flatMap((item) => (item.subItems ? item.subItems : item.divider ? [] : [item]));
+    const leaves = leavesOf(DEFAULT_NOTES_TOOLBAR_GROUPS);
     expect(leaves.length).toBeGreaterThan(0);
     expect(leaves.every((leaf) => toolbarPressEffect(leaf) === 'run')).toBe(true);
+  });
+
+  it('la barre reflète exactement la config (ordre, dépliants, blocs, masquage)', () => {
+    const groups: NotesToolbarGroup[] = [
+      { id: 'titres', label: 'Titres', collapsible: true, buttons: ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'] },
+      {
+        id: 'mise-en-forme',
+        label: 'Mise en forme',
+        collapsible: false,
+        buttons: ['undo', 'redo', 'bold', 'italic', 'code', 'quote', 'strike', 'underline'],
+      },
+      { id: 'listes-liens', label: 'Listes & liens', collapsible: false, buttons: ['bullet', 'numbered', 'link'] },
+      { id: 'divers', label: 'Divers', collapsible: false, buttons: ['table', 'attach', 'template', 'lint'] },
+      {
+        id: 'alignement',
+        label: 'Alignement',
+        collapsible: true,
+        buttons: ['align-left', 'align-center', 'align-right', 'align-justify'],
+      },
+    ];
+    const items = buildNotesToolbarItems([...groups]);
+    expect(items.map((item) => item.id)).toEqual([
+      'group-titres',
+      'divider-mise-en-forme',
+      'group-mise-en-forme',
+      'divider-listes-liens',
+      'group-listes-liens',
+      'divider-divers',
+      'group-divers',
+      'divider-alignement',
+      'group-alignement',
+    ]);
+    expect(items[0].subItems?.map((sub) => sub.id)).toEqual(['h1', 'h2', 'h3', 'h4', 'h5', 'h6']);
+    expect(items[0].cluster).toBeUndefined();
+    expect(items[2].cluster?.map((leaf) => leaf.id)).toEqual([
+      'undo',
+      'redo',
+      'bold',
+      'italic',
+      'code',
+      'quote',
+      'strike',
+      'underline',
+    ]);
+    expect(items[2].subItems).toBeUndefined();
+    expect(items[8].subItems?.map((sub) => sub.id)).toEqual([
+      'align-left',
+      'align-center',
+      'align-right',
+      'align-justify',
+    ]);
+    // Bouton hors groupe : masqué (pas dans la barre).
+    const hidden = buildNotesToolbarItems([
+      { id: 'a', label: 'A', collapsible: false, buttons: ['bold'] },
+    ]);
+    expect(leavesOf([{ id: 'a', label: 'A', collapsible: false, buttons: ['bold'] }]).map((leaf) => leaf.id)).toEqual(['bold']);
+    expect(hidden.flatMap((item) => item.cluster ?? item.subItems ?? []).map((leaf) => leaf.id)).not.toContain('italic');
   });
 
   it('ignore les identifiants inconnus', () => {
@@ -67,10 +133,7 @@ describe('toolbarPressEffect', () => {
 });
 
 describe('cohérence Paramètres ↔ barre de l’éditeur', () => {
-  const leavesOf = (groups: Parameters<typeof buildNotesToolbarItems>[0]) =>
-    buildNotesToolbarItems(groups)
-      .flatMap((item) => (item.subItems ? item.subItems : item.divider ? [] : [item]))
-      .map((leaf) => leaf.id);
+  const shown = (groups: Parameters<typeof buildNotesToolbarItems>[0]) => leavesOf(groups).map((leaf) => leaf.id);
 
   it('chaque bouton existant a un nom, un glyphe, et figure une seule fois dans les groupes par défaut', () => {
     const ids = NOTES_TOOLBAR_ACTIONS.map((action) => action.id);
@@ -94,15 +157,14 @@ describe('cohérence Paramètres ↔ barre de l’éditeur', () => {
       ],
       NOTES_TOOLBAR_ACTION_IDS,
     );
-    const shown = leavesOf(groups);
+    const visible = shown(groups);
     const reserve = notesToolbarReserve(groups);
-    expect(shown).toEqual(['h1', 'h2', 'bold', 'link']);
-    expect([...shown, ...reserve].sort()).toEqual([...NOTES_TOOLBAR_ACTION_IDS].sort());
-    expect(shown.filter((id) => (reserve as string[]).includes(id))).toEqual([]);
-    // Groupe vide : aucun séparateur orphelin.
+    expect(visible).toEqual(['h1', 'h2', 'bold', 'link']);
+    expect([...visible, ...reserve].sort()).toEqual([...NOTES_TOOLBAR_ACTION_IDS].sort());
+    expect(visible.filter((id) => (reserve as string[]).includes(id))).toEqual([]);
+    // Groupe vide : aucun séparateur orphelin ; pas de séparateur intra-groupe.
     expect(buildNotesToolbarItems(groups).filter((item) => item.divider).map((item) => item.id)).toEqual([
       'divider-b',
-      'divider-b-1',
     ]);
   });
 

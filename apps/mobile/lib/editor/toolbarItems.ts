@@ -54,6 +54,9 @@ export type ToolbarItem = {
   label: string;
   onPress?: () => void;
   subItems?: ToolbarSubItem[];
+  // Groupe ouvert : boutons côte à côte en un seul bloc (séparateur entre
+  // groupes seulement, pas entre chaque bouton).
+  cluster?: ToolbarSubItem[];
   // Séparateur vertical entre groupes : label/id ignorés.
   divider?: boolean;
   // Action DÉLÉGUÉE : l'appelant reçoit l'item et exécute l'action.
@@ -80,9 +83,12 @@ export function buildNotesToolbarItems(groups: NotesToolbarGroup[]): ToolbarItem
         subItems: resolved.map((action) => ({ id: action.id, label: action.label, run: runOf(action) })),
       });
     } else {
-      resolved.forEach((action, index) => {
-        if (index > 0) items.push({ id: `divider-${group.id}-${index}`, label: '', divider: true });
-        items.push({ id: action.id, label: action.label, run: runOf(action) });
+      // Groupe ouvert : un bloc unique. Les séparateurs sont posés ENTRE
+      // les groupes (ci-dessus), jamais entre les boutons d'un même bloc.
+      items.push({
+        id: `group-${group.id}`,
+        label: group.label,
+        cluster: resolved.map((action) => ({ id: action.id, label: action.label, run: runOf(action) })),
       });
     }
   });
