@@ -342,8 +342,37 @@ export function NoteRenderer({
     [theme, onOpenWikilink, onOpenOccurrence, isWikilinkResolved],
   );
 
+  const codeBg = `${theme.accent}14`;
   return (
-    <Markdown markdownit={markdownIt} rules={rules} style={{ body: { color: theme.text } }}>
+    <Markdown
+      markdownit={markdownIt}
+      rules={rules}
+      style={{
+        body: { color: theme.text, backgroundColor: 'transparent' },
+        paragraph: { color: theme.text },
+        text: { color: theme.text },
+        link: { color: theme.accent },
+        code_inline: {
+          color: theme.text,
+          backgroundColor: codeBg,
+          borderRadius: 4,
+        },
+        fence: {
+          color: theme.text,
+          backgroundColor: codeBg,
+          borderRadius: 8,
+          borderWidth: 1,
+          borderColor: theme.border,
+          padding: 10,
+        },
+        code_block: {
+          color: theme.text,
+          backgroundColor: codeBg,
+          borderRadius: 8,
+          padding: 10,
+        },
+      }}
+    >
       {content}
     </Markdown>
   );

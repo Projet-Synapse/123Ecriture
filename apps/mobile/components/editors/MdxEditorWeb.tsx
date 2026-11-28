@@ -30,8 +30,9 @@ import type { Theme } from '../../theme';
 //     reste en diff, curseur préservé (lib/editor/docSync.ts).
 //   • Les callbacks stables (onMessage) lisent les derniers handlers via
 //     des refs mises à jour en EFFET, jamais pendant le rendu.
-//   • editorBackground n'est PAS transmis : la WebView suit le fond de
-//     l'app (la préférence donnait une page blanche en thème sombre).
+//   • editorBackground est transmis (v0.5.2) : même fond que le titre et
+//     les propriétés (blanc en clair, sombre en sombre). Plus de page
+//     blanche forcée en thème sombre — la valeur vient du thème actif.
 //
 // SOMMAIRE :
 //   1. Pont RN → web (config, document)
@@ -174,10 +175,10 @@ export function MdxEditorWeb({
         textMuted: theme.textMuted,
         background: theme.background,
         surface: theme.surface,
-        // ⚠️ editorBackground volontairement NON transmis sur mobile : la
-        // préférence (blanc par défaut) donnait une page blanche en thème
-        // sombre — l'éditeur suit le fond de l'app à la place (même
-        // rendu que l'éditeur Source natif).
+        // Fond de la note (blanc en clair, sombre en sombre, ou la
+        // couleur choisie dans Personnalisation). Aligné sur le
+        // titre et les propriétés rendus côté natif.
+        editorBackground: theme.editorBackground ?? theme.background,
       },
     });
     inject(`window.__editorApi && window.__editorApi.applyConfig(${JSON.stringify(payload)});`);

@@ -31,6 +31,9 @@ export type Theme = {
 export const lightTheme: Theme = {
   background: '#ffffff',
   surface: '#f5f5f7',
+  // Fond de la note (titre, propriétés, corps, marges) : blanc en clair,
+  // indépendant du fond de l'app (explorateur, barres).
+  editorBackground: '#ffffff',
   text: '#111114',
   textMuted: '#6b7280',
   accent: '#4f46e5',
@@ -41,9 +44,18 @@ export const lightTheme: Theme = {
 export const darkTheme: Theme = {
   background: '#111114',
   surface: '#1c1c22',
+  editorBackground: '#111114',
   text: '#f5f5f7',
   textMuted: '#9ca3af',
   accent: '#818cf8',
   border: '#2a2a33',
   danger: '#dc2626',
 };
+
+// Fond de la zone de note (titre, propriétés, corps, marges) — blanc en
+// thème clair, sombre en thème sombre, ou la couleur choisie dans
+// Paramètres → Personnalisation. Ne pas utiliser `background` : c'est le
+// fond de l'APP, souvent différent (papier vs chrome).
+export function editorCanvasColor(theme: Theme): string {
+  return theme.editorBackground ?? theme.background;
+}
