@@ -4,6 +4,7 @@ import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import type { Theme } from '../../theme';
 import { buildExplorerColors } from '../../lib/theme/explorerColors';
 import { ChevronIcon, FolderOpenIcon, FolderClosedIcon, NoteIconByKind } from './FileIcons';
+import { ExplorerHoverHost } from './ExplorerHoverHost';
 import { TREE_ICON_SIZE } from '../../lib/ui/iconBox';
 import { isAiLocked, isDirectlyLocked } from '../../lib/ai/aiLock';
 
@@ -355,7 +356,19 @@ function vaultTreePropsAreEqual(prev: Props, next: Props): boolean {
   );
 }
 
-export const VaultTreeView = memo(VaultTreeViewImpl, vaultTreePropsAreEqual);
+function VaultTreeViewRoot(props: Props) {
+  const tree = <VaultTreeViewImpl {...props} />;
+  // L'hôte de survol n'enveloppe que la RACINE (les appels récursifs
+  // restent sur VaultTreeViewImpl, sans double bulle ni CSS empilé).
+  if ((props.depth ?? 0) > 0) return tree;
+  return (
+    <ExplorerHoverHost nodes={props.nodes} theme={props.theme}>
+      {tree}
+    </ExplorerHoverHost>
+  );
+}
+
+export const VaultTreeView = memo(VaultTreeViewRoot, vaultTreePropsAreEqual);
 
 //////// 3. Les styles ////////////////////////////////////////////////////////////////////
 
