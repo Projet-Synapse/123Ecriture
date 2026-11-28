@@ -67,7 +67,7 @@ import {
 import { countCharacters, countWords } from '../../lib/editor/wordCount';
 import { useSyncStatus } from '../../lib/sync/SyncStatusContext';
 import { useVaults } from '../../lib/sync/VaultsContext';
-import type { Theme } from '../../theme';
+import { editorCanvasColor, type Theme } from '../../theme';
 import type { AppearanceTokens } from '../../lib/theme/appearance';
 import { usePreferences } from '../../preferences/PreferencesContext';
 import type { NotesActions } from '../AppShell';
@@ -265,6 +265,9 @@ export function NotesScreen({
     remapAiLocksAfterPathChange,
   } = usePreferences();
   const aiLockedPaths = useMemo(() => normalizeLockedPaths(preferences.aiLockedPaths), [preferences.aiLockedPaths]);
+  // Fond de la note (titre, propriétés, corps, marges) — distinct du
+  // fond de l'app (explorateur, barres). Blanc en clair, sombre en sombre.
+  const editorCanvas = editorCanvasColor(theme);
   const vault = typeof window !== 'undefined' ? window.vault : undefined;
   // Gel des cycles de synchronisation pendant les actions structurantes
   // (suppression, renommage, déplacement) : un cycle partant au milieu
@@ -3683,9 +3686,9 @@ export function NotesScreen({
                       />
                     )}
 
-                    <View style={styles.editorBody}>
+                    <View style={[styles.editorBody, { backgroundColor: editorCanvas }]}>
                       {effectiveViewMode === 'reading' ? (
-                        <NativeReadingScroll scrollbarColor={`${theme.accent}88`}>
+                        <NativeReadingScroll scrollbarColor={`${theme.accent}88`} backgroundColor={editorCanvas}>
                           {renderContentTitle(activeNote)}
                           {/* À l'intérieur du ScrollView (pas au-dessus, contrairement
                               au mode Intermédiaire) : défile avec le reste de la note
@@ -3719,7 +3722,7 @@ export function NotesScreen({
                         // commun du desktop. Même coquille que la lecture :
                         // barre de défilement maintenable au doigt
                         // (demande 2026-10-03).
-                        <NativeReadingScroll scrollbarColor={`${theme.accent}88`}>
+                        <NativeReadingScroll scrollbarColor={`${theme.accent}88`} backgroundColor={editorCanvas}>
                           {renderContentTitle(activeNote)}
                           <PropertiesBlock
                             theme={theme}
@@ -3759,7 +3762,7 @@ export function NotesScreen({
                         // barre de défilement manipulable (Android ne sait
                         // pas faire défiler un TextInput par programme —
                         // vécu 2026-10-04 : « le glisser ne répond pas »).
-                        <NativeReadingScroll scrollbarColor={`${theme.accent}88`}>
+                        <NativeReadingScroll scrollbarColor={`${theme.accent}88`} backgroundColor={editorCanvas}>
                           {renderContentTitle(activeNote)}
                           <MdxEditorWeb
                             value={content}
@@ -3784,7 +3787,7 @@ export function NotesScreen({
                            scroll que le texte (demande : « qu'elle fasse partie
                            du scroll ») — ScrollView commune, CodeMirror en
                            hauteur auto (pas de scroll interne propre). */
-                        <ScrollView style={styles.previewFull} contentContainerStyle={{ paddingBottom: 40 }}>
+                        <ScrollView style={[styles.previewFull, { backgroundColor: editorCanvas }]} contentContainerStyle={{ paddingBottom: 40, flexGrow: 1, backgroundColor: editorCanvas }}>
                           {renderContentTitle(activeNote)}
                           <PropertiesBlock
                             theme={theme}
@@ -3821,7 +3824,7 @@ export function NotesScreen({
                         // l'Intermédiaire — titre puis CodeMirror en hauteur
                         // auto dans UN scroll commun (le titre défile avec
                         // le texte, comme dans Obsidian).
-                        <ScrollView style={styles.previewFull} contentContainerStyle={{ paddingBottom: 40 }}>
+                        <ScrollView style={[styles.previewFull, { backgroundColor: editorCanvas }]} contentContainerStyle={{ paddingBottom: 40, flexGrow: 1, backgroundColor: editorCanvas }}>
                           {renderContentTitle(activeNote)}
                           <MdxEditor
                             value={content}
@@ -4142,7 +4145,7 @@ function NativeScrollbar({ viewportHeight, contentHeight, scrollOffset, color, s
 // l'espacement bas grandit de la hauteur du clavier (la fin du fichier
 // peut remonter au-dessus), et l'éditeur WebView demande, via
 // CaretRevealContext, de faire défiler pour garder le curseur visible.
-function NativeReadingScroll({ scrollbarColor, children }: { scrollbarColor: string; children: ReactNode }) {
+function NativeReadingScroll({ scrollbarColor, backgroundColor, children }: { scrollbarColor: string; backgroundColor?: string; children: ReactNode }) {
   const [viewHeight, setViewHeight] = useState(0);
   const [contentHeight, setContentHeight] = useState(0);
   const [scrollOffset, setScrollOffset] = useState(0);
@@ -4183,12 +4186,12 @@ function NativeReadingScroll({ scrollbarColor, children }: { scrollbarColor: str
     }, 30);
   }, []);
   return (
-    <View ref={frameRef} style={{ flex: 1 }} collapsable={false}>
+    <View ref={frameRef} style={{ flex: 1, backgroundColor }} collapsable={false}>
       <CaretRevealContext.Provider value={reveal}>
         <ScrollView
           ref={scrollRef}
-          style={styles.previewFull}
-          contentContainerStyle={{ paddingBottom: keyboardBottomPadding(40, keyboard.height) }}
+          style={[styles.previewFull, backgroundColor ? { backgroundColor } : null]}
+          contentContainerStyle={{ paddingBottom: keyboardBottomPadding(40, keyboard.height), flexGrow: 1, backgroundColor }}
           onScroll={(event) => {
             scrollOffsetRef.current = event.nativeEvent.contentOffset.y;
             setScrollOffset(event.nativeEvent.contentOffset.y);
