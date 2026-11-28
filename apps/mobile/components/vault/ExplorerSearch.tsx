@@ -198,50 +198,89 @@ export function ExplorerSearch({ theme, onOpenResult, onClose, onHasQueryChange 
 
   const showOptions = optionsOpen;
 
+  const fieldBorder = inputFocused || optionsOpen ? theme.accent : theme.border;
+  const fieldBg = theme.background;
+  const panelBg = theme.surface;
+  const popoverBg = theme.background;
+
   return (
-    <View style={styles.root}>
-      <View style={[styles.bar, { borderColor: theme.border, backgroundColor: theme.surface }]}>
-        <TextInput
-          ref={inputRef}
-          autoFocus
-          value={query}
-          onChangeText={(text) => {
-            setQuery(text);
-            if (text.trim()) setOptionsOpen(false);
-          }}
-          onFocus={() => {
-            setInputFocused(true);
-            if (!query.trim()) setOptionsOpen(true);
-          }}
-          onBlur={() => setInputFocused(false)}
-          onSubmitEditing={() => openResult(visibleResults[selectedIndex])}
-          placeholder="Saisir pour lancer la recherche"
-          placeholderTextColor={theme.textMuted}
-          accessibilityLabel="Recherche dans le coffre"
-          style={[styles.input, { color: theme.text }]}
-        />
-        <Pressable
-          onPress={() => setCaseSensitive((v) => !v)}
-          accessibilityLabel="Respecter la casse"
-          accessibilityState={{ selected: caseSensitive }}
-          style={[styles.iconBtn, caseSensitive && { backgroundColor: `${theme.accent}33` }]}
+    <View style={[styles.root, { backgroundColor: panelBg }]}>
+      <View style={styles.bar}>
+        <View
+          style={[
+            styles.field,
+            {
+              backgroundColor: fieldBg,
+              borderColor: fieldBorder,
+            },
+          ]}
         >
-          <Text style={{ color: caseSensitive ? theme.accent : theme.text, fontWeight: '700', fontSize: 13 }}>Aa</Text>
-        </Pressable>
-        <Pressable
-          onPress={() => setOptionsOpen((o) => !o)}
-          accessibilityLabel="Options de recherche"
-          style={styles.iconBtn}
-        >
-          <Text style={{ color: theme.text }}>⚙</Text>
-        </Pressable>
+          <TextInput
+            ref={inputRef}
+            autoFocus
+            value={query}
+            onChangeText={(text) => {
+              setQuery(text);
+              if (text.trim()) setOptionsOpen(false);
+            }}
+            onFocus={() => {
+              setInputFocused(true);
+              if (!query.trim()) setOptionsOpen(true);
+            }}
+            onBlur={() => setInputFocused(false)}
+            onSubmitEditing={() => openResult(visibleResults[selectedIndex])}
+            placeholder="Saisir pour lancer la recherche"
+            placeholderTextColor={theme.textMuted}
+            accessibilityLabel="Recherche dans le coffre"
+            style={[
+              styles.input,
+              { color: theme.text },
+              Platform.OS === 'web' ? ({ outlineStyle: 'none' } as unknown as TextStyle) : null,
+            ]}
+          />
+          <Pressable
+            onPress={() => setCaseSensitive((v) => !v)}
+            accessibilityLabel="Respecter la casse"
+            accessibilityState={{ selected: caseSensitive }}
+            style={[styles.iconBtn, caseSensitive && { backgroundColor: `${theme.accent}33` }]}
+          >
+            <Text style={{ color: caseSensitive ? theme.accent : theme.text, fontWeight: '700', fontSize: 13 }}>Aa</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => setOptionsOpen((o) => !o)}
+            accessibilityLabel="Options de recherche"
+            style={[styles.iconBtn, optionsOpen && { backgroundColor: `${theme.accent}33` }]}
+          >
+            <Text style={{ color: optionsOpen ? theme.accent : theme.text }}>⚙</Text>
+          </Pressable>
+        </View>
         <Pressable onPress={onClose} accessibilityLabel="Fermer la recherche" style={styles.iconBtn}>
           <Text style={{ color: theme.textMuted, fontSize: 16 }}>✕</Text>
         </Pressable>
       </View>
 
       {showOptions && (
-        <View style={[styles.options, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+        <View
+          style={[
+            styles.options,
+            {
+              backgroundColor: popoverBg,
+              borderColor: theme.border,
+              // Ombre web : le popover doit passer AU-DESSUS de tout reste
+              // d'arbre (z-index + fond opaque, jamais theme.surface du
+              // panneau qui se confondait avec l'arborescence).
+              ...(Platform.OS === 'web'
+                ? { boxShadow: '0 8px 24px rgba(0, 0, 0, 0.22)' }
+                : {
+                    shadowColor: '#000',
+                    shadowOffset: { width: 0, height: 4 },
+                    shadowOpacity: 0.22,
+                    shadowRadius: 10,
+                    elevation: 8,
+                  }),
+            },
+          ]}
+        >
           <Text style={[styles.optionsTitle, { color: theme.textMuted }]}>Options de recherche</Text>
           {SEARCH_OPERATOR_HINTS.map((op) => (
             <Pressable
@@ -351,21 +390,37 @@ const styles = StyleSheet.create({
     flexShrink: 1,
     flexGrow: 1,
     minHeight: 0,
+    zIndex: 2,
+    overflow: 'hidden',
   },
   bar: {
     flexDirection: 'row',
     alignItems: 'center',
-    borderBottomWidth: 1,
     paddingHorizontal: 8,
-    paddingVertical: 6,
+    paddingTop: 8,
+    paddingBottom: 6,
     gap: 4,
+  },
+  field: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    minWidth: 0,
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingLeft: 4,
+    paddingRight: 2,
   },
   input: {
     flex: 1,
     fontSize: 14,
-    paddingVertical: 6,
+    paddingVertical: 7,
     paddingHorizontal: 8,
     minWidth: 0,
+    // Evite le fond/contour natif qui laissait le champ se fondre dans
+    // le panneau. Le contour web (outline) est retiré à part, le type
+    // RN n'accepte pas outlineStyle: 'none'.
+    backgroundColor: 'transparent',
   },
   iconBtn: {
     minWidth: 32,
@@ -376,10 +431,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
   },
   options: {
-    borderBottomWidth: 1,
-    paddingVertical: 6,
+    marginHorizontal: 8,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingVertical: 8,
     paddingHorizontal: 10,
     gap: 2,
+    zIndex: 4,
+    overflow: 'hidden',
+    maxWidth: '100%',
+    alignSelf: 'stretch',
   },
   optionsTitle: {
     fontSize: 11,
@@ -390,6 +452,8 @@ const styles = StyleSheet.create({
   optionRow: {
     paddingVertical: 6,
     gap: 2,
+    minWidth: 0,
+    alignSelf: 'stretch',
   },
   optionToken: {
     fontSize: 13,
@@ -398,6 +462,9 @@ const styles = StyleSheet.create({
   },
   optionHint: {
     fontSize: 11,
+    lineHeight: 16,
+    flexShrink: 1,
+    minWidth: 0,
   },
   results: {
     flexGrow: 1,

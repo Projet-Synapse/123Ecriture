@@ -470,7 +470,6 @@ export function NotesScreen({
   // (ExplorerSearch.tsx), indépendante de `activeNote`, contrairement à
   // sidebarOpen/sidebarTab qui n'ont de sens qu'avec une note ouverte.
   const [searchOpen, setSearchOpen] = useState(false);
-  const [searchHasQuery, setSearchHasQuery] = useState(false);
   const pendingRevealRef = useRef<{ relPath: string; offset: number } | null>(null);
   // Dictionnaire personnel des {{occurrences}} — chargé une fois ici (pas
   // dans OccurrencesPanel/NoteRenderer/MdxEditor séparément) puisque les
@@ -2361,7 +2360,6 @@ export function NotesScreen({
     () => {
       if (searchOpen) {
         setSearchOpen(false);
-        setSearchHasQuery(false);
       } else if (renamingRelPath !== null) cancelRename();
       else if (sidebarOpen) setSidebarOpen(false);
       else if (selectedRelPaths.size > 0) setSelectedRelPaths(new Set());
@@ -3132,7 +3130,6 @@ export function NotesScreen({
                 onPress={() => {
                   if (searchOpen) {
                     setSearchOpen(false);
-                    setSearchHasQuery(false);
                   } else setSearchOpen(true);
                 }}
                 style={[
@@ -3207,7 +3204,6 @@ export function NotesScreen({
         {searchOpen && (
           <ExplorerSearch
             theme={theme}
-            onHasQueryChange={setSearchHasQuery}
             onOpenResult={(result) => {
               // On laisse la recherche ouverte (comme Obsidian) : l'arbre
               // réapparaît à la fermeture (✕ / Échap / retour).
@@ -3219,7 +3215,6 @@ export function NotesScreen({
             }}
             onClose={() => {
               setSearchOpen(false);
-              setSearchHasQuery(false);
             }}
           />
         )}
@@ -3228,8 +3223,9 @@ export function NotesScreen({
             ScrollView du dessous) : reste visible même en scrollant une longue
             arborescence, comme une barre de raccourcis. N'apparaît que s'il y
             a au moins un favori RÉSOLU (voir favoriteNotes, //8) — jamais un
-            bandeau vide. Masqué pendant une recherche avec requête. */}
-        {favoriteNotes.length > 0 && !searchHasQuery && (
+            bandeau vide. Masqué dès que la recherche est ouverte
+            (le champ et les résultats prennent la place de l'arbre). */}
+        {favoriteNotes.length > 0 && !searchOpen && (
           <View style={[styles.favoritesSection, { borderColor: theme.border }]}>
             <Text style={[styles.favoritesHeader, { color: theme.textMuted }]}>⭐ Favoris</Text>
             {favoriteNotes.map((node) => (
@@ -3255,7 +3251,7 @@ export function NotesScreen({
           </View>
         )}
 
-        {!searchHasQuery && (explorerViewMode === 'files' ? (
+        {!searchOpen && (explorerViewMode === 'files' ? (
           <ScrollView>
             <VaultTreeView
               onOpenFolder={openFolder}
