@@ -613,3 +613,149 @@ export function planInline(
   emitText(cursor, to);
   return pieces;
 }
+
+//////// 8. Citations `>` (findQuoteBlocks) ///////////////////////////////////
+
+export type QuoteCallout = {
+  type: string;
+  title: string;
+  // Plage de `[!type]` (sans le titre) — masquée hors curseur.
+  syntaxFrom: number;
+  syntaxTo: number;
+};
+
+export type QuoteLine = {
+  from: number;
+  to: number;
+  depth: number;
+  // Prefixe `>` / `>>` et l'espace éventuel qui suit le dernier `>`.
+  markerFrom: number;
+  markerTo: number;
+};
+
+export type QuoteBlock = {
+  from: number;
+  to: number;
+  lines: QuoteLine[];
+  callout: QuoteCallout | null;
+};
+
+// Prefixe de citation CommonMark : 0–3 espaces, puis un ou plusieurs `>`,
+// chacun éventuellement suivi d'un espace. `null` si ce n'est pas une
+// ligne de citation.
+export function quoteMarkerOf(line: string): { depth: number; markerFrom: number; markerTo: number } | null {
+  let i = 0;
+  while (i < line.length && i < 3 && line[i] === ' ') i += 1;
+  if (line[i] !== '>') return null;
+  const markerFrom = i;
+  let depth = 0;
+  while (i < line.length && line[i] === '>') {
+    depth += 1;
+    i += 1;
+    if (line[i] === ' ') i += 1;
+  }
+  return { depth, markerFrom, markerTo: i };
+}
+
+const CALLOUT_RE = /^\[!([A-Za-z][\w-]*)\]([+-]?)(?:[ \t]+(.*))?$/;
+
+export function parseCallout(content: string): { type: string; title: string; syntaxLength: number } | null {
+  const m = CALLOUT_RE.exec(content.trimEnd());
+  if (!m) return null;
+  const syntaxLength = content.indexOf(']') + 1;
+  return { type: m[1].toLowerCase(), title: (m[3] ?? '').trim(), syntaxLength };
+}
+
+const FENCE_OPEN = /^( {0,3})(`{3,}|~{3,})/;
+
+// Blocs de citation : lignes consécutives commençant par `>`, fusionnées.
+// Une ligne vide SANS `>` sépare deux blocs. Les fences ```` / ~~~ sont
+// ignorées. Un callout Obsidian `> [!note] Titre` est reconnu sur la
+// première ligne.
+export function findQuoteBlocks(text: string): QuoteBlock[] {
+  const lines = text.split('\n');
+  const starts: number[] = [];
+  let offset = 0;
+  for (const line of lines) {
+    starts.push(offset);
+    offset += line.length + 1;
+  }
+  const blocks: QuoteBlock[] = [];
+  let fence: string | null = null;
+  let current: QuoteLine[] = [];
+
+  const flush = () => {
+    if (!current.length) return;
+    const first = current[0];
+    const last = current[current.length - 1];
+    const content = text.slice(first.markerTo, first.to);
+    const parsed = parseCallout(content);
+    const callout: QuoteCallout | null = parsed
+      ? {
+          type: parsed.type,
+          title: parsed.title,
+          syntaxFrom: first.markerTo + (content.length - content.trimStart().length),
+          syntaxTo: first.markerTo + (content.length - content.trimStart().length) + parsed.syntaxLength,
+        }
+      : null;
+    blocks.push({ from: first.from, to: last.to, lines: current, callout });
+    current = [];
+  };
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    const from = starts[i];
+    const to = from + line.length;
+    if (fence === null) {
+      const open = FENCE_OPEN.exec(line);
+      if (open) {
+        flush();
+        fence = open[2][0];
+        continue;
+      }
+    } else {
+      const token = fence === '`' ? '`' : '~';
+      if (new RegExp('^( {0,3})' + token + '{3,}\s*$').test(line)) fence = null;
+      continue;
+    }
+    const marker = quoteMarkerOf(line);
+    if (marker) {
+      current.push({ from, to, depth: marker.depth, markerFrom: from + marker.markerFrom, markerTo: from + marker.markerTo });
+    } else {
+      flush();
+    }
+  }
+  flush();
+  return blocks;
+}
+
+// Couleur de barre d'un callout (ou accent par défaut).
+export function calloutLabel(type: string): string {
+  const labels: Record<string, string> = {
+    note: 'Note',
+    info: 'Info',
+    tip: 'Astuce',
+    abstract: 'Résumé',
+    todo: 'À faire',
+    success: 'Succès',
+    check: 'OK',
+    question: 'Question',
+    warning: 'Attention',
+    caution: 'Prudence',
+    danger: 'Danger',
+    error: 'Erreur',
+    failure: 'Échec',
+    bug: 'Bug',
+    example: 'Exemple',
+    quote: 'Citation',
+  };
+  return labels[type.toLowerCase()] ?? type;
+}
+
+export function calloutAccent(type: string | undefined, fallback: string): string {
+  const t = (type ?? '').toLowerCase();
+  if (t === 'warning' || t === 'question' || t === 'caution') return '#d97706';
+  if (t === 'danger' || t === 'failure' || t === 'bug' || t === 'error') return '#dc2626';
+  if (t === 'success' || t === 'tip' || t === 'check') return '#16a34a';
+  return fallback;
+}

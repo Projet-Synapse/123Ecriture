@@ -4,8 +4,10 @@ import { EditorState, StateField } from '@codemirror/state';
 import { isImageEmbedTarget } from '../notes/embedResolution';
 import { unsupportedImageMessage, withImageMime } from '../files/imageFormats';
 import {
+  calloutAccent,
   findAlignedBlocks,
   findLiveMatches,
+  findQuoteBlocks,
   findTableBlocks,
   planInline,
   planMark,
@@ -487,6 +489,41 @@ function buildDecorations(view: EditorView, colors: LivePreviewColors, callbacks
       ranges.push({ from: block.from, to: block.openTo, decoration: Decoration.replace({}) });
       ranges.push({ from: block.closeFrom, to: block.to, decoration: Decoration.replace({}) });
     }
+  }
+
+  // Citations `>` : lignes consécutives fusionnées, barre à gauche,
+  // fond teinté, `>` (et `[!type]` d'un callout) masqués hors curseur,
+  // révélés (estompés) quand le curseur est sur la ligne — même règle
+  // que les marqueurs de mise en forme (#261).
+  for (const block of findQuoteBlocks(text)) {
+    if (insideRenderedTable(block.from, block.to)) continue;
+    const accent = calloutAccent(block.callout?.type, colors.accent);
+    block.lines.forEach((line, index) => {
+      const pad = 8 + (line.depth - 1) * 14;
+      const isFirst = index === 0;
+      const isLast = index === block.lines.length - 1;
+      const style = [
+        `background-color:${accent}18`,
+        `border-left:3px solid ${accent}`,
+        `padding-top:${isFirst ? 6 : 2}px`,
+        `padding-bottom:${isLast ? 6 : 2}px`,
+        `padding-left:${pad}px`,
+      ].join(';');
+      ranges.push({ from: line.from, to: line.from, decoration: Decoration.line({ attributes: { style } }) });
+      const reveal = selectionTouchesInclusive(view, line.from, line.to);
+      const markMarker = (from: number, to: number) => {
+        if (from >= to) return;
+        ranges.push({
+          from,
+          to,
+          decoration: reveal
+            ? Decoration.mark({ attributes: { style: 'opacity:0.55' } })
+            : Decoration.replace({}),
+        });
+      };
+      markMarker(line.markerFrom, line.markerTo);
+      if (isFirst && block.callout) markMarker(block.callout.syntaxFrom, block.callout.syntaxTo);
+    });
   }
 
   return Decoration.set(
