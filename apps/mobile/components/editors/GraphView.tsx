@@ -1,8 +1,17 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import Svg, { Circle, Line, Text as SvgText } from 'react-native-svg';
 
 import { SliderField } from '../properties/SliderField';
+import { GraphGroupsEditor } from './GraphGroupsEditor';
+import {
+  computeGroupMatches,
+  createGraphDocResolver,
+  normalizeGraphGroups,
+  resolveGroupColors,
+  type GraphGroupEntry,
+} from '../../lib/graph/graphGroups';
+import { usePreferences } from '../../preferences/PreferencesContext';
 import type { Theme } from '../../theme';
 
 // ✒️ 123ECRITURE — components/editors/GraphView.tsx — vue graphique du coffre (graphe de liens)
@@ -16,7 +25,7 @@ import type { Theme } from '../../theme';
 // paquets), relance le layout quand les curseurs changent (débouncés) et
 // rend le tout en react-native-svg, avec zoom (molette/boutons), pan au
 // glisser et panneau de réglages redimensionnable (recherche, filtre
-// orphelins, tailles, 4 forces).
+// orphelins, groupes de couleurs, tailles, 4 forces).
 //
 // Invariants du fichier :
 //   • L'index des liens est DOUBLE (nom avec et sans extension) : un lien
@@ -26,6 +35,10 @@ import type { Theme } from '../../theme';
 //   • Le layout repart TOUJOURS d'une copie fraîche des positions de base
 //     (baseNodesRef) — les curseurs relancent une simulation, ils ne
 //     l'ajustent pas à chaud.
+//   • Les GROUPES (couleur par requête, lib/graph/graphGroups.ts) se
+//     calculent à part de la simulation : ils ne dépendent que des fichiers
+//     chargés (`entries`) et des requêtes, jamais des positions — bouger un
+//     curseur de force ou changer la couleur d'un groupe ne ré-évalue rien.
 //   • Le layout est purement synchrone et borné (iterations, refroidissement,
 //     pas borné) : jamais de boucle infinie sur un graphe dégénéré.
 //
@@ -227,6 +240,28 @@ export function GraphView({ theme, onOpenNote }: Props) {
   const [forcesOpen, setForcesOpen] = useState(true);
   const [forces, setForces] = useState<ForceOptions>({ centrale: 1, repulsion: 16, liaison: 0.43, distance: 80 });
 
+  // Groupes de couleurs : persistés dans les préférences (donc répliqués
+  // dans le coffre et synchronisés). `groupSource` (fichiers + lecteur de contenu) est figé
+  // au chargement du coffre ; les ensembles de correspondance se
+  // recalculent seulement quand le TEXTE d'une requête change.
+  const { preferences, setGraphGroups } = usePreferences();
+  const groups = useMemo(() => normalizeGraphGroups(preferences.graphGroups), [preferences.graphGroups]);
+  const [showLegend, setShowLegend] = useState(true);
+  const [groupSource, setGroupSource] = useState<{
+    entries: GraphGroupEntry[];
+    docOf: ReturnType<typeof createGraphDocResolver>;
+  } | null>(null);
+  const entries = useMemo(() => groupSource?.entries ?? [], [groupSource]);
+  const queriesKey = JSON.stringify(groups.map((g) => g.query));
+  const groupMatches = useMemo(() => {
+    if (!groupSource || groupSource.entries.length === 0) return [];
+    return computeGroupMatches(groupSource.entries, JSON.parse(queriesKey) as string[], groupSource.docOf);
+  }, [groupSource, queriesKey]);
+  const { colorByPath, counts: groupCounts } = useMemo(
+    () => resolveGroupColors(entries.map((e) => e.relPath), groups, groupMatches),
+    [entries, groups, groupMatches],
+  );
+
   const recomputeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Glisser en cours (pan du graphe) — espace enfoncé ou bouton milieu ;
   // simplifié : le glisser direct déplace toujours (le clic sur un NOM
@@ -272,6 +307,15 @@ export function GraphView({ theme, onOpenNote }: Props) {
           }),
         );
         const graph = buildGraph(tree, contents);
+        setGroupSource({
+          docOf: createGraphDocResolver(contents),
+          entries: graph.nodes.map((n) => ({
+            relPath: n.id,
+            name: n.name,
+            fileName: n.id.slice(n.id.lastIndexOf('/') + 1),
+            kind: n.kind,
+          })),
+        });
         baseNodesRef.current = graph.nodes;
         runForceLayout(graph.nodes, graph.edges, { centrale: 1, repulsion: 16, liaison: 0.43, distance: 80 });
         setNodes(graph.nodes);
@@ -400,7 +444,7 @@ export function GraphView({ theme, onOpenNote }: Props) {
                       cx={toScreenX(n.x)}
                       cy={toScreenY(n.y)}
                       r={r}
-                      fill={folderColor(n.folder)}
+                      fill={colorByPath.get(n.id) ?? folderColor(n.folder)}
                     />
                     {showLabel && (
                       <SvgText
@@ -418,6 +462,20 @@ export function GraphView({ theme, onOpenNote }: Props) {
                 );
               })}
             </Svg>
+          </View>
+        )}
+        {showLegend && groups.some((g, i) => g.query.trim() && groupCounts[i] > 0) && (
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, paddingHorizontal: 14, paddingTop: 6 }}>
+            {groups.map((g, i) =>
+              g.query.trim() && groupCounts[i] > 0 ? (
+                <View key={g.id} style={{ flexDirection: 'row', alignItems: 'center', gap: 5, maxWidth: 260 }}>
+                  <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: g.color }} />
+                  <Text numberOfLines={1} style={{ color: theme.textMuted, fontSize: 11, flexShrink: 1 }}>
+                    {g.query.trim()} · {groupCounts[i]}
+                  </Text>
+                </View>
+              ) : null,
+            )}
           </View>
         )}
         <Text style={{ color: theme.textMuted, fontSize: 11, paddingHorizontal: 14, paddingVertical: 6 }}>
@@ -498,6 +556,14 @@ export function GraphView({ theme, onOpenNote }: Props) {
             <Text style={{ color: theme.text, fontSize: 13 }}>Orphelins (sans lien)</Text>
             <Switch value={showOrphans} onValueChange={setShowOrphans} trackColor={{ false: theme.border, true: theme.accent }} />
           </View>
+
+          <GraphGroupsEditor groups={groups} counts={groupCounts} onChange={(next) => void setGraphGroups(next)} theme={theme} />
+          {groups.length > 0 && (
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+              <Text style={{ color: theme.text, fontSize: 13 }}>Afficher la légende</Text>
+              <Switch value={showLegend} onValueChange={setShowLegend} trackColor={{ false: theme.border, true: theme.accent }} />
+            </View>
+          )}
 
           <Text style={{ color: theme.text, fontSize: 13, fontWeight: '600' }}>Réglages</Text>
           <SliderField
