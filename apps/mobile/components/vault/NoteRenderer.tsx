@@ -4,6 +4,7 @@ import { SvgXml } from 'react-native-svg';
 import Markdown, { type ASTNode, type RenderRules } from 'react-native-markdown-display';
 
 import { createConfiguredMarkdownIt } from '../../lib/editor/markdownPlugins';
+import { calloutAccent, calloutLabel, parseCallout } from '../../lib/editor/liveDecorations';
 import { imageSupport, isImageFile, svgTextFromDataUrl, unsupportedImageMessage, type ImageEngine } from '../../lib/files/imageFormats';
 import { hexToRgba } from '../../lib/theme/appearance';
 import type { Theme } from '../../theme';
@@ -222,6 +223,14 @@ function alignChildren(children: ReactNode, textAlign: 'left' | 'center' | 'righ
 
 //////// 2. NoteRenderer — la config markdown-it et les rules de rendu ////////////////////
 
+
+function flattenAstText(node: ASTNode | undefined): string {
+  if (!node) return '';
+  const kids = node.children ?? [];
+  if (kids.length === 0) return typeof node.content === 'string' ? node.content : '';
+  return kids.map((child) => flattenAstText(child)).join('');
+}
+
 export function NoteRenderer({
   content,
   theme,
@@ -334,6 +343,38 @@ export function NoteRenderer({
           {children}
         </Text>
       ),
+      // Citations `>` : barre à gauche, fond teinté, blocs imbriqués
+      // (`>>`) rendus en cascade. Callout `> [!note] Titre` : en-tête
+      // coloré, la syntaxe `[!note]` n'est pas répétée.
+      blockquote: (node, children) => {
+        const rendered = Array.isArray(children) ? [...children] : children ? [children] : [];
+        const first = node.children?.[0];
+        const callout = parseCallout(flattenAstText(first));
+        const accent = calloutAccent(callout?.type, theme.accent);
+        const body = callout ? rendered.slice(1) : rendered;
+        return (
+          <View
+            key={node.key}
+            style={{
+              borderLeftWidth: 3,
+              borderLeftColor: accent,
+              backgroundColor: hexToRgba(accent, 0.08),
+              paddingVertical: 8,
+              paddingHorizontal: 12,
+              marginVertical: 8,
+              borderRadius: 4,
+            }}
+          >
+            {callout && (
+              <Text style={{ color: accent, fontWeight: '700', marginBottom: body.length ? 6 : 0 }}>
+                {calloutLabel(callout.type)}
+                {callout.title ? `  ${callout.title}` : ''}
+              </Text>
+            )}
+            {body}
+          </View>
+        );
+      },
       embed: (node) => {
         const target = String((node as NodeWithMeta).sourceMeta?.target ?? node.content);
         return <EmbedNode key={node.key} target={target} theme={theme} />;
@@ -370,6 +411,13 @@ export function NoteRenderer({
           backgroundColor: codeBg,
           borderRadius: 8,
           padding: 10,
+        },
+        blockquote: {
+          backgroundColor: 'transparent',
+          borderColor: 'transparent',
+          borderLeftWidth: 0,
+          margin: 0,
+          padding: 0,
         },
       }}
     >
