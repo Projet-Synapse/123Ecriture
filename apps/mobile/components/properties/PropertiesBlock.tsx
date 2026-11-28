@@ -88,7 +88,7 @@ export function PropertiesBlock({ theme, activeNote, content, onChangeContent, t
     line.definition ?? makePropertyDefinition(`raw-${line.name}`, line.name, 'text');
 
   return (
-    <View style={[styles.card, { borderColor: theme.border }]}>
+    <View style={[styles.card, { borderColor: theme.border, backgroundColor: theme.surface }]}>
       <Pressable style={styles.titleRow} onPress={() => setCollapsed((v) => !v)}>
         <Text style={[styles.title, { color: theme.textMuted }]}>Propriétés</Text>
         <Text style={{ color: theme.textMuted, fontSize: 11 }}>{collapsed ? '▸' : '▾'}</Text>
