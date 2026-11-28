@@ -34,7 +34,17 @@ export function EllieChatSection() {
       setModels(found);
       setStatus(`Connexion réussie. ${found.length} modèle(s) : ${found.slice(0, 8).join(', ')}${found.length > 8 ? '…' : ''}.`);
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : String(error));
+      // Même en échec (ex. modèle mal orthographié), on charge la liste des
+      // modèles installés pour permettre de choisir le bon d'un appui.
+      let hint = '';
+      try {
+        const found = await listEllieModels(chat, resolveEllieHttp());
+        setModels(found);
+        if (found.length > 0) hint = ' Appuie sur le bon modèle ci-dessous pour le choisir.';
+      } catch {
+        setModels([]);
+      }
+      setStatus((error instanceof Error ? error.message : String(error)) + hint);
     } finally {
       setBusy(false);
     }
