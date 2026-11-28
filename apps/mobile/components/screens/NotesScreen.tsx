@@ -210,9 +210,9 @@ type Props = {
 };
 
 // Construit les items de la barre d'outils depuis les GROUPES (Paramètres →
-// Éditeur) : groupe dépliant = un bouton qui déploie sa rangée au survol/
-// appui (voir EditorToolbar) ; groupe ouvert = boutons côte à côte séparés
-// entre groupes. Annuler/Rétablir (commands CodeMirror natives) et Pièce
+// Éditeur) : groupe dépliant = un bouton qui déploie son menu au clic/tap
+// (voir EditorToolbar) ; groupe ouvert = bloc de boutons, séparateur entre
+// groupes seulement. Annuler/Rétablir (commands CodeMirror natives) et Pièce
 // jointe (importAttachment + insertion au curseur) sont des ids de la
 // config branchés sur leurs handlers réels. Fonction HORS composant : elle
 // ne touche aucun ref — l'EditorView et l'insertion arrivent en paramètres
