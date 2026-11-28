@@ -604,6 +604,8 @@ declare global {
     templateRules?: { folder: string; template: string }[];
     // Dossiers/fichiers verrouillés pour l'IA (lib/ai/aiLock.ts) — hérités par les sous-dossiers.
     aiLockedPaths?: string[];
+    // Vue graphique : groupes de couleurs par requête (lib/graph/graphGroups.ts), ordre = priorité.
+    graphGroups?: { id: string; query: string; color: string }[];
     // Passerelle IA (lib/ai/aiPolicy.ts) — jeton stocké en SHA-256 seulement.
     aiGateway?: {
       enabled: boolean;

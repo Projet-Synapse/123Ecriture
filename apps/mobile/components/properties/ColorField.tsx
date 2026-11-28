@@ -119,12 +119,17 @@ export function ColorField({
   presets,
   onValueChange,
   theme,
+  compact = false,
 }: {
   label: string;
   value: string;
   presets: string[];
   onValueChange: (hex: string) => void;
   theme: Theme;
+  // Pastille seule (sans ligne ni libellé visible) — pour les listes denses
+  // comme les Groupes de la vue graphique ; le libellé sert alors de titre
+  // à la modale et de libellé d'accessibilité.
+  compact?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(value);
@@ -142,10 +147,16 @@ export function ColorField({
           gauche, PASTILLE de la couleur courante à droite — la pastille
           ouvre la roue ; les PRÉRÉGLAGES vivent DANS la roue, plus sur la
           page. Hierarchie : fond d'écran > carte > conteneurs > boutons. */}
-      <Pressable onPress={openWheel} accessibilityRole="button" style={[styles.rowButton, { borderColor: theme.border }]}>
-        <Text style={{ color: theme.text, fontSize: 13, flex: 1 }}>{label}</Text>
-        <View style={[styles.wheelGlyph, { backgroundColor: value }]} />
-      </Pressable>
+      {compact ? (
+        <Pressable onPress={openWheel} accessibilityRole="button" accessibilityLabel={label} hitSlop={6}>
+          <View style={[styles.wheelGlyph, { backgroundColor: value }]} />
+        </Pressable>
+      ) : (
+        <Pressable onPress={openWheel} accessibilityRole="button" style={[styles.rowButton, { borderColor: theme.border }]}>
+          <Text style={{ color: theme.text, fontSize: 13, flex: 1 }}>{label}</Text>
+          <View style={[styles.wheelGlyph, { backgroundColor: value }]} />
+        </Pressable>
+      )}
       <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
         <View style={[styles.modalBackdrop]}>
           <View style={[styles.modalCard, { backgroundColor: theme.surface, borderColor: theme.border }]}>
